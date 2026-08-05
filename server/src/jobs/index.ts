@@ -1,5 +1,5 @@
 import { Cron } from 'croner';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { generateRecurrences } from '../engine/recurrence-generate.js';
 import { fillFlightPlanCandidates, autoScheduleOnIngest } from '../engine/autoplan.js';
 import { sweepMissedBlocks, requestReplan } from '../engine/auto-defense.js';
@@ -47,9 +47,9 @@ export interface JobRunResult extends JobOutcome {
  * Cautious/Balanced. Wrapped so a placement hiccup never turns a successful promotion into
  * a failed job — the tasks are already promoted; we just couldn't block them this pass.
  */
-function autoBlockAfterPromote(): number {
+async function autoBlockAfterPromote(): Promise<number> {
   try {
-    return autoScheduleOnIngest(currentOwnerId(), { requireEstimate: true })?.blocksCreated ?? 0;
+    return (await autoScheduleOnIngest(currentOwnerId(), { requireEstimate: true }))?.blocksCreated ?? 0;
   } catch (err) {
     logger.error('auto-block after promote failed', { err: (err as Error).message });
     return 0;
@@ -89,7 +89,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       // Fixture mode (explicit dev/demo opt-in) keeps the single canned client.
       let r = emptyIngestTotals();
       if (config.google.mode === 'live') {
-        const accounts = googleAccounts();
+        const accounts = await googleAccounts();
         if (accounts.length === 0) {
           return { itemsCreated: 0, itemsUpdated: 0, log: 'No Google account connected — skipped (connect one in Settings)' };
         }
@@ -107,7 +107,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       } else {
         r = addIngestTotals(r, await ingestEmails());
       }
-      const placed = autoScheduleOnIngest(); // D1: schedule mode places tag-matched in the background; no-op in suggest
+      const placed = await autoScheduleOnIngest(); // D1: schedule mode places tag-matched in the background; no-op in suggest
       return {
         itemsCreated: r.possiblesCreated,
         itemsUpdated: r.possiblesUpdated,
@@ -125,7 +125,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       }
       let r = emptyIngestTotals();
       if (config.google.mode === 'live') {
-        const accounts = googleAccounts();
+        const accounts = await googleAccounts();
         if (accounts.length === 0) {
           return { itemsCreated: 0, itemsUpdated: 0, log: 'No Google account connected — skipped (connect one in Settings)' };
         }
@@ -198,7 +198,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       // owner's run only (claimLegacy), never by whichever owner happens to run first.
       const owner = currentOwnerId();
       const r = await promotePossibles(owner, { claimLegacy: owner === SYSTEM_OWNER });
-      const blocked = autoBlockAfterPromote();
+      const blocked = await autoBlockAfterPromote();
       return { itemsCreated: r.promoted, itemsUpdated: 0, log: `Promoted ${r.promoted}${r.failed ? `, ${r.failed} failed` : ''}${blocked ? `; auto-blocked ${blocked}` : ''}` };
     }
     case 'nightly_grooming': {
@@ -218,9 +218,9 @@ async function execute(kind: string): Promise<JobOutcome> {
         duplicates: dedupeAuto.duplicates + dedupeReview.duplicates,
         available: dedupeAuto.available && dedupeReview.available,
       };
-      const overdue = surfaceOverdue(owner);
+      const overdue = await surfaceOverdue(owner);
       const promote = await promotePossibles(owner, { claimLegacy: owner === SYSTEM_OWNER });
-      const blocked = autoBlockAfterPromote();
+      const blocked = await autoBlockAfterPromote();
       return {
         itemsCreated: promote.promoted,
         itemsUpdated: dedupe.duplicates + overdue,
@@ -231,11 +231,11 @@ async function execute(kind: string): Promise<JobOutcome> {
       // Retired (Phase G): Auto no longer packs the backlog into the day. Repurposed
       // to *propose* open-task candidates into the flight-plan; placement is
       // user-triggered via POST /api/auto/run. See engine/autoplan.ts.
-      const added = fillFlightPlanCandidates();
+      const added = await fillFlightPlanCandidates();
       // B2 safety net: sweep blocks whose planned time passed without being started,
       // mark them missed, re-stage the work, and request a reactive reflow (debounced,
       // toggle-gated) so the missed task gets re-placed into the remaining day.
-      const swept = sweepMissedBlocks();
+      const swept = await sweepMissedBlocks();
       if (swept.skipped > 0) requestReplan('missed');
       return {
         itemsCreated: added,
@@ -244,7 +244,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       };
     }
     case 'generate_recurrences': {
-      const r = generateRecurrences();
+      const r = await generateRecurrences();
       return {
         itemsCreated: r.created,
         itemsUpdated: r.missed,
@@ -256,7 +256,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       // (+1/3/7 backoff, unified 2026-07-20); stuck 'missed' one-offs are revived;
       // hands_off owners get reopened tasks placed into their new day right away.
       // Open tasks with no future blocks are re-staged into the flight plan.
-      const r = reviewAndReschedule();
+      const r = await reviewAndReschedule();
       return {
         itemsCreated: r.restaged,
         itemsUpdated: r.deferred + r.revived,
@@ -313,7 +313,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       }
       // WP5: place AFTER inbound so the Auto engine packs around the freshly-synced meeting
       // obstacles (the locked inbound blocks applyInbound just created). D1: no-op in suggest.
-      const placed = autoScheduleOnIngest();
+      const placed = await autoScheduleOnIngest();
       // B2: a calendar change shifts the day's obstacles — request a reactive reflow so
       // existing task blocks re-pack around the new meetings (debounced, toggle-gated).
       if (totals.created + totals.updated + totals.deleted > 0) requestReplan('calendar');
@@ -337,7 +337,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       // owners in one pass (T3: this kind runs once globally, not per owner — the
       // old owner-scoped predicate would have left every non-first owner's rows to
       // grow unbounded under multi-tenant).
-      const { changes } = sqlite
+      const { changes } = await store()
         .prepare(`DELETE FROM sync_events WHERE at < datetime('now', '-30 days')`)
         .run();
       return { itemsCreated: 0, itemsUpdated: changes, log: `Pruned ${changes} sync_event row(s) older than 30 days` };
@@ -355,13 +355,13 @@ async function execute(kind: string): Promise<JobOutcome> {
       //
       // Zero rows is the normal case and must NOT throw — runJob would mark the run
       // red. Deletions are reported in itemsUpdated (prune_sync_events precedent).
-      const { changes } = sqlite
+      const { changes } = await store()
         .prepare(`DELETE FROM objectives WHERE purge_after IS NOT NULL AND purge_after < ?`)
         .run(new Date().toISOString());
       return { itemsCreated: 0, itemsUpdated: changes, log: `Purged ${changes} objective(s) past the reversal window` };
     }
     case 'advance_objectives': {
-      const r = advanceObjectives();
+      const r = await advanceObjectives();
       return {
         itemsCreated: r.nominated,
         itemsUpdated: r.skipped,
@@ -373,14 +373,14 @@ async function execute(kind: string): Promise<JobOutcome> {
       // cron fans this out per owner, and each pass reads only that owner's log.
       // A cron/agent write, so it deliberately does NOT stamp owner attribution
       // (WHO rule, owner ruling 2026-07-16).
-      const r = calibrateTriality(currentOwnerId(), new Date());
+      const r = await calibrateTriality(currentOwnerId(), new Date());
       const label = r.slotsWritten > 0
         ? `${r.slotsWritten} slot(s) tuned from ${r.outcomeRows} outcome(s)`
         : `no slot cleared the ${r.floor}-outcome floor (${r.outcomeRows} outcome(s)) — defaults stand`;
       return { itemsCreated: 0, itemsUpdated: r.slotsWritten, log: `Triality calibration: ${label}` };
     }
     case 'calibrate_estimates': {
-      const r = calibrateEstimates();
+      const r = await calibrateEstimates();
       const label = r.bias_ratio != null
         ? `bias_ratio=${r.bias_ratio.toFixed(2)} (n=${r.sample_count})`
         : 'no timed tasks yet';
@@ -390,7 +390,7 @@ async function execute(kind: string): Promise<JobOutcome> {
     case 'freeze_stars': {
       // Freezing is an INSERT (first-freeze-wins): a create, or a no-op if the
       // day was already frozen — never an update. Report counters accordingly.
-      const r = freezeStars();
+      const r = await freezeStars();
       return {
         itemsCreated: r.created ? 1 : 0,
         itemsUpdated: 0,
@@ -402,7 +402,7 @@ async function execute(kind: string): Promise<JobOutcome> {
     case 'reset_routines': {
       // Midnight: Routine tasks are a repeatable checklist — never archived. Flip any
       // completed routine member back to open so the routine is fresh for the new day.
-      const r = resetRoutineTasks();
+      const r = await resetRoutineTasks();
       return { itemsCreated: 0, itemsUpdated: r.reset, log: `Reset ${r.reset} completed routine task(s) to open` };
     }
     default:
@@ -413,12 +413,12 @@ async function execute(kind: string): Promise<JobOutcome> {
 /** Run a job by kind, recording a job_runs row and broadcasting start/finish over SSE. */
 export async function runJob(kind: string): Promise<JobRunResult> {
   const startedAt = new Date().toISOString();
-  const run = sqlite
+  const run = await store()
     .prepare(
       `INSERT INTO job_runs (id, job_id, started_at, status)
        SELECT uuid7(), id, ?, 'running' FROM scheduled_jobs WHERE kind = ? RETURNING id`
     )
-    .get(startedAt, kind) as { id: string } | undefined;
+    .get<{ id: string }>(startedAt, kind);
 
   broadcast(currentOwnerId(), 'job:started', { kind, startedAt });
 
@@ -438,13 +438,13 @@ export async function runJob(kind: string): Promise<JobRunResult> {
 
   const finishedAt = new Date().toISOString();
   if (run) {
-    sqlite
+    await store()
       .prepare(
         `UPDATE job_runs SET finished_at = ?, status = ?, items_created = ?, items_updated = ?, log = ? WHERE id = ?`
       )
       .run(finishedAt, status, outcome.itemsCreated, outcome.itemsUpdated, outcome.log, run.id);
   }
-  sqlite.prepare('UPDATE scheduled_jobs SET last_run_at = ? WHERE kind = ?').run(finishedAt, kind);
+  await store().prepare('UPDATE scheduled_jobs SET last_run_at = ? WHERE kind = ?').run(finishedAt, kind);
 
   broadcast(currentOwnerId(), 'job:run', { kind, status, ...outcome, finishedAt });
   logger.info(`Job ${kind} ${status}`, { ...outcome });
@@ -483,8 +483,8 @@ const OWNER_SCOPED_KINDS = new Set([
   'reset_routines',
 ]);
 
-function allOwnerIds(): string[] {
-  return (sqlite.prepare('SELECT id FROM owners').all() as { id: string }[]).map((o) => o.id);
+async function allOwnerIds(): Promise<string[]> {
+  return (await store().prepare('SELECT id FROM owners').all<{ id: string }>()).map((o) => o.id);
 }
 
 /**
@@ -521,8 +521,8 @@ const inFlight = new Set<string>();
  * startup belongs to a process that is gone. Left alone they accumulate forever and make
  * the Jobs view claim work is in progress that nothing is doing. Called once at boot.
  */
-export function failInterruptedJobRuns(): number {
-  const { changes } = sqlite
+export async function failInterruptedJobRuns(): Promise<number> {
+  const { changes } = await store()
     .prepare(
       `UPDATE job_runs SET status = 'error', finished_at = ?, log = 'interrupted — server restarted'
         WHERE status = 'running'`,
@@ -549,7 +549,7 @@ export async function runScheduledJob(kind: string): Promise<void> {
 
 async function runScheduledJobInner(kind: string): Promise<void> {
   if (OWNER_SCOPED_KINDS.has(kind)) {
-    for (const ownerId of allOwnerIds()) {
+    for (const ownerId of await allOwnerIds()) {
       try {
         await runWithOwner(ownerId, JOB_SCOPES, () => runJob(kind));
       } catch (err) {
@@ -596,10 +596,10 @@ export async function runIngestNow(): Promise<JobRunResult[]> {
   return results;
 }
 
-export function startCronJobs() {
-  const jobs = sqlite
+export async function startCronJobs() {
+  const jobs = await store()
     .prepare('SELECT id, kind, cron FROM scheduled_jobs WHERE enabled = 1')
-    .all() as { id: string; kind: string; cron: string }[];
+    .all<{ id: string; kind: string; cron: string }>();
 
   for (const job of jobs) {
     new Cron(job.cron, () => runScheduledJob(job.kind));

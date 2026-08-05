@@ -190,12 +190,12 @@ describe('PUT /api/pattern-prefs/:patternTagId — persistence', () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('pattern-prefs service', () => {
-  it('getPatternPrefs excludes missing rows; reflects setPatternPref', () => {
+  it('getPatternPrefs excludes missing rows; reflects setPatternPref', async () => {
     const dirs = seedDirections();
-    expect(getPatternPrefs(OWNER)).toEqual({});
+    expect(await getPatternPrefs(OWNER)).toEqual({});
 
-    setPatternPref(OWNER, dirs.work, { auto_fill: false, reminder_offsets: [30] });
-    const prefs = getPatternPrefs(OWNER);
+    await setPatternPref(OWNER, dirs.work, { auto_fill: false, reminder_offsets: [30] });
+    const prefs = await getPatternPrefs(OWNER);
     expect(Object.keys(prefs)).toEqual([dirs.work]);
     expect(prefs[dirs.work]).toEqual({
       auto_fill: false,
@@ -206,15 +206,15 @@ describe('pattern-prefs service', () => {
     });
   });
 
-  it('setPatternPref fetch-then-merges patches onto the existing row', () => {
+  it('setPatternPref fetch-then-merges patches onto the existing row', async () => {
     const dirs = seedDirections();
-    setPatternPref(OWNER, dirs.home, { icon_shape: 'square' });
-    const merged = setPatternPref(OWNER, dirs.home, { color_token: 'chart-3' });
+    await setPatternPref(OWNER, dirs.home, { icon_shape: 'square' });
+    const merged = await setPatternPref(OWNER, dirs.home, { color_token: 'chart-3' });
 
     // returned merged row keeps the earlier icon_shape AND the new color_token
     expect(merged).toMatchObject({ icon_shape: 'square', color_token: 'chart-3', auto_fill: true });
     expect(prefRowCount(dirs.home)).toBe(1);
-    expect(getPatternPrefs(OWNER)[dirs.home]).toMatchObject({ icon_shape: 'square', color_token: 'chart-3' });
+    expect((await getPatternPrefs(OWNER))[dirs.home]).toMatchObject({ icon_shape: 'square', color_token: 'chart-3' });
   });
 });
 

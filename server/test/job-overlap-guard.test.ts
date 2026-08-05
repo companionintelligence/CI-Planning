@@ -56,7 +56,7 @@ describe('overlapping scheduled runs', () => {
 });
 
 describe('failInterruptedJobRuns', () => {
-  it("settles rows a dead process left `running`", () => {
+  it("settles rows a dead process left `running`", async () => {
     const job = sqlite.prepare(`SELECT id FROM scheduled_jobs WHERE kind = 'ingest_gcal'`).get() as { id: string };
     for (let i = 0; i < 3; i++) {
       sqlite
@@ -64,7 +64,7 @@ describe('failInterruptedJobRuns', () => {
         .run(job.id, new Date().toISOString());
     }
 
-    expect(failInterruptedJobRuns()).toBe(3);
+    expect(await failInterruptedJobRuns()).toBe(3);
 
     const rows = runRows('ingest_gcal');
     expect(rows.every((r) => r.status === 'error')).toBe(true);
@@ -73,13 +73,13 @@ describe('failInterruptedJobRuns', () => {
     expect(rows.filter((r) => r.status === 'running')).toHaveLength(0);
   });
 
-  it('leaves finished rows alone', () => {
+  it('leaves finished rows alone', async () => {
     const job = sqlite.prepare(`SELECT id FROM scheduled_jobs WHERE kind = 'ingest_gcal'`).get() as { id: string };
     sqlite
       .prepare(`INSERT INTO job_runs (id, job_id, started_at, finished_at, status) VALUES (uuid7(), ?, ?, ?, 'done')`)
       .run(job.id, new Date().toISOString(), new Date().toISOString());
 
-    expect(failInterruptedJobRuns()).toBe(0);
+    expect(await failInterruptedJobRuns()).toBe(0);
     expect(runRows('ingest_gcal')[0].status).toBe('done');
   });
 });

@@ -71,18 +71,18 @@ afterEach(() => {
 });
 
 describe('connectionHealth', () => {
-  it('returns [] (not null) when the owner has no tokens', () => {
-    const result = connectionHealth(SYSTEM_OWNER);
+  it('returns [] (not null) when the owner has no tokens', async () => {
+    const result = await connectionHealth(SYSTEM_OWNER);
     expect(result).toEqual([]);
   });
 
-  it('active row + future expiresAt → connected, with expiresAt + mappedEventCount', () => {
+  it('active row + future expiresAt → connected, with expiresAt + mappedEventCount', async () => {
     const future = new Date(Date.now() + 3_600_000).toISOString();
     seedToken({ account: 'a@x.io', expiresAt: future });
     seedEvent('a@x.io');
     seedEvent('a@x.io');
 
-    const result = connectionHealth(SYSTEM_OWNER);
+    const result = await connectionHealth(SYSTEM_OWNER);
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({
       provider: 'google',
@@ -95,67 +95,67 @@ describe('connectionHealth', () => {
     });
   });
 
-  it('active row + past expiresAt → expired', () => {
+  it('active row + past expiresAt → expired', async () => {
     const past = new Date(Date.now() - 3_600_000).toISOString();
     seedToken({ account: 'old@x.io', expiresAt: past });
 
-    const result = connectionHealth(SYSTEM_OWNER);
+    const result = await connectionHealth(SYSTEM_OWNER);
     expect(result[0].status).toBe('expired');
     expect(result[0].expiresAt).toBe(past);
   });
 
-  it("status='revoked' → inactive, expiresAt null (never decrypts)", () => {
+  it("status='revoked' → inactive, expiresAt null (never decrypts)", async () => {
     seedToken({ account: 'gone@x.io', status: 'revoked', expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
 
-    const result = connectionHealth(SYSTEM_OWNER);
+    const result = await connectionHealth(SYSTEM_OWNER);
     expect(result[0].status).toBe('inactive');
     expect(result[0].expiresAt).toBeNull();
   });
 
-  it('corrupt ciphertext → inactive, does NOT throw', () => {
+  it('corrupt ciphertext → inactive, does NOT throw', async () => {
     seedToken({ account: 'bad@x.io', expiresAt: new Date(Date.now() + 3_600_000).toISOString(), corrupt: true });
 
-    let result!: ReturnType<typeof connectionHealth>;
-    expect(() => { result = connectionHealth(SYSTEM_OWNER); }).not.toThrow();
+    // A rejected promise fails the test, which is the async form of "does NOT throw".
+    const result = await connectionHealth(SYSTEM_OWNER);
     expect(result[0].status).toBe('inactive');
     expect(result[0].expiresAt).toBeNull();
   });
 
-  it('lastError is populated from an errored sync_calendar run, null when done', () => {
+  it('lastError is populated from an errored sync_calendar run, null when done', async () => {
     const future = new Date(Date.now() + 3_600_000).toISOString();
 
     // Errored run.
     seedToken({ account: 'err@x.io', expiresAt: future });
     seedRun({ startedAt: new Date(Date.now() - 1000).toISOString(), finishedAt: new Date().toISOString(), status: 'error', log: 'token refresh failed' });
-    let result = connectionHealth(SYSTEM_OWNER);
+    let result = await connectionHealth(SYSTEM_OWNER);
     expect(result[0].lastError).toBe('token refresh failed');
     expect(result[0].lastSyncAt).not.toBeNull();
 
     // Replace with a 'done' run → lastError clears (most recent wins).
     sqlite.exec('DELETE FROM job_runs');
     seedRun({ startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), status: 'done', log: 'ok' });
-    result = connectionHealth(SYSTEM_OWNER);
+    result = await connectionHealth(SYSTEM_OWNER);
     expect(result[0].lastError).toBeNull();
     expect(result[0].lastSyncAt).not.toBeNull();
   });
 
-  it('lastSyncAt falls back to started_at when finished_at is null (still-running run)', () => {
+  it('lastSyncAt falls back to started_at when finished_at is null (still-running run)', async () => {
     const started = new Date().toISOString();
     seedToken({ account: 'run@x.io', expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
     seedRun({ startedAt: started, finishedAt: null, status: 'running' });
 
-    const result = connectionHealth(SYSTEM_OWNER);
+    const result = await connectionHealth(SYSTEM_OWNER);
     expect(result[0].lastSyncAt).toBe(started);
     expect(result[0].lastError).toBeNull();
   });
 
-  it('NO-LEAK GUARD: serialized result contains no token material', () => {
+  it('NO-LEAK GUARD: serialized result contains no token material', async () => {
     const future = new Date(Date.now() + 3_600_000).toISOString();
     seedToken({ account: 'leak-check@x.io', expiresAt: future });
     seedToken({ account: 'revoked@x.io', status: 'revoked' });
     seedEvent('leak-check@x.io');
 
-    const json = JSON.stringify(connectionHealth(SYSTEM_OWNER));
+    const json = JSON.stringify(await connectionHealth(SYSTEM_OWNER));
     for (const forbidden of ['ciphertext', 'authTag', 'auth_tag', 'accessToken', 'refreshToken']) {
       expect(json).not.toContain(forbidden);
     }

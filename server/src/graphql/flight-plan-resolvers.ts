@@ -28,50 +28,50 @@ export const flightPlanResolvers = {
   },
 
   Mutation: {
-    stageFlightPlanTask: (_p: unknown, args: { input: { taskId: string } }) => {
+    stageFlightPlanTask: async (_p: unknown, args: { input: { taskId: string } }) => {
       const owner = currentOwnerId();
-      const res = stage(owner, { taskId: args.input.taskId });
+      const res = await stage(owner, { taskId: args.input.taskId });
       if (!res.ok) {
         if (res.error === 'task_not_found') throw new GraphQLError('task not found', { extensions: { code: 'NOT_FOUND' } });
         if (res.error === 'is_instance') throw new GraphQLError('stage the series template, not an instance', { extensions: { code: 'BAD_USER_INPUT' } });
         throw new GraphQLError('taskId is required', { extensions: { code: 'BAD_USER_INPUT' } });
       }
       broadcast(owner, 'flight_plan:updated', { added: res.added });
-      return { flightPlan: listFlightPlan(owner), added: res.added, success: true };
+      return { flightPlan: await listFlightPlan(owner), added: res.added, success: true };
     },
 
-    stageFlightPlanPattern: (_p: unknown, args: { input: { patternId: string } }) => {
+    stageFlightPlanPattern: async (_p: unknown, args: { input: { patternId: string } }) => {
       const owner = currentOwnerId();
-      const res = stage(owner, { patternId: args.input.patternId });
+      const res = await stage(owner, { patternId: args.input.patternId });
       if (!res.ok) {
         // A pattern stage can only fail as pattern_not_found (no instance/nothing paths).
         throw new GraphQLError('pattern not found', { extensions: { code: 'NOT_FOUND' } });
       }
       broadcast(owner, 'flight_plan:updated', { added: res.added });
-      return { flightPlan: listFlightPlan(owner), added: res.added, success: true };
+      return { flightPlan: await listFlightPlan(owner), added: res.added, success: true };
     },
 
-    updateFlightPlanEntry: (_p: unknown, args: { input: { taskId: string; selected?: boolean | null; position?: number | null } }) => {
+    updateFlightPlanEntry: async (_p: unknown, args: { input: { taskId: string; selected?: boolean | null; position?: number | null } }) => {
       const owner = currentOwnerId();
       const patch: { selected?: boolean; position?: number } = {};
       if (args.input.selected != null) patch.selected = args.input.selected;
       if (args.input.position != null) patch.position = args.input.position;
-      const res = updateEntry(owner, args.input.taskId, patch);
+      const res = await updateEntry(owner, args.input.taskId, patch);
       if (!res.ok) throw new GraphQLError('not staged', { extensions: { code: 'NOT_FOUND' } });
       broadcast(owner, 'flight_plan:updated', { task_id: args.input.taskId });
-      return { flightPlan: listFlightPlan(owner), success: true };
+      return { flightPlan: await listFlightPlan(owner), success: true };
     },
 
-    unstageFlightPlanEntry: (_p: unknown, args: { input: { taskId: string } }) => {
+    unstageFlightPlanEntry: async (_p: unknown, args: { input: { taskId: string } }) => {
       const owner = currentOwnerId();
-      unstageEntry(owner, args.input.taskId);
+      await unstageEntry(owner, args.input.taskId);
       broadcast(owner, 'flight_plan:updated', { removed: args.input.taskId });
-      return { flightPlan: listFlightPlan(owner), success: true };
+      return { flightPlan: await listFlightPlan(owner), success: true };
     },
 
-    resetFlightPlan: () => {
+    resetFlightPlan: async () => {
       const owner = currentOwnerId();
-      const { cleared } = resetFlightPlan(owner);
+      const { cleared } = await resetFlightPlan(owner);
       broadcast(owner, 'flight_plan:reset', { cleared });
       return { cleared, success: true };
     },

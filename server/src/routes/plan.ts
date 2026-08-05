@@ -50,7 +50,7 @@ export function planRouter() {
   // The banner fetches this on mount so a reload re-surfaces a still-open suggestion
   // (the SSE 'replan:suggested' event is fire-once and isn't replayed on reconnect).
   router.get('/api/plan/suggestion', async (ctx) => {
-    ctx.body = { suggestion: outstandingSuggestion(currentOwnerId()) ?? null };
+    ctx.body = { suggestion: (await outstandingSuggestion(currentOwnerId())) ?? null };
   });
 
   // POST /api/plan/reauthor { date? } — accept the nudge: force an AI re-author of the
@@ -63,8 +63,8 @@ export function planRouter() {
     const date = body.date ?? localISODate();
     const owner = currentOwnerId();
     await authorPlanOrder(owner, date, { force: true });
-    clearSuggestion(owner);
-    const diff = reflow(owner, date, 'reauthor');
+    await clearSuggestion(owner);
+    const diff = await reflow(owner, date, 'reauthor');
     broadcast(owner, 'schedule:done', { reason: 'reauthor', ...diff });
     writeAudit({ ownerId: owner, actor: 'owner', action: 'reauthor', entity: `plan:${date}` });
     ctx.body = { ok: true, date, ...diff };
@@ -74,7 +74,7 @@ export function planRouter() {
   // suggestion so it won't re-surface until the NEXT big disruption.
   router.post('/api/plan/reauthor/dismiss', async (ctx) => {
     const owner = currentOwnerId();
-    clearSuggestion(owner);
+    await clearSuggestion(owner);
     broadcast(owner, 'replan:dismissed', {});
     writeAudit({ ownerId: owner, actor: 'owner', action: 'dismiss', entity: 'plan:reauthor' });
     ctx.body = { ok: true };

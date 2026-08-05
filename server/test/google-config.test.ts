@@ -150,9 +150,9 @@ describe('PUT /api/google-config', () => {
 
 // FTUE · T12 (#348) — the "Try with sample data" fixture-mode toggle.
 describe('fixture mode', () => {
-  it('enables with no client id and no KEK, persists the marker, and survives boot hydration', () => {
+  it('enables with no client id and no KEK, persists the marker, and survives boot hydration', async () => {
     delete process.env.CP_KEK_B64; // fixture mode must not need a KEK
-    const res = saveGoogleConfig({ enabled: true, mode: 'fixture' });
+    const res = await saveGoogleConfig({ enabled: true, mode: 'fixture' });
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     expect(res.state).toMatchObject({ source: 'app', mode: 'fixture', enabled: true, clientId: null });
@@ -160,16 +160,16 @@ describe('fixture mode', () => {
 
     // Simulate a restart: singleton back at defaults, then re-hydrate from app_config.
     config.google.mode = 'off';
-    hydrateGoogleConfig();
+    await hydrateGoogleConfig();
     expect(config.google.mode).toBe('fixture');
-    expect(googleConfigState().mode).toBe('fixture');
+    expect((await googleConfigState()).mode).toBe('fixture');
   });
 
-  it('disabling clears the marker and returns to off', () => {
-    saveGoogleConfig({ enabled: true, mode: 'fixture' });
+  it('disabling clears the marker and returns to off', async () => {
+    await saveGoogleConfig({ enabled: true, mode: 'fixture' });
     expect(config.google.mode).toBe('fixture');
 
-    const cleared = saveGoogleConfig({ enabled: false });
+    const cleared = await saveGoogleConfig({ enabled: false });
     expect(cleared.ok).toBe(true);
     if (!cleared.ok) return;
     expect(cleared.state).toMatchObject({ source: 'off', mode: 'off' });
@@ -179,12 +179,12 @@ describe('fixture mode', () => {
     expect(rows).toEqual([]);
   });
 
-  it('switching to fixture then back to live restores the previously-saved client untouched', () => {
-    saveGoogleConfig({ clientId: 'id-1', clientSecret: 'sekret', enabled: true });
-    saveGoogleConfig({ enabled: true, mode: 'fixture' });
+  it('switching to fixture then back to live restores the previously-saved client untouched', async () => {
+    await saveGoogleConfig({ clientId: 'id-1', clientSecret: 'sekret', enabled: true });
+    await saveGoogleConfig({ enabled: true, mode: 'fixture' });
     expect(config.google.mode).toBe('fixture');
 
-    const back = saveGoogleConfig({ enabled: true }); // mode omitted => live path
+    const back = await saveGoogleConfig({ enabled: true }); // mode omitted => live path
     expect(back.ok).toBe(true);
     if (!back.ok) return;
     expect(back.state).toMatchObject({ mode: 'live', clientId: 'id-1', hasClientSecret: true });
@@ -216,20 +216,20 @@ describe('fixture mode', () => {
       if (savedAllowFixture === undefined) delete process.env.CP_ALLOW_FIXTURE; else process.env.CP_ALLOW_FIXTURE = savedAllowFixture;
     });
 
-    it('refuses fixture mode in production without CP_ALLOW_FIXTURE', () => {
+    it('refuses fixture mode in production without CP_ALLOW_FIXTURE', async () => {
       process.env.NODE_ENV = 'production';
       delete process.env.CP_ALLOW_FIXTURE;
-      const res = saveGoogleConfig({ enabled: true, mode: 'fixture' });
+      const res = await saveGoogleConfig({ enabled: true, mode: 'fixture' });
       expect(res.ok).toBe(false);
       if (res.ok) return;
       expect(res.error).toBe('fixture_forbidden_in_production');
       expect(config.google.mode).not.toBe('fixture'); // nothing was persisted or hot-applied
     });
 
-    it('allows fixture mode in production with the explicit CP_ALLOW_FIXTURE escape hatch', () => {
+    it('allows fixture mode in production with the explicit CP_ALLOW_FIXTURE escape hatch', async () => {
       process.env.NODE_ENV = 'production';
       process.env.CP_ALLOW_FIXTURE = 'true';
-      const res = saveGoogleConfig({ enabled: true, mode: 'fixture' });
+      const res = await saveGoogleConfig({ enabled: true, mode: 'fixture' });
       expect(res.ok).toBe(true);
     });
 
@@ -245,9 +245,9 @@ describe('fixture mode', () => {
     // row (e.g. copied/promoted from a non-production box) would still get silently
     // re-activated by hydrateGoogleConfig on every later boot — that function only
     // checked config.google.envPinned, never NODE_ENV/CP_ALLOW_FIXTURE directly.
-    it('a persisted fixture row from a non-production save is NOT re-activated by hydrateGoogleConfig() on a later production boot', () => {
+    it('a persisted fixture row from a non-production save is NOT re-activated by hydrateGoogleConfig() on a later production boot', async () => {
       // Persist the row while allowed (no NODE_ENV set in this test's default env).
-      const saved = saveGoogleConfig({ enabled: true, mode: 'fixture' });
+      const saved = await saveGoogleConfig({ enabled: true, mode: 'fixture' });
       expect(saved.ok).toBe(true);
       expect(config.google.mode).toBe('fixture');
 
@@ -255,43 +255,43 @@ describe('fixture mode', () => {
       config.google.mode = 'off'; // singleton back at defaults, as a real restart would leave it
       process.env.NODE_ENV = 'production';
       delete process.env.CP_ALLOW_FIXTURE;
-      hydrateGoogleConfig();
+      await hydrateGoogleConfig();
 
       expect(config.google.mode).not.toBe('fixture');
       expect(config.google.mode).toBe('off'); // no clientId configured either, so falls all the way to off
-      expect(googleConfigState().source).toBe('off'); // not the misleading 'app'
+      expect((await googleConfigState()).source).toBe('off'); // not the misleading 'app'
     });
 
-    it('the same persisted fixture row IS re-activated on a production boot with CP_ALLOW_FIXTURE=true', () => {
-      saveGoogleConfig({ enabled: true, mode: 'fixture' });
+    it('the same persisted fixture row IS re-activated on a production boot with CP_ALLOW_FIXTURE=true', async () => {
+      await saveGoogleConfig({ enabled: true, mode: 'fixture' });
       config.google.mode = 'off';
       process.env.NODE_ENV = 'production';
       process.env.CP_ALLOW_FIXTURE = 'true';
-      hydrateGoogleConfig();
+      await hydrateGoogleConfig();
       expect(config.google.mode).toBe('fixture');
     });
   });
 });
 
 describe('boot hydration', () => {
-  it('re-applies a saved app config after a simulated restart', () => {
-    saveGoogleConfig({ clientId: 'boot-id', clientSecret: 'boot-secret', enabled: true });
+  it('re-applies a saved app config after a simulated restart', async () => {
+    await saveGoogleConfig({ clientId: 'boot-id', clientSecret: 'boot-secret', enabled: true });
     // Simulate a fresh boot: singleton back at defaults, then hydrate (app.ts does this).
     config.google.mode = 'off';
     config.google.clientId = undefined;
     config.google.clientSecret = undefined;
-    hydrateGoogleConfig();
+    await hydrateGoogleConfig();
     expect(config.google.mode).toBe('live');
     expect(config.google.clientId).toBe('boot-id');
     expect(config.google.clientSecret).toBe('boot-secret');
-    expect(googleConfigState().source).toBe('app');
+    expect((await googleConfigState()).source).toBe('app');
   });
 
-  it('is a no-op when env-pinned', () => {
-    saveGoogleConfig({ clientId: 'boot-id', enabled: true });
+  it('is a no-op when env-pinned', async () => {
+    await saveGoogleConfig({ clientId: 'boot-id', enabled: true });
     config.google.envPinned = true;
     config.google.mode = 'fixture';
-    hydrateGoogleConfig();
+    await hydrateGoogleConfig();
     expect(config.google.mode).toBe('fixture'); // untouched
   });
 });

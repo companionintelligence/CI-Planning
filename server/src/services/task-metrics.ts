@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { MOODS, type Mood } from './task-close.js';
 
 /**
@@ -93,25 +93,28 @@ const TASK_SCOPE = `
   )
 `;
 
-const selectByDirection = sqlite.prepare(`
+// SQL strings at module level, prepared inside taskMetrics(): a module-level
+// store().prepare() would call store() at import time and throw when this module
+// loads before db/index installs the backend (§5.5).
+const SELECT_BY_DIRECTION = `
   SELECT g.name AS axis, ${ROW_COLS}
     FROM tasks t
     JOIN entity_tags e ON e.entity_kind = 'task' AND e.entity_id = t.id AND e.level = 1
     JOIN tags g ON g.id = e.tag_id AND g.kind = 'direction'
    WHERE ${TASK_SCOPE}
-`);
+`;
 
-const selectByCategory = sqlite.prepare(`
+const SELECT_BY_CATEGORY = `
   SELECT c.name AS axis, ${ROW_COLS}
     FROM tasks t
     JOIN entity_categories ec ON ec.entity_kind = 'task' AND ec.entity_id = t.id
     JOIN tags c ON c.id = ec.category_tag_id
    WHERE ${TASK_SCOPE}
-`);
+`;
 
-const selectAll = sqlite.prepare(`
+const SELECT_ALL = `
   SELECT '' AS axis, ${ROW_COLS} FROM tasks t WHERE ${TASK_SCOPE}
-`);
+`;
 
 interface Row {
   axis: string;
@@ -174,16 +177,16 @@ function rollup(rows: Row[]): AxisMetrics[] {
  * `days` is clamped to 1..365: the window is a user-supplied query param, and an
  * unbounded value would turn this into a full-history table scan on every page load.
  */
-export function taskMetrics(owner: string, days = 30): TaskMetrics {
+export async function taskMetrics(owner: string, days = 30): Promise<TaskMetrics> {
   const windowDays = Math.max(1, Math.min(365, Math.floor(days) || 30));
   const since = new Date(Date.now() - windowDays * 86_400_000).toISOString();
 
-  const directions = rollup(selectByDirection.all(owner, since) as Row[]);
-  const categories = rollup(selectByCategory.all(owner, since) as Row[]);
+  const directions = rollup(await store().prepare(SELECT_BY_DIRECTION).all<Row>(owner, since));
+  const categories = rollup(await store().prepare(SELECT_BY_CATEGORY).all<Row>(owner, since));
 
   // Totals come from the unjoined task set, NOT from summing the axes: a task can carry
   // up to three categories (so it would be counted thrice) or none (never counted).
-  const all = rollup(selectAll.all(owner, since) as Row[])[0];
+  const all = rollup(await store().prepare(SELECT_ALL).all<Row>(owner, since))[0];
   const totals = all
     ? { open: all.open, completed: all.completed, actualMinutes: all.actualMinutes, mood: all.mood, moodSamples: all.moodSamples }
     : { open: 0, completed: 0, actualMinutes: 0, mood: emptyMood(), moodSamples: 0 };

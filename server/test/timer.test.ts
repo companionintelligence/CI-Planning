@@ -52,7 +52,7 @@ const blockStatus = (blockId: string): string =>
 describe('§C1 overrun detection', () => {
   beforeEach(() => resetDb());
 
-  it('session exceeding block span + tolerance → status=overrun, overran=true', () => {
+  it('session exceeding block span + tolerance → status=overrun, overran=true', async () => {
     const task = insertTask();
     // Block planned for 60 minutes.
     const blockId = insertBlock(
@@ -61,8 +61,8 @@ describe('§C1 overrun detection', () => {
       '2026-06-20T10:00:00.000Z',
     );
 
-    runWithOwner(OWNER, ALL_SCOPES, () => {
-      const { entry } = startTimer(task, blockId);
+    await runWithOwner(OWNER, ALL_SCOPES, async () => {
+      const { entry } = await startTimer(task, blockId);
 
       // Backdate started_at so the session elapsed is 63 minutes — 1 minute
       // past the 2-minute tolerance (60 + 2 = 62 min threshold).
@@ -71,7 +71,7 @@ describe('§C1 overrun detection', () => {
         .prepare(`UPDATE time_entries SET started_at = ? WHERE id = ?`)
         .run(startedAt, entry.id);
 
-      const res = stopTimer();
+      const res = await stopTimer();
       expect(res).not.toBeNull();
       expect(res!.overran).toBe(true);
     });
@@ -79,7 +79,7 @@ describe('§C1 overrun detection', () => {
     expect(blockStatus(blockId)).toBe('overrun');
   });
 
-  it('session within block span + tolerance → block status unchanged, overran falsy', () => {
+  it('session within block span + tolerance → block status unchanged, overran falsy', async () => {
     const task = insertTask();
     // Block planned for 60 minutes.
     const blockId = insertBlock(
@@ -88,8 +88,8 @@ describe('§C1 overrun detection', () => {
       '2026-06-20T10:00:00.000Z',
     );
 
-    runWithOwner(OWNER, ALL_SCOPES, () => {
-      const { entry } = startTimer(task, blockId);
+    await runWithOwner(OWNER, ALL_SCOPES, async () => {
+      const { entry } = await startTimer(task, blockId);
 
       // Session elapsed is 61 minutes — inside the 2-minute tolerance (≤ 62 min).
       const startedAt = new Date(Date.now() - 61 * 60_000).toISOString();
@@ -97,7 +97,7 @@ describe('§C1 overrun detection', () => {
         .prepare(`UPDATE time_entries SET started_at = ? WHERE id = ?`)
         .run(startedAt, entry.id);
 
-      const res = stopTimer();
+      const res = await stopTimer();
       expect(res).not.toBeNull();
       expect(res!.overran).toBeFalsy();
     });
@@ -105,18 +105,18 @@ describe('§C1 overrun detection', () => {
     expect(blockStatus(blockId)).toBe('planned');
   });
 
-  it('no block_id → no-op (block table untouched)', () => {
+  it('no block_id → no-op (block table untouched)', async () => {
     const task = insertTask();
 
-    runWithOwner(OWNER, ALL_SCOPES, () => {
-      const { entry } = startTimer(task); // no blockId
+    await runWithOwner(OWNER, ALL_SCOPES, async () => {
+      const { entry } = await startTimer(task); // no blockId
 
       const startedAt = new Date(Date.now() - 90 * 60_000).toISOString();
       sqlite
         .prepare(`UPDATE time_entries SET started_at = ? WHERE id = ?`)
         .run(startedAt, entry.id);
 
-      const res = stopTimer();
+      const res = await stopTimer();
       expect(res).not.toBeNull();
       expect(res!.overran).toBeFalsy();
     });
@@ -130,7 +130,7 @@ describe('§C1 overrun detection', () => {
     expect(blockCount).toBe(0);
   });
 
-  it('task-total SUM does NOT drive overrun — only the session span matters', () => {
+  it('task-total SUM does NOT drive overrun — only the session span matters', async () => {
     // Block planned for 60 minutes.  Two 40-minute sessions: the first session
     // (40 min < 62 min threshold) must NOT overrun; the second (40 min elapsed
     // in that session, even though the task total hits 80 min) must also NOT
@@ -142,24 +142,24 @@ describe('§C1 overrun detection', () => {
       '2026-06-20T10:00:00.000Z',
     );
 
-    runWithOwner(OWNER, ALL_SCOPES, () => {
+    await runWithOwner(OWNER, ALL_SCOPES, async () => {
       // --- First session: 40 minutes ---
-      const { entry: e1 } = startTimer(task, blockId);
+      const { entry: e1 } = await startTimer(task, blockId);
       const start1 = new Date(Date.now() - 40 * 60_000).toISOString();
       sqlite
         .prepare(`UPDATE time_entries SET started_at = ? WHERE id = ?`)
         .run(start1, e1.id);
-      const res1 = stopTimer();
+      const res1 = await stopTimer();
       expect(res1!.overran).toBeFalsy();
       expect(blockStatus(blockId)).toBe('planned');
 
       // --- Second session: another 40 minutes (task total would be 80 min) ---
-      const { entry: e2 } = startTimer(task, blockId);
+      const { entry: e2 } = await startTimer(task, blockId);
       const start2 = new Date(Date.now() - 40 * 60_000).toISOString();
       sqlite
         .prepare(`UPDATE time_entries SET started_at = ? WHERE id = ?`)
         .run(start2, e2.id);
-      const res2 = stopTimer();
+      const res2 = await stopTimer();
       // 40 min session < 62 min (60 + 2 tolerance) → still not overrun.
       expect(res2!.overran).toBeFalsy();
       expect(blockStatus(blockId)).toBe('planned');

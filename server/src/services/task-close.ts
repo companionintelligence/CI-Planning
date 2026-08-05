@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { writeAudit } from '../lib/audit.js';
 
 /**
@@ -36,9 +36,8 @@ export type CloseTaskResult =
   | { ok: true; taskId: string; completedAt: string; reactionAt: string | null; mood: Mood | null; actualMinutes: number }
   | { ok: false; error: 'not_found' };
 
-const selectTask = sqlite.prepare(
-  `SELECT id, status, completed_at, actual_minutes FROM tasks WHERE id = ? AND owner_id = ?`,
-);
+// SQL at module scope, prepare at the use site (§5.5).
+const SQL_TASK = `SELECT id, status, completed_at, actual_minutes FROM tasks WHERE id = ? AND owner_id = ?`;
 
 /**
  * Close a task with an optional reflection. Completes it first when it is still open, so
@@ -48,10 +47,10 @@ const selectTask = sqlite.prepare(
  * duration correction on its own is bookkeeping, not a reflection, and stamping it would
  * make the reaction-latency metric a lie.
  */
-export function closeTask(owner: string, taskId: string, input: CloseTaskInput): CloseTaskResult {
-  const task = selectTask.get(taskId, owner) as
-    | { id: string; status: string; completed_at: string | null; actual_minutes: number }
-    | undefined;
+export async function closeTask(owner: string, taskId: string, input: CloseTaskInput): Promise<CloseTaskResult> {
+  const task = await store()
+    .prepare(SQL_TASK)
+    .get<{ id: string; status: string; completed_at: string | null; actual_minutes: number }>(taskId, owner);
   if (!task) return { ok: false, error: 'not_found' };
 
   const now = new Date().toISOString();
@@ -87,7 +86,7 @@ export function closeTask(owner: string, taskId: string, input: CloseTaskInput):
   if (sets.length > 0) {
     sets.push(`version = version + 1`, `updated_at = ?`);
     args.push(now);
-    sqlite.prepare(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ? AND owner_id = ?`).run(...args, taskId, owner);
+    await store().prepare(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ? AND owner_id = ?`).run(...args, taskId, owner);
     writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: `task:${taskId}` });
   }
 

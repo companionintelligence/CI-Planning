@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
-import { db, sqlite } from '../db/index.js';
+import { db } from '../db/index.js';
+import { store } from '../db/store.js';
 import { schedulingPrefs } from '../db/schema.js';
 import { toApi, fromApi } from '../lib/serialize.js';
 import { writeAudit } from '../lib/audit.js';
@@ -140,9 +141,9 @@ export async function updatePrefs(ownerId: string, rawBody: Record<string, unkno
   // are only ever consumed inside the shorten branch, which is unreachable otherwise
   // (mirrors the pre-extraction route, which made this same read conditional).
   const beforeRow = horizonPatched
-    ? (sqlite
+    ? await store()
         .prepare(`SELECT recurrence_horizon_days, timezone FROM scheduling_prefs WHERE owner_id = ?`)
-        .get(ownerId) as { recurrence_horizon_days: number | null; timezone: string | null } | undefined)
+        .get<{ recurrence_horizon_days: number | null; timezone: string | null }>(ownerId)
     : undefined;
   const oldHorizon = horizonPatched ? beforeRow?.recurrence_horizon_days ?? 7 : null;
   const timezone = beforeRow?.timezone || '';

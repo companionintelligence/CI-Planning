@@ -37,16 +37,16 @@ function toTemplateTask(t: { title: string; tag?: string | null; estimatedMinute
 export const blockTemplateResolvers = {
   Query: {
     blockTemplates: () => listBlockTemplates(currentOwnerId()),
-    blockTemplate: (_p: unknown, args: { id: string }) => getBlockTemplate(currentOwnerId(), args.id) ?? null,
+    blockTemplate: async (_p: unknown, args: { id: string }) => (await getBlockTemplate(currentOwnerId(), args.id)) ?? null,
   },
 
   Mutation: {
-    createBlockTemplate: (
+    createBlockTemplate: async (
       _p: unknown,
       args: { input: { name: string; tag?: string | null; defaultMinutes?: number | null; tasks?: { title: string; tag?: string | null; estimatedMinutes?: number | null; offsetMinutes?: number | null }[] | null } },
     ) => {
       const owner = currentOwnerId();
-      const res = createBlockTemplate(owner, {
+      const res = await createBlockTemplate(owner, {
         name: args.input.name,
         tag: args.input.tag ?? null,
         default_minutes: args.input.defaultMinutes ?? null,
@@ -58,7 +58,7 @@ export const blockTemplateResolvers = {
       return { blockTemplate: res.row, success: true };
     },
 
-    updateBlockTemplate: (
+    updateBlockTemplate: async (
       _p: unknown,
       args: { input: { id: string; name?: string | null; tag?: string | null; defaultMinutes?: number | null } },
     ) => {
@@ -68,7 +68,7 @@ export const blockTemplateResolvers = {
       if (args.input.name != null) patch.name = args.input.name;
       if (args.input.tag !== undefined) patch.tag = args.input.tag;
       if (args.input.defaultMinutes != null) patch.default_minutes = args.input.defaultMinutes;
-      const res = updateBlockTemplate(owner, args.input.id, patch);
+      const res = await updateBlockTemplate(owner, args.input.id, patch);
       if (!res.ok) {
         if (res.error === 'not_found') throw new GraphQLError('block template not found', { extensions: { code: 'NOT_FOUND' } });
         throw new GraphQLError('name is required', { extensions: { code: 'BAD_USER_INPUT' } });
@@ -78,9 +78,9 @@ export const blockTemplateResolvers = {
       return { blockTemplate: res.row, success: true };
     },
 
-    deleteBlockTemplate: (_p: unknown, args: { input: { id: string } }) => {
+    deleteBlockTemplate: async (_p: unknown, args: { input: { id: string } }) => {
       const owner = currentOwnerId();
-      const res = deleteBlockTemplate(owner, args.input.id);
+      const res = await deleteBlockTemplate(owner, args.input.id);
       if (!res.ok) throw new GraphQLError('block template not found', { extensions: { code: 'NOT_FOUND' } });
       broadcast(owner, 'block_template:deleted', { id: args.input.id });
       return { deletedId: args.input.id, success: true };

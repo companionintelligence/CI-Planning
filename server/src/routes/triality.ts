@@ -1,6 +1,6 @@
 import Router from '@koa/router';
 import type Koa from 'koa';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { trialityEnabled } from '../lib/flags.js';
 import { writeAudit } from '../lib/audit.js';
@@ -24,8 +24,11 @@ export function trialityRouter() {
 
   // Per-route gate (NOT router.use — the @koa/router prefix-path caveat, see
   // routes/calibration.ts).
-  const gate = (ctx: Koa.Context): boolean => {
-    if (trialityEnabled(currentOwnerId())) return true;
+  // Async because the flag read goes through the store facade. Every caller must
+  // `await` it: `if (!gate(ctx))` on a promise is ALWAYS false, which would turn
+  // the 404-when-disabled posture into "the feature is always on".
+  const gate = async (ctx: Koa.Context): Promise<boolean> => {
+    if (await trialityEnabled(currentOwnerId())) return true;
     ctx.status = 404;
     ctx.body = { error: 'Not found' };
     return false;
@@ -78,7 +81,7 @@ export function trialityRouter() {
   // explanation, §8). Refusal is a typed 200, not an error: "not enough history"
   // is an honest answer, not a failure.
   router.get('/next', async (ctx) => {
-    if (!gate(ctx)) return;
+    if (!(await gate(ctx))) return;
     const owner = currentOwnerId();
     const now = new Date();
     const res = await trialityNext(owner, now);
@@ -90,7 +93,7 @@ export function trialityRouter() {
     // situation vector is never persisted, and a later reader could only reconstruct
     // today's — a fabricated reading on an old row.
     const confidences = attachConfidence(res.picks, res.vector);
-    const logIds = logShown(owner, now, res.picks, confidences.map(serializeConfidence));
+    const logIds = await logShown(owner, now, res.picks, confidences.map(serializeConfidence));
     const rationales = await attachRationales(res.picks, res.vector);
     ctx.body = {
       picks: res.picks.map((p, i) => (p ? pickToApi(p, logIds[i], rationales[i]!, confidences[i]!) : null)),
@@ -104,8 +107,8 @@ export function trialityRouter() {
   // on a shown row, at most once (append-only discipline; the engine's guarded
   // UPDATE). A foreign/unknown log_id is a 404 — multi-tenant convention: never
   // confirm another owner's row exists.
-  router.post('/feedback', (ctx) => {
-    if (!gate(ctx)) return;
+  router.post('/feedback', async (ctx) => {
+    if (!(await gate(ctx))) return;
     const body = (ctx.request.body ?? {}) as { log_id?: unknown; outcome?: unknown };
     if (typeof body.log_id !== 'string' || !body.log_id || !isOutcome(body.outcome)) {
       ctx.status = 422;
@@ -113,7 +116,7 @@ export function trialityRouter() {
       return;
     }
     const owner = currentOwnerId();
-    const mine = sqlite
+    const mine = await store()
       .prepare(`SELECT 1 FROM triality_log WHERE id = ? AND owner_id = ?`)
       .get(body.log_id, owner);
     if (!mine) {
@@ -121,7 +124,7 @@ export function trialityRouter() {
       ctx.body = { error: 'Not found' };
       return;
     }
-    const res = stampOutcome(owner, body.log_id, body.outcome, new Date());
+    const res = await stampOutcome(owner, body.log_id, body.outcome, new Date());
     // Audit only the stamp that actually landed — a repeat is a no-op, not a mutation.
     if (res.changed) {
       writeAudit({ ownerId: owner, actor: 'owner', action: 'feedback', entity: `triality:${body.log_id}` });
@@ -133,10 +136,10 @@ export function trialityRouter() {
   // learned rows only; the triality_log evidence survives untouched, so the
   // adaptation can be re-earned on the next weekly pass rather than being lost.
   // Owner-initiated write ⇒ audited (WHO rule), unlike the job that writes them.
-  router.delete('/weights', (ctx) => {
-    if (!gate(ctx)) return;
+  router.delete('/weights', async (ctx) => {
+    if (!(await gate(ctx))) return;
     const owner = currentOwnerId();
-    const res = sqlite.prepare(`DELETE FROM triality_weights WHERE owner_id = ?`).run(owner);
+    const res = await store().prepare(`DELETE FROM triality_weights WHERE owner_id = ?`).run(owner);
     // Audit only a real reset — a no-op delete is not a mutation worth a row
     // (the same posture as the feedback stamp above).
     if (res.changes > 0) {

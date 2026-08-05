@@ -1,7 +1,8 @@
 import Router from '@koa/router';
 import { eq, and, like, asc, lte, ne } from 'drizzle-orm';
 import { logger } from '../lib/logger.js';
-import { db, sqlite } from '../db/index.js';
+import { db } from '../db/index.js';
+import { store } from '../db/store.js';
 import { tasks } from '../db/schema.js';
 import { broadcast } from './sse.js';
 import { taskToApi } from '../lib/serialize.js';
@@ -62,18 +63,22 @@ export function tasksRouter() {
       .orderBy(asc(tasks.priority), asc(tasks.dueAt));
 
     // Attach tags + dependency info, serialize to snake_case
-    const blocked = blockedTaskIds();
+    const blocked = await blockedTaskIds();
     const ids = result.map((t) => t.id);
-    const tagsById = taskTagNamesByIds(ids);
-    const secondaryById = taskSecondaryTagNamesByIds(ids);
-    const categoriesById = entityCategoryNamesByIds('task', ids); // Phase B: 1–3, position order
-    const objectivesById = objectiveIdsByTaskIds(currentOwnerId(), ids); // AF-10: ALL links (created_at,id order)
+    const tagsById = await taskTagNamesByIds(ids);
+    const secondaryById = await taskSecondaryTagNamesByIds(ids);
+    const categoriesById = await entityCategoryNamesByIds('task', ids); // Phase B: 1–3, position order
+    const objectivesById = await objectiveIdsByTaskIds(currentOwnerId(), ids); // AF-10: ALL links (created_at,id order)
+    // Resolved up front so the map below can stay synchronous — an async .map callback
+    // would put a Promise in every depends_on field, and ctx.body would serialize `{}`.
+    const dependsById = new Map<string, string[]>();
+    for (const id of ids) dependsById.set(id, await getDependencies(id));
     const withTags = result.map((t) => ({
       ...taskToApi(t),
       tags: tagsById.get(t.id) ?? [],
       secondary_tags: secondaryById.get(t.id) ?? [],
       categories: categoriesById.get(t.id) ?? [],
-      depends_on: getDependencies(t.id),
+      depends_on: dependsById.get(t.id) ?? [],
       blocked: blocked.has(t.id),
       // §I star + AF-10 card picker. objective_id = objective_ids[0] ?? null (back compat).
       objective_ids: objectivesById.get(t.id) ?? [],
@@ -113,7 +118,7 @@ export function tasksRouter() {
         if (res.error === 'title_required') { ctx.status = 400; ctx.body = { error: 'title is required' }; return; }
         ctx.status = 422; ctx.body = { error: res.message }; return;
       }
-      const out = { ...taskToApi(res.template), tags: body.tags ?? [], secondary_tags: taskSecondaryTags(res.template.id), categories: entityCategoryNames('task', res.template.id), depends_on: [] as string[], blocked: false };
+      const out = { ...taskToApi(res.template), tags: body.tags ?? [], secondary_tags: await taskSecondaryTags(res.template.id), categories: await entityCategoryNames('task', res.template.id), depends_on: [] as string[], blocked: false };
       broadcast(owner, 'task:created', out);
       broadcast(owner, 'recurrence:generated', res.generated);
       ctx.status = 201;
@@ -136,7 +141,7 @@ export function tasksRouter() {
     let placement: StartAnchoredOutcome | undefined;
     if (body.auto_place === true && task.scheduledFor) {
       try {
-        placement = placeStartAnchoredTask(owner, task.id);
+        placement = await placeStartAnchoredTask(owner, task.id);
         if (placement.placed) [task] = await db.select().from(tasks).where(and(eq(tasks.id, task.id), eq(tasks.ownerId, owner)));
       } catch (err) {
         logger.warn('auto_place: start-anchored placement failed', { owner, taskId: task.id, err: (err as Error).message });
@@ -146,10 +151,10 @@ export function tasksRouter() {
     const out = {
       ...taskToApi(task),
       tags: body.tags ?? [],
-      secondary_tags: taskSecondaryTags(task.id),
-      categories: entityCategoryNames('task', task.id),
-      depends_on: getDependencies(task.id),
-      blocked: blockedTaskIds().has(task.id),
+      secondary_tags: await taskSecondaryTags(task.id),
+      categories: await entityCategoryNames('task', task.id),
+      depends_on: await getDependencies(task.id),
+      blocked: (await blockedTaskIds()).has(task.id),
     };
     broadcast(owner, 'task:created', out);
     requestReplan('task:created'); // B2: a new task can shift today's plan (debounced + toggle-gated)
@@ -180,7 +185,7 @@ export function tasksRouter() {
     let enriched = parsed;
     let llm = false;
     try {
-      enriched = await enrichQuick(text, parsed, suggestibleVocabulary(currentOwnerId())); // additive overlay
+      enriched = await enrichQuick(text, parsed, await suggestibleVocabulary(currentOwnerId())); // additive overlay
       llm = true;
     } catch {
       /* OllamaUnavailable / bad JSON → keep the deterministic parse */
@@ -202,7 +207,7 @@ export function tasksRouter() {
     let enriched = parsed;
     let llm = false;
     try {
-      enriched = await enrichQuick(text, parsed, suggestibleVocabulary(currentOwnerId())); // additive overlay
+      enriched = await enrichQuick(text, parsed, await suggestibleVocabulary(currentOwnerId())); // additive overlay
       llm = true;
     } catch {
       /* OllamaUnavailable / bad JSON → keep the deterministic parse */
@@ -213,7 +218,7 @@ export function tasksRouter() {
     // brand-new names, created with the default kind='intention') at level 2. The
     // split stays at the route (it's quick-add's parse shape, not a create rule);
     // the leveled write itself rides createTask's tags/secondary_tags.
-    const { directions, others } = splitNamesByDirection(currentOwnerId(), enriched.tags);
+    const { directions, others } = await splitNamesByDirection(currentOwnerId(), enriched.tags);
 
     // Shared create path (services/tasks.ts) — the same service POST /api/tasks uses,
     // so tag-level sync, reminders, dependency handling, parent promotion, and the
@@ -250,7 +255,7 @@ export function tasksRouter() {
     // the quick-add itself (the task is already created).
     if (task.scheduledFor) {
       try {
-        const placed = placeStartAnchoredTask(currentOwnerId(), task.id);
+        const placed = await placeStartAnchoredTask(currentOwnerId(), task.id);
         // Placement flips status open → scheduled (R2 parity) — re-read so the
         // response/broadcast carry the post-placement row. Owner-scoped (defense in
         // depth; matches the other owner-scoped reads in this router).
@@ -262,7 +267,7 @@ export function tasksRouter() {
 
     // `tags` reflects the LEVELED result (L1 = directions), not the flat parse — so the
     // response matches what a follow-up GET returns; intentions ride in secondary_tags.
-    const out = { ...taskToApi(task), tags: taskTagNames(task.id), secondary_tags: taskSecondaryTags(task.id), depends_on: [] as number[], blocked: false, llm };
+    const out = { ...taskToApi(task), tags: await taskTagNames(task.id), secondary_tags: await taskSecondaryTags(task.id), depends_on: [] as number[], blocked: false, llm };
     broadcast(currentOwnerId(), 'task:created', out);
     // No writeAudit here — createTask already wrote the 'create' audit row.
     ctx.status = 201;
@@ -280,10 +285,10 @@ export function tasksRouter() {
       .where(and(eq(tasks.parentId, parentId), eq(tasks.ownerId, currentOwnerId())))
       .orderBy(asc(tasks.priority));
     const ids = result.map((t) => t.id);
-    const tagsById = taskTagNamesByIds(ids);
-    const secondaryById = taskSecondaryTagNamesByIds(ids);
-    const objectivesById = objectiveIdsByTaskIds(currentOwnerId(), ids); // §I: subtasks of a promoted parent are linked too — show their star
-    const categoriesById = entityCategoryNamesByIds('task', ids); // Phase B
+    const tagsById = await taskTagNamesByIds(ids);
+    const secondaryById = await taskSecondaryTagNamesByIds(ids);
+    const objectivesById = await objectiveIdsByTaskIds(currentOwnerId(), ids); // §I: subtasks of a promoted parent are linked too — show their star
+    const categoriesById = await entityCategoryNamesByIds('task', ids); // Phase B
     const withTags = result.map((t) => ({
       ...taskToApi(t),
       tags: tagsById.get(t.id) ?? [],
@@ -328,7 +333,7 @@ export function tasksRouter() {
     if (!owned) {
       ctx.status = 404; ctx.body = { error: 'not a recurring task' }; return;
     }
-    const res = computeStreak(id);
+    const res = await computeStreak(id);
     if (!res) { ctx.status = 404; ctx.body = { error: 'not a recurring task' }; return; }
     ctx.body = res;
   });
@@ -340,7 +345,7 @@ export function tasksRouter() {
     const owner = currentOwnerId();
     const res = await promoteToHabit(owner, id);
     if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
-    const out = { ...taskToApi(res.task), tags: taskTagNames(id), depends_on: getDependencies(id) };
+    const out = { ...taskToApi(res.task), tags: await taskTagNames(id), depends_on: await getDependencies(id) };
     broadcast(owner, 'task:updated', out);
     broadcast(owner, 'pattern:updated', { id });
     ctx.body = { task: out };
@@ -355,18 +360,18 @@ export function tasksRouter() {
   router.post('/api/tasks/:id/promote-objective', async (ctx) => {
     const id = ctx.params.id;
     const owner = currentOwnerId();
-    if (!sqlite.prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, owner)) {
+    if (!(await store().prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, owner))) {
       ctx.status = 404; ctx.body = { error: 'not found' }; return;
     }
     // The task exists but is ephemeral — a quick task or a materialized recurrence
     // instance. Those must not spawn a strategic objective (services/task-promotion.ts).
-    const objectiveId = ensureTaskPromoted(id, owner);
+    const objectiveId = await ensureTaskPromoted(id, owner);
     if (!objectiveId) { ctx.status = 422; ctx.body = { error: 'not_promotable' }; return; }
     // Owner-scoped read even though ensureTaskPromoted only ever returns THIS owner's
     // objective: the route shouldn't depend on the service's internal scoping for its
     // own safety (matches every other raw read here), and an unscoped read would answer
     // 200 with a silent `{}` if the row were unreadable. Unreachable today — by design.
-    const objective = sqlite.prepare('SELECT * FROM objectives WHERE id = ? AND owner_id = ?').get(objectiveId, owner);
+    const objective = await store().prepare('SELECT * FROM objectives WHERE id = ? AND owner_id = ?').get(objectiveId, owner);
     if (!objective) { ctx.status = 500; ctx.body = { error: 'objective missing' }; return; }
     ctx.body = { objective };
   });
@@ -382,7 +387,7 @@ export function tasksRouter() {
     // offered list — a category lives in entity_categories, never entity_tags, so a
     // category pick here could only ever be discarded (same rule as the bulk sweep).
     // `directions` rides along separately so the prompt can name and define the axis.
-    const vocab = suggestibleVocabulary(currentOwnerId());
+    const vocab = await suggestibleVocabulary(currentOwnerId());
     const tags = await suggestTags(
       title ?? '',
       [...vocab.directions, ...vocab.others],
@@ -398,7 +403,7 @@ export function tasksRouter() {
   router.post('/api/tasks/:id/enrich', async (ctx) => {
     const owner = currentOwnerId();
     const id = ctx.params.id;
-    if (!sqlite.prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, owner)) {
+    if (!(await store().prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, owner))) {
       ctx.status = 404; ctx.body = { error: 'not found' }; return;
     }
     const res = await enrichTaskFromMemory(owner, id);
@@ -407,11 +412,11 @@ export function tasksRouter() {
       if (task) {
         broadcast(owner, 'task:updated', {
           ...taskToApi(task),
-          tags: taskTagNames(id),
-          secondary_tags: taskSecondaryTags(id),
-          categories: entityCategoryNames('task', id),
-          depends_on: getDependencies(id),
-          blocked: blockedTaskIds().has(id),
+          tags: await taskTagNames(id),
+          secondary_tags: await taskSecondaryTags(id),
+          categories: await entityCategoryNames('task', id),
+          depends_on: await getDependencies(id),
+          blocked: (await blockedTaskIds()).has(id),
         });
       }
       writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: `task:${id}` });
@@ -448,16 +453,16 @@ export function tasksRouter() {
 
     // The service writes entity_tags directly (no updateTask call), so nothing else
     // broadcasts these — fan them out here or other open clients keep the stale tags.
-    const blocked = blockedTaskIds(); // hoisted: one dependency scan, not one per task
+    const blocked = await blockedTaskIds(); // hoisted: one dependency scan, not one per task
     for (const id of res.taggedIds) {
       const [task] = await db.select().from(tasks).where(and(eq(tasks.id, id), eq(tasks.ownerId, owner)));
       if (!task) continue;
       broadcast(owner, 'task:updated', {
         ...taskToApi(task),
-        tags: taskTagNames(id),
-        secondary_tags: taskSecondaryTags(id),
-        categories: entityCategoryNames('task', id),
-        depends_on: getDependencies(id),
+        tags: await taskTagNames(id),
+        secondary_tags: await taskSecondaryTags(id),
+        categories: await entityCategoryNames('task', id),
+        depends_on: await getDependencies(id),
         blocked: blocked.has(id),
       });
       // One row per task, matching what the old PATCH-per-task path recorded — a bulk
@@ -478,7 +483,7 @@ export function tasksRouter() {
     const res = await recallTask(owner, ctx.params.id);
     if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     const task = res.task;
-    const out = { ...taskToApi(task), tags: taskTagNames(task.id), secondary_tags: taskSecondaryTags(task.id), depends_on: [] as string[], blocked: false };
+    const out = { ...taskToApi(task), tags: await taskTagNames(task.id), secondary_tags: await taskSecondaryTags(task.id), depends_on: [] as string[], blocked: false };
     broadcast(owner, 'task:created', out);
     ctx.status = 201;
     ctx.body = { task: out };
@@ -499,12 +504,12 @@ export function tasksRouter() {
     const owner = currentOwnerId();
     const body = (ctx.request.body ?? {}) as { days?: number };
     if (typeof body.days !== 'number') { ctx.status = 422; ctx.body = { error: 'days is required' }; return; }
-    if (!sqlite.prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, owner)) {
+    if (!(await store().prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, owner))) {
       ctx.status = 404; ctx.body = { error: 'not found' }; return;
     }
-    const { scheduled_for, placement } = rescheduleTask(id, body.days, owner);
+    const { scheduled_for, placement } = await rescheduleTask(id, body.days, owner);
     const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
-    const out = { ...taskToApi(task), tags: taskTagNames(id), depends_on: getDependencies(id) };
+    const out = { ...taskToApi(task), tags: await taskTagNames(id), depends_on: await getDependencies(id) };
     broadcast(owner, 'task:updated', out);
     writeAudit({ ownerId: owner, actor: 'owner', action: 'reschedule', entity: `task:${id}` });
     broadcast(owner, 'block:updated', { rescheduled: id });
@@ -555,11 +560,11 @@ export function tasksRouter() {
 
     const out = {
       ...taskToApi(res.task),
-      tags: taskTagNames(res.targetId),
-      secondary_tags: taskSecondaryTags(res.targetId),
-      categories: entityCategoryNames('task', res.targetId),
-      depends_on: getDependencies(res.targetId),
-      blocked: blockedTaskIds().has(res.targetId),
+      tags: await taskTagNames(res.targetId),
+      secondary_tags: await taskSecondaryTags(res.targetId),
+      categories: await entityCategoryNames('task', res.targetId),
+      depends_on: await getDependencies(res.targetId),
+      blocked: (await blockedTaskIds()).has(res.targetId),
     };
     broadcast(owner, 'task:updated', out);
     if (res.generated) broadcast(owner, 'recurrence:generated', res.generated);
@@ -590,7 +595,7 @@ export function tasksRouter() {
   router.post('/api/tasks/:id/timer/start', async (ctx) => {
     const taskId = ctx.params.id;
     const blockId = (ctx.request.body as { block_id?: number } | undefined)?.block_id;
-    const { entry, stopped } = startTimer(taskId, blockId);
+    const { entry, stopped } = await startTimer(taskId, blockId);
     const owner = currentOwnerId();
     if (stopped) {
       broadcast(owner, 'timer:stopped', stopped.entry); // the superseded one
@@ -611,17 +616,17 @@ export function tasksRouter() {
     const owner = currentOwnerId();
     const id = ctx.params.id;
     const body = (ctx.request.body ?? {}) as { mood?: unknown; note?: unknown; actual_minutes?: unknown };
-    const res = closeTask(owner, id, { mood: body.mood, note: body.note, actualMinutes: body.actual_minutes });
+    const res = await closeTask(owner, id, { mood: body.mood, note: body.note, actualMinutes: body.actual_minutes });
     if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
     const [task] = await db.select().from(tasks).where(and(eq(tasks.id, id), eq(tasks.ownerId, owner)));
     const out = {
       ...taskToApi(task),
-      tags: taskTagNames(id),
-      secondary_tags: taskSecondaryTags(id),
-      categories: entityCategoryNames('task', id),
-      depends_on: getDependencies(id),
-      blocked: blockedTaskIds().has(id),
+      tags: await taskTagNames(id),
+      secondary_tags: await taskSecondaryTags(id),
+      categories: await entityCategoryNames('task', id),
+      depends_on: await getDependencies(id),
+      blocked: (await blockedTaskIds()).has(id),
     };
     broadcast(owner, 'task:updated', out);
     ctx.body = { task: out, closed: { completed_at: res.completedAt, reaction_at: res.reactionAt, mood: res.mood, actual_minutes: res.actualMinutes } };
@@ -631,7 +636,7 @@ export function tasksRouter() {
   // none is running (deterministic, safe for a double-click). :id is ignored —
   // there is only ever one running entry per owner.
   router.post('/api/tasks/:id/timer/stop', async (ctx) => {
-    const res = stopTimer();
+    const res = await stopTimer();
     if (!res) {
       ctx.status = 409;
       ctx.body = { error: 'no running timer' };
@@ -653,7 +658,7 @@ export function tasksRouter() {
 
   // GET /api/timer — the current running entry (for reload/restart recovery), or null.
   router.get('/api/timer', async (ctx) => {
-    ctx.body = { entry: getRunning(currentOwnerId()) ?? null };
+    ctx.body = { entry: (await getRunning(currentOwnerId())) ?? null };
   });
 
   return router;

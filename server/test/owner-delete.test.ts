@@ -51,16 +51,16 @@ function populate(ownerId: string): void {
 }
 
 describe('deleteOwner (F-CASCADE)', () => {
-  it('purges every owner-scoped table for the target and leaves other owners intact', () => {
-    const a = provisionOwner({ name: 'Owner A', username: 'owner-a', passwordHash: 'x' });
-    const b = provisionOwner({ name: 'Owner B', username: 'owner-b', passwordHash: 'y' });
+  it('purges every owner-scoped table for the target and leaves other owners intact', async () => {
+    const a = await provisionOwner({ name: 'Owner A', username: 'owner-a', passwordHash: 'x' });
+    const b = await provisionOwner({ name: 'Owner B', username: 'owner-b', passwordHash: 'y' });
     populate(a);
     populate(b);
 
     // Sanity: A has rows across the sweep before deletion.
     for (const t of OWNER_SCOPED_TABLES) expect(countFor(t, a), `${t} seeded for A`).toBeGreaterThan(0);
 
-    deleteOwner(a);
+    await deleteOwner(a);
 
     // A is gone everywhere; the owners row too.
     for (const t of OWNER_SCOPED_TABLES) expect(countFor(t, a), `${t} residue for A`).toBe(0);
@@ -71,8 +71,8 @@ describe('deleteOwner (F-CASCADE)', () => {
     for (const t of OWNER_SCOPED_TABLES) expect(countFor(t, b), `${t} lost for B`).toBeGreaterThan(0);
   });
 
-  it('refuses to delete the system owner', () => {
-    expect(() => deleteOwner(SYSTEM_OWNER_ID)).toThrow(/system owner/i);
+  it('refuses to delete the system owner', async () => {
+    await expect(deleteOwner(SYSTEM_OWNER_ID)).rejects.toThrow(/system owner/i);
     expect(sqlite.prepare('SELECT id FROM owners WHERE id = ?').get(SYSTEM_OWNER_ID)).toBeTruthy();
   });
 });

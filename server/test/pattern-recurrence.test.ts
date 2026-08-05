@@ -54,39 +54,39 @@ beforeEach(() => {
 });
 
 describe('patternsRecurringOnDate', () => {
-  it('FREQ=DAILY fires every day', () => {
+  it('FREQ=DAILY fires every day', async () => {
     insertPattern('Routine', 'Daily', [], 'FREQ=DAILY', noonUTC(MONDAY));
-    expect(patternsRecurringOnDate(OWNER, MONDAY).map((p) => p.name)).toEqual(['Daily']);
-    expect(patternsRecurringOnDate(OWNER, TUESDAY).map((p) => p.name)).toEqual(['Daily']);
+    expect((await patternsRecurringOnDate(OWNER, MONDAY)).map((p) => p.name)).toEqual(['Daily']);
+    expect((await patternsRecurringOnDate(OWNER, TUESDAY)).map((p) => p.name)).toEqual(['Daily']);
   });
 
-  it('FREQ=WEEKLY;BYDAY=MO fires only on Monday', () => {
+  it('FREQ=WEEKLY;BYDAY=MO fires only on Monday', async () => {
     insertPattern('Routine', 'Monday-only', [], 'FREQ=WEEKLY;BYDAY=MO', noonUTC(MONDAY));
-    expect(patternsRecurringOnDate(OWNER, MONDAY).map((p) => p.name)).toEqual(['Monday-only']);
-    expect(patternsRecurringOnDate(OWNER, TUESDAY).map((p) => p.name)).toEqual([]);
+    expect((await patternsRecurringOnDate(OWNER, MONDAY)).map((p) => p.name)).toEqual(['Monday-only']);
+    expect((await patternsRecurringOnDate(OWNER, TUESDAY)).map((p) => p.name)).toEqual([]);
   });
 
-  it('excludes patterns with no rule + excludes Rituals', () => {
+  it('excludes patterns with no rule + excludes Rituals', async () => {
     insertPattern('Routine', 'NoRule', [], null as unknown as undefined, undefined);
     insertPattern('Ritual', 'RitualDaily', [], 'FREQ=DAILY', noonUTC(MONDAY));
     insertPattern('Habit', 'HabitDaily', [], 'FREQ=DAILY', noonUTC(MONDAY));
-    expect(patternsRecurringOnDate(OWNER, MONDAY).map((p) => p.name).sort()).toEqual(['HabitDaily']);
+    expect((await patternsRecurringOnDate(OWNER, MONDAY)).map((p) => p.name).sort()).toEqual(['HabitDaily']);
   });
 });
 
-describe('ensurePatternsForRange (lazy placement on GET)', () => {
-  it('places every Habit/Routine firing inside the range; Rituals stay excluded', () => {
+describe('await ensurePatternsForRange (lazy placement on GET)', () => {
+  it('places every Habit/Routine firing inside the range; Rituals stay excluded', async () => {
     const t1 = insertTask('A', 30);
     const t2 = insertTask('B', 30);
     insertPattern('Routine', 'DailyTwo', [t1, t2], 'FREQ=DAILY', noonUTC(TODAY));
     insertPattern('Habit', 'HabitDaily', [t1], 'FREQ=DAILY', noonUTC(TODAY));
     insertPattern('Ritual', 'Skipped', [t1], 'FREQ=DAILY', noonUTC(TODAY));
 
-    const r = ensurePatternsForRange(OWNER, `${TODAY}T00:00:00.000Z`, `${TODAY}T23:59:59.999Z`);
+    const r = await ensurePatternsForRange(OWNER, `${TODAY}T00:00:00.000Z`, `${TODAY}T23:59:59.999Z`);
     expect(r.placed).toBeGreaterThanOrEqual(1);
     expect(r.blocksCreated).toBeGreaterThanOrEqual(3); // 2 Routine + 1 Habit
     // marker-based idempotency: a 2nd call places nothing new.
-    expect(ensurePatternsForRange(OWNER, `${TODAY}T00:00:00.000Z`, `${TODAY}T23:59:59.999Z`).blocksCreated).toBe(0);
+    expect((await ensurePatternsForRange(OWNER, `${TODAY}T00:00:00.000Z`, `${TODAY}T23:59:59.999Z`)).blocksCreated).toBe(0);
     // Ritual was not placed.
     const ritualBlocks = sqlite.prepare(`SELECT COUNT(*) AS n FROM time_blocks WHERE source_kind = 'pattern'`).get() as { n: number };
     expect(ritualBlocks.n).toBeGreaterThanOrEqual(3); // routine 2 + habit 1 placed; ritual not.
@@ -103,14 +103,14 @@ describe('ensurePatternsForRange (lazy placement on GET)', () => {
     expect(r.body.blocks.some((b: any) => b.source_kind === 'pattern' && b.title === 'A')).toBe(true);
   });
 
-  it('skips recurring Routines when enable_routines is OFF, but still places Habits', () => {
+  it('skips recurring Routines when enable_routines is OFF, but still places Habits', async () => {
     // Regression: with the flag off, a deleted Routine container used to regenerate
     // on the very next read (the refetch after delete), so it could never be removed.
     sqlite.prepare(`UPDATE scheduling_prefs SET enable_routines = 0 WHERE owner_id = ?`).run(OWNER);
     insertPattern('Routine', 'DailyRoutine', [insertTask('RoutineTaskA', 30), insertTask('RoutineTaskB', 30)], 'FREQ=DAILY', noonUTC(TODAY));
     insertPattern('Habit', 'DailyHabit', [insertTask('HabitTask', 30)], 'FREQ=DAILY', noonUTC(TODAY));
 
-    ensurePatternsForRange(OWNER, `${TODAY}T00:00:00.000Z`, `${TODAY}T23:59:59.999Z`);
+    await ensurePatternsForRange(OWNER, `${TODAY}T00:00:00.000Z`, `${TODAY}T23:59:59.999Z`);
 
     // Only the Habit placed (its container + task block); the Routine's container
     // and both its task blocks are absent — nothing for the user to fight to delete.
@@ -120,12 +120,12 @@ describe('ensurePatternsForRange (lazy placement on GET)', () => {
     expect(titles).toEqual(['DailyHabit', 'HabitTask']);
   });
 
-  it('honours a pattern_day_optout: an opted-out (pattern, day) is not placed', () => {
+  it('honours a pattern_day_optout: an opted-out (pattern, day) is not placed', async () => {
     const t = insertTask('A', 30);
     const pid = insertPattern('Routine', 'DailyOne', [t], 'FREQ=DAILY', noonUTC(TODAY));
     sqlite.prepare(`INSERT INTO pattern_day_optouts (owner_id, pattern_id, date) VALUES (?, ?, ?)`).run(OWNER, pid, TODAY);
 
-    ensurePatternsForRange(OWNER, `${TODAY}T00:00:00.000Z`, `${TODAY}T23:59:59.999Z`);
+    await ensurePatternsForRange(OWNER, `${TODAY}T00:00:00.000Z`, `${TODAY}T23:59:59.999Z`);
     expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM time_blocks WHERE source_kind = 'pattern'`).get() as { n: number }).n).toBe(0);
   });
 
@@ -151,11 +151,11 @@ describe('ensurePatternsForRange (lazy placement on GET)', () => {
     expect(blocks.some((b: any) => b.source_kind === 'pattern' && b.title === 'DailyRoutine')).toBe(false);
   });
 
-  it('does NOT backfill past days (no recursion into yesterday on a normal read)', () => {
+  it('does NOT backfill past days (no recursion into yesterday on a normal read)', async () => {
     const yesterday = '2026-06-15';
     const t = insertTask('A', 30);
     insertPattern('Routine', 'DailyOne', [t], 'FREQ=DAILY', noonUTC(yesterday));
-    ensurePatternsForRange(OWNER, `${yesterday}T00:00:00.000Z`, `${yesterday}T23:59:59.999Z`);
+    await ensurePatternsForRange(OWNER, `${yesterday}T00:00:00.000Z`, `${yesterday}T23:59:59.999Z`);
     expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM time_blocks WHERE source_kind = 'pattern'`).get() as { n: number }).n).toBe(0);
   });
 

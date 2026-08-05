@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { newId } from '../lib/ids.js';
 import { writeAudit } from '../lib/audit.js';
 import { zonedWallTimeToUTC, serverTimezone } from '../lib/tz.js';
@@ -29,10 +29,8 @@ export interface PushSubscriptionRow {
 }
 
 /** The owner's IANA timezone (falls back to the server zone). */
-export function ownerTz(ownerId: string): string {
-  const row = sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(ownerId) as
-    | { timezone: string | null }
-    | undefined;
+export async function ownerTz(ownerId: string): Promise<string> {
+  const row = await store().prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get<{ timezone: string | null }>(ownerId);
   return row?.timezone || serverTimezone();
 }
 
@@ -45,9 +43,9 @@ export type SubscribePushInput = { endpoint?: string; p256dh?: string; auth?: st
 export type SubscribePushResult = { ok: true } | { ok: false; error: 'missing_fields' };
 
 /** Upsert by endpoint (one row per browser endpoint), re-pointing keys/owner on conflict. */
-export function subscribePushChecked(ownerId: string, input: SubscribePushInput): SubscribePushResult {
+export async function subscribePushChecked(ownerId: string, input: SubscribePushInput): Promise<SubscribePushResult> {
   if (!input.endpoint || !input.p256dh || !input.auth) return { ok: false, error: 'missing_fields' };
-  sqlite
+  await store()
     .prepare(
       `INSERT INTO push_subscriptions (id, owner_id, endpoint, p256dh, auth, user_agent)
        VALUES (?, ?, ?, ?, ?, ?)
@@ -63,41 +61,41 @@ export function subscribePushChecked(ownerId: string, input: SubscribePushInput)
 export type UnsubscribePushResult = { ok: true } | { ok: false; error: 'missing_endpoint' };
 
 /** Remove a subscription by endpoint, owner-scoped. */
-export function unsubscribePushChecked(ownerId: string, endpoint: string | undefined): UnsubscribePushResult {
+export async function unsubscribePushChecked(ownerId: string, endpoint: string | undefined): Promise<UnsubscribePushResult> {
   if (!endpoint) return { ok: false, error: 'missing_endpoint' };
-  sqlite.prepare(`DELETE FROM push_subscriptions WHERE endpoint = ? AND owner_id = ?`).run(endpoint, ownerId);
+  await store().prepare(`DELETE FROM push_subscriptions WHERE endpoint = ? AND owner_id = ?`).run(endpoint, ownerId);
   writeAudit({ ownerId, actor: 'owner', action: 'unsubscribe', entity: 'push:unsubscribe' });
   return { ok: true };
 }
 
 /** The owner's push subscriptions (no REST GET for this today — new for GraphQL, W10). */
-export function listPushSubscriptions(ownerId: string): PushSubscriptionRow[] {
-  return sqlite
+export async function listPushSubscriptions(ownerId: string): Promise<PushSubscriptionRow[]> {
+  return store()
     .prepare(
       `SELECT id, endpoint, user_agent, created_at FROM push_subscriptions WHERE owner_id = ? ORDER BY created_at`,
     )
-    .all(ownerId) as PushSubscriptionRow[];
+    .all<PushSubscriptionRow>(ownerId);
 }
 
 // ── Reminders ────────────────────────────────────────────────────────────────
 
 /** The owner's live (non-cancelled) reminders, soonest fire_at first. */
-export function listReminders(ownerId: string): Reminder[] {
-  return sqlite
+export async function listReminders(ownerId: string): Promise<Reminder[]> {
+  return store()
     .prepare(
       `SELECT id, task_id, block_id, fire_at, status, fired_at, source
          FROM reminders WHERE owner_id = ? AND status <> 'cancelled' ORDER BY fire_at`,
     )
-    .all(ownerId) as Reminder[];
+    .all<Reminder>(ownerId);
 }
 
 /** A single reminder, owner-scoped (used by field resolvers / cross-owner checks). */
-export function getReminder(ownerId: string, id: string): Reminder | undefined {
-  return sqlite
+export async function getReminder(ownerId: string, id: string): Promise<Reminder | undefined> {
+  return store()
     .prepare(
       `SELECT id, task_id, block_id, fire_at, status, fired_at, source FROM reminders WHERE id = ? AND owner_id = ?`,
     )
-    .get(id, ownerId) as Reminder | undefined;
+    .get<Reminder>(id, ownerId);
 }
 
 export type CreateReminderInput = { taskId?: string | null; blockId?: string | null; fireAt?: string | null; date?: string | null; time?: string | null };
@@ -108,7 +106,7 @@ export type CreateReminderResult = { ok: true; reminder: Reminder } | { ok: fals
  * otherwise). fire_at is stored UTC ISO: pass `fireAt` directly, or `date`+`time`
  * resolved tz-correctly via the owner's timezone (never the naive `${date}T${time}Z`).
  */
-export function createReminderChecked(ownerId: string, input: CreateReminderInput): CreateReminderResult {
+export async function createReminderChecked(ownerId: string, input: CreateReminderInput): Promise<CreateReminderResult> {
   const hasTask = !!input.taskId, hasBlock = !!input.blockId;
   if (hasTask === hasBlock) return { ok: false, error: 'target' };
 
@@ -116,23 +114,23 @@ export function createReminderChecked(ownerId: string, input: CreateReminderInpu
   // another owner's task/block id; the dispatcher would then render that row's title into
   // this owner's notification. Treated as an invalid target (same 'target' error, so a
   // foreign id is indistinguishable from a missing one — no cross-owner probe).
-  if (hasTask && !sqlite.prepare(`SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?`).get(input.taskId, ownerId)) {
+  if (hasTask && !(await store().prepare(`SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?`).get(input.taskId, ownerId))) {
     return { ok: false, error: 'target' };
   }
-  if (hasBlock && !sqlite.prepare(`SELECT 1 FROM time_blocks WHERE id = ? AND owner_id = ?`).get(input.blockId, ownerId)) {
+  if (hasBlock && !(await store().prepare(`SELECT 1 FROM time_blocks WHERE id = ? AND owner_id = ?`).get(input.blockId, ownerId))) {
     return { ok: false, error: 'target' };
   }
 
   let fireAt = input.fireAt ?? undefined;
-  if (!fireAt && input.date && input.time) fireAt = zonedWallTimeToUTC(input.date, input.time, ownerTz(ownerId));
+  if (!fireAt && input.date && input.time) fireAt = zonedWallTimeToUTC(input.date, input.time, await ownerTz(ownerId));
   if (!fireAt) return { ok: false, error: 'fire_at_required' };
 
-  const reminder = sqlite
+  const reminder = (await store()
     .prepare(
       `INSERT INTO reminders (id, owner_id, task_id, block_id, fire_at) VALUES (?, ?, ?, ?, ?)
        RETURNING id, task_id, block_id, fire_at, status, fired_at, source`,
     )
-    .get(newId(), ownerId, input.taskId ?? null, input.blockId ?? null, fireAt) as Reminder;
+    .get<Reminder>(newId(), ownerId, input.taskId ?? null, input.blockId ?? null, fireAt))!;
   writeAudit({ ownerId, actor: 'owner', action: 'create', entity: `reminder:${reminder.id}` });
   return { ok: true, reminder };
 }
@@ -140,13 +138,13 @@ export function createReminderChecked(ownerId: string, input: CreateReminderInpu
 export type CancelReminderResult = { ok: true; reminder: Reminder } | { ok: false; error: 'not_found' };
 
 /** Soft-cancel: status='cancelled', row stays (kept off the dispatcher, still queryable). */
-export function cancelReminderChecked(ownerId: string, id: string): CancelReminderResult {
-  const row = sqlite
+export async function cancelReminderChecked(ownerId: string, id: string): Promise<CancelReminderResult> {
+  const row = await store()
     .prepare(
       `UPDATE reminders SET status = 'cancelled' WHERE id = ? AND owner_id = ?
        RETURNING id, task_id, block_id, fire_at, status, fired_at, source`,
     )
-    .get(id, ownerId) as Reminder | undefined;
+    .get<Reminder>(id, ownerId);
   if (!row) return { ok: false, error: 'not_found' };
   writeAudit({ ownerId, actor: 'owner', action: 'delete', entity: `reminder:${id}` });
   return { ok: true, reminder: row };
@@ -158,17 +156,17 @@ export type SnoozeReminderResult = { ok: true; reminder: Reminder } | { ok: fals
  * Re-arm the SAME row forward: status→pending + fire_at advanced cancels the original
  * firing (already 'fired') and schedules exactly one new one — no double-fire.
  */
-export function snoozeReminderChecked(ownerId: string, id: string, minutesRaw: unknown): SnoozeReminderResult {
+export async function snoozeReminderChecked(ownerId: string, id: string, minutesRaw: unknown): Promise<SnoozeReminderResult> {
   const minutes = Number(minutesRaw);
   if (!Number.isFinite(minutes) || minutes <= 0) return { ok: false, error: 'bad_minutes' };
   const fireAt = new Date(Date.now() + minutes * 60_000).toISOString();
-  const reminder = sqlite
+  const reminder = await store()
     .prepare(
       `UPDATE reminders SET fire_at = ?, status = 'pending', fired_at = NULL
          WHERE id = ? AND owner_id = ?
        RETURNING id, task_id, block_id, fire_at, status, fired_at, source`,
     )
-    .get(fireAt, id, ownerId) as Reminder | undefined;
+    .get<Reminder>(fireAt, id, ownerId);
   if (!reminder) return { ok: false, error: 'not_found' };
   writeAudit({ ownerId, actor: 'owner', action: 'snooze', entity: `reminder:${id}` });
   return { ok: true, reminder };

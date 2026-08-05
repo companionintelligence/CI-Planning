@@ -78,35 +78,35 @@ async function seedUser(email: string | undefined = EMAIL): Promise<string> {
 describe('V — reset-token service', () => {
   it('issues a raw token, stores only its sha256 hash, and consumes it once', async () => {
     const ownerId = await seedUser();
-    const raw = issueResetToken(ownerId);
+    const raw = await issueResetToken(ownerId);
     // Raw token is never stored — the row holds a 64-hex sha256, not the raw value.
     const row = sqlite.prepare(`SELECT token_hash FROM password_reset_tokens WHERE owner_id = ?`).get(ownerId) as { token_hash: string };
     expect(row.token_hash).toMatch(/^[0-9a-f]{64}$/);
     expect(row.token_hash).not.toBe(raw);
 
-    expect(consumeResetToken(raw)).toBe(ownerId);
+    expect(await consumeResetToken(raw)).toBe(ownerId);
     // Single-use: a second consume fails.
-    expect(consumeResetToken(raw)).toBeNull();
+    expect(await consumeResetToken(raw)).toBeNull();
   });
 
   it('rejects an expired token', async () => {
     const ownerId = await seedUser();
-    const raw = issueResetToken(ownerId);
+    const raw = await issueResetToken(ownerId);
     // Force the row to be already expired.
     sqlite.prepare(`UPDATE password_reset_tokens SET expires_at = ? WHERE owner_id = ?`).run(new Date(Date.now() - 1000).toISOString(), ownerId);
-    expect(consumeResetToken(raw)).toBeNull();
+    expect(await consumeResetToken(raw)).toBeNull();
   });
 
   it('a fresh issue supersedes the owner\'s prior tokens', async () => {
     const ownerId = await seedUser();
-    const first = issueResetToken(ownerId);
-    const second = issueResetToken(ownerId);
-    expect(consumeResetToken(first)).toBeNull(); // superseded
-    expect(consumeResetToken(second)).toBe(ownerId);
+    const first = await issueResetToken(ownerId);
+    const second = await issueResetToken(ownerId);
+    expect(await consumeResetToken(first)).toBeNull(); // superseded
+    expect(await consumeResetToken(second)).toBe(ownerId);
   });
 
-  it('returns null for an unknown token', () => {
-    expect(consumeResetToken('not-a-real-token')).toBeNull();
+  it('returns null for an unknown token', async () => {
+    expect(await consumeResetToken('not-a-real-token')).toBeNull();
   });
 });
 
@@ -186,7 +186,7 @@ describe('V — POST /api/auth/reset-request', () => {
     expect(r.status).toBe(200);
     expect(__getLastConsoleMail()?.to).toBe(shared); // delivered to B's email, not A
     const tokens = sqlite.prepare(`SELECT owner_id FROM password_reset_tokens`).all() as { owner_id: string }[];
-    const bId = findOwnerByUsername('owner-b')!.id;
+    const bId = (await findOwnerByUsername('owner-b'))!.id;
     expect(tokens).toEqual([{ owner_id: bId }]); // token issued for B only
   });
 
@@ -227,7 +227,7 @@ describe('V — POST /api/auth/reset-request', () => {
 describe('V — POST /api/auth/reset', () => {
   it('sets the new password (old no longer works, new does)', async () => {
     const ownerId = await seedUser();
-    const raw = issueResetToken(ownerId);
+    const raw = await issueResetToken(ownerId);
     const r = await post('/api/auth/reset', { token: raw, newPassword: NEW_PW });
     expect(r.status).toBe(200);
     expect((await login(USER, PW)).status).toBe(401);      // old password rejected
@@ -240,8 +240,8 @@ describe('V — POST /api/auth/reset', () => {
     // The pre-reset session authenticates.
     expect((await fetch(`${srv.url}/api/tasks`, { headers: { Cookie: cookie } })).status).toBe(200);
 
-    const ownerId = findOwnerByUsername(USER)!.id;
-    await post('/api/auth/reset', { token: issueResetToken(ownerId), newPassword: NEW_PW });
+    const ownerId = (await findOwnerByUsername(USER))!.id;
+    await post('/api/auth/reset', { token: await issueResetToken(ownerId), newPassword: NEW_PW });
 
     // After the reset bumps the epoch, the old cookie no longer authenticates.
     expect((await fetch(`${srv.url}/api/tasks`, { headers: { Cookie: cookie } })).status).toBe(401);
@@ -254,7 +254,7 @@ describe('V — POST /api/auth/reset', () => {
 
   it('rejects a too-short password with 400 (and does not consume the token)', async () => {
     const ownerId = await seedUser();
-    const raw = issueResetToken(ownerId);
+    const raw = await issueResetToken(ownerId);
     const r = await post('/api/auth/reset', { token: raw, newPassword: 'short' });
     expect(r.status).toBe(400);
     // Token was not consumed — a valid password still completes the reset.
@@ -263,7 +263,7 @@ describe('V — POST /api/auth/reset', () => {
 
   it('a reset token is single-use over HTTP', async () => {
     const ownerId = await seedUser();
-    const raw = issueResetToken(ownerId);
+    const raw = await issueResetToken(ownerId);
     expect((await post('/api/auth/reset', { token: raw, newPassword: NEW_PW })).status).toBe(200);
     expect((await post('/api/auth/reset', { token: raw, newPassword: 'another-good-one-1' })).status).toBe(400);
   });
@@ -296,7 +296,7 @@ describe('V — PATCH /api/owner/backup-email', () => {
       body: JSON.stringify({ backup_email: 'backup@example.com' }),
     });
     expect(res.status).toBe(200);
-    const ownerId = findOwnerByUsername(USER)!.id;
+    const ownerId = (await findOwnerByUsername(USER))!.id;
     const row = sqlite.prepare(`SELECT backup_email FROM owners WHERE id = ?`).get(ownerId) as { backup_email: string };
     expect(row.backup_email).toBe('backup@example.com');
   });
@@ -339,7 +339,7 @@ describe('PATCH /api/owner/profile', () => {
     const res = await patchProfile(cookie, { name: '  Alex Hartman  ', email: 'alex@example.com' });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, name: 'Alex Hartman', email: 'alex@example.com', username: USER });
-    const ownerId = findOwnerByUsername(USER)!.id;
+    const ownerId = (await findOwnerByUsername(USER))!.id;
     const row = sqlite.prepare(`SELECT name, email FROM owners WHERE id = ?`).get(ownerId) as { name: string; email: string | null };
     expect(row).toEqual({ name: 'Alex Hartman', email: 'alex@example.com' });
   });
@@ -424,7 +424,7 @@ describe('PATCH /api/owner/profile', () => {
     const res = await patchProfile(cookie, { username: 'taken' });
     expect(res.status).toBe(409);
     // The original handle is untouched after a rejected rename.
-    expect(findOwnerByUsername(USER)).toBeDefined();
+    expect(await findOwnerByUsername(USER)).toBeDefined();
   });
 
   it('rejects an empty or whitespace-bearing username with 400', async () => {

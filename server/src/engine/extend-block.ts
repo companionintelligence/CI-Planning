@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { stampRow } from '../sync/apply.js';
 
@@ -93,20 +93,20 @@ function isFixed(r: Row): boolean {
  * @param minutes positive minutes to add to its end
  * @param opts.commit when true AND the plan fits, apply the writes atomically
  */
-export function extendBlock(
+export async function extendBlock(
   blockId: string,
   minutes: number,
   opts: { commit?: boolean } = {},
   owner: string = currentOwnerId(),
-): ExtendResult {
+): Promise<ExtendResult> {
   if (!Number.isFinite(minutes) || minutes <= 0) throw new Error('minutes must be a positive number');
 
-  const block = sqlite
+  const block = await store()
     .prepare(
       `SELECT id, task_id, title, start_at, end_at, block_kind, block_type, is_locked, status, 0 AS is_running
          FROM time_blocks WHERE id = ? AND owner_id = ?`,
     )
-    .get(blockId, owner) as Row | undefined;
+    .get<Row>(blockId, owner);
   if (!block) throw new Error('block not found');
 
   const overflowMs = Math.round(minutes) * 60_000;
@@ -122,7 +122,7 @@ export function extendBlock(
   // they live inside a container (itself fixed here) and must never be pushed
   // independently. Someday Plans and completed/skipped/cancelled blocks aren't
   // timeline obstacles.
-  const subsequent = sqlite
+  const subsequent = await store()
     .prepare(
       `SELECT id, task_id, title, start_at, end_at, block_kind, block_type, is_locked, status,
               (EXISTS (SELECT 1 FROM time_entries te WHERE te.block_id = time_blocks.id AND te.ended_at IS NULL)) AS is_running
@@ -139,7 +139,7 @@ export function extendBlock(
           )
         ORDER BY start_at ASC`,
     )
-    .all(owner, blockId, block.end_at) as Row[];
+    .all<Row>(owner, blockId, block.end_at);
 
   const movedSet: ExtendMove[] = [];
   let blockedBy: ExtendResult['blockedBy'] = null;
@@ -170,24 +170,24 @@ export function extendBlock(
   let committed = false;
   if (fits && opts.commit) {
     const now = new Date().toISOString();
-    sqlite.transaction(() => {
+    await store().transaction(async () => {
       // Phase L: an extend is an owner edit, so both the anchor and everything its
       // cascade displaces must stamp — otherwise a queued op holding the pre-extend
       // times wins LWW and the whole shift unwinds. Gated on the owner-scoped UPDATE
       // landing: stampRow keys on id alone (see cascadeArchiveToDescendants).
       // `last_moved_at` needs no stamp — it isn't in the sync allowlist.
-      const anchor = sqlite
+      const anchor = await store()
         .prepare(`UPDATE time_blocks SET end_at = ?, last_moved_at = ? WHERE id = ? AND owner_id = ?`)
         .run(newEndAt, now, blockId, owner);
-      if (anchor.changes > 0) stampRow(sqlite, 'block', blockId, ['endAt']);
-      const upd = sqlite.prepare(
+      if (anchor.changes > 0) await stampRow('block', blockId, ['endAt']);
+      const upd = store().prepare(
         `UPDATE time_blocks SET start_at = ?, end_at = ?, last_moved_at = ? WHERE id = ? AND owner_id = ?`,
       );
       for (const m of movedSet) {
-        const info = upd.run(m.after.start_at, m.after.end_at, now, m.block_id, owner);
-        if (info.changes > 0) stampRow(sqlite, 'block', m.block_id, ['startAt', 'endAt']);
+        const info = await upd.run(m.after.start_at, m.after.end_at, now, m.block_id, owner);
+        if (info.changes > 0) await stampRow('block', m.block_id, ['startAt', 'endAt']);
       }
-    })();
+    });
     committed = true;
   }
 

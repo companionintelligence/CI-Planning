@@ -88,41 +88,41 @@ describe('H1 updateTouchesSchedule', () => {
 // ─── H2 — locked-block guards ───────────────────────────────────────────────────
 
 describe('H2 locked blocks survive reschedule + review', () => {
-  it('rescheduleTask keeps a locked block, drops the unlocked one', () => {
+  it('rescheduleTask keeps a locked block, drops the unlocked one', async () => {
     const t = insertTask('Has a pin', { scheduledFor: '2026-06-24' });
     const locked = insertBlock(t, '2026-06-24T09:00:00.000Z', '2026-06-24T10:00:00.000Z', { isLocked: 1 });
     insertBlock(t, '2026-06-24T11:00:00.000Z', '2026-06-24T12:00:00.000Z', { isLocked: 0 }); // unlocked
 
-    rescheduleTask(t, 3, OWNER);
+    await rescheduleTask(t, 3, OWNER);
 
     const blocks = taskBlocks(t);
     expect(blocks.map((b) => b.id)).toEqual([locked]); // only the pin survives
     expect(taskRow(t).status).toBe('open');
   });
 
-  it('the nightly review leaves a locked past block alone (no defer, no re-defer loop)', () => {
+  it('the nightly review leaves a locked past block alone (no defer, no re-defer loop)', async () => {
     const now = '2026-06-24T20:00:00.000Z';
     const t = insertTask('Pinned but not done', { priority: 3 }); // low priority → would auto-defer if missed
     const locked = insertBlock(t, '2026-06-24T09:00:00.000Z', '2026-06-24T10:00:00.000Z', { isAuto: 1, isLocked: 1 });
 
-    const r = reviewAndReschedule({ nowISO: now });
+    const r = await reviewAndReschedule({ nowISO: now });
 
     // The locked past block is not "missed work": no defer, block survives, task untouched.
     expect(taskBlocks(t).map((b) => b.id)).toEqual([locked]);
     expect(taskRow(t).status).toBe('open');
     expect(taskRow(t).scheduled_for).toBeNull(); // NOT bumped
     // A second run must not re-defer it either (would be an endless nightly loop).
-    reviewAndReschedule({ nowISO: '2026-06-25T20:00:00.000Z' });
+    await reviewAndReschedule({ nowISO: '2026-06-25T20:00:00.000Z' });
     expect(taskBlocks(t).map((b) => b.id)).toEqual([locked]);
     expect(taskRow(t).defer_count ?? 0).toBe(0);
     expect(r.missed).toBeGreaterThanOrEqual(0);
   });
 
-  it('the review still defers an UNLOCKED missed low-priority block (control)', () => {
+  it('the review still defers an UNLOCKED missed low-priority block (control)', async () => {
     const t = insertTask('Genuinely missed', { priority: 3 });
     insertBlock(t, '2026-06-24T09:00:00.000Z', '2026-06-24T10:00:00.000Z', { isAuto: 1, isLocked: 0 });
 
-    reviewAndReschedule({ nowISO: '2026-06-24T20:00:00.000Z' });
+    await reviewAndReschedule({ nowISO: '2026-06-24T20:00:00.000Z' });
 
     expect(taskBlocks(t), 'unlocked missed block is dropped on defer').toHaveLength(0);
     expect((taskRow(t).defer_count ?? 0)).toBe(1);
@@ -132,11 +132,11 @@ describe('H2 locked blocks survive reschedule + review', () => {
 // ─── H4 — day-scoped pin idempotency ────────────────────────────────────────────
 
 describe('H4 placeStartAnchoredTask idempotency is day-scoped', () => {
-  it('honours the stated day even when a stale block sits on another day (moves it)', () => {
+  it('honours the stated day even when a stale block sits on another day (moves it)', async () => {
     const t = insertTask('Stated today, stale yesterday', { scheduledFor: '2026-06-25', taskTime: '10:00', est: 60 });
     insertBlock(t, '2026-06-20T09:00:00.000Z', '2026-06-20T10:00:00.000Z', { isAuto: 0, isLocked: 0 }); // stale, other day
 
-    const out = placeStartAnchoredTask(OWNER, t, { silent: true, nowMs: Date.parse('2026-06-25T00:00:00.000Z') });
+    const out = await placeStartAnchoredTask(OWNER, t, { silent: true, nowMs: Date.parse('2026-06-25T00:00:00.000Z') });
 
     expect(out.placed).toBe(true);
     const blocks = taskBlocks(t);
@@ -144,21 +144,21 @@ describe('H4 placeStartAnchoredTask idempotency is day-scoped', () => {
     expect(blocks[0].start_at).toBe('2026-06-25T10:00:00.000Z'); // honoured the stated (day, time)
   });
 
-  it('treats a LOCKED pin on another day as the placement (never fights the pin)', () => {
+  it('treats a LOCKED pin on another day as the placement (never fights the pin)', async () => {
     const t = insertTask('Pinned elsewhere', { scheduledFor: '2026-06-25', taskTime: '10:00', est: 60 });
     const locked = insertBlock(t, '2026-06-20T09:00:00.000Z', '2026-06-20T10:00:00.000Z', { isLocked: 1 });
 
-    const out = placeStartAnchoredTask(OWNER, t, { silent: true, nowMs: Date.parse('2026-06-25T00:00:00.000Z') });
+    const out = await placeStartAnchoredTask(OWNER, t, { silent: true, nowMs: Date.parse('2026-06-25T00:00:00.000Z') });
 
     expect(out.placed).toBe(true);
     expect(taskBlocks(t).map((b) => b.id), 'no competing block created').toEqual([locked]);
   });
 
-  it('is idempotent against a block already on the stated day (no duplicate)', () => {
+  it('is idempotent against a block already on the stated day (no duplicate)', async () => {
     const t = insertTask('Already placed today', { scheduledFor: '2026-06-25', taskTime: '10:00', est: 60 });
     const sameDay = insertBlock(t, '2026-06-25T14:00:00.000Z', '2026-06-25T15:00:00.000Z', { isAuto: 0 });
 
-    const out = placeStartAnchoredTask(OWNER, t, { silent: true, nowMs: Date.parse('2026-06-25T00:00:00.000Z') });
+    const out = await placeStartAnchoredTask(OWNER, t, { silent: true, nowMs: Date.parse('2026-06-25T00:00:00.000Z') });
 
     expect(out.placed).toBe(true);
     expect(taskBlocks(t).map((b) => b.id)).toEqual([sameDay]); // reused, not duplicated
@@ -168,14 +168,14 @@ describe('H4 placeStartAnchoredTask idempotency is day-scoped', () => {
 // ─── H5 — sweep requeue positions + multi-session characterization ──────────────
 
 describe('H5 sweep requeue + multi-session', () => {
-  it('re-queues each missed task at a distinct flight-plan position (not all 0)', () => {
+  it('re-queues each missed task at a distinct flight-plan position (not all 0)', async () => {
     const t1 = insertTask('Missed A');
     const t2 = insertTask('Missed B');
     // Two agent auto blocks whose planned end is in the past.
     insertBlock(t1, '2026-06-24T09:00:00.000Z', '2026-06-24T09:30:00.000Z', { isAuto: 1 });
     insertBlock(t2, '2026-06-24T10:00:00.000Z', '2026-06-24T10:30:00.000Z', { isAuto: 1 });
 
-    const res = sweepMissedBlocks(OWNER, '2026-06-24', Date.parse('2026-06-24T23:00:00.000Z'));
+    const res = await sweepMissedBlocks(OWNER, '2026-06-24', Date.parse('2026-06-24T23:00:00.000Z'));
 
     expect(res.skipped).toBe(2);
     expect(res.requeued).toBe(2);
@@ -189,7 +189,7 @@ describe('H5 sweep requeue + multi-session', () => {
     // 180min task with a 90m focus cap → two sessions.
     const t = insertTask('Deep work', { est: 180 });
     stage(t);
-    placeFlightPlan(OWNER, { date: '2026-06-24', nowMs: Date.parse('2026-06-24T08:00:00.000Z') });
+    await placeFlightPlan(OWNER, { date: '2026-06-24', nowMs: Date.parse('2026-06-24T08:00:00.000Z') });
     expect(taskBlocks(t).length, 'placed as 2 sessions').toBe(2);
 
     // User edits the task's start time; the service moves the earliest block (is_auto=0)
@@ -197,7 +197,7 @@ describe('H5 sweep requeue + multi-session', () => {
     // double-placed (an is_auto=0 survivor beside freshly-created is_auto=1 sessions).
     await updateTask(OWNER, t, { scheduled_for: '2026-06-24', task_time: '14:00' });
     const { reflow } = await import('../src/engine/auto-defense.js');
-    reflow(OWNER, '2026-06-24', 'task:updated', { nowMs: Date.parse('2026-06-24T08:05:00.000Z') });
+    await reflow(OWNER, '2026-06-24', 'task:updated', { nowMs: Date.parse('2026-06-24T08:05:00.000Z') });
 
     const blocks = taskBlocks(t);
     const starts = blocks.map((b) => b.start_at);

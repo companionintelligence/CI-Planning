@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { isoWeekKey } from '../lib/tz.js';
 
@@ -19,22 +19,22 @@ export type CalibrationReadout =
  * source-of-truth dedup, not a behavior change: the endpoint's response must stay
  * byte-identical, and a test pins that.
  */
-export function globalCalibrationReadout(owner: string): CalibrationReadout {
-  const row = sqlite
+export async function globalCalibrationReadout(owner: string): Promise<CalibrationReadout> {
+  const row = await store()
     .prepare(
       // Z0 (0107) scope-keyed this table; this legacy surface reads the global
       // row explicitly — without the filter it would grab an arbitrary scope.
       `SELECT computed_at, sample_count, bias_ratio, p25, p50, p75
        FROM estimate_calibration WHERE owner_id = ? AND scope_kind = 'global' AND scope_ref = ''`,
     )
-    .get(owner) as {
+    .get<{
       computed_at: string;
       sample_count: number;
       bias_ratio: number | null;
       p25: number | null;
       p50: number | null;
       p75: number | null;
-    } | undefined;
+    }>(owner);
 
   if (!row || row.bias_ratio == null) {
     return { calibrated: false, sample_count: row?.sample_count ?? 0 };
@@ -83,7 +83,7 @@ function weekDays(anchor: string): string[] {
   return Array.from({ length: 7 }, (_, i) => addDays(monday, i));
 }
 
-export function weeklyReview(anchor: string): WeekReview {
+export async function weeklyReview(anchor: string): Promise<WeekReview> {
   const owner = currentOwnerId();
   const days = weekDays(anchor);
   const week_key = isoWeekKey(anchor);
@@ -92,43 +92,43 @@ export function weeklyReview(anchor: string): WeekReview {
   const rangeStart = days[0] + 'T00:00:00.000Z';
   const rangeEnd = days[6] + 'T23:59:59.999Z';
 
-  const { tasks_completed } = sqlite
+  const { tasks_completed } = (await store()
     .prepare(
       `SELECT COUNT(*) AS tasks_completed FROM tasks
        WHERE owner_id = ? AND status = 'done'
          AND completed_at >= ? AND completed_at <= ?`,
     )
-    .get(owner, rangeStart, rangeEnd) as { tasks_completed: number };
+    .get<{ tasks_completed: number }>(owner, rangeStart, rangeEnd))!;
 
-  const { tasks_overdue } = sqlite
+  const { tasks_overdue } = (await store()
     .prepare(
       `SELECT COUNT(*) AS tasks_overdue FROM tasks
        WHERE owner_id = ? AND status NOT IN ('done','dropped','archived')
          AND due_at >= ? AND due_at <= ?`,
     )
-    .get(owner, rangeStart, rangeEnd) as { tasks_overdue: number };
+    .get<{ tasks_overdue: number }>(owner, rangeStart, rangeEnd))!;
 
-  const { blocks_count } = sqlite
+  const { blocks_count } = (await store()
     .prepare(
       `SELECT COUNT(*) AS blocks_count FROM time_blocks
        WHERE owner_id = ? AND start_at >= ? AND start_at <= ?`,
     )
-    .get(owner, rangeStart, rangeEnd) as { blocks_count: number };
+    .get<{ blocks_count: number }>(owner, rangeStart, rangeEnd))!;
 
-  const weekly_goals = sqlite
+  const weekly_goals = await store()
     .prepare(
       `SELECT position, body, done_at FROM reflections
        WHERE owner_id = ? AND kind = 'weekly_goal' AND period_key = ?
        ORDER BY position`,
     )
-    .all(owner, week_key) as Array<{ position: number; body: string; done_at: string | null }>;
+    .all<{ position: number; body: string; done_at: string | null }>(owner, week_key);
 
-  const { objectives_rotting } = sqlite
+  const { objectives_rotting } = (await store()
     .prepare(
       `SELECT COUNT(*) AS objectives_rotting FROM objectives
        WHERE owner_id = ? AND status = 'active' AND progress_cache IS NULL`,
     )
-    .get(owner) as { objectives_rotting: number };
+    .get<{ objectives_rotting: number }>(owner))!;
 
   return { week_key, days, tasks_completed, tasks_overdue, blocks_count, weekly_goals, objectives_rotting };
 }

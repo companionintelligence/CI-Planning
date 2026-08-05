@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { newId } from '../lib/ids.js';
 import { writeAudit } from '../lib/audit.js';
 
@@ -47,8 +47,8 @@ function rowToPref(r: PrefCols): PatternPref {
  * (Since 0097 the direction + category prefs share one `tag_prefs` table,
  * partitioned by `kind`; this reads only the 'direction' rows.)
  */
-export function getPatternPrefs(ownerId: string): Record<string, PatternPref> {
-  const rows = sqlite
+export async function getPatternPrefs(ownerId: string): Promise<Record<string, PatternPref>> {
+  const rows = await store()
     .prepare(
       `SELECT id, owner_id, tag_id, auto_fill, reminder_offsets, icon_shape, color_token, default_minutes
          FROM tag_prefs
@@ -65,12 +65,12 @@ export function getPatternPrefs(ownerId: string): Record<string, PatternPref> {
  * Upsert a single direction-axis tag_prefs row (kind='direction'). Merges `patch` on
  * top of any existing values (fetch-then-merge), then persists. Returns the final row.
  */
-export function setPatternPref(
+export async function setPatternPref(
   ownerId: string,
   patternTagId: string,
   patch: Partial<PatternPref>
-): PatternPref {
-  const existing = sqlite
+): Promise<PatternPref> {
+  const existing = await store()
     .prepare(
       `SELECT auto_fill, reminder_offsets, icon_shape, color_token, default_minutes
          FROM tag_prefs WHERE owner_id = ? AND tag_id = ? AND kind = 'direction'`
@@ -89,7 +89,7 @@ export function setPatternPref(
       patch.default_minutes !== undefined ? patch.default_minutes : current.default_minutes,
   };
 
-  sqlite
+  await store()
     .prepare(
       `INSERT INTO tag_prefs (id, owner_id, tag_id, kind, auto_fill, reminder_offsets, icon_shape, color_token, default_minutes)
        VALUES (?, ?, ?, 'direction', ?, ?, ?, ?, ?)
@@ -125,12 +125,12 @@ export type SetPrefResult =
  * GraphQL share one implementation. `patch` carries raw (unknown-typed) values so the
  * type checks (REST body hygiene) live here too; on success delegates to setPatternPref.
  */
-export function setPatternPrefChecked(
+export async function setPatternPrefChecked(
   ownerId: string,
   tagId: string,
   patch: { auto_fill?: unknown; reminder_offsets?: unknown; icon_shape?: unknown; color_token?: unknown; default_minutes?: unknown },
-): SetPrefResult {
-  const tag = sqlite.prepare(`SELECT kind FROM tags WHERE id = ? AND owner_id = ?`).get(tagId, ownerId) as { kind: string } | undefined;
+): Promise<SetPrefResult> {
+  const tag = await store().prepare(`SELECT kind FROM tags WHERE id = ? AND owner_id = ?`).get(tagId, ownerId) as { kind: string } | undefined;
   if (!tag) return { ok: false, error: 'tag_not_found' };
   if (tag.kind !== 'direction') return { ok: false, error: 'not_direction' };
   if (patch.auto_fill !== undefined && typeof patch.auto_fill !== 'boolean') return { ok: false, error: 'auto_fill_type' };
@@ -144,7 +144,7 @@ export function setPatternPrefChecked(
   if (patch.color_token !== undefined && (typeof patch.color_token !== 'string' || !patch.color_token)) return { ok: false, error: 'color_token_invalid' };
   if (patch.default_minutes !== undefined && !(Number.isInteger(patch.default_minutes) && (patch.default_minutes as number) > 0)) return { ok: false, error: 'default_minutes_invalid' };
 
-  const pref = setPatternPref(ownerId, tagId, {
+  const pref = await setPatternPref(ownerId, tagId, {
     auto_fill: patch.auto_fill as boolean | undefined,
     reminder_offsets: patch.reminder_offsets as number[] | undefined,
     icon_shape: patch.icon_shape as string | undefined,

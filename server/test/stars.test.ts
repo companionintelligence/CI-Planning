@@ -72,210 +72,210 @@ beforeEach(() => { resetDb(); });
 
 // ── S1 objective ───────────────────────────────────────────────────────────────
 describe('computeStars — S1 objective', () => {
-  it('false when no today_goal', () => { expect(stars().objective).toBe(false); });
-  it('false when today_goal not done', () => { setToday('Ship it', false); expect(stars().objective).toBe(false); });
-  it('true when today_goal has done_at', () => { setToday('Ship it', true); expect(stars().objective).toBe(true); });
+  it('false when no today_goal', async () => { expect((await stars()).objective).toBe(false); });
+  it('false when today_goal not done', async () => { setToday('Ship it', false); expect((await stars()).objective).toBe(false); });
+  it('true when today_goal has done_at', async () => { setToday('Ship it', true); expect((await stars()).objective).toBe(true); });
 });
 
 // ── S2 habits (empty-set rule) ──────────────────────────────────────────────────
 describe('computeStars — S2 habits', () => {
-  it('false when no habit instance exists that day (empty-set rule)', () => {
-    expect(stars().habits).toBe(false);
+  it('false when no habit instance exists that day (empty-set rule)', async () => {
+    expect((await stars()).habits).toBe(false);
   });
-  it('false when a habit instance is not done', () => {
+  it('false when a habit instance is not done', async () => {
     makeTask({ title: 'Meditate', subtype: 'habit', occurrenceDate: DAY, status: 'open' });
-    expect(stars().habits).toBe(false);
+    expect((await stars()).habits).toBe(false);
   });
-  it('true when the single habit instance is done', () => {
+  it('true when the single habit instance is done', async () => {
     makeTask({ title: 'Meditate', subtype: 'habit', occurrenceDate: DAY, status: 'done' });
-    expect(stars().habits).toBe(true);
+    expect((await stars()).habits).toBe(true);
   });
-  it('false when one of two habit instances is undone', () => {
+  it('false when one of two habit instances is undone', async () => {
     makeTask({ title: 'A', subtype: 'habit', occurrenceDate: DAY, status: 'done' });
     makeTask({ title: 'B', subtype: 'habit', occurrenceDate: DAY, status: 'open' });
-    expect(stars().habits).toBe(false);
+    expect((await stars()).habits).toBe(false);
   });
-  it('ignores habit instances on another day', () => {
+  it('ignores habit instances on another day', async () => {
     makeTask({ title: 'Yesterday', subtype: 'habit', occurrenceDate: NEXT_DAY, status: 'open' });
-    expect(stars().habits).toBe(false);
+    expect((await stars()).habits).toBe(false);
   });
 });
 
 // ── S3 tasks (empty-set rule + habit/routine exclusion) ─────────────────────────
 describe('computeStars — S3 tasks', () => {
-  it('false when nothing is planned (empty-set rule)', () => {
-    expect(stars().tasks).toBe(false);
+  it('false when nothing is planned (empty-set rule)', async () => {
+    expect((await stars()).tasks).toBe(false);
   });
-  it('false when a planned task is still open', () => {
+  it('false when a planned task is still open', async () => {
     plan(makeTask({ title: 'A', status: 'open' }), 0);
-    expect(stars().tasks).toBe(false);
+    expect((await stars()).tasks).toBe(false);
   });
-  it('true when the single planned task is done', () => {
+  it('true when the single planned task is done', async () => {
     plan(makeTask({ title: 'A', status: 'done' }), 0);
-    expect(stars().tasks).toBe(true);
+    expect((await stars()).tasks).toBe(true);
   });
-  it('false when one of two planned tasks is open', () => {
+  it('false when one of two planned tasks is open', async () => {
     plan(makeTask({ title: 'A', status: 'done' }), 0);
     plan(makeTask({ title: 'B', status: 'open' }), 1);
-    expect(stars().tasks).toBe(false);
+    expect((await stars()).tasks).toBe(false);
   });
-  it('a planned habit does NOT count toward the tasks star (empty-set holds)', () => {
+  it('a planned habit does NOT count toward the tasks star (empty-set holds)', async () => {
     plan(makeTask({ title: 'Habit', subtype: 'habit', status: 'done' }), 0);
-    expect(stars().tasks).toBe(false); // only a habit planned → no plannable task
+    expect((await stars()).tasks).toBe(false); // only a habit planned → no plannable task
   });
-  it('a planned routine member does NOT count toward the tasks star', () => {
+  it('a planned routine member does NOT count toward the tasks star', async () => {
     plan(makeRoutineMember('Routine'), 0);
-    expect(stars().tasks).toBe(false);
+    expect((await stars()).tasks).toBe(false);
   });
-  it('a planned open habit alongside a done plannable task still earns it', () => {
+  it('a planned open habit alongside a done plannable task still earns it', async () => {
     plan(makeTask({ title: 'Habit', subtype: 'habit', status: 'open' }), 0); // excluded
     plan(makeTask({ title: 'Real', status: 'done' }), 1);
-    expect(stars().tasks).toBe(true);
+    expect((await stars()).tasks).toBe(true);
   });
   // FIX 1 — cancelling a planned task (soft-delete leaves the daily_plan row)
   // must drop it from the "for the day" set so the star can still light.
-  it('cancelling a planned task removes it from the set (star still earns)', () => {
+  it('cancelling a planned task removes it from the set (star still earns)', async () => {
     plan(makeTask({ title: 'A', status: 'done' }), 0);
     plan(makeTask({ title: 'B', status: 'cancelled' }), 1); // soft-deleted, plan row survives
-    expect(stars().tasks).toBe(true);
+    expect((await stars()).tasks).toBe(true);
   });
-  it('a skipped planned recurring instance does not keep the star dark', () => {
+  it('a skipped planned recurring instance does not keep the star dark', async () => {
     plan(makeTask({ title: 'A', status: 'done' }), 0);
     plan(makeTask({ title: 'Skipped', status: 'skipped' }), 1);
-    expect(stars().tasks).toBe(true);
+    expect((await stars()).tasks).toBe(true);
   });
-  it('a MISSED planned task is a genuine incompletion and keeps the star dark', () => {
+  it('a MISSED planned task is a genuine incompletion and keeps the star dark', async () => {
     plan(makeTask({ title: 'A', status: 'done' }), 0);
     plan(makeTask({ title: 'Missed', status: 'missed' }), 1);
-    expect(stars().tasks).toBe(false);
+    expect((await stars()).tasks).toBe(false);
   });
-  it('only a cancelled planned task means no plannable task remains (empty-set)', () => {
+  it('only a cancelled planned task means no plannable task remains (empty-set)', async () => {
     plan(makeTask({ title: 'B', status: 'cancelled' }), 0);
-    expect(stars().tasks).toBe(false);
+    expect((await stars()).tasks).toBe(false);
   });
 
   // Path-independence: HOW a task was scheduled must not change its star. A
   // self-scheduled task (scheduled_for = date; quick-add / New Task / drag — no
   // daily_plan row, which only the AI authoring path writes) is planned work.
-  it('a self-scheduled (scheduled_for) done task earns S3 with no daily_plan row at all', () => {
+  it('a self-scheduled (scheduled_for) done task earns S3 with no daily_plan row at all', async () => {
     makeTask({ title: 'Self-placed', status: 'done', scheduledFor: DAY });
-    expect(stars().tasks).toBe(true);
+    expect((await stars()).tasks).toBe(true);
   });
-  it('a self-scheduled task still open keeps S3 dark', () => {
+  it('a self-scheduled task still open keeps S3 dark', async () => {
     makeTask({ title: 'Self-placed', status: 'open', scheduledFor: DAY });
-    expect(stars().tasks).toBe(false);
+    expect((await stars()).tasks).toBe(false);
   });
-  it('authored ∪ self-scheduled: ALL planned tasks must be done, whichever way they were planned', () => {
+  it('authored ∪ self-scheduled: ALL planned tasks must be done, whichever way they were planned', async () => {
     plan(makeTask({ title: 'Authored', status: 'done' }), 0);
     makeTask({ title: 'Self-placed', status: 'open', scheduledFor: DAY });
-    expect(stars().tasks).toBe(false);
+    expect((await stars()).tasks).toBe(false);
   });
-  it('a task scheduled for ANOTHER day is not part of this day\'s planned set', () => {
+  it('a task scheduled for ANOTHER day is not part of this day\'s planned set', async () => {
     makeTask({ title: 'Tomorrow', status: 'open', scheduledFor: NEXT_DAY });
-    expect(stars().tasks).toBe(false); // empty-set rule, not an incompletion
+    expect((await stars()).tasks).toBe(false); // empty-set rule, not an incompletion
   });
-  it('a task both authored AND self-scheduled counts once', () => {
+  it('a task both authored AND self-scheduled counts once', async () => {
     const t = makeTask({ title: 'Both', status: 'done', scheduledFor: DAY });
     plan(t, 0);
-    expect(stars().tasks).toBe(true);
+    expect((await stars()).tasks).toBe(true);
   });
 });
 
 // ── S4 bonus (unplanned completion) ─────────────────────────────────────────────
 describe('computeStars — S4 bonus', () => {
-  it('false with no completions', () => { expect(stars().bonus).toBe(false); });
-  it('completing a PLANNED task does NOT earn the bonus', () => {
+  it('false with no completions', async () => { expect((await stars()).bonus).toBe(false); });
+  it('completing a PLANNED task does NOT earn the bonus', async () => {
     const t = makeTask({ title: 'Planned', status: 'done', completedAt: at(DAY) });
     plan(t, 0);
-    expect(stars().bonus).toBe(false);
+    expect((await stars()).bonus).toBe(false);
   });
-  it('completing an UNPLANNED task earns the bonus', () => {
+  it('completing an UNPLANNED task earns the bonus', async () => {
     makeTask({ title: 'Surprise win', status: 'done', completedAt: at(DAY) });
-    expect(stars().bonus).toBe(true);
+    expect((await stars()).bonus).toBe(true);
   });
-  it('an unplanned HABIT completion does NOT earn the bonus', () => {
+  it('an unplanned HABIT completion does NOT earn the bonus', async () => {
     makeTask({ title: 'Habit', subtype: 'habit', status: 'done', completedAt: at(DAY), occurrenceDate: DAY });
-    expect(stars().bonus).toBe(false);
+    expect((await stars()).bonus).toBe(false);
   });
-  it('an unplanned ROUTINE completion does NOT earn the bonus', () => {
+  it('an unplanned ROUTINE completion does NOT earn the bonus', async () => {
     const t = makeRoutineMember('Routine');
     sqlite.prepare(`UPDATE tasks SET status='done', completed_at=? WHERE id=?`).run(at(DAY), t);
-    expect(stars().bonus).toBe(false);
+    expect((await stars()).bonus).toBe(false);
   });
-  it('a completion on another day does not earn today\'s bonus', () => {
+  it('a completion on another day does not earn today\'s bonus', async () => {
     makeTask({ title: 'Yesterday', status: 'done', completedAt: at(NEXT_DAY) });
-    expect(stars().bonus).toBe(false);
+    expect((await stars()).bonus).toBe(false);
   });
 
   // The S4 exclusion mirrors S3's widened planned set: a self-scheduled completion
   // is planned work (S3), never double-counted as an unplanned win.
-  it('completing a SELF-SCHEDULED task does NOT earn the bonus (it earns S3 instead)', () => {
+  it('completing a SELF-SCHEDULED task does NOT earn the bonus (it earns S3 instead)', async () => {
     makeTask({ title: 'Self-placed', status: 'done', completedAt: at(DAY), scheduledFor: DAY });
-    const s = stars();
+    const s = await stars();
     expect(s.bonus).toBe(false);
     expect(s.tasks).toBe(true);
   });
-  it('a task scheduled for ANOTHER day but completed today still earns the bonus', () => {
+  it('a task scheduled for ANOTHER day but completed today still earns the bonus', async () => {
     makeTask({ title: 'Pulled forward', status: 'done', completedAt: at(DAY), scheduledFor: NEXT_DAY });
-    expect(stars().bonus).toBe(true);
+    expect((await stars()).bonus).toBe(true);
   });
 });
 
 // ── S5 reflection (done task + note) ────────────────────────────────────────────
 describe('computeStars — S5 reflection', () => {
-  it('false with a note but no completed task', () => {
+  it('false with a note but no completed task', async () => {
     setNote('Reflecting');
-    expect(stars().note).toBe(false);
+    expect((await stars()).note).toBe(false);
   });
-  it('false with a completed task but no note', () => {
+  it('false with a completed task but no note', async () => {
     makeTask({ title: 'Done', status: 'done', completedAt: at(DAY) });
-    expect(stars().note).toBe(false);
+    expect((await stars()).note).toBe(false);
   });
-  it('false when the note is only whitespace', () => {
+  it('false when the note is only whitespace', async () => {
     makeTask({ title: 'Done', status: 'done', completedAt: at(DAY) });
     setNote('   ');
-    expect(stars().note).toBe(false);
+    expect((await stars()).note).toBe(false);
   });
-  it('true with both a completed task and a non-empty note', () => {
+  it('true with both a completed task and a non-empty note', async () => {
     makeTask({ title: 'Done', status: 'done', completedAt: at(DAY) });
     setNote('Great day');
-    expect(stars().note).toBe(true);
+    expect((await stars()).note).toBe(true);
   });
 
   // FIX 5 — pin S5's doneToday semantics: it counts ANY status='done' task with a
   // completed_at in the local-day window (no habit/routine exclusion, unlike S3/S4),
   // and requires a non-null completed_at (unlike S3's status-only rule).
-  it('a habit completion + a note earns S5 (no habit exclusion for the done-task predicate)', () => {
+  it('a habit completion + a note earns S5 (no habit exclusion for the done-task predicate)', async () => {
     makeTask({ title: 'Habit', subtype: 'habit', status: 'done', completedAt: at(DAY), occurrenceDate: DAY });
     setNote('Reflected');
-    expect(stars().note).toBe(true);
+    expect((await stars()).note).toBe(true);
   });
-  it('a routine-member completion + a note earns S5 (no routine exclusion either)', () => {
+  it('a routine-member completion + a note earns S5 (no routine exclusion either)', async () => {
     const t = makeRoutineMember('Routine');
     sqlite.prepare(`UPDATE tasks SET status='done', completed_at=? WHERE id=?`).run(at(DAY), t);
     setNote('Reflected');
-    expect(stars().note).toBe(true);
+    expect((await stars()).note).toBe(true);
   });
-  it('a done task with a NULL completed_at + a note does NOT earn S5', () => {
+  it('a done task with a NULL completed_at + a note does NOT earn S5', async () => {
     makeTask({ title: 'Done but untimed', status: 'done', completedAt: null });
     setNote('Reflected');
-    expect(stars().note).toBe(false);
+    expect((await stars()).note).toBe(false);
   });
 });
 
 // ── total ────────────────────────────────────────────────────────────────────
 describe('computeStars — total', () => {
-  it('total equals the count of true flags (a perfect 5-star day)', () => {
+  it('total equals the count of true flags (a perfect 5-star day)', async () => {
     setToday('The one thing', true);                                              // S1
     makeTask({ title: 'Habit', subtype: 'habit', occurrenceDate: DAY, status: 'done' }); // S2
     plan(makeTask({ title: 'Planned', status: 'done', completedAt: at(DAY) }), 0);  // S3
     makeTask({ title: 'Bonus', status: 'done', completedAt: at(DAY) });            // S4 (unplanned)
     setNote('Reflected');                                                          // S5 (done task exists)
-    const s = stars();
+    const s = await stars();
     expect(s).toMatchObject({ objective: true, habits: true, tasks: true, bonus: true, note: true, total: 5 });
   });
-  it('empty day scores zero', () => {
-    expect(stars().total).toBe(0);
+  it('empty day scores zero', async () => {
+    expect((await stars()).total).toBe(0);
   });
 });
 
@@ -287,10 +287,10 @@ describe('freezeStars — nightly snapshot', () => {
   const setTz = (tz: string) =>
     sqlite.prepare(`UPDATE scheduling_prefs SET timezone = ? WHERE owner_id = ?`).run(tz, SYSTEM_OWNER);
 
-  it('snapshots the day that just ended (yesterday relative to now)', () => {
+  it('snapshots the day that just ended (yesterday relative to now)', async () => {
     setToday('Done goal', true);
     // now = a NEXT_DAY instant → yesterday = DAY.
-    const r = runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(undefined, iso(NEXT_DAY, '00:20')));
+    const r = await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(undefined, iso(NEXT_DAY, '00:20')));
     expect(r.date).toBe(DAY);
     expect(r.created).toBe(true); // FIX 6 — a first freeze is a create
     const row = frozenRow();
@@ -298,13 +298,13 @@ describe('freezeStars — nightly snapshot', () => {
   });
 
   // FIX 2 — the frozen day is derived from the OWNER timezone, not the server clock.
-  it('freezes the owner-tz day, not the server-local day (UTC server + LA owner)', () => {
+  it('freezes the owner-tz day, not the server-local day (UTC server + LA owner)', async () => {
     setTz('America/Los_Angeles');
     setToday('Goal', true, DAY);
     // 2026-06-16T05:00Z is still 2026-06-15 22:00 in Los Angeles, so the owner-tz
     // "today" is still 2026-06-15 (DAY) and yesterday is 2026-06-14 — NOT DAY.
     // The 00:20-local cron fires when it's 07:20Z (2026-06-16T07:20Z) on that day.
-    const r = runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(undefined, '2026-06-16T07:20:00.000Z'));
+    const r = await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(undefined, '2026-06-16T07:20:00.000Z'));
     // 07:20Z on 06-16 = 00:20 local on 06-16 in LA → yesterday-local = 06-15 = DAY.
     expect(r.date).toBe(DAY);
     expect(frozenRow(DAY)).toMatchObject({ total: 1 });
@@ -316,34 +316,34 @@ describe('freezeStars — nightly snapshot', () => {
     resetDb();
     setTz('America/Los_Angeles');
     setToday('Goal2', true, DAY);
-    const r2 = runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(undefined, '2026-06-17T04:00:00.000Z'));
+    const r2 = await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(undefined, '2026-06-17T04:00:00.000Z'));
     expect(r2.date).toBe(DAY);            // LA yesterday, not UTC yesterday (06-16)
     expect(frozenRow(NEXT_DAY)).toBeUndefined();
   });
 
-  it('a later edit to a frozen past day leaves the frozen row unchanged', () => {
+  it('a later edit to a frozen past day leaves the frozen row unchanged', async () => {
     // Freeze DAY with a single done goal → total 1.
     setToday('Goal', true);
-    runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, iso(TODAY, '00:20')));
+    await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, iso(TODAY, '00:20')));
     expect(frozenRow().total).toBe(1);
 
     // Later: complete an unplanned task on DAY (would be +1 live). Frozen row must not change.
     makeTask({ title: 'Late win', status: 'done', completedAt: at(DAY) });
-    expect(runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => computeStars(SYSTEM_OWNER, DAY)).total).toBe(2); // live sees it
+    expect((await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => computeStars(SYSTEM_OWNER, DAY))).total).toBe(2); // live sees it
     expect(frozenRow().total).toBe(1); // frozen unchanged (no re-freeze)
   });
 
   // FIX 4 — first-freeze-wins: a same-day manual re-run after an edit cannot overwrite.
   // FIX 6 — created=true on the first freeze, false on the no-op re-run.
-  it('re-running freeze after mutating the day leaves the frozen row unchanged', () => {
+  it('re-running freeze after mutating the day leaves the frozen row unchanged', async () => {
     setToday('Goal', true);
-    const first = runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, iso(TODAY, '00:20')));
+    const first = await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, iso(TODAY, '00:20')));
     expect(first.total).toBe(1);
     expect(first.created).toBe(true);
 
     // Owner edits DAY (adds an unplanned completion) then a manual job re-run fires.
     makeTask({ title: 'Late win', status: 'done', completedAt: at(DAY) });
-    const second = runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, iso(TODAY, '09:00')));
+    const second = await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, iso(TODAY, '09:00')));
     expect(second.total).toBe(1);                 // returns the EXISTING total, no recompute
     expect(second.created).toBe(false);           // no-op, not a create
     expect(frozenRow().total).toBe(1);            // row untouched
@@ -351,10 +351,10 @@ describe('freezeStars — nightly snapshot', () => {
     expect(n).toBe(1);
   });
 
-  it('is idempotent — re-running never creates a second row', () => {
+  it('is idempotent — re-running never creates a second row', async () => {
     setToday('Goal', true);
-    runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, iso(TODAY, '00:20')));
-    runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, iso(TODAY, '00:20')));
+    await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, iso(TODAY, '00:20')));
+    await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, iso(TODAY, '00:20')));
     const rows = sqlite.prepare(`SELECT COUNT(*) AS n FROM daily_recap WHERE owner_id=? AND date=?`).get(SYSTEM_OWNER, DAY) as { n: number };
     expect(rows.n).toBe(1);
     expect(frozenRow().total).toBe(1);
@@ -384,7 +384,7 @@ describe('GET /api/stars', () => {
   it('returns the FROZEN row over the live value', async () => {
     // Freeze DAY at total 1.
     setToday('Goal', true);
-    runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, iso(TODAY, '00:20')));
+    await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, iso(TODAY, '00:20')));
     // Change the live world so recompute would give 2.
     makeTask({ title: 'Late win', status: 'done', completedAt: at(DAY) });
 
@@ -403,7 +403,7 @@ describe('daily_recap co-location (summary cache + immutable star freeze)', () =
   const recapRow = (date = DAY) =>
     sqlite.prepare(`SELECT * FROM daily_recap WHERE owner_id=? AND date=?`).get(SYSTEM_OWNER, date) as any;
 
-  it('freezes stars even when a summary row already exists (guard keys on frozen_at, not existence)', () => {
+  it('freezes stars even when a summary row already exists (guard keys on frozen_at, not existence)', async () => {
     // A summarizeDay upsert created the (owner,date) row first, frozen_at NULL.
     sqlite
       .prepare(
@@ -413,7 +413,7 @@ describe('daily_recap co-location (summary cache + immutable star freeze)', () =
       .run(SYSTEM_OWNER, DAY);
 
     setToday('Done goal', true); // objective star → total 1
-    const r = runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, `${TODAY}T00:20:00.000Z`));
+    const r = await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, `${TODAY}T00:20:00.000Z`));
 
     expect(r.created).toBe(true); // it actually froze — the bug an existence-guard would introduce is that it would NOT
     const row = recapRow();
@@ -422,9 +422,9 @@ describe('daily_recap co-location (summary cache + immutable star freeze)', () =
     expect(row.prose).toBe('Morning brief'); // summary group PRESERVED by the partial star upsert
   });
 
-  it('a summary refresh never disturbs a frozen star row', () => {
+  it('a summary refresh never disturbs a frozen star row', async () => {
     setToday('Done goal', true);
-    runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, `${TODAY}T00:20:00.000Z`));
+    await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, `${TODAY}T00:20:00.000Z`));
     const beforeFrozenAt = recapRow().frozen_at;
 
     // Simulate summarizeDay's partial upsert onto the already-frozen row.
@@ -444,14 +444,14 @@ describe('daily_recap co-location (summary cache + immutable star freeze)', () =
     expect(row.frozen_at).toBe(beforeFrozenAt); // frozen stamp untouched
   });
 
-  it('re-freeze stays a no-op even after the live world changed (first-freeze-wins)', () => {
+  it('re-freeze stays a no-op even after the live world changed (first-freeze-wins)', async () => {
     setToday('Done goal', true);
-    const first = runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, `${TODAY}T00:20:00.000Z`));
+    const first = await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, `${TODAY}T00:20:00.000Z`));
     expect(first.created).toBe(true);
 
     // An unplanned completion that would raise the live score, then re-freeze.
     makeTask({ title: 'Late win', status: 'done', completedAt: `${DAY}T15:00:00.000Z` });
-    const second = runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, `${TODAY}T09:00:00.000Z`));
+    const second = await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, `${TODAY}T09:00:00.000Z`));
     expect(second.created).toBe(false);
     expect(recapRow().total).toBe(first.total);
   });

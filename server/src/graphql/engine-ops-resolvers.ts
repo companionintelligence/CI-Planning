@@ -40,15 +40,15 @@ function toPlanHints(hints: PlanHint[]) {
 export const engineOpsResolvers = {
   Query: {
     // GET /api/plan/suggestion — nullable outstanding nudge.
-    planSuggestion: () => outstandingSuggestion(currentOwnerId()) ?? null,
+    planSuggestion: async () => (await outstandingSuggestion(currentOwnerId())) ?? null,
   },
 
   Mutation: {
     // POST /api/schedule/run — deterministic reflow; no SSE in the route; audit stays here.
-    runSchedule: (_p: unknown, args: { date?: string | null }) => {
+    runSchedule: async (_p: unknown, args: { date?: string | null }) => {
       const owner = currentOwnerId();
       const date = args.date ?? localISODate();
-      const diff = reflow(owner, date, 'manual');
+      const diff = await reflow(owner, date, 'manual');
       writeAudit({ ownerId: owner, actor: 'owner', action: 'run', entity: `schedule:${date}` });
       return { diff, success: true };
     },
@@ -88,29 +88,29 @@ export const engineOpsResolvers = {
       const owner = currentOwnerId();
       const date = args.date ?? localISODate();
       await authorPlanOrder(owner, date, { force: true });
-      clearSuggestion(owner);
-      const diff = reflow(owner, date, 'reauthor');
+      await clearSuggestion(owner);
+      const diff = await reflow(owner, date, 'reauthor');
       broadcast(owner, 'schedule:done', { reason: 'reauthor', ...diff });
       writeAudit({ ownerId: owner, actor: 'owner', action: 'reauthor', entity: `plan:${date}` });
       return { diff, success: true };
     },
 
     // POST /api/plan/reauthor/dismiss — drop the outstanding suggestion.
-    dismissReauthor: () => {
+    dismissReauthor: async () => {
       const owner = currentOwnerId();
-      clearSuggestion(owner);
+      await clearSuggestion(owner);
       broadcast(owner, 'replan:dismissed', {});
       writeAudit({ ownerId: owner, actor: 'owner', action: 'dismiss', entity: 'plan:reauthor' });
       return { success: true };
     },
 
     // POST /api/auto/fill — propose candidates into staging. Never places.
-    autoFill: () => {
+    autoFill: async () => {
       const owner = currentOwnerId();
-      const added = fillFlightPlanCandidates(owner);
+      const added = await fillFlightPlanCandidates(owner);
       broadcast(owner, 'flight_plan:filled', { added });
       writeAudit({ ownerId: owner, actor: 'owner', action: 'fill', entity: 'flight-plan:fill' });
-      return { result: { step: 'fill', candidatesAdded: added }, flightPlan: listFlightPlan(owner), success: true };
+      return { result: { step: 'fill', candidatesAdded: added }, flightPlan: await listFlightPlan(owner), success: true };
     },
 
     // POST /api/auto/run — horizon resolution + placement (service; audit inside). A
@@ -129,24 +129,24 @@ export const engineOpsResolvers = {
         broadcast(owner, 'auto:placed', { blocksCreated: result.blocksCreated, placed: result.placed, unplaced: result.unplaced, days: result.days });
         broadcast(owner, 'flight_plan:updated', { removed: result.placed });
       }
-      return { result, flightPlan: listFlightPlan(owner), success: true };
+      return { result, flightPlan: await listFlightPlan(owner), success: true };
     },
 
     // POST /api/auto/priority — explicit priority top-up. No SSE in the route.
-    autoPriority: (_p: unknown, args: { date?: string | null }) => {
+    autoPriority: async (_p: unknown, args: { date?: string | null }) => {
       const owner = currentOwnerId();
-      const result = fillByPriority(owner, { date: args.date ?? undefined });
+      const result = await fillByPriority(owner, { date: args.date ?? undefined });
       writeAudit({ ownerId: owner, actor: 'owner', action: 'run', entity: 'flight-plan:priority' });
-      return { result, flightPlan: listFlightPlan(owner), success: true };
+      return { result, flightPlan: await listFlightPlan(owner), success: true };
     },
 
     // POST /api/auto/undo — undo the last placement run. undoLastAuto broadcasts auto:undone
     // internally, so (like the route) NO extra broadcast here.
-    autoUndo: () => {
+    autoUndo: async () => {
       const owner = currentOwnerId();
-      const result = undoLastAuto(owner);
+      const result = await undoLastAuto(owner);
       writeAudit({ ownerId: owner, actor: 'owner', action: 'undo', entity: 'flight-plan:undo' });
-      return { result, flightPlan: listFlightPlan(owner), success: true };
+      return { result, flightPlan: await listFlightPlan(owner), success: true };
     },
 
     // POST /api/planner/clear — validate (service) then snapshot (apply only) + clear +
@@ -173,7 +173,7 @@ export const engineOpsResolvers = {
         backup = filename;
       }
 
-      const result = clearPlannerRange({ owner, start, end, suppress: 'auto', autoOnly: false, dryRun });
+      const result = await clearPlannerRange({ owner, start, end, suppress: 'auto', autoOnly: false, dryRun });
 
       if (!dryRun) {
         writeAudit({ ownerId: owner, actor: 'owner', action: 'clear-range', entity: `planner:${start}..${end ?? ''}` });

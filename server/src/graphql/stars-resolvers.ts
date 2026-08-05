@@ -36,9 +36,9 @@ function parseJson(text: string | null): unknown {
 
 export const starsResolvers = {
   Query: {
-    dayStars: (_p: unknown, args: { from: string; to: string }): DayStarsRow[] =>
+    dayStars: (_p: unknown, args: { from: string; to: string }): Promise<DayStarsRow[]> =>
       listDayStars(currentOwnerId(), requireISODate(args.from, 'from'), requireISODate(args.to, 'to')),
-    dailyRecap: (_p: unknown, args: { date: string }): DailyRecapRow | null =>
+    dailyRecap: (_p: unknown, args: { date: string }): Promise<DailyRecapRow | null> =>
       getDailyRecap(currentOwnerId(), requireISODate(args.date, 'date')),
   },
 

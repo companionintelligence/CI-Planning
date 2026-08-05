@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { boundRuleBefore } from './recurrence.js';
 import { serverTimezone } from '../lib/tz.js';
 import { removeEntityTags } from '../services/tags.js';
@@ -31,10 +31,10 @@ export interface TruncateResult {
   reason?: 'not_found' | 'not_recurring' | 'bad_rule';
 }
 
-function ownerTimezone(owner: string): string {
-  const row = sqlite
+async function ownerTimezone(owner: string): Promise<string> {
+  const row = await store()
     .prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`)
-    .get(owner) as { timezone: string | null } | undefined;
+    .get<{ timezone: string | null }>(owner);
   return row?.timezone || serverTimezone();
 }
 
@@ -45,19 +45,19 @@ function ownerTimezone(owner: string): string {
  * (recurrence_rule / recurrence_dtstart / recurrence_parent_id / occurrence_date), which
  * is why one implementation serves both rather than two that can drift.
  */
-export function truncateSeriesFrom(
+export async function truncateSeriesFrom(
   owner: string,
   table: SeriesEntity,
   templateId: string,
   fromLocalDate: string,
-): TruncateResult {
-  const tpl = sqlite
+): Promise<TruncateResult> {
+  const tpl = await store()
     .prepare(`SELECT id, recurrence_rule FROM ${table} WHERE id = ? AND owner_id = ?`)
-    .get(templateId, owner) as { id: string; recurrence_rule: string | null } | undefined;
+    .get<{ id: string; recurrence_rule: string | null }>(templateId, owner);
   if (!tpl) return { ok: false, removed: 0, templateRemoved: false, reason: 'not_found' };
   if (!tpl.recurrence_rule) return { ok: false, removed: 0, templateRemoved: false, reason: 'not_recurring' };
 
-  const bounded = boundRuleBefore(tpl.recurrence_rule, fromLocalDate, ownerTimezone(owner));
+  const bounded = boundRuleBefore(tpl.recurrence_rule, fromLocalDate, await ownerTimezone(owner));
   if (!bounded.ok) {
     // Fail CLOSED. Leaving the rule unbounded here would silently convert "this and
     // following" into "nothing changes", and the caller would report success.
@@ -68,43 +68,51 @@ export function truncateSeriesFrom(
   // Drop the materialized instances from the split forward. Instances are hard rows and
   // a single occurrence can carry its own tags (CON-3), so clear those first.
   const entityKind = table === 'tasks' ? 'task' : 'time_block';
-  const dropped = sqlite
+  // One transaction: dropping the instances, deciding whether the template can still
+  // materialize, and bounding-or-removing it were a contiguous unit only because nothing
+  // could interleave. Split across awaits, a concurrent read lands between the instance
+  // DELETE and the rule UPDATE and sees a template that still claims the old, unbounded
+  // rule with its future instances already gone — the lazy materializer would re-create
+  // exactly the occurrences this call was removing.
+  return store().transaction(async (): Promise<TruncateResult> => {
+  const dropped = await store()
     .prepare(
       `DELETE FROM ${table}
         WHERE owner_id = ? AND recurrence_parent_id = ?
           AND occurrence_date IS NOT NULL AND occurrence_date >= ?
         RETURNING id`,
     )
-    .all(owner, templateId, fromLocalDate) as { id: string }[];
-  for (const r of dropped) removeEntityTags(entityKind, r.id);
+    .all<{ id: string }>(owner, templateId, fromLocalDate);
+  for (const r of dropped) await removeEntityTags(entityKind, r.id);
 
   // Does anything remain before the split? If the split is at//before the first
   // occurrence the bounded rule covers nothing, and a template that can never
   // materialize is just an invisible orphan — remove it outright.
-  const survivors = sqlite
+  const survivors = (await store()
     .prepare(
       `SELECT COUNT(*) AS n FROM ${table}
         WHERE owner_id = ? AND recurrence_parent_id = ?
           AND occurrence_date IS NOT NULL AND occurrence_date < ?`,
     )
-    .get(owner, templateId, fromLocalDate) as { n: number };
+    .get<{ n: number }>(owner, templateId, fromLocalDate))!;
 
-  const dtstartRow = sqlite
+  const dtstartRow = await store()
     .prepare(`SELECT recurrence_dtstart FROM ${table} WHERE id = ?`)
-    .get(templateId) as { recurrence_dtstart: string | null } | undefined;
+    .get<{ recurrence_dtstart: string | null }>(templateId);
   const startsAfterSplit = (dtstartRow?.recurrence_dtstart ?? '').slice(0, 10) >= fromLocalDate;
 
   if (survivors.n === 0 && startsAfterSplit) {
-    sqlite.prepare(`DELETE FROM ${table} WHERE id = ? AND owner_id = ?`).run(templateId, owner);
-    removeEntityTags(entityKind, templateId);
+    await store().prepare(`DELETE FROM ${table} WHERE id = ? AND owner_id = ?`).run(templateId, owner);
+    await removeEntityTags(entityKind, templateId);
     return { ok: true, removed: dropped.length, templateRemoved: true };
   }
 
-  sqlite
+  await store()
     .prepare(`UPDATE ${table} SET recurrence_rule = ? WHERE id = ? AND owner_id = ?`)
     .run(bounded.rule, templateId, owner);
 
   return { ok: true, removed: dropped.length, templateRemoved: false };
+  });
 }
 
 export interface ForkResult {
@@ -126,26 +134,28 @@ export interface ForkResult {
  * stops copying anything added later — the new half would quietly lose fields — and this
  * table is wide enough that nobody would notice for a long time.
  */
-export function forkSeriesAt(
+export async function forkSeriesAt(
   owner: string,
   table: SeriesEntity,
   templateId: string,
   fromLocalDate: string,
   newId: string,
-): ForkResult {
-  const tpl = sqlite
+): Promise<ForkResult> {
+  const tpl = await store()
     .prepare(`SELECT * FROM ${table} WHERE id = ? AND owner_id = ?`)
-    .get(templateId, owner) as Record<string, unknown> | undefined;
+    .get<Record<string, unknown>>(templateId, owner);
   if (!tpl) return { ok: false, reason: 'not_found' };
   if (!tpl.recurrence_rule) return { ok: false, reason: 'not_recurring' };
 
   // The forward half keeps the ORIGINAL rule (the user may or may not also be changing
   // it); only its anchor moves to the split day. Validate before mutating anything.
   const rule = String(tpl.recurrence_rule);
-  const tz = ownerTimezone(owner);
+  const tz = await ownerTimezone(owner);
   if (!boundRuleBefore(rule, fromLocalDate, tz).ok) return { ok: false, reason: 'bad_rule' };
 
-  const cols = (sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[])
+  // DIALECT: PRAGMA table_info is SQLite-only — Postgres needs information_schema.columns.
+  // Listed with the other deltas in the post-wave-8 section of docs/passA-worklist.md.
+  const cols = (await store().prepare(`PRAGMA table_info(${table})`).all<{ name: string }>())
     .map((c) => c.name)
     .filter((c) => c !== 'id');
 
@@ -162,17 +172,24 @@ export function forkSeriesAt(
   };
 
   const values = cols.map((c) => (c in overrides ? overrides[c] : (tpl[c] ?? null)));
-  sqlite
-    .prepare(`INSERT INTO ${table} (id, ${cols.join(', ')}) VALUES (?, ${cols.map(() => '?').join(', ')})`)
-    .run(newId, ...(values as never[]));
+  // Both halves commit together. Without the transaction a reader between the INSERT and
+  // the truncate sees BOTH templates live on the same rule — the forked series would
+  // briefly materialize twice.
+  return store().transaction(async (): Promise<ForkResult> => {
+    await store()
+      .prepare(`INSERT INTO ${table} (id, ${cols.join(', ')}) VALUES (?, ${cols.map(() => '?').join(', ')})`)
+      .run(newId, ...(values as never[]));
 
-  // Only now truncate the original — if the insert above throws, the old series is
-  // still intact rather than silently cut short with no replacement.
-  const t = truncateSeriesFrom(owner, table, templateId, fromLocalDate);
-  if (!t.ok) {
-    sqlite.prepare(`DELETE FROM ${table} WHERE id = ?`).run(newId);
-    return { ok: false, reason: t.reason ?? 'bad_rule' };
-  }
+    // Only now truncate the original — if the insert above throws, the old series is
+    // still intact rather than silently cut short with no replacement. The explicit
+    // compensating DELETE is kept for the !ok-without-throwing path, which the
+    // transaction alone would commit.
+    const t = await truncateSeriesFrom(owner, table, templateId, fromLocalDate);
+    if (!t.ok) {
+      await store().prepare(`DELETE FROM ${table} WHERE id = ?`).run(newId);
+      return { ok: false, reason: t.reason ?? 'bad_rule' };
+    }
 
-  return { ok: true, newTemplateId: newId };
+    return { ok: true, newTemplateId: newId };
+  });
 }

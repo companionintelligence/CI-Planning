@@ -9,21 +9,49 @@
     {
       "name": "All (server + client)",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["dev"],
+      "runtimeArgs": [
+        "dev"
+      ],
       "port": 5173,
       "autoPort": true
     },
     {
       "name": "Koa API server",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "server", "start"],
+      "runtimeArgs": [
+        "--filter",
+        "server",
+        "start"
+      ],
       "port": 3848
     },
     {
       "name": "Vite client dev",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "client", "dev"],
+      "runtimeArgs": [
+        "--filter",
+        "client",
+        "dev"
+      ],
       "port": 5173
+    },
+    {
+      "name": "Branch preview API (3849)",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-lc",
+        "PORT=3849 pnpm --filter server dev"
+      ],
+      "port": 3849
+    },
+    {
+      "name": "Branch preview client (5174)",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-lc",
+        "VITE_PORT=5174 VITE_API_TARGET=http://localhost:3849 pnpm --filter client dev"
+      ],
+      "port": 5174
     }
   ]
 }

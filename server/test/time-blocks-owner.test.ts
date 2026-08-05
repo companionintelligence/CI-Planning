@@ -175,21 +175,19 @@ function insertBlock(id: string, owner: string, over: Record<string, unknown> = 
 describe('applyOp — block owner isolation (L Gap 5)', () => {
   beforeEach(() => resetDb());
 
-  it('rejects a block op from a different owner as not found', () => {
+  it('rejects a block op from a different owner as not found', async () => {
     insertBlock('blk-1', SYSTEM_OWNER); // owned by SYSTEM_OWNER
-    expect(() =>
-      applyOp(sqlite, {
+    await expect(applyOp({
         opId: 'op-1', entity: 'block', entityId: 'blk-1',
         fields: { title: 'hijacked' }, baseVersion: 1, clientTs: at('12:00'),
-      } as Op, SECOND_OWNER_ID),
-    ).toThrow('not found');
+      } as Op, SECOND_OWNER_ID)).rejects.toThrow('not found');
     // The block is untouched.
     expect((sqlite.prepare(`SELECT title FROM time_blocks WHERE id = 'blk-1'`).get() as { title: string }).title).toBe('Block');
   });
 
-  it('applies an owned block op but never lets a synced op author owner_id', () => {
+  it('applies an owned block op but never lets a synced op author owner_id', async () => {
     insertBlock('blk-2', SYSTEM_OWNER);
-    const result = applyOp(sqlite, {
+    const result = await applyOp({
       opId: 'op-2', entity: 'block', entityId: 'blk-2',
       fields: { owner_id: SECOND_OWNER_ID, title: 'renamed' }, baseVersion: 1, clientTs: at('12:00'),
     } as Op, SYSTEM_OWNER);
@@ -250,18 +248,18 @@ describe('time_blocks HTTP owner-isolation', () => {
 describe('time_blocks cross-owner non-interference', () => {
   beforeEach(() => { resetDb(); createOwner(); });
 
-  it('reflow(B) never deletes or moves owner A auto blocks (F-REFLOW)', () => {
+  it('reflow(B) never deletes or moves owner A auto blocks (F-REFLOW)', async () => {
     // Owner A (SYSTEM) has an auto task-block; a bare reflow for owner B must not
     // clear or move it (clearPriorAuto + snapshotAutoBlocks are owner-scoped now).
     insertBlock('a-auto', SYSTEM_OWNER, { start_at: at('10:00'), end_at: at('11:00') });
-    reflow(SECOND_OWNER_ID, DAY);
+    await reflow(SECOND_OWNER_ID, DAY);
     const row = sqlite.prepare(`SELECT start_at, end_at, status FROM time_blocks WHERE id = 'a-auto'`).get() as
       | { start_at: string; end_at: string; status: string }
       | undefined;
     expect(row).toMatchObject({ start_at: at('10:00'), end_at: at('11:00'), status: 'planned' });
   });
 
-  it('a GET-driven recurrence materialization for B never expands owner A templates (G-RECUR)', () => {
+  it('a GET-driven recurrence materialization for B never expands owner A templates (G-RECUR)', async () => {
     const today = new Date().toISOString().slice(0, 10);
     // Owner A owns a DAILY recurring container template (rule set, no parent).
     insertBlock('a-tmpl', SYSTEM_OWNER, {
@@ -272,8 +270,8 @@ describe('time_blocks cross-owner non-interference', () => {
     const from = `${today}T00:00:00.000Z`;
     const to = new Date(Date.parse(from) + 2 * 86_400_000).toISOString();
 
-    ensureRecurringBlocksForRange(SECOND_OWNER_ID, from, to); // B: sees no template → materializes nothing
-    ensureRecurringBlocksForRange(SYSTEM_OWNER, from, to);     // A: its own template DOES fire (sanity)
+    await ensureRecurringBlocksForRange(SECOND_OWNER_ID, from, to); // B: sees no template → materializes nothing
+    await ensureRecurringBlocksForRange(SYSTEM_OWNER, from, to);     // A: its own template DOES fire (sanity)
 
     const bInstances = sqlite
       .prepare(`SELECT COUNT(*) AS n FROM time_blocks WHERE owner_id = ? AND recurrence_parent_id IS NOT NULL`)

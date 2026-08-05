@@ -74,7 +74,7 @@ describe('placeStartAnchoredTask — exact time', () => {
     const date = dPlus(3);
     const id = await createTask({ scheduled_for: date, task_time: '14:00', estimated_minutes: 60 });
 
-    const res = placeStartAnchoredTask(OWNER, id);
+    const res = await placeStartAnchoredTask(OWNER, id);
     expect(res).toMatchObject({ placed: true, startAt: `${date}T14:00:00.000Z`, endAt: `${date}T15:00:00.000Z` });
 
     const blocks = blocksOf(id);
@@ -87,7 +87,7 @@ describe('placeStartAnchoredTask — exact time', () => {
   it('falls back to the default_time_block_minutes duration (60) when the task has no estimate', async () => {
     const date = dPlus(3);
     const id = await createTask({ scheduled_for: date, task_time: '08:30' });
-    const res = placeStartAnchoredTask(OWNER, id);
+    const res = await placeStartAnchoredTask(OWNER, id);
     expect(res).toMatchObject({ placed: true, startAt: `${date}T08:30:00.000Z`, endAt: `${date}T09:30:00.000Z` });
   });
 
@@ -97,7 +97,7 @@ describe('placeStartAnchoredTask — exact time', () => {
     insertBlock(`${date}T14:00:00.000Z`, `${date}T15:00:00.000Z`);
     const id = await createTask({ scheduled_for: date, task_time: '14:00', estimated_minutes: 60 });
 
-    const res = placeStartAnchoredTask(OWNER, id);
+    const res = await placeStartAnchoredTask(OWNER, id);
     // Nearest fit: 13:00–14:00 right before the meeting (60m away) beats 15:10 after
     // the 10-min break (70m away). Same local day, no overlap.
     expect(res).toMatchObject({ placed: true, startAt: `${date}T13:00:00.000Z`, endAt: `${date}T14:00:00.000Z` });
@@ -109,7 +109,7 @@ describe('placeStartAnchoredTask — exact time', () => {
     insertBlock(`${date}T00:00:00.000Z`, `${dPlus(4)}T00:00:00.000Z`, { locked: 1 });
     const id = await createTask({ scheduled_for: date, task_time: '14:00', estimated_minutes: 60 });
 
-    const res = placeStartAnchoredTask(OWNER, id);
+    const res = await placeStartAnchoredTask(OWNER, id);
     expect(res).toEqual({ placed: false, reason: 'day_full' });
     expect(blocksOf(id).length).toBe(0);
   });
@@ -118,8 +118,8 @@ describe('placeStartAnchoredTask — exact time', () => {
     const date = dPlus(3);
     const id = await createTask({ scheduled_for: date, task_time: '14:00', estimated_minutes: 60 });
 
-    const first = placeStartAnchoredTask(OWNER, id);
-    const second = placeStartAnchoredTask(OWNER, id);
+    const first = await placeStartAnchoredTask(OWNER, id);
+    const second = await placeStartAnchoredTask(OWNER, id);
     expect(first).toMatchObject({ placed: true });
     expect(second).toMatchObject({ placed: true, blockId: (first as { blockId: string }).blockId });
     expect(blocksOf(id).length).toBe(1); // no duplicate
@@ -144,14 +144,14 @@ describe('placeStartAnchoredTask — no task_time (engine picks the time on THAT
       .prepare(`INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, 1)`)
       .run(id, dirId);
 
-    const res = placeStartAnchoredTask(OWNER, id);
+    const res = await placeStartAnchoredTask(OWNER, id);
     expect(res).toMatchObject({ placed: true, startAt: `${date}T10:00:00.000Z`, endAt: `${date}T11:00:00.000Z` });
   });
 
   it('no direction window → earliest workday gap on that date', async () => {
     const date = dPlus(3);
     const id = await createTask({ scheduled_for: date, estimated_minutes: 45 });
-    const res = placeStartAnchoredTask(OWNER, id);
+    const res = await placeStartAnchoredTask(OWNER, id);
     expect(res).toMatchObject({ placed: true, startAt: `${date}T09:00:00.000Z`, endAt: `${date}T09:45:00.000Z` });
   });
 });
@@ -173,7 +173,7 @@ describe('fillFlightPlanCandidates — scheduled_for exclusion (AB1)', () => {
       .run(todayWithBlock, `${today}T10:00:00.000Z`, `${today}T11:00:00.000Z`, OWNER);
     const startless = await createTask({ title: 'Start-less backlog' });
 
-    const added = fillFlightPlanCandidates(OWNER);
+    const added = await fillFlightPlanCandidates(OWNER);
     expect(added).toBe(2);
     const staged = new Set(
       (sqlite.prepare(`SELECT task_id FROM flight_plan WHERE owner_id = ?`).all(OWNER) as { task_id: string }[]).map((r) => r.task_id),

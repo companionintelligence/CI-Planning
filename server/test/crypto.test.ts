@@ -59,22 +59,22 @@ describe('crypto — loadKek versioning', () => {
     restore('CP_KEK_B64_V2');
   });
 
-  it('no-arg loads CP_KEK_B64 (unchanged behavior)', () => {
+  it('no-arg loads CP_KEK_B64 (unchanged behavior)', async () => {
     process.env.CP_KEK_B64 = KEY_V1;
-    expect(loadKek().toString('base64')).toBe(KEY_V1);
+    expect((await loadKek()).toString('base64')).toBe(KEY_V1);
   });
 
-  it('versioned loads CP_KEK_B64_V{n}; falls back to CP_KEK_B64 for the current version', () => {
+  it('versioned loads CP_KEK_B64_V{n}; falls back to CP_KEK_B64 for the current version', async () => {
     process.env.CP_KEK_B64 = KEY_V1; // current version is 1 (config default)
     process.env.CP_KEK_B64_V2 = KEY_V2;
-    expect(loadKek(2).toString('base64')).toBe(KEY_V2);
+    expect((await loadKek(2)).toString('base64')).toBe(KEY_V2);
     // version 1 == config.kek.currentVersion → falls back to CP_KEK_B64.
-    expect(loadKek(1).toString('base64')).toBe(KEY_V1);
+    expect((await loadKek(1)).toString('base64')).toBe(KEY_V1);
   });
 
-  it('throws when the env var is absent', () => {
+  it('throws when the env var is absent', async () => {
     delete process.env.CP_KEK_B64;
-    expect(() => loadKek()).toThrow(/CP_KEK_B64/);
+    await expect(loadKek()).rejects.toThrow(/CP_KEK_B64/);
   });
 });
 
@@ -90,11 +90,11 @@ describe('crypto — rotateKek', () => {
     restore('CP_KEK_B64_V3');
   });
 
-  it('re-seals every row under the new key, bumps key_version, stays decryptable', () => {
+  it('re-seals every row under the new key, bumps key_version, stays decryptable', async () => {
     seedToken('a@x.io', 'secret-A', KEY_V1, 1);
     seedToken('b@x.io', 'secret-B', KEY_V1, 1);
 
-    const { rotated } = rotateKek(2, KEY_V2);
+    const { rotated } = await rotateKek(2, KEY_V2);
     expect(rotated).toBe(2);
 
     for (const acct of ['a@x.io', 'b@x.io']) {
@@ -108,7 +108,7 @@ describe('crypto — rotateKek', () => {
     }
   });
 
-  it('only rotates rows that lag the target version (already-current rows are skipped)', () => {
+  it('only rotates rows that lag the target version (already-current rows are skipped)', async () => {
     // Two rows already at v2 and one lagging at v1. Rotate to v3: all three lag v3, so all
     // three are re-sealed. The skip predicate (key_version <> target) is what keeps a
     // re-run from double-sealing — verified by the refuse-on-≤-max test below.
@@ -118,42 +118,42 @@ describe('crypto — rotateKek', () => {
     process.env.CP_KEK_B64_V1 = KEY_V1;
     process.env.CP_KEK_B64_V2 = KEY_V2;
 
-    expect(rotateKek(3, KEY_V3).rotated).toBe(3);
+    expect((await rotateKek(3, KEY_V3)).rotated).toBe(3);
     for (const a of ['lag@x.io', 'cur1@x.io', 'cur2@x.io']) {
       expect(tokenRow(a).key_version).toBe(3);
     }
   });
 
-  it('a second rotation to the SAME version is refused — no double-seal (idempotent)', () => {
+  it('a second rotation to the SAME version is refused — no double-seal (idempotent)', async () => {
     seedToken('a@x.io', 'secret-A', KEY_V1, 1);
-    expect(rotateKek(2, KEY_V2).rotated).toBe(1); // first run rotates the row
+    expect((await rotateKek(2, KEY_V2)).rotated).toBe(1); // first run rotates the row
     const after = tokenRow('a@x.io');
     // Re-running the SAME rotation throws (≤ max) — the row is never re-sealed.
-    expect(() => rotateKek(2, KEY_V2)).toThrow(/greater than/);
+    await expect(rotateKek(2, KEY_V2)).rejects.toThrow(/greater than/);
     const stillAfter = tokenRow('a@x.io');
     expect(stillAfter.iv).toBe(after.iv); // untouched
     expect(stillAfter.ciphertext).toBe(after.ciphertext);
     expect(stillAfter.key_version).toBe(2);
   });
 
-  it('reads the new key from CP_KEK_B64_V{n} when no key arg is passed', () => {
+  it('reads the new key from CP_KEK_B64_V{n} when no key arg is passed', async () => {
     seedToken('a@x.io', 'secret-A', KEY_V1, 1);
     process.env.CP_KEK_B64_V2 = KEY_V2;
-    expect(rotateKek(2).rotated).toBe(1);
+    expect((await rotateKek(2)).rotated).toBe(1);
     expect(tokenRow('a@x.io').key_version).toBe(2);
   });
 
-  it('refuses (throws, no writes) when the new key is not 32 bytes', () => {
+  it('refuses (throws, no writes) when the new key is not 32 bytes', async () => {
     seedToken('a@x.io', 'secret-A', KEY_V1, 1);
     const shortKey = randomBytes(16).toString('base64');
-    expect(() => rotateKek(2, shortKey)).toThrow(/32 bytes/);
+    await expect(rotateKek(2, shortKey)).rejects.toThrow(/32 bytes/);
     // Row untouched.
     expect(tokenRow('a@x.io').key_version).toBe(1);
   });
 
-  it('refuses when newVersion is not greater than the existing max key_version', () => {
+  it('refuses when newVersion is not greater than the existing max key_version', async () => {
     seedToken('a@x.io', 'secret-A', KEY_V2, 2); // already at v2
-    expect(() => rotateKek(2, KEY_V2)).toThrow(/greater than/);
+    await expect(rotateKek(2, KEY_V2)).rejects.toThrow(/greater than/);
     expect(tokenRow('a@x.io').key_version).toBe(2);
   });
 });

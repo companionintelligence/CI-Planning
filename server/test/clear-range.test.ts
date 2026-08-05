@@ -88,7 +88,7 @@ describe('clearPlannerRange — recurring block templates', () => {
     const tpl = await makeRecurringBlock('FREQ=DAILY');
     expect(await instancesOf(tpl.id)).toHaveLength(5); // T0..T4
 
-    const res = clearPlannerRange({ owner: OWNER, start: T2, suppress: 'auto', dryRun: false });
+    const res = await clearPlannerRange({ owner: OWNER, start: T2, suppress: 'auto', dryRun: false });
     expect(res.mode).toBe('open-ended');
     expect(res.blocksDeleted).toBe(3); // T2, T3, T4
     expect(res.generators).toEqual([
@@ -106,7 +106,7 @@ describe('clearPlannerRange — recurring block templates', () => {
     const tpl = await makeRecurringBlock('FREQ=DAILY');
     expect(await instancesOf(tpl.id)).toHaveLength(5);
 
-    const res = clearPlannerRange({ owner: OWNER, start: T1, end: T2, suppress: 'auto', dryRun: false });
+    const res = await clearPlannerRange({ owner: OWNER, start: T1, end: T2, suppress: 'auto', dryRun: false });
     expect(res.mode).toBe('bounded');
     expect(res.blocksDeleted).toBe(2); // T1, T2 only
     expect(res.generators[0]).toMatchObject({ kind: 'block', action: 'exdates', daysSuppressed: 2 });
@@ -122,7 +122,7 @@ describe('clearPlannerRange — recurring block templates', () => {
     const tpl = await makeRecurringBlock('FREQ=DAILY');
     await instancesOf(tpl.id);
 
-    const res = clearPlannerRange({ owner: OWNER, start: T2, suppress: 'none', dryRun: false });
+    const res = await clearPlannerRange({ owner: OWNER, start: T2, suppress: 'none', dryRun: false });
     expect(res.blocksDeleted).toBe(3);
     expect(res.generators).toHaveLength(0); // nothing suppressed
     expect(ruleOf(tpl.id)).toBe('FREQ=DAILY');
@@ -137,12 +137,12 @@ describe('clearPlannerRange — recurring block templates', () => {
     await instancesOf(tpl.id);
     const before = (sqlite.prepare(`SELECT COUNT(*) AS n FROM time_blocks`).get() as { n: number }).n;
 
-    const dry = clearPlannerRange({ owner: OWNER, start: T1, suppress: 'auto', dryRun: true });
+    const dry = await clearPlannerRange({ owner: OWNER, start: T1, suppress: 'auto', dryRun: true });
     expect(dry.blocksDeleted).toBe(4); // T1..T4
     expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM time_blocks`).get() as { n: number }).n).toBe(before); // unchanged
     expect(ruleOf(tpl.id)).toBe('FREQ=DAILY'); // not capped
 
-    const wet = clearPlannerRange({ owner: OWNER, start: T1, suppress: 'auto', dryRun: false });
+    const wet = await clearPlannerRange({ owner: OWNER, start: T1, suppress: 'auto', dryRun: false });
     expect(wet.blocksDeleted).toBe(dry.blocksDeleted);
   });
 });
@@ -159,7 +159,7 @@ describe('clearPlannerRange — autoOnly filter', () => {
       .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, owner_id) VALUES (uuid7(), 'Locked', 'timeblock', ?, ?, 1, 0, 'manual', 'planned', ?)`)
       .run(at(T2, '16:00'), at(T2, '17:00'), OWNER);
 
-    clearPlannerRange({ owner: OWNER, start: T2, suppress: 'none', autoOnly: true, dryRun: false });
+    await clearPlannerRange({ owner: OWNER, start: T2, suppress: 'none', autoOnly: true, dryRun: false });
 
     // Recurring instances on/after T2 gone (they have recurrence_parent_id despite is_auto=0).
     // Query the DB directly — a GET would re-materialize them (suppress:'none' leaves the rule).
@@ -180,7 +180,7 @@ describe('clearPlannerRange — autoOnly filter', () => {
       .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, owner_id) VALUES (uuid7(), 'Locked', 'timeblock', ?, ?, 1, 0, 'manual', 'planned', ?)`)
       .run(at(T2, '16:00'), at(T2, '17:00'), OWNER);
 
-    const res = clearPlannerRange({ owner: OWNER, start: T2, suppress: 'none', autoOnly: false, dryRun: false });
+    const res = await clearPlannerRange({ owner: OWNER, start: T2, suppress: 'none', autoOnly: false, dryRun: false });
     expect(res.blocksDeleted).toBe(2);
     expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM time_blocks WHERE title IN ('Manual','Locked')`).get() as { n: number }).n).toBe(0);
   });
@@ -191,7 +191,7 @@ describe('clearPlannerRange — daily_plan', () => {
     const task = insertTask('planned');
     const ins = (date: string) => sqlite.prepare(`INSERT INTO daily_plan (owner_id, date, task_id, position) VALUES (?, ?, ?, 0)`).run(OWNER, date, task);
     [T0, T1, T2, T3].forEach(ins);
-    const res = clearPlannerRange({ owner: OWNER, start: T1, end: T2, suppress: 'none', dryRun: false });
+    const res = await clearPlannerRange({ owner: OWNER, start: T1, end: T2, suppress: 'none', dryRun: false });
     expect(res.dailyPlanDeleted).toBe(2);
     expect((sqlite.prepare(`SELECT date FROM daily_plan ORDER BY date`).all() as { date: string }[]).map((r) => r.date)).toEqual([T0, T3]);
   });
@@ -204,7 +204,7 @@ describe('clearPlannerRange — recurring patterns', () => {
     await getBlocks(at(T0, '00:00'), at(T3, '23:59')); // lazy-place T0..T3
     expect(patternBlockCount(pid)).toBeGreaterThanOrEqual(4);
 
-    const res = clearPlannerRange({ owner: OWNER, start: T2, suppress: 'auto', dryRun: false });
+    const res = await clearPlannerRange({ owner: OWNER, start: T2, suppress: 'auto', dryRun: false });
     expect(res.generators.some((g) => g.kind === 'pattern' && g.action === 'until-cap')).toBe(true);
     expect((sqlite.prepare(`SELECT recurrence_rule FROM patterns WHERE id = ?`).get(pid) as { recurrence_rule: string }).recurrence_rule).toContain('UNTIL=');
 
@@ -214,7 +214,7 @@ describe('clearPlannerRange — recurring patterns', () => {
     expect(days).toEqual([T0, T1]);
   });
 
-  it('open-ended: caps EVERY recurring member-task rule of a multi-member Habit, so the clear sticks', () => {
+  it('open-ended: caps EVERY recurring member-task rule of a multi-member Habit, so the clear sticks', async () => {
     // Regression (adversarial review): the UNION emits one row per recurring member
     // task. Deduping by pattern id would cap only the first member's rule; the second
     // keeps firing and re-places the pattern past the cutoff.
@@ -228,7 +228,7 @@ describe('clearPlannerRange — recurring patterns', () => {
     sqlite.prepare(`INSERT INTO pattern_tasks (pattern_id, task_id, position) VALUES (?, ?, 0)`).run(pid, t1);
     sqlite.prepare(`INSERT INTO pattern_tasks (pattern_id, task_id, position) VALUES (?, ?, 1)`).run(pid, t2);
 
-    clearPlannerRange({ owner: OWNER, start: T2, suppress: 'auto', dryRun: false });
+    await clearPlannerRange({ owner: OWNER, start: T2, suppress: 'auto', dryRun: false });
 
     const rule = (id: string) => (sqlite.prepare(`SELECT recurrence_rule FROM tasks WHERE id = ?`).get(id) as { recurrence_rule: string }).recurrence_rule;
     expect(rule(t1)).toContain('UNTIL='); // both member rules capped, not just the first
@@ -240,14 +240,14 @@ describe('clearPlannerRange — recurring patterns', () => {
     const pid = insertPattern('Routine', 'DailyRoutine', [t], 'FREQ=DAILY', noon(T0));
     await getBlocks(at(T0, '00:00'), at(T3, '23:59'));
 
-    const res = clearPlannerRange({ owner: OWNER, start: T1, end: T2, suppress: 'auto', dryRun: false });
+    const res = await clearPlannerRange({ owner: OWNER, start: T1, end: T2, suppress: 'auto', dryRun: false });
     const patGen = res.generators.find((g) => g.kind === 'pattern')!;
     expect(patGen).toMatchObject({ action: 'optouts', daysSuppressed: 2 });
     expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM pattern_day_optouts WHERE pattern_id = ?`).get(pid) as { n: number }).n).toBe(2);
     expect((sqlite.prepare(`SELECT recurrence_rule FROM patterns WHERE id = ?`).get(pid) as { recurrence_rule: string }).recurrence_rule).toBe('FREQ=DAILY'); // NOT capped
 
     // The opted-out day is honored by the placer directly.
-    const placed = placePatternOnDay(OWNER, pid, { date: T1 });
+    const placed = await placePatternOnDay(OWNER, pid, { date: T1 });
     expect(placed.skippedAlreadyPlaced).toBe(true);
   });
 });

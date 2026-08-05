@@ -120,38 +120,38 @@ function logLearnable(o: { outcome: string; scores: Record<string, number>; ageD
 }
 
 describe('acceptance math', () => {
-  it('taken/(decided) per slot; pending <24h rows excluded from the denominator', () => {
+  it('taken/(decided) per slot; pending <24h rows excluded from the denominator', async () => {
     logRow({ slot: 'habitual', outcome: 'staged' });
     logRow({ slot: 'habitual', outcome: 'opened' });
     logRow({ slot: 'habitual', outcome: 'dismissed' });
     logRow({ slot: 'habitual', outcome: 'shown', ageHours: 48 }); // ignored — counts, not taken
     logRow({ slot: 'habitual', outcome: 'shown', ageHours: 2 });  // pending — excluded entirely
-    const m = trialityMetrics(OWNER, NOW, 30);
+    const m = await trialityMetrics(OWNER, NOW, 30);
     expect(m.acceptance.habitual).toEqual({ shown: 4, taken: 2, pending: 1, rate: 0.5 });
   });
 
-  it('remount spam is ONE vote in the tile, exactly as it is in learning', () => {
+  it('remount spam is ONE vote in the tile, exactly as it is in learning', async () => {
     // The prover's finding: the log has two readers, and the tile was still
     // counting raw impressions — a day of banner remounts reported hundreds of
     // "shown" for a handful of real suggestions and understated acceptance ~3×.
     for (let i = 0; i < 40; i++) logRow({ slot: 'habitual', outcome: 'shown', ageHours: 2, ref: 'same-pick' });
     logRow({ slot: 'habitual', outcome: 'staged', ageHours: 2, ref: 'same-pick' }); // the decision wins the group
     logRow({ slot: 'habitual', outcome: 'dismissed', ageHours: 3, ref: 'other-pick' });
-    const m = trialityMetrics(OWNER, NOW, 30);
+    const m = await trialityMetrics(OWNER, NOW, 30);
     expect(m.acceptance.habitual).toEqual({ shown: 2, taken: 1, pending: 0, rate: 0.5 });
   });
 
-  it('no shown rows ⇒ null rate — no data is not 0%', () => {
-    const m = trialityMetrics(OWNER, NOW, 30);
+  it('no shown rows ⇒ null rate — no data is not 0%', async () => {
+    const m = await trialityMetrics(OWNER, NOW, 30);
     expect(m.acceptance.habitual.rate).toBeNull();
     expect(m.acceptance.novel.rate).toBeNull();
     expect(m.novelTrend).toEqual({ current: null, prior: null });
   });
 
-  it('novel trend compares this window against the prior same-length window', () => {
+  it('novel trend compares this window against the prior same-length window', async () => {
     logRow({ slot: 'novel', outcome: 'staged', ageHours: 24 * 5 });      // current window: 1/1
     logRow({ slot: 'novel', outcome: 'dismissed', ageHours: 24 * 40 });  // prior window: 0/1
-    const m = trialityMetrics(OWNER, NOW, 30);
+    const m = await trialityMetrics(OWNER, NOW, 30);
     expect(m.novelTrend.current).toBe(1);
     expect(m.novelTrend.prior).toBe(0);
   });
@@ -160,8 +160,8 @@ describe('acceptance math', () => {
 describe('confidence calibration', () => {
   /** The tile, with the null guard spent once. Every case here seeds at least one row
    *  this version can read, so a null return is a failure rather than a state. */
-  function cal(): TrialityCalibration {
-    const c = trialityMetrics(OWNER, NOW, 30).calibration;
+  async function cal(): Promise<TrialityCalibration> {
+    const c = (await trialityMetrics(OWNER, NOW, 30)).calibration;
     expect(c).not.toBeNull();
     return c as TrialityCalibration;
   }
@@ -210,7 +210,7 @@ describe('confidence calibration', () => {
     expect(parseConfidence(confidenceJson('solid'))).toBeNull();
   });
 
-  it('calibration collapses impressions — 40 remounts of one suggestion are ONE row, in ONE band', () => {
+  it('calibration collapses impressions — 40 remounts of one suggestion are ONE row, in ONE band', async () => {
     // The ~3× inflation this file already fixed once for `acceptance`, now arriving at a
     // THIRD reader of triality_log. GET /next appends three fresh rows and the banner
     // refetches on every mount, so a per-band rate over RAW rows would inflate exactly the
@@ -222,22 +222,22 @@ describe('confidence calibration', () => {
     }
     logRow({ band: 'firm', outcome: 'staged', ageHours: 2, ref: 'same-pick' }); // the decision wins the group
 
-    const c = cal();
+    const c = await cal();
     expect(bandStats(c, 'firm')).toMatchObject({ shown: 1, taken: 1, pending: 0, rate: 1 });
     expect(credited(c)).toBe(1);
     expect(c.unbanded + c.otherModel).toBe(0);
     // …and the two tiles stay one vote apiece: divergent counts here would make the
     // calibration grid dispute the acceptance grid it sits under.
-    expect(trialityMetrics(OWNER, NOW, 30).acceptance.habitual.shown).toBe(1);
+    expect((await trialityMetrics(OWNER, NOW, 30)).acceptance.habitual.shown).toBe(1);
   });
 
-  it('NULL-confidence rows land in unbanded only — never coerced to guess', () => {
+  it('NULL-confidence rows land in unbanded only — never coerced to guess', async () => {
     seedBand('firm', { decided: 3, taken: 3 });
     logRow({ outcome: 'staged' });                 // pre-v2.2: shown before the column existed
     logRow({ outcome: 'dismissed' });
     logRow({ outcome: 'shown', ageHours: 2 });     // pending — and not a BAND's pending either
 
-    const c = cal();
+    const c = await cal();
     expect(c.unbanded).toBe(3);
     expect(c.otherModel).toBe(0);
     expect(bandStats(c, 'firm')).toMatchObject({ shown: 3, taken: 3, pending: 0, rate: 1 });
@@ -247,31 +247,31 @@ describe('confidence calibration', () => {
     expect(credited(c)).toBe(3);
   });
 
-  it('a window of only NULL-confidence rows reports no calibration at all', () => {
+  it('a window of only NULL-confidence rows reports no calibration at all', async () => {
     // Not a three-band grid of zeros: pre-v2.2 rows skew toward the feature's earliest
     // period, so a rendered grid would read as "the bands were measured and found equal".
     logRow({ outcome: 'staged' });
     logRow({ outcome: 'dismissed' });
-    const m = trialityMetrics(OWNER, NOW, 30);
+    const m = await trialityMetrics(OWNER, NOW, 30);
     expect(m.calibration).toBeNull();
     expect(m.acceptance.habitual.shown).toBe(2); // …while the tile above still sees them
   });
 
-  it('version-mismatched rows land in otherModel only', () => {
+  it('version-mismatched rows land in otherModel only', async () => {
     // They claim `firm`, which is the whole risk: a retune that kept the same band names
     // would silently pool two models' evidence and destroy what motivated the retune.
     const EARLIER_MODEL = CONFIDENCE_MODEL_VERSION - 1;
     seedBand('firm', { decided: 2, taken: 2 });
     for (let i = 0; i < 4; i++) logRow({ band: 'firm', outcome: 'staged', v: EARLIER_MODEL });
 
-    const c = cal();
+    const c = await cal();
     expect(c.otherModel).toBe(4);
     expect(c.unbanded).toBe(0);
     expect(bandStats(c, 'firm')).toMatchObject({ shown: 2, taken: 2, rate: 1 });
     expect(credited(c)).toBe(2);
   });
 
-  it('a window of ONLY older-model rows still returns a payload, so the disclosure renders', () => {
+  it('a window of ONLY older-model rows still returns a payload, so the disclosure renders', async () => {
     // The null guard keys on `unbanded === rows.length`, not on "no current-model rows",
     // and that distinction is the whole point of shipping a version at all. Tighten it to
     // `unbanded + otherModel === rows.length` — a natural-looking simplification, since
@@ -284,46 +284,46 @@ describe('confidence calibration', () => {
     const EARLIER_MODEL = CONFIDENCE_MODEL_VERSION - 1;
     for (let i = 0; i < 5; i++) logRow({ band: 'firm', outcome: 'staged', v: EARLIER_MODEL });
 
-    const c = cal();
+    const c = await cal();
     expect(c.otherModel).toBe(5);
     expect(c.unbanded).toBe(0);
     expect(c.verdict).toBe('insufficient');
     for (const b of c.bands) expect(b).toMatchObject({ shown: 0, taken: 0, rate: null });
   });
 
-  it('pending is drawn at the same 24h line as acceptance — both tiles agree on one corpus', () => {
+  it('pending is drawn at the same 24h line as acceptance — both tiles agree on one corpus', async () => {
     const PENDING_HOURS = PENDING_MS / 3_600_000;
     logRow({ band: 'firm', outcome: 'staged' });
     logRow({ band: 'firm', outcome: 'dismissed' });
     logRow({ band: 'firm', outcome: 'shown', ageHours: PENDING_HOURS });     // AT the line ⇒ ignored, decided
     logRow({ band: 'firm', outcome: 'shown', ageHours: PENDING_HOURS - 1 }); // inside it ⇒ pending
 
-    const m = trialityMetrics(OWNER, NOW, 30);
+    const m = await trialityMetrics(OWNER, NOW, 30);
     const f = bandStats(m.calibration as TrialityCalibration, 'firm');
     expect(m.acceptance.habitual).toEqual({ shown: 3, taken: 1, pending: 1, rate: 0.333 });
     expect({ shown: f.shown, taken: f.taken, pending: f.pending, rate: f.rate })
       .toEqual(m.acceptance.habitual);
   });
 
-  it('honest zeros: no rows ⇒ no calibration; a band with nothing decided ⇒ null rate, not 0%', () => {
-    expect(trialityMetrics(OWNER, NOW, 30).calibration).toBeNull();
+  it('honest zeros: no rows ⇒ no calibration; a band with nothing decided ⇒ null rate, not 0%', async () => {
+    expect((await trialityMetrics(OWNER, NOW, 30)).calibration).toBeNull();
 
     seedBand('firm', { decided: 2, taken: 2 });
     logRow({ band: 'tentative', outcome: 'shown', ageHours: 2 }); // pending only — nothing decided
     seedBand('guess', { decided: 2, taken: 0 });
 
-    const c = cal();
+    const c = await cal();
     expect(bandStats(c, 'tentative')).toMatchObject({ shown: 0, taken: 0, pending: 1, rate: null });
     // A band that WAS decided and never taken is a real 0%, and it must stay
     // distinguishable from the null above — that difference is the whole honest-zero rule.
     expect(bandStats(c, 'guess')).toMatchObject({ shown: 2, taken: 0, pending: 0, rate: 0 });
   });
 
-  it('verdict: insufficient until two bands clear the floor', () => {
+  it('verdict: insufficient until two bands clear the floor', async () => {
     seedBand('firm', { decided: OUTCOME_FLOOR, taken: OUTCOME_FLOOR });
     seedBand('tentative', { decided: OUTCOME_FLOOR - 1, taken: 0 });
 
-    const c = cal();
+    const c = await cal();
     expect(c.floor).toBe(OUTCOME_FLOOR);
     expect(c.verdict).toBe('insufficient');
     // The floor gates the COMPARISON, not the numbers: both rates still compute and still
@@ -333,56 +333,56 @@ describe('confidence calibration', () => {
     expect(c.confounded).toBe(false);
   });
 
-  it('verdict: ordered when every adjacent band is taken less than the one above it', () => {
+  it('verdict: ordered when every adjacent band is taken less than the one above it', async () => {
     seedBand('firm', { decided: OUTCOME_FLOOR, taken: takenFor(0.8) });
     seedBand('tentative', { decided: OUTCOME_FLOOR, taken: takenFor(0.5) });
     seedBand('guess', { decided: OUTCOME_FLOOR, taken: takenFor(0.2) });
 
-    const c = cal();
+    const c = await cal();
     expect(c.bands.map((b) => b.band)).toEqual(['firm', 'tentative', 'guess']);
     expect(c.verdict).toBe('ordered');
     expect(bandStats(c, 'firm').rate! - bandStats(c, 'tentative').rate!).toBeGreaterThanOrEqual(c.minGap);
     expect(bandStats(c, 'tentative').rate! - bandStats(c, 'guess').rate!).toBeGreaterThanOrEqual(c.minGap);
   });
 
-  it('verdict: flat when no adjacent gap clears minGap', () => {
+  it('verdict: flat when no adjacent gap clears minGap', async () => {
     seedBand('firm', { decided: OUTCOME_FLOOR, taken: takenFor(0.55) });
     seedBand('tentative', { decided: OUTCOME_FLOOR, taken: takenFor(0.5) });
     seedBand('guess', { decided: OUTCOME_FLOOR, taken: takenFor(0.5) });
 
-    const c = cal();
+    const c = await cal();
     expect(c.verdict).toBe('flat');
     // Ranked in the right ORDER and still flat: an ordering smaller than minGap is one
     // flipped outcome wide, so calling it a result would be reading noise.
     expect(bandStats(c, 'firm').rate! - bandStats(c, 'tentative').rate!).toBeLessThan(c.minGap);
   });
 
-  it('verdict: inverted when the ordering runs backwards', () => {
+  it('verdict: inverted when the ordering runs backwards', async () => {
     seedBand('firm', { decided: OUTCOME_FLOOR, taken: takenFor(0.2) });
     seedBand('tentative', { decided: OUTCOME_FLOOR, taken: takenFor(0.5) });
     seedBand('guess', { decided: OUTCOME_FLOOR, taken: takenFor(0.8) });
 
-    expect(cal().verdict).toBe('inverted');
+    expect((await cal()).verdict).toBe('inverted');
   });
 
-  it('inverted beats ordered — the scan is over ADJACENT pairs, not the extremes', () => {
+  it('inverted beats ordered — the scan is over ADJACENT pairs, not the extremes', async () => {
     seedBand('firm', { decided: OUTCOME_FLOOR, taken: takenFor(0.2) });
     seedBand('tentative', { decided: OUTCOME_FLOOR, taken: takenFor(0.6) });
     seedBand('guess', { decided: OUTCOME_FLOOR, taken: takenFor(0.1) });
 
-    const c = cal();
+    const c = await cal();
     // firm-vs-guess alone spans the gap in the right direction, so an extremes-only scan
     // would report `ordered` on a model that is visibly backwards at its first step.
     expect(bandStats(c, 'firm').rate! - bandStats(c, 'guess').rate!).toBeGreaterThanOrEqual(c.minGap);
     expect(c.verdict).toBe('inverted');
   });
 
-  it('a middle-band inversion is caught', () => {
+  it('a middle-band inversion is caught', async () => {
     seedBand('firm', { decided: OUTCOME_FLOOR, taken: takenFor(0.6) });
     seedBand('tentative', { decided: OUTCOME_FLOOR, taken: takenFor(0.2) });
     seedBand('guess', { decided: OUTCOME_FLOOR, taken: takenFor(0.45) });
 
-    const c = cal();
+    const c = await cal();
     // The outer pair is ordered and the first adjacent pair is ordered — only
     // tentative-vs-guess is reversed, and that alone is the model falsifying itself.
     expect(bandStats(c, 'firm').rate! - bandStats(c, 'guess').rate!).toBeGreaterThanOrEqual(c.minGap);
@@ -395,7 +395,7 @@ describe('confidence calibration', () => {
   const MINORITY = 5;
   const MAJORITY = OUTCOME_FLOOR - MINORITY;
 
-  it('confounded when the top and bottom bands are dominated by different slots', () => {
+  it('confounded when the top and bottom bands are dominated by different slots', async () => {
     // firm is Habitual-heavy and guess Novel-heavy BY CONSTRUCTION — Novel's veto selects
     // the low-H, low-evidence tail — so an `ordered` verdict here may be the slot effect
     // the acceptance grid already shows rather than confidence working. The flag says so.
@@ -404,24 +404,24 @@ describe('confidence calibration', () => {
     seedBand('guess', { decided: MAJORITY, taken: 0, slot: 'novel' });
     seedBand('guess', { decided: MINORITY, taken: MINORITY, slot: 'contextual' });
 
-    const c = cal();
+    const c = await cal();
     expect(bandStats(c, 'firm').slotMix).toEqual({ habitual: MAJORITY, contextual: MINORITY, novel: 0 });
     expect(bandStats(c, 'guess').slotMix).toEqual({ habitual: 0, contextual: MINORITY, novel: MAJORITY });
     expect(c.verdict).toBe('ordered');   // …and confounded rides ON TOP of a passing verdict
     expect(c.confounded).toBe(true);
   });
 
-  it('not confounded when both ends share a modal slot', () => {
+  it('not confounded when both ends share a modal slot', async () => {
     seedBand('firm', { decided: MAJORITY, taken: MAJORITY, slot: 'habitual' });
     seedBand('firm', { decided: MINORITY, taken: 0, slot: 'novel' });
     seedBand('guess', { decided: MAJORITY, taken: 0, slot: 'habitual' });
     seedBand('guess', { decided: MINORITY, taken: 0, slot: 'novel' });
 
-    const c = cal();
+    const c = await cal();
     expect(c.confounded).toBe(false);
   });
 
-  it('a group whose impressions carry different bands is credited to the representative the collapse kept', () => {
+  it('a group whose impressions carry different bands is credited to the representative the collapse kept', async () => {
     // One suggestion, one owner-local day, two readings: in_work_hours, momentum and
     // free_gap all move within a day, so the two bands genuinely differ. The credited band
     // is the one on the row the collapse KEPT — never averaged, never re-derived.
@@ -429,21 +429,21 @@ describe('confidence calibration', () => {
     logRow({ ref: REF, band: 'firm', outcome: 'shown', ageHours: ageOf('2026-07-28T09:00:00.000Z') });
     logRow({ ref: REF, band: 'tentative', outcome: 'staged', ageHours: ageOf('2026-07-28T16:00:00.000Z') });
 
-    const c = cal();
+    const c = await cal();
     expect(credited(c)).toBe(1);
     // The 16:00 reading is the one that was in front of the owner when they decided.
     expect(bandStats(c, 'tentative')).toMatchObject({ shown: 1, taken: 1, pending: 0, rate: 1 });
     expect(bandStats(c, 'firm')).toMatchObject({ shown: 0, taken: 0, pending: 0, rate: null });
   });
 
-  it('an off-enum band never buckets — it counts as unbanded', () => {
+  it('an off-enum band never buckets — it counts as unbanded', async () => {
     // Hand-edited, or written by a future version this one cannot interpret. Either way it
     // is not a reading, and the honest place for it is the same disclosure line as a
     // pre-v2.2 NULL — never `guess`, which is a positive claim about a real pick.
     seedBand('firm', { decided: 2, taken: 2 });
     for (let i = 0; i < 3; i++) logRow({ band: 'solid', outcome: 'staged' });
 
-    const c = cal();
+    const c = await cal();
     expect(c.unbanded).toBe(3);
     expect(c.otherModel).toBe(0);
     expect(credited(c)).toBe(2);
@@ -452,11 +452,11 @@ describe('confidence calibration', () => {
 });
 
 describe('weights', () => {
-  it('returns null while there are no learned ROWS yet — endpoint still whole', () => {
+  it('returns null while there are no learned ROWS yet — endpoint still whole', async () => {
     // Migration 0142 always creates triality_weights, so "not started" is an EMPTY
     // table, never a missing one — and null (not []) is what the tile keys its
     // "learning hasn't started" state on. A reset lands back in exactly this state.
-    const m = trialityMetrics(OWNER, NOW, 30);
+    const m = await trialityMetrics(OWNER, NOW, 30);
     expect(m.weights).toBeNull();
   });
 
@@ -467,9 +467,9 @@ describe('weights', () => {
       logLearnable({ outcome: 'staged', scores: { F: 1, H: 0, Q: 0.5 }, ageDays: 3 + i });
       logLearnable({ outcome: 'dismissed', scores: { F: 0, H: 1, Q: 0.5 }, ageDays: 3 + i });
     }
-    expect(calibrateTriality(OWNER, NOW).slotsWritten).toBe(1);
+    expect((await calibrateTriality(OWNER, NOW)).slotsWritten).toBe(1);
 
-    const m = trialityMetrics(OWNER, NOW, 30);
+    const m = await trialityMetrics(OWNER, NOW, 30);
     expect(m.weights).toHaveLength(1);
     const row = m.weights![0]!;
     expect(row.slot).toBe('habitual');
@@ -486,15 +486,15 @@ describe('weights', () => {
     expect(res.body.weights).toEqual(m.weights);
   });
 
-  it('null again after the learned rows go — a reset is indistinguishable from never having learned', () => {
+  it('null again after the learned rows go — a reset is indistinguishable from never having learned', async () => {
     logLearnable({ outcome: 'staged', scores: { F: 1, H: 0, Q: 0.5 }, ageDays: 3 });
     for (let i = 0; i < 19; i++) {
       logLearnable({ outcome: i % 2 ? 'staged' : 'dismissed', scores: { F: i % 2, H: 0.5, Q: 0.5 }, ageDays: 4 + i });
     }
-    calibrateTriality(OWNER, NOW);
-    expect(trialityMetrics(OWNER, NOW, 30).weights).not.toBeNull();
+    await calibrateTriality(OWNER, NOW);
+    expect((await trialityMetrics(OWNER, NOW, 30)).weights).not.toBeNull();
     sqlite.prepare(`DELETE FROM triality_weights WHERE owner_id = ?`).run(OWNER);
-    expect(trialityMetrics(OWNER, NOW, 30).weights).toBeNull();
+    expect((await trialityMetrics(OWNER, NOW, 30)).weights).toBeNull();
   });
 });
 

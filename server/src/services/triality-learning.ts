@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { localDateInTZ } from '../lib/tz.js';
 import { ownerTimezone } from '../engine/recurrence-generate.js';
 import { DEFAULT_WEIGHTS, SLOTS, type Slot, type SlotWeights } from './triality.js';
@@ -189,11 +189,12 @@ export function applyUpdateRule(
 
 // ORDER BY id: uuid7 ids are time-ordered, so this fixes the row order and thus
 // the float summation order — the same log must produce bit-identical weights.
-const selectWindow = sqlite.prepare(
+// SQL at module level, prepared inside calibrateTriality — a module-level store()
+// call would throw when this module loads before db/index installs the backend.
+const SELECT_WINDOW_SQL =
   `SELECT slot, outcome, shown_at, scores, action_ref, local_date FROM triality_log
     WHERE owner_id = ? AND shown_at >= ? AND shown_at <= ?
-    ORDER BY id ASC`,
-);
+    ORDER BY id ASC`;
 
 /**
  * Collapse IMPRESSIONS into DECISIONS — one vote per (slot, action, owner-local day).
@@ -241,12 +242,11 @@ export function collapseImpressions<T extends { id?: string; slot: string; outco
   return [...best.values()];
 }
 
-const deleteWeights = sqlite.prepare(`DELETE FROM triality_weights WHERE owner_id = ?`);
+const DELETE_WEIGHTS_SQL = `DELETE FROM triality_weights WHERE owner_id = ?`;
 
-const insertWeights = sqlite.prepare(
+const INSERT_WEIGHTS_SQL =
   `INSERT INTO triality_weights (owner_id, slot, weights, sample_count, computed_date)
-   VALUES (?, ?, ?, ?, ?)`,
-);
+   VALUES (?, ?, ?, ?, ?)`;
 
 /**
  * Recompute this owner's learned slot weights from the last 90 days of outcomes.
@@ -262,16 +262,16 @@ const insertWeights = sqlite.prepare(
  * existing log after the flag comes back on is the correct behavior. Clearing
  * learned weights is a separate, explicit owner action (the reset switch, §6b).
  */
-export function calibrateTriality(ownerId: string, now: Date): TrialityCalibrationResult {
+export async function calibrateTriality(ownerId: string, now: Date): Promise<TrialityCalibrationResult> {
   const since = new Date(now.getTime() - LEARNING_WINDOW_DAYS * 86_400_000).toISOString();
-  const raw = selectWindow.all(ownerId, since, now.toISOString()) as {
+  const raw = await store().prepare(SELECT_WINDOW_SQL).all<{
     slot: string;
     outcome: string;
     shown_at: string;
     scores: string;
     action_ref: string;
     local_date: string;
-  }[];
+  }>(ownerId, since, now.toISOString());
   // One vote per suggestion per day — see collapseImpressions. Without this the
   // learning corpus counts UI remounts as evidence.
   const rows = collapseImpressions(raw);
@@ -305,15 +305,16 @@ export function calibrateTriality(ownerId: string, now: Date): TrialityCalibrati
     writes.push({ slot, weights: applied.weights, sampleCount: decided.length });
   }
 
-  const computedDate = localDateInTZ(now.toISOString(), ownerTimezone(ownerId));
-  sqlite.transaction(() => {
-    deleteWeights.run(ownerId);
+  const computedDate = localDateInTZ(now.toISOString(), await ownerTimezone(ownerId));
+  await store().transaction(async () => {
+    await store().prepare(DELETE_WEIGHTS_SQL).run(ownerId);
+    const insertWeights = store().prepare(INSERT_WEIGHTS_SQL);
     for (const w of writes) {
       // COMPONENTS order in, COMPONENTS order out: a stable JSON string is what
       // makes "same log ⇒ same row" checkable byte-for-byte.
-      insertWeights.run(ownerId, w.slot, JSON.stringify(w.weights), w.sampleCount, computedDate);
+      await insertWeights.run(ownerId, w.slot, JSON.stringify(w.weights), w.sampleCount, computedDate);
     }
-  })();
+  });
 
   return { outcomeRows, slotsWritten: writes.length, slotsFloored, floor: OUTCOME_FLOOR };
 }

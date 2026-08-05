@@ -1,5 +1,5 @@
 import Router from '@koa/router';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { httpError } from '../lib/http-error.js';
 
@@ -25,7 +25,7 @@ export function ownerRouter() {
   // null/'' to clear. This is the only writer of owners.name/email/username
   // post-provision — without it a self-hosted (test/standalone-mode) owner is stuck as
   // the seeded 'System' identity forever.
-  router.patch('/api/owner/profile', (ctx) => {
+  router.patch('/api/owner/profile', async (ctx) => {
     const { name, email, username } = (ctx.request.body ?? {}) as {
       name?: unknown;
       email?: unknown;
@@ -70,7 +70,7 @@ export function ownerRouter() {
 
     const ownerId = currentOwnerId();
     try {
-      sqlite.prepare(`UPDATE owners SET ${sets.join(', ')} WHERE id = ?`).run(...values, ownerId);
+      await store().prepare(`UPDATE owners SET ${sets.join(', ')} WHERE id = ?`).run(...values, ownerId);
     } catch (err) {
       // The DB is the single enforcer of username uniqueness (partial unique index
       // ux_owners_username) — same posture as POST /api/accounts. Translate rather than
@@ -80,9 +80,10 @@ export function ownerRouter() {
       }
       throw err;
     }
-    const row = sqlite
+    const row = await store()
       .prepare(`SELECT name, email, username FROM owners WHERE id = ?`)
-      .get(ownerId) as { name: string; email: string | null; username: string | null };
+      .get<{ name: string; email: string | null; username: string | null }>(ownerId);
+    if (!row) throw httpError(404, 'owner not found');
     // NOTE: session_epoch is deliberately NOT bumped. The session cookie is keyed by
     // owner id, not username, so a rename doesn't invalidate it — signing the owner out
     // of every device for a cosmetic change would be gratuitous.
@@ -91,7 +92,7 @@ export function ownerRouter() {
 
   // PATCH /api/owner/backup-email  — { backup_email: string | null }
   // A null/empty value clears it. Scoped to the current owner (never the sentinel).
-  router.patch('/api/owner/backup-email', (ctx) => {
+  router.patch('/api/owner/backup-email', async (ctx) => {
     const { backup_email } = (ctx.request.body ?? {}) as { backup_email?: unknown };
 
     let value: string | null;
@@ -103,7 +104,7 @@ export function ownerRouter() {
       throw httpError(400, 'a valid email address (or null / empty string to clear) is required');
     }
 
-    sqlite.prepare(`UPDATE owners SET backup_email = ? WHERE id = ?`).run(value, currentOwnerId());
+    await store().prepare(`UPDATE owners SET backup_email = ? WHERE id = ?`).run(value, currentOwnerId());
     ctx.body = { ok: true, backup_email: value };
   });
 

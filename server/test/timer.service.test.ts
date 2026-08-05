@@ -72,10 +72,10 @@ describe('duration.elapsedMinutes', () => {
 describe('timer service', () => {
   beforeEach(() => resetDb());
 
-  it('start creates exactly one running entry', () => {
+  it('start creates exactly one running entry', async () => {
     const task = insertTask();
-    runWithOwner(OWNER, ALL_SCOPES, () => {
-      const { entry, stopped } = startTimer(task);
+    await runWithOwner(OWNER, ALL_SCOPES, async () => {
+      const { entry, stopped } = await startTimer(task);
       expect(stopped).toBeNull();
       expect(entry.task_id).toBe(task);
       expect(entry.ended_at).toBeNull();
@@ -84,12 +84,12 @@ describe('timer service', () => {
     expect(runningRows()).toHaveLength(1);
   });
 
-  it('starting a 2nd timer stops the 1st (partial unique index never violated)', () => {
+  it('starting a 2nd timer stops the 1st (partial unique index never violated)', async () => {
     const a = insertTask('A');
     const b = insertTask('B');
-    runWithOwner(OWNER, ALL_SCOPES, () => {
-      const first = startTimer(a);
-      const second = startTimer(b);
+    await runWithOwner(OWNER, ALL_SCOPES, async () => {
+      const first = await startTimer(a);
+      const second = await startTimer(b);
 
       // The second start reports the superseded (first) entry as stopped.
       expect(second.stopped).not.toBeNull();
@@ -110,7 +110,7 @@ describe('timer service', () => {
     expect(firstClosed.ended_at).not.toBeNull();
   });
 
-  it('block-sourced start records source=block and the block link', () => {
+  it('block-sourced start records source=block and the block link', async () => {
     const task = insertTask();
     const blockId = (
       sqlite
@@ -120,27 +120,27 @@ describe('timer service', () => {
         )
         .get(task, OWNER) as { id: string }
     ).id;
-    runWithOwner(OWNER, ALL_SCOPES, () => {
-      const { entry } = startTimer(task, blockId);
+    await runWithOwner(OWNER, ALL_SCOPES, async () => {
+      const { entry } = await startTimer(task, blockId);
       expect(entry.source).toBe('block');
       expect(entry.block_id).toBe(blockId);
     });
   });
 
-  it('stop closes the running entry and recomputes actual_minutes', () => {
+  it('stop closes the running entry and recomputes actual_minutes', async () => {
     const task = insertTask();
     // Seed two prior finished entries totaling 90 minutes, then run + stop a live one.
     insertEntry(task, '2026-06-15T08:00:00.000Z', '2026-06-15T08:30:00.000Z'); // 30
     insertEntry(task, '2026-06-15T09:00:00.000Z', '2026-06-15T10:00:00.000Z'); // 60
     recompute(task); // baseline 90
 
-    runWithOwner(OWNER, ALL_SCOPES, () => {
-      const { entry } = startTimer(task);
+    await runWithOwner(OWNER, ALL_SCOPES, async () => {
+      const { entry } = await startTimer(task);
       // Backdate the live entry's start so the stop produces a deterministic duration.
       const tenMinAgo = new Date(Date.now() - 10 * 60_000).toISOString();
       sqlite.prepare(`UPDATE time_entries SET started_at = ? WHERE id = ?`).run(tenMinAgo, entry.id);
 
-      const res = stopTimer();
+      const res = await stopTimer();
       expect(res).not.toBeNull();
       expect(res!.entry.ended_at).not.toBeNull();
       expect(res!.taskId).toBe(task);
@@ -151,7 +151,7 @@ describe('timer service', () => {
     expect(runningRows()).toHaveLength(0);
   });
 
-  it('actual_minutes aggregates across multiple entries and is recomputed, not incremented', () => {
+  it('actual_minutes aggregates across multiple entries and is recomputed, not incremented', async () => {
     const task = insertTask();
     // Three finished sessions: 30 + 45 + 15 = 90.
     insertEntry(task, '2026-06-15T08:00:00.000Z', '2026-06-15T08:30:00.000Z'); // 30
@@ -164,11 +164,11 @@ describe('timer service', () => {
     expect(recompute(task)).toBe(75);
 
     // A stop also recomputes from the source of truth.
-    runWithOwner(OWNER, ALL_SCOPES, () => {
-      const { entry } = startTimer(task);
+    await runWithOwner(OWNER, ALL_SCOPES, async () => {
+      const { entry } = await startTimer(task);
       const fiveMinAgo = new Date(Date.now() - 5 * 60_000).toISOString();
       sqlite.prepare(`UPDATE time_entries SET started_at = ? WHERE id = ?`).run(fiveMinAgo, entry.id);
-      const res = stopTimer();
+      const res = await stopTimer();
       expect(res!.actualMinutes).toBe(80); // 75 + ~5
     });
     expect(actualOf(task)).toBe(80);
@@ -182,22 +182,22 @@ describe('timer service', () => {
     expect(recompute(task)).toBe(60);
   });
 
-  it('stopTimer with no running timer returns null', () => {
-    runWithOwner(OWNER, ALL_SCOPES, () => {
-      expect(stopTimer()).toBeNull();
-      expect(stopRunning(OWNER)).toBeNull();
+  it('stopTimer with no running timer returns null', async () => {
+    await runWithOwner(OWNER, ALL_SCOPES, async () => {
+      expect(await stopTimer()).toBeNull();
+      expect(await stopRunning(OWNER)).toBeNull();
     });
   });
 
-  it('getRunning returns the live entry, then null after stop', () => {
+  it('getRunning returns the live entry, then null after stop', async () => {
     const task = insertTask();
-    runWithOwner(OWNER, ALL_SCOPES, () => {
-      const { entry } = startTimer(task);
-      const live = getRunning(OWNER);
+    await runWithOwner(OWNER, ALL_SCOPES, async () => {
+      const { entry } = await startTimer(task);
+      const live = await getRunning(OWNER);
       expect(live).not.toBeNull();
       expect(live!.id).toBe(entry.id);
-      stopTimer();
-      expect(getRunning(OWNER)).toBeNull();
+      await stopTimer();
+      expect(await getRunning(OWNER)).toBeNull();
     });
   });
 });

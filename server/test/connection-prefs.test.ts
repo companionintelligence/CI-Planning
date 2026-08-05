@@ -32,62 +32,62 @@ const run = <T>(fn: () => Promise<T>): Promise<T> => runWithOwner(SYSTEM_OWNER, 
 beforeEach(() => resetDb());
 
 describe('connection prefs', () => {
-  it('is empty until something is set — the default look is untouched', () => {
+  it('is empty until something is set — the default look is untouched', async () => {
     seedConnection();
-    expect(getConnectionPrefs(SYSTEM_OWNER)).toEqual({});
+    expect(await getConnectionPrefs(SYSTEM_OWNER)).toEqual({});
   });
 
-  it('round-trips a colour and texture keyed by provider:account', () => {
+  it('round-trips a colour and texture keyed by provider:account', async () => {
     seedConnection();
-    setConnectionPref(SYSTEM_OWNER, 'google', ACCOUNT, { color_token: 'chart-4', texture: 'grid' });
-    expect(getConnectionPrefs(SYSTEM_OWNER)[connectionKey('google', ACCOUNT)]).toEqual({
+    await setConnectionPref(SYSTEM_OWNER, 'google', ACCOUNT, { color_token: 'chart-4', texture: 'grid' });
+    expect((await getConnectionPrefs(SYSTEM_OWNER))[connectionKey('google', ACCOUNT)]).toEqual({
       color_token: 'chart-4',
       texture: 'grid',
     });
   });
 
-  it('merges a partial patch instead of resetting the other field', () => {
+  it('merges a partial patch instead of resetting the other field', async () => {
     seedConnection();
-    setConnectionPref(SYSTEM_OWNER, 'google', ACCOUNT, { color_token: 'chart-4', texture: 'grid' });
-    setConnectionPref(SYSTEM_OWNER, 'google', ACCOUNT, { texture: 'vertical' });
-    expect(getConnectionPrefs(SYSTEM_OWNER)[connectionKey('google', ACCOUNT)]).toEqual({
+    await setConnectionPref(SYSTEM_OWNER, 'google', ACCOUNT, { color_token: 'chart-4', texture: 'grid' });
+    await setConnectionPref(SYSTEM_OWNER, 'google', ACCOUNT, { texture: 'vertical' });
+    expect((await getConnectionPrefs(SYSTEM_OWNER))[connectionKey('google', ACCOUNT)]).toEqual({
       color_token: 'chart-4', // preserved
       texture: 'vertical',
     });
   });
 
-  it('refuses a pref for a connection this owner does not hold', () => {
+  it('refuses a pref for a connection this owner does not hold', async () => {
     // Without this the table would be an unbounded owner-writable key/value store, and
     // one owner could author prefs keyed to another's account.
-    const res = setConnectionPrefChecked(SYSTEM_OWNER, 'google', 'stranger@example.com', { color_token: 'primary' });
+    const res = await setConnectionPrefChecked(SYSTEM_OWNER, 'google', 'stranger@example.com', { color_token: 'primary' });
     expect(res).toEqual({ ok: false, error: 'connection_not_found' });
   });
 
-  it('rejects an unknown texture name', () => {
+  it('rejects an unknown texture name', async () => {
     seedConnection();
-    expect(setConnectionPrefChecked(SYSTEM_OWNER, 'google', ACCOUNT, { texture: 'sparkles' })).toEqual({
+    expect(await setConnectionPrefChecked(SYSTEM_OWNER, 'google', ACCOUNT, { texture: 'sparkles' })).toEqual({
       ok: false,
       error: 'texture_invalid',
     });
   });
 
-  it('rejects an empty colour token', () => {
+  it('rejects an empty colour token', async () => {
     seedConnection();
-    expect(setConnectionPrefChecked(SYSTEM_OWNER, 'google', ACCOUNT, { color_token: '' })).toEqual({
+    expect(await setConnectionPrefChecked(SYSTEM_OWNER, 'google', ACCOUNT, { color_token: '' })).toEqual({
       ok: false,
       error: 'color_token_invalid',
     });
   });
 
-  it('SURVIVES a disconnect — reconnecting the same account restores its look', () => {
+  it('SURVIVES a disconnect — reconnecting the same account restores its look', async () => {
     // The whole reason the row is keyed (provider, account) rather than FK'd to
     // connection_tokens.id: disconnect hard-deletes the token row, and an FK/CASCADE
     // would silently discard the owner's colour every time they re-authorized.
     seedConnection();
-    setConnectionPref(SYSTEM_OWNER, 'google', ACCOUNT, { color_token: 'chart-2', texture: 'diagonal' });
+    await setConnectionPref(SYSTEM_OWNER, 'google', ACCOUNT, { color_token: 'chart-2', texture: 'diagonal' });
     sqlite.prepare(`DELETE FROM connection_tokens WHERE owner_id = ? AND account = ?`).run(SYSTEM_OWNER, ACCOUNT);
 
-    expect(getConnectionPrefs(SYSTEM_OWNER)[connectionKey('google', ACCOUNT)]).toEqual({
+    expect((await getConnectionPrefs(SYSTEM_OWNER))[connectionKey('google', ACCOUNT)]).toEqual({
       color_token: 'chart-2',
       texture: 'diagonal',
     });

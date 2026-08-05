@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 
 /**
  * Phase Z master feature flag (0106). Default OFF — every Time-Sense surface
@@ -6,10 +6,10 @@ import { sqlite } from '../db/index.js';
  * anything the pre-Z app didn't. Per-owner, so one tenant opting in never
  * changes another's behavior.
  */
-export function timeSenseEnabled(ownerId: string): boolean {
-  const row = sqlite
+export async function timeSenseEnabled(ownerId: string): Promise<boolean> {
+  const row = await store()
     .prepare(`SELECT time_sense_enabled AS v FROM scheduling_prefs WHERE owner_id = ?`)
-    .get(ownerId) as { v: number | null } | undefined;
+    .get<{ v: number | null }>(ownerId);
   return !!row?.v;
 }
 
@@ -18,9 +18,9 @@ export function timeSenseEnabled(ownerId: string): boolean {
  * Balance→Metrics tiles, and every /api/triality/* surface (REST and GraphQL)
  * check this before existing at all. Per-owner, same contract as above.
  */
-export function trialityEnabled(ownerId: string): boolean {
-  const row = sqlite
+export async function trialityEnabled(ownerId: string): Promise<boolean> {
+  const row = await store()
     .prepare(`SELECT triality_enabled AS v FROM scheduling_prefs WHERE owner_id = ?`)
-    .get(ownerId) as { v: number | null } | undefined;
+    .get<{ v: number | null }>(ownerId);
   return !!row?.v;
 }

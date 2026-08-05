@@ -193,7 +193,7 @@ describe('placeFlightPlan — reads daily_plan.position (§0 seam)', () => {
     sqlite.prepare(`UPDATE scheduling_prefs SET auto_fill_workday = 1 WHERE owner_id = ?`).run(OWNER);
   });
 
-  it('places tasks in daily_plan order, not flight_plan.position order', () => {
+  it('places tasks in daily_plan order, not flight_plan.position order', async () => {
     const p1 = insertTask('High priority', 1, undefined, 30);
     const p3 = insertTask('Low priority', 3, undefined, 30);
     // Stage p3 at position 0, p1 at position 1 (counter-priority)
@@ -204,7 +204,7 @@ describe('placeFlightPlan — reads daily_plan.position (§0 seam)', () => {
     sqlite.prepare(`INSERT INTO daily_plan (owner_id, date, task_id, position, source) VALUES (?, ?, ?, ?, 'test')`).run(OWNER, DATE, p3, 0);
     sqlite.prepare(`INSERT INTO daily_plan (owner_id, date, task_id, position, source) VALUES (?, ?, ?, ?, 'test')`).run(OWNER, DATE, p1, 1);
 
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
 
     const blocks = sqlite
       .prepare(`SELECT title, start_at FROM time_blocks WHERE is_auto = 1 AND block_kind = 'task' ORDER BY start_at`)
@@ -216,7 +216,7 @@ describe('placeFlightPlan — reads daily_plan.position (§0 seam)', () => {
     expect(blocks[1].title).toBe('High priority');
   });
 
-  it('falls back to priority order when no daily_plan row exists', () => {
+  it('falls back to priority order when no daily_plan row exists', async () => {
     // Without a daily_plan, the workday pass calls orderForPlan which sorts by priority.
     // Stage the lower-priority task first (counter-priority) to prove it's not fp.position.
     const high = insertTask('High priority', 1, undefined, 30);
@@ -224,7 +224,7 @@ describe('placeFlightPlan — reads daily_plan.position (§0 seam)', () => {
     stage(low, 0); // staged first but lower priority
     stage(high, 1);
 
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
 
     const blocks = sqlite
       .prepare(`SELECT title, start_at FROM time_blocks WHERE is_auto = 1 AND block_kind = 'task' ORDER BY start_at`)
@@ -234,12 +234,12 @@ describe('placeFlightPlan — reads daily_plan.position (§0 seam)', () => {
     expect(blocks[1].title).toBe('Low priority');
   });
 
-  it('links daily_plan.block_id for each placed task', () => {
+  it('links daily_plan.block_id for each placed task', async () => {
     const t = insertTask('Link me', 2, undefined, 30);
     stage(t, 0);
     sqlite.prepare(`INSERT INTO daily_plan (owner_id, date, task_id, position, source) VALUES (?, ?, ?, 0, 'deterministic')`).run(OWNER, DATE, t);
 
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
 
     const row = sqlite
       .prepare(`SELECT block_id FROM daily_plan WHERE owner_id = ? AND date = ? AND task_id = ?`)
@@ -254,7 +254,7 @@ describe('placeFlightPlan — reads daily_plan.position (§0 seam)', () => {
     expect(block?.task_id).toBe(t);
   });
 
-  it('v1-regression guard: placed order survives a re-run (idempotent given same daily_plan)', () => {
+  it('v1-regression guard: placed order survives a re-run (idempotent given same daily_plan)', async () => {
     // Ensure that if placeFlightPlan is called a second time with the same daily_plan,
     // the resulting block order is identical — the frozen order survives re-placement.
     const p1 = insertTask('First', 1, undefined, 30);
@@ -264,14 +264,14 @@ describe('placeFlightPlan — reads daily_plan.position (§0 seam)', () => {
     sqlite.prepare(`INSERT INTO daily_plan (owner_id, date, task_id, position, source) VALUES (?, ?, ?, 0, 'test')`).run(OWNER, DATE, p3);
     sqlite.prepare(`INSERT INTO daily_plan (owner_id, date, task_id, position, source) VALUES (?, ?, ?, 1, 'test')`).run(OWNER, DATE, p1);
 
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
     const firstOrder = (sqlite.prepare(`SELECT title FROM time_blocks WHERE is_auto = 1 AND block_kind = 'task' ORDER BY start_at`).all() as { title: string }[]).map(b => b.title);
 
     // Re-stage (as reflow would) and run again
     sqlite.prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, 0)`).run(OWNER, p3);
     sqlite.prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, 1)`).run(OWNER, p1);
 
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
     const secondOrder = (sqlite.prepare(`SELECT title FROM time_blocks WHERE is_auto = 1 AND block_kind = 'task' ORDER BY start_at`).all() as { title: string }[]).map(b => b.title);
 
     expect(secondOrder).toEqual(firstOrder);

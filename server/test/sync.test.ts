@@ -397,7 +397,7 @@ describe('calendar sync — fixture mode (offline)', () => {
       expect(externalEvents().filter((e) => e.direction === 'outbound')).toHaveLength(0);
     });
 
-    it('enqueueOutbound queues nothing when disabled, even with writeback on + an active connector', () => {
+    it('enqueueOutbound queues nothing when disabled, even with writeback on + an active connector', async () => {
       // Seed an ACTIVE connector so enqueueOutbound WOULD queue when enabled (distinguishing control).
       sqlite
         .prepare(
@@ -414,13 +414,13 @@ describe('calendar sync — fixture mode (offline)', () => {
       config.sync.writeback = true;
 
       // Control: enabled → the block is queued for the active connector.
-      runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => enqueueOutbound(blockId));
+      await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => enqueueOutbound(blockId));
       expect(outboundQueue()).toHaveLength(1);
 
       // Kill switch: disabled → a fresh enqueue adds nothing.
       sqlite.prepare('DELETE FROM outbound_queue').run();
       config.sync.disabled = true;
-      runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => enqueueOutbound(blockId));
+      await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => enqueueOutbound(blockId));
       expect(outboundQueue()).toHaveLength(0);
     });
 

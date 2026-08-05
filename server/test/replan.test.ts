@@ -47,56 +47,59 @@ function insertAutoBlock(taskId: string, startAt: string, endAt: string, status 
 let srv: TestServer;
 beforeAll(async () => { srv = await startTestServer(); });
 afterAll(async () => { await srv.close(); });
-beforeEach(() => {
+beforeEach(async () => {
   resetDb();
   sqlite.exec(`DELETE FROM flight_plan`);
   sqlite.exec(`DELETE FROM daily_plan WHERE owner_id = '${OWNER}'`);
   sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC', workday_start = '09:00', workday_end = '18:00' WHERE owner_id = ?`).run(OWNER);
-  _resetReplanState();
+  await _resetReplanState();
   mockBroadcast.mockClear();
 });
 
 describe('requestReplan — debounce + toggle', () => {
-  it('collapses a burst of 5 calls into exactly one reflow', () => {
+  // advanceTimersByTimeAsync, not advanceTimersByTime: the debounced callback is now
+  // async, so firing the timer only STARTS the reflow. The sync variant returns before
+  // any of its awaits settle and the broadcast has not happened yet.
+  it('collapses a burst of 5 calls into exactly one reflow', async () => {
     vi.useFakeTimers();
     try {
       setAutoDefense(true);
       for (let i = 0; i < 5; i++) requestReplan('task:updated', OWNER, DATE);
       expect(eventCount('schedule:done')).toBe(0); // trailing — nothing fired yet
-      vi.advanceTimersByTime(1500);
+      await vi.advanceTimersByTimeAsync(1500);
       expect(eventCount('schedule:done')).toBe(1); // one reflow for the whole burst
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('is a no-op (no reflow, no broadcast) when auto_defense_enabled = 0', () => {
+  it('is a no-op (no reflow, no broadcast) when auto_defense_enabled = 0', async () => {
     vi.useFakeTimers();
     try {
       setAutoDefense(false);
       requestReplan('task:updated', OWNER, DATE);
-      vi.advanceTimersByTime(1500);
+      await vi.advanceTimersByTimeAsync(1500);
       expect(eventCount('schedule:done')).toBe(0);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('never throws into the caller', () => {
+  it('never throws into the caller', async () => {
     setAutoDefense(true);
     expect(() => requestReplan('task:updated', OWNER, DATE)).not.toThrow();
-    _resetReplanState(); // cancel the real-timer we just scheduled so it can't leak
+    await _resetReplanState(); // cancel the real-timer we just scheduled so it can't leak
   });
 });
 
 describe('sweepMissedBlocks', () => {
   const NOON = Date.parse(`${DATE}T12:00:00.000Z`);
 
-  it('marks a past planned block missed and re-queues its open task', () => {
+  it('marks a past planned block missed and re-queues its open task', async () => {
     const taskId = insertTask('Missed work');
     const blockId = insertAutoBlock(taskId, `${DATE}T09:00:00.000Z`, `${DATE}T10:00:00.000Z`); // ended 10:00, now noon
 
-    const res = sweepMissedBlocks(OWNER, DATE, NOON);
+    const res = await sweepMissedBlocks(OWNER, DATE, NOON);
 
     expect(res.skipped).toBe(1);
     expect(res.requeued).toBe(1);
@@ -104,32 +107,32 @@ describe('sweepMissedBlocks', () => {
     expect(sqlite.prepare(`SELECT 1 FROM flight_plan WHERE owner_id = ? AND task_id = ?`).get(OWNER, taskId)).toBeTruthy();
   });
 
-  it('leaves a block whose planned time has not yet passed', () => {
+  it('leaves a block whose planned time has not yet passed', async () => {
     const taskId = insertTask('Future work');
     const blockId = insertAutoBlock(taskId, `${DATE}T14:00:00.000Z`, `${DATE}T15:00:00.000Z`); // ends 15:00, after noon
 
-    const res = sweepMissedBlocks(OWNER, DATE, NOON);
+    const res = await sweepMissedBlocks(OWNER, DATE, NOON);
 
     expect(res.skipped).toBe(0);
     expect((sqlite.prepare(`SELECT status FROM time_blocks WHERE id = ?`).get(blockId) as { status: string }).status).toBe('planned');
   });
 
-  it('sweeps the block but does not re-queue a non-open task', () => {
+  it('sweeps the block but does not re-queue a non-open task', async () => {
     const taskId = insertTask('Already done', 'done');
     insertAutoBlock(taskId, `${DATE}T09:00:00.000Z`, `${DATE}T10:00:00.000Z`);
 
-    const res = sweepMissedBlocks(OWNER, DATE, NOON);
+    const res = await sweepMissedBlocks(OWNER, DATE, NOON);
 
     expect(res.skipped).toBe(1);
     expect(res.requeued).toBe(0); // a completed task's stale block isn't re-queued work
     expect(sqlite.prepare(`SELECT 1 FROM flight_plan WHERE owner_id = ? AND task_id = ?`).get(OWNER, taskId)).toBeFalsy();
   });
 
-  it('does not touch a started (in_progress) block', () => {
+  it('does not touch a started (in_progress) block', async () => {
     const taskId = insertTask('In progress');
     const blockId = insertAutoBlock(taskId, `${DATE}T09:00:00.000Z`, `${DATE}T10:00:00.000Z`, 'in_progress');
 
-    const res = sweepMissedBlocks(OWNER, DATE, NOON);
+    const res = await sweepMissedBlocks(OWNER, DATE, NOON);
 
     expect(res.skipped).toBe(0);
     expect((sqlite.prepare(`SELECT status FROM time_blocks WHERE id = ?`).get(blockId) as { status: string }).status).toBe('in_progress');

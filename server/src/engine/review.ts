@@ -25,7 +25,7 @@
  * construction: outcome stamps are write-once, deferrals consume their stale
  * blocks, and the revive pass only sees rows still stuck in 'missed'.
  */
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { broadcast } from '../routes/sse.js';
 import { localISODate } from '../lib/dates.js';
 import { removeEntityTags } from '../services/tags.js';
@@ -65,13 +65,13 @@ interface MissedRow {
  * Idempotent in spirit: once a block is consumed (deferred → deleted), it won't
  * be re-counted on the next run; the revive pass only sees still-stuck rows.
  */
-export function reviewAndReschedule(opts: { owner?: string; nowISO?: string } = {}): ReviewResult {
+export async function reviewAndReschedule(opts: { owner?: string; nowISO?: string } = {}): Promise<ReviewResult> {
   const nowISO = opts.nowISO ?? new Date().toISOString();
 
   // Missed = a planned task block whose end has passed, whose task isn't done
   // and isn't already surfaced as missed. One row per task (earliest miss).
   const ownerClause = opts.owner != null ? `AND t.owner_id = @owner` : ``;
-  const missed = sqlite
+  const missed = await store()
     .prepare(
       `SELECT t.id AS task_id, t.owner_id, COALESCE(t.priority, 3) AS priority, COALESCE(t.defer_count, 0) AS defer_count
          FROM tasks t
@@ -85,12 +85,12 @@ export function reviewAndReschedule(opts: { owner?: string; nowISO?: string } = 
           ${ownerClause}
         GROUP BY t.id`
     )
-    .all({ now: nowISO, owner: opts.owner }) as MissedRow[];
+    .all<MissedRow>({ now: nowISO, owner: opts.owner });
 
   // Stuck 'missed' one-offs — pre-unification residue (or a sync'd write): swept
   // back to open by the same backoff. Recurring INSTANCES stay missed (genuine
   // history — recurrence-generate marks them itself); subtasks ride their parent.
-  const stuck = sqlite
+  const stuck = await store()
     .prepare(
       `SELECT t.id AS task_id, t.owner_id, COALESCE(t.priority, 3) AS priority, COALESCE(t.defer_count, 0) AS defer_count
          FROM tasks t
@@ -99,9 +99,9 @@ export function reviewAndReschedule(opts: { owner?: string; nowISO?: string } = 
           AND t.parent_id IS NULL
           ${ownerClause}`
     )
-    .all({ owner: opts.owner }) as MissedRow[];
+    .all<MissedRow>({ owner: opts.owner });
 
-  const bumpDefer = sqlite.prepare(
+  const bumpDefer = store().prepare(
     `UPDATE tasks SET scheduled_for = ?, defer_count = defer_count + 1, status = 'open' WHERE id = ?`
   );
   // is_locked = 0: a user-PINNED past block is a deliberate placement, not missed work
@@ -109,7 +109,7 @@ export function reviewAndReschedule(opts: { owner?: string; nowISO?: string } = 
   // above, so a task pinned-but-not-done never triggers an endless nightly re-defer.
   // status IN ('missed','planned'): a revived task's blocks were relabelled 'missed'
   // by the old surface path — both flavors are stale and must go so it re-places clean.
-  const dropBlocks = sqlite.prepare(
+  const dropBlocks = store().prepare(
     `DELETE FROM time_blocks WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND status IN ('missed','planned') AND end_at < ? AND is_locked = 0 RETURNING id`
   );
   // N4 lossy-slip fix: stamp daily_plan.outcome before block hard-delete so the
@@ -117,33 +117,32 @@ export function reviewAndReschedule(opts: { owner?: string; nowISO?: string } = 
   // Write-once (outcome IS NULL guard) so re-runs can't overwrite a prior stamp.
   // The stamp KEEPS the priority split — an important miss records 'missed' even
   // though the task itself now auto-defers like everything else.
-  const stampPlanOutcome = sqlite.prepare(
+  const stampPlanOutcome = store().prepare(
     `UPDATE daily_plan SET outcome = ? WHERE owner_id = ? AND task_id = ? AND outcome IS NULL`
   );
 
   let deferred = 0;
   let revived = 0;
   const moved: MissedRow[] = []; // everything reopened this run, for the placement pass
-  const tx = sqlite.transaction(() => {
+  await store().transaction(async () => {
     for (const m of missed) {
       // Auto-defer with backoff — ALL priorities; drop the stale block.
-      stampPlanOutcome.run(m.priority <= 2 ? 'missed' : 'deferred', m.owner_id, m.task_id);
-      bumpDefer.run(addDays(backoffDays(m.defer_count)), m.task_id);
+      await stampPlanOutcome.run(m.priority <= 2 ? 'missed' : 'deferred', m.owner_id, m.task_id);
+      await bumpDefer.run(addDays(backoffDays(m.defer_count)), m.task_id);
       // CON-3 cascade: dropped blocks are HARD-deleted — clear their tag rows.
-      for (const b of dropBlocks.all(m.task_id, m.owner_id, nowISO) as { id: string }[]) removeEntityTags('time_block', b.id);
+      for (const b of await dropBlocks.all<{ id: string }>(m.task_id, m.owner_id, nowISO)) await removeEntityTags('time_block', b.id);
       deferred++;
       moved.push(m);
     }
     for (const m of stuck) {
       // Same backoff for the stuck rows; their plan outcome (if any) was already
       // stamped 'missed' when they were surfaced — the write-once guard holds.
-      bumpDefer.run(addDays(backoffDays(m.defer_count)), m.task_id);
-      for (const b of dropBlocks.all(m.task_id, m.owner_id, nowISO) as { id: string }[]) removeEntityTags('time_block', b.id);
+      await bumpDefer.run(addDays(backoffDays(m.defer_count)), m.task_id);
+      for (const b of await dropBlocks.all<{ id: string }>(m.task_id, m.owner_id, nowISO)) await removeEntityTags('time_block', b.id);
       revived++;
       moved.push(m);
     }
   });
-  tx();
 
   // Schedule-mode placement: hands_off owners get each reopened task booked into
   // the next available slot on its new day right away (start-anchored engine —
@@ -151,17 +150,17 @@ export function reviewAndReschedule(opts: { owner?: string; nowISO?: string } = 
   // a full day or an engine error never fails the sweep; the task stays open+dated.
   let placed = 0;
   if (moved.length > 0) {
-    const trustOf = sqlite.prepare(`SELECT trust_mode FROM scheduling_prefs WHERE owner_id = ?`);
+    const trustOf = store().prepare(`SELECT trust_mode FROM scheduling_prefs WHERE owner_id = ?`);
     const trustCache = new Map<string, string>();
     for (const m of moved) {
       let trust = trustCache.get(m.owner_id);
       if (trust === undefined) {
-        trust = (trustOf.get(m.owner_id) as { trust_mode: string } | undefined)?.trust_mode ?? 'balanced';
+        trust = (await trustOf.get<{ trust_mode: string }>(m.owner_id))?.trust_mode ?? 'balanced';
         trustCache.set(m.owner_id, trust);
       }
       if (trust !== 'hands_off') continue;
       try {
-        const outcome: StartAnchoredOutcome = placeStartAnchoredTask(m.owner_id, m.task_id);
+        const outcome: StartAnchoredOutcome = await placeStartAnchoredTask(m.owner_id, m.task_id);
         if (outcome.placed) placed++;
       } catch (err) {
         logger.warn('review sweep: start-anchored placement failed', { owner: m.owner_id, taskId: m.task_id, err: (err as Error).message });
@@ -172,7 +171,7 @@ export function reviewAndReschedule(opts: { owner?: string; nowISO?: string } = 
   // Re-stage open tasks that have no future blocks and aren't already in the
   // flight plan, so the user sees them again at the start of the new day.
   const ownerFilterClause = opts.owner != null ? `AND t.owner_id = @owner` : '';
-  const toRestage = sqlite
+  const toRestage = await store()
     .prepare(
       `SELECT t.id AS task_id, t.owner_id
          FROM tasks t
@@ -191,7 +190,7 @@ export function reviewAndReschedule(opts: { owner?: string; nowISO?: string } = 
           )
           ${ownerFilterClause}`
     )
-    .all({ now: nowISO, owner: opts.owner }) as { task_id: string; owner_id: string }[];
+    .all<{ task_id: string; owner_id: string }>({ now: nowISO, owner: opts.owner });
 
   const byOwner = new Map<string, string[]>();
   for (const row of toRestage) {
@@ -200,13 +199,13 @@ export function reviewAndReschedule(opts: { owner?: string; nowISO?: string } = 
     byOwner.set(row.owner_id, arr);
   }
 
-  const getMax = sqlite.prepare(`SELECT COALESCE(MAX(position), -1) AS m FROM flight_plan WHERE owner_id = ?`);
-  const ins = sqlite.prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, ?)`);
+  const getMax = store().prepare(`SELECT COALESCE(MAX(position), -1) AS m FROM flight_plan WHERE owner_id = ?`);
+  const ins = store().prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, ?)`);
   let restaged = 0;
   for (const [ownerId, taskIds] of byOwner) {
-    let pos = (getMax.get(ownerId) as { m: number }).m + 1;
+    let pos = (await getMax.get<{ m: number }>(ownerId))!.m + 1;
     for (const taskId of taskIds) {
-      if (ins.run(ownerId, taskId, pos).changes > 0) { pos++; restaged++; }
+      if ((await ins.run(ownerId, taskId, pos)).changes > 0) { pos++; restaged++; }
     }
     broadcast(ownerId, 'flight_plan:updated', { restaged: taskIds.length });
   }
@@ -235,27 +234,26 @@ export function reviewAndReschedule(opts: { owner?: string; nowISO?: string } = 
  * would corrupt that owner's merge state. The route pre-checks ownership, but this stays
  * correct if a future caller does not.
  */
-export function rescheduleTask(taskId: string, days: number, owner: string): { scheduled_for: string; placement?: StartAnchoredOutcome } {
+export async function rescheduleTask(taskId: string, days: number, owner: string): Promise<{ scheduled_for: string; placement?: StartAnchoredOutcome }> {
   const scheduledFor = addDays(Math.max(0, Math.round(days)));
-  const tx = sqlite.transaction(() => {
-    const info = sqlite.prepare(`UPDATE tasks SET scheduled_for = ?, status = 'open', defer_count = defer_count + 1 WHERE id = ? AND owner_id = ?`).run(scheduledFor, taskId, owner);
-    if (info.changes > 0) stampRow(sqlite, 'task', taskId, ['scheduledFor', 'status']);
+  await store().transaction(async () => {
+    const info = await store().prepare(`UPDATE tasks SET scheduled_for = ?, status = 'open', defer_count = defer_count + 1 WHERE id = ? AND owner_id = ?`).run(scheduledFor, taskId, owner);
+    if (info.changes > 0) await stampRow('task', taskId, ['scheduledFor', 'status']);
     // CON-3 cascade: these blocks are HARD-deleted — clear their tag rows.
-    for (const b of sqlite.prepare(`DELETE FROM time_blocks WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND status IN ('missed','planned') AND is_locked = 0 RETURNING id`).all(taskId, owner) as { id: string }[]) {
-      removeEntityTags('time_block', b.id);
+    for (const b of await store().prepare(`DELETE FROM time_blocks WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND status IN ('missed','planned') AND is_locked = 0 RETURNING id`).all<{ id: string }>(taskId, owner)) {
+      await removeEntityTags('time_block', b.id);
     }
   });
-  tx();
 
   // Schedule mode only (trust_mode='hands_off'): book the reopened task into the
   // next available slot on its new day right away. Suggest/cautious owners keep
   // control — the task comes back open+dated and waits for a Schedule run.
   // Best-effort: a placement failure never fails the reschedule itself.
   let placement: StartAnchoredOutcome | undefined;
-  const trust = (sqlite.prepare(`SELECT trust_mode FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as { trust_mode: string } | undefined)?.trust_mode;
+  const trust = (await store().prepare(`SELECT trust_mode FROM scheduling_prefs WHERE owner_id = ?`).get<{ trust_mode: string }>(owner))?.trust_mode;
   if (trust === 'hands_off') {
     try {
-      placement = placeStartAnchoredTask(owner, taskId);
+      placement = await placeStartAnchoredTask(owner, taskId);
     } catch (err) {
       logger.warn('rescheduleTask: start-anchored placement failed', { owner, taskId, err: (err as Error).message });
     }

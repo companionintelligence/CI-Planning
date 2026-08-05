@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { config } from '../lib/config.js';
 import { newId } from '../lib/ids.js';
@@ -38,17 +38,17 @@ function syncWindow(): { from: string; to: string } {
  * No-op when writeback is disabled (CP_SYNC_WRITEBACK off) or when the block is
  * an inbound calendar mirror — we never push meeting mirrors back (I9).
  */
-export function enqueueOutbound(blockId: string): void {
+export async function enqueueOutbound(blockId: string): Promise<void> {
   if (config.sync.disabled || !config.sync.writeback) return;
   // I9: inbound-mirrored blocks must never be pushed back to the provider. Checked
   // inside this function (not only at call sites) so future callers can't bypass it.
-  const isInbound = sqlite
+  const isInbound = await store()
     .prepare(`SELECT 1 FROM external_events WHERE block_id = ? AND direction = 'inbound'`)
     .get(blockId);
   if (isInbound) return;
   const ownerId = currentOwnerId();
-  for (const c of getConnectors()) {
-    sqlite
+  for (const c of await getConnectors()) {
+    await store()
       .prepare(
         `INSERT INTO outbound_queue (id, owner_id, block_id, provider, account)
          VALUES (uuid7(), ?, ?, ?, ?)
@@ -64,16 +64,16 @@ export function enqueueOutbound(blockId: string): void {
  */
 export async function pushOutboundDeletes(blockId: string): Promise<void> {
   if (config.sync.disabled) return;
-  const outbound = sqlite
+  const outbound = await store()
     .prepare(
       `SELECT provider, account, external_id, etag
        FROM external_events WHERE block_id = ? AND direction = 'outbound'`,
     )
-    .all(blockId) as { provider: string; account: string; external_id: string; etag: string | null }[];
+    .all<{ provider: string; account: string; external_id: string; etag: string | null }>(blockId);
 
   if (outbound.length === 0) return;
 
-  const connectors = getConnectors();
+  const connectors = await getConnectors();
   for (const row of outbound) {
     const connector = connectors.find((c) => c.provider === row.provider && c.account === row.account);
     if (!connector) continue;
@@ -103,28 +103,28 @@ export async function pushOutboundDeletes(blockId: string): Promise<void> {
  *    NOT a delete signal; only an incremental tombstone deletes. A full cycle never removes
  *    an inbound mapping.
  */
-function applyInbound(
+async function applyInbound(
   connector: CalendarConnector,
   remoteEvents: RemoteEvent[],
   ownerId: string,
   result: SyncResult,
   cycle: 'full' | 'incremental',
-): void {
+): Promise<void> {
   for (const event of remoteEvents) {
     // ── Tombstone (incremental delete signal) ──────────────────────────────
     if (event.deleted) {
       // I8: only an INCREMENTAL cycle deletes. A full cycle never carries tombstones, but
       // guard anyway so an absent/stale event can never trigger a delete on a full re-init.
       if (cycle !== 'incremental') continue;
-      const mapping = sqlite
+      const mapping = await store()
         .prepare(
           `SELECT block_id FROM external_events
            WHERE provider = ? AND account = ? AND external_id = ? AND direction = 'inbound' AND owner_id = ?`,
         )
-        .get(connector.provider, connector.account, event.id, ownerId) as { block_id: string } | undefined;
+        .get<{ block_id: string }>(connector.provider, connector.account, event.id, ownerId);
       if (mapping) {
         // Deleting the block cascades the external_events mapping (ON DELETE CASCADE).
-        sqlite.prepare('DELETE FROM time_blocks WHERE id = ? AND owner_id = ?').run(mapping.block_id, ownerId);
+        await store().prepare('DELETE FROM time_blocks WHERE id = ? AND owner_id = ?').run(mapping.block_id, ownerId);
         result.deleted++;
       }
       continue;
@@ -132,13 +132,11 @@ function applyInbound(
 
     // Fetch any existing mapping for this external_id regardless of direction.
     // Outbound rows mean we pushed this event — skip creating an inbound mirror.
-    const mapping = sqlite
+    const mapping = await store()
       .prepare(
         'SELECT id, block_id, etag, direction FROM external_events WHERE provider = ? AND account = ? AND external_id = ?',
       )
-      .get(connector.provider, connector.account, event.id) as
-      | { id: string; block_id: string; etag: string | null; direction: string }
-      | undefined;
+      .get<{ id: string; block_id: string; etag: string | null; direction: string }>(connector.provider, connector.account, event.id);
 
     if (!mapping) {
       // Atomic: the block mirror and its identity mapping must commit together. A
@@ -146,33 +144,33 @@ function applyInbound(
       // cycle re-insert a duplicate — the 0027 unique index covers only 'gmail'/'gcal',
       // not the 'google' source_kind used here, so nothing else dedupes it.
       const blockId = newId();
-      sqlite.transaction(() => {
-        sqlite
+      await store().transaction(async () => {
+        await store()
           .prepare(
             `INSERT INTO time_blocks (id, task_id, owner_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status)
              VALUES (?, NULL, ?, ?, 'meeting', ?, ?, 1, 0, ?, ?, 'planned')`,
           )
           .run(blockId, ownerId, event.title, event.start, event.end, connector.provider, event.id);
-        sqlite
+        await store()
           .prepare(
             `INSERT INTO external_events (id, owner_id, provider, account, external_id, block_id, etag, direction, last_synced_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, 'inbound', strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
           )
           .run(newId(), ownerId, connector.provider, connector.account, event.id, blockId, event.etag ?? null);
-      })();
+      });
       result.created++;
     } else if (mapping.direction === 'inbound' && event.etag !== mapping.etag) {
       // Inbound event changed remotely — update the local mirror + its etag atomically.
-      sqlite.transaction(() => {
-        sqlite
+      await store().transaction(async () => {
+        await store()
           .prepare(`UPDATE time_blocks SET title = ?, start_at = ?, end_at = ? WHERE id = ? AND owner_id = ?`)
           .run(event.title, event.start, event.end, mapping.block_id, ownerId);
-        sqlite
+        await store()
           .prepare(
             `UPDATE external_events SET etag = ?, last_synced_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`,
           )
           .run(event.etag ?? null, mapping.id);
-      })();
+      });
       result.updated++;
     }
     // direction='outbound' or etag unchanged → no-op
@@ -194,7 +192,7 @@ async function applyOutbound(
   result: SyncResult,
 ): Promise<void> {
   if (!config.sync.writeback) return;
-  const queued = sqlite
+  const queued = await store()
     .prepare(
       `SELECT oq.id AS queue_id, oq.block_id,
               tb.title, tb.start_at, tb.end_at, tb.all_day
@@ -202,31 +200,29 @@ async function applyOutbound(
        JOIN time_blocks tb ON tb.id = oq.block_id AND tb.owner_id = oq.owner_id
        WHERE oq.provider = ? AND oq.account = ? AND oq.owner_id = ?`,
     )
-    .all(connector.provider, connector.account, ownerId) as Array<{
+    .all<{
       queue_id: string;
       block_id: string;
       title: string;
       start_at: string;
       end_at: string;
       all_day: number;
-    }>;
+    }>(connector.provider, connector.account, ownerId);
 
   for (const row of queued) {
     // I7: stable idempotency key → connector derives cp+base32hex(blockId) provider event id
     const input = { title: row.title, start: row.start_at, end: row.end_at, allDay: row.all_day === 1, idempotencyKey: row.block_id };
-    const existing = sqlite
+    const existing = await store()
       .prepare(
         `SELECT id, external_id, etag FROM external_events
          WHERE block_id = ? AND provider = ? AND account = ? AND direction = 'outbound'`,
       )
-      .get(row.block_id, connector.provider, connector.account) as
-      | { id: string; external_id: string; etag: string | null }
-      | undefined;
+      .get<{ id: string; external_id: string; etag: string | null }>(row.block_id, connector.provider, connector.account);
 
     try {
       if (existing) {
         const updated = await connector.updateEvent(existing.external_id, input, existing.etag);
-        sqlite
+        await store()
           .prepare(
             `UPDATE external_events SET etag = ?, last_synced_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`,
           )
@@ -234,7 +230,7 @@ async function applyOutbound(
         result.updated++;
       } else {
         const created = await connector.createEvent(input);
-        sqlite
+        await store()
           .prepare(
             `INSERT INTO external_events (id, owner_id, provider, account, external_id, block_id, etag, direction, last_synced_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, 'outbound', strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
@@ -243,7 +239,7 @@ async function applyOutbound(
         result.created++;
       }
       // Remove from queue on success
-      sqlite.prepare('DELETE FROM outbound_queue WHERE id = ?').run(row.queue_id);
+      await store().prepare('DELETE FROM outbound_queue WHERE id = ?').run(row.queue_id);
     } catch (err) {
       if (err instanceof EtagConflictError) {
         // Remote changed since last sync — record fresh etag, remove from queue.
@@ -251,12 +247,12 @@ async function applyOutbound(
         // and overwrites the local block with the authoritative remote state.
         result.conflicts++;
         if (existing && err.freshEtag !== null) {
-          sqlite
+          await store()
             .prepare(`UPDATE external_events SET etag = ? WHERE id = ?`)
             .run(err.freshEtag, existing.id);
         }
-        clearCalendarCursor(connector, ownerId);
-        sqlite.prepare('DELETE FROM outbound_queue WHERE id = ?').run(row.queue_id);
+        await clearCalendarCursor(connector, ownerId);
+        await store().prepare('DELETE FROM outbound_queue WHERE id = ?').run(row.queue_id);
         logger.warn('outbound etag conflict — remote wins; cursor cleared for re-pull', {
           provider: connector.provider,
           externalId: existing?.external_id,
@@ -280,25 +276,23 @@ async function applyOutbound(
 const CALENDAR_SYNCTOKEN = 'calendar_synctoken';
 
 /** Read the stored incremental syncToken for (owner, provider, account), or null. */
-function readCalendarCursor(connector: CalendarConnector, ownerId: string): string | null {
-  const row = sqlite
+async function readCalendarCursor(connector: CalendarConnector, ownerId: string): Promise<string | null> {
+  const row = await store()
     .prepare(
       `SELECT cursor FROM sync_state
        WHERE owner_id = ? AND provider = ? AND account = ? AND resource = ?`,
     )
-    .get(ownerId, connector.provider, connector.account, CALENDAR_SYNCTOKEN) as
-    | { cursor: string | null }
-    | undefined;
+    .get<{ cursor: string | null }>(ownerId, connector.provider, connector.account, CALENDAR_SYNCTOKEN);
   return row?.cursor ?? null;
 }
 
 /** Persist the next incremental syncToken (advance-after-commit). Null clears it. */
-function writeCalendarCursor(
+async function writeCalendarCursor(
   connector: CalendarConnector,
   ownerId: string,
   cursor: string | null,
-): void {
-  sqlite
+): Promise<void> {
+  await store()
     .prepare(
       `INSERT INTO sync_state (id, owner_id, provider, account, resource, cursor)
        VALUES (?, ?, ?, ?, ?, ?)
@@ -317,8 +311,8 @@ function writeCalendarCursor(
 }
 
 /** Clear the stored cursor (e.g. after the provider rejects it as expired). */
-function clearCalendarCursor(connector: CalendarConnector, ownerId: string): void {
-  sqlite
+async function clearCalendarCursor(connector: CalendarConnector, ownerId: string): Promise<void> {
+  await store()
     .prepare(
       `DELETE FROM sync_state
        WHERE owner_id = ? AND provider = ? AND account = ? AND resource = ?`,
@@ -363,7 +357,7 @@ export async function syncConnector(connector: CalendarConnector): Promise<SyncR
   const window = syncWindow();
 
   try {
-    const storedCursor = readCalendarCursor(connector, ownerId);
+    const storedCursor = await readCalendarCursor(connector, ownerId);
 
     let cycle: 'full' | 'incremental';
     let page: Awaited<ReturnType<CalendarConnector['listEvents']>>;
@@ -372,7 +366,7 @@ export async function syncConnector(connector: CalendarConnector): Promise<SyncR
       page = await connector.listEvents({ syncToken: storedCursor });
       if (page.expired) {
         // Provider rejected the stale token — drop it and re-init with a full window.
-        clearCalendarCursor(connector, ownerId);
+        await clearCalendarCursor(connector, ownerId);
         page = await connector.listEvents({ from: window.from, to: window.to });
         cycle = 'full';
       } else {
@@ -383,14 +377,14 @@ export async function syncConnector(connector: CalendarConnector): Promise<SyncR
       cycle = 'full';
     }
 
-    applyInbound(connector, page.events, ownerId, result, cycle);
+    await applyInbound(connector, page.events, ownerId, result, cycle);
 
     // Persist the new cursor only after applyInbound committed (advance-after-commit). A
     // full re-init that itself returned no token leaves the cursor cleared → next cycle
     // re-inits full again. We never persist a null/undefined over a good token here because
     // the only path that nulls it is the explicit clearCalendarCursor above.
     if (page.nextSyncToken != null) {
-      writeCalendarCursor(connector, ownerId, page.nextSyncToken);
+      await writeCalendarCursor(connector, ownerId, page.nextSyncToken);
     }
 
     await applyOutbound(connector, ownerId, result);
@@ -413,7 +407,7 @@ export async function syncAll(): Promise<SyncResult[]> {
     logger.debug('syncAll: sync disabled (CP_SYNC_DISABLED)');
     return [];
   }
-  const connectors = getConnectors();
+  const connectors = await getConnectors();
   if (connectors.length === 0) {
     logger.debug('syncAll: no connectors registered for this owner');
     return [];

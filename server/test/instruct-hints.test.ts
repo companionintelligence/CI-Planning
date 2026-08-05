@@ -51,90 +51,90 @@ beforeEach(() => {
 });
 
 describe('A4 tag-window enforcement in placement', () => {
-  it('tag_after holds a tagged task out of the morning (placed only after the cutoff)', () => {
+  it('tag_after holds a tagged task out of the morning (placed only after the cutoff)', async () => {
     const errand = insertTask('Post office', 60, 'errands');
     stage(errand);
     addHint('tag_after', 'errands', '12:00'); // "no errands before noon"
 
-    const r = placeFlightPlan(OWNER, { date: DAY });
+    const r = await placeFlightPlan(OWNER, { date: DAY });
     expect(r.placed).toBe(1);
     const blk = block('Post office')!;
     expect(blk).toBeTruthy();
     expect(blk.start_at >= at('12:00')).toBe(true); // never before noon
   });
 
-  it('tag_before keeps a tagged task in the morning (placed only before the cutoff)', () => {
+  it('tag_before keeps a tagged task in the morning (placed only before the cutoff)', async () => {
     const deep = insertTask('Deep work', 60, 'deep-work');
     stage(deep);
     addHint('tag_before', 'deep-work', '12:00'); // "deep work before noon"
 
-    placeFlightPlan(OWNER, { date: DAY });
+    await placeFlightPlan(OWNER, { date: DAY });
     const blk = block('Deep work')!;
     expect(blk).toBeTruthy();
     expect(blk.end_at <= at('12:00')).toBe(true);
   });
 
-  it('intersects multiple hints on the same tag into one window', () => {
+  it('intersects multiple hints on the same tag into one window', async () => {
     const t = insertTask('Calls', 60, 'calls');
     stage(t);
     addHint('tag_after', 'calls', '10:00');
     addHint('tag_before', 'calls', '16:00'); // window = [10:00, 16:00]
 
-    placeFlightPlan(OWNER, { date: DAY });
+    await placeFlightPlan(OWNER, { date: DAY });
     const blk = block('Calls')!;
     expect(blk.start_at >= at('10:00')).toBe(true);
     expect(blk.end_at <= at('16:00')).toBe(true);
   });
 
-  it('HARD: a contradictory/empty window leaves the task unplaced — never dropped into the fill', () => {
+  it('HARD: a contradictory/empty window leaves the task unplaced — never dropped into the fill', async () => {
     const errand = insertTask('Post office', 60, 'errands');
     stage(errand);
     addHint('tag_after', 'errands', '18:00'); // window [18:00, 18:00] (= workday end) → empty
 
-    const r = placeFlightPlan(OWNER, { date: DAY });
+    const r = await placeFlightPlan(OWNER, { date: DAY });
     expect(block('Post office')).toBeUndefined(); // NOT force-placed in the morning fill
     expect(r.placed).toBe(0);
   });
 
-  it('only constrains the hinted tag — other tasks fill normally', () => {
+  it('only constrains the hinted tag — other tasks fill normally', async () => {
     const errand = insertTask('Post office', 60, 'errands');
     const free = insertTask('Anything', 60); // untagged → unconstrained workday fill
     stage(errand); stage(free);
     addHint('tag_after', 'errands', '12:00');
 
-    placeFlightPlan(OWNER, { date: DAY });
+    await placeFlightPlan(OWNER, { date: DAY });
     expect(block('Post office')!.start_at >= at('12:00')).toBe(true);
     const freeBlk = block('Anything')!;
     expect(freeBlk).toBeTruthy();
     expect(freeBlk.start_at >= at('09:00') && freeBlk.start_at < at('12:00')).toBe(true); // free to take the morning
   });
 
-  it('batch imposes no window — the task still places normally', () => {
+  it('batch imposes no window — the task still places normally', async () => {
     const a = insertTask('Email A', 30, 'email');
     const b = insertTask('Email B', 30, 'email');
     stage(a); stage(b);
     addHint('batch', 'email');
 
-    const r = placeFlightPlan(OWNER, { date: DAY });
+    const r = await placeFlightPlan(OWNER, { date: DAY });
     expect(r.placed).toBe(2); // batch is an ordering concern (§A2), not a placement gate
   });
 
-  it('the explicit priority top-up (fillByPriority) also honours the window — no leak', () => {
+  it('the explicit priority top-up (fillByPriority) also honours the window — no leak', async () => {
     const errand = insertTask('Post office', 60, 'errands');
     stage(errand);
     addHint('tag_after', 'errands', '12:00');
 
-    const r = fillByPriority(OWNER, { date: DAY });
+    const r = await fillByPriority(OWNER, { date: DAY });
     expect(r.placed).toBe(1);
     expect(block('Post office')!.start_at >= at('12:00')).toBe(true); // not force-filled into the morning
   });
 
-  it('fillByPriority leaves a contradictory-window task unplaced (hard, like tap 2)', () => {
+  it('fillByPriority leaves a contradictory-window task unplaced (hard, like tap 2)', async () => {
     const errand = insertTask('Post office', 60, 'errands');
     stage(errand);
     addHint('tag_after', 'errands', '18:00'); // empty window
 
-    const r = fillByPriority(OWNER, { date: DAY });
+    const r = await fillByPriority(OWNER, { date: DAY });
     expect(block('Post office')).toBeUndefined();
     expect(r.placed).toBe(0);
   });

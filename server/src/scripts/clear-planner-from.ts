@@ -35,7 +35,7 @@ console.log(`cutoff : ${cutoff} (>= this local day is cleared)`);
 console.log(`mode   : ${APPLY ? 'APPLY (writes)' : 'DRY-RUN (no writes)'}\n`);
 
 // Preview: always compute the report without writing.
-const preview = clearPlannerRange({ owner: SYSTEM_OWNER_ID, start: cutoff, suppress: 'auto', autoOnly: false, dryRun: true });
+const preview = await clearPlannerRange({ owner: SYSTEM_OWNER_ID, start: cutoff, suppress: 'auto', autoOnly: false, dryRun: true });
 console.log(`DELETE`);
 console.log(`  time_blocks (instances + non-recurring, on/after cutoff): ${preview.blocksDeleted}`);
 console.log(`  daily_plan rows (date >= cutoff)                        : ${preview.dailyPlanDeleted}\n`);
@@ -59,7 +59,7 @@ const dest = join(backupDir, `companion-preclear-${ts}.db`);
 await snapshot(dest);
 console.log(`Snapshot written to ${dest}`);
 
-const applied = clearPlannerRange({ owner: SYSTEM_OWNER_ID, start: cutoff, suppress: 'auto', autoOnly: false, dryRun: false });
+const applied = await clearPlannerRange({ owner: SYSTEM_OWNER_ID, start: cutoff, suppress: 'auto', autoOnly: false, dryRun: false });
 console.log(`\nAPPLIED:`);
 console.log(`  deleted ${applied.blocksDeleted} time_blocks, ${applied.dailyPlanDeleted} daily_plan rows`);
 console.log(`  capped  ${applied.generators.length} generators to < ${cutoff}`);

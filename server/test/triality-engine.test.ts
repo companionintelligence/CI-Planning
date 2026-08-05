@@ -110,7 +110,7 @@ describe('refusal floor (§4)', () => {
   it('refuses below 10 confirmed completions; the 10th flips it', async () => {
     seedConfirmedHistory(9);
     insertTask('unconfirmed', { status: 'done', completedAt: daysAgo(2) }); // no mood/reaction/timer — doesn't count
-    expect(confirmedCompletionCount(OWNER, NOW)).toBe(9);
+    expect(await confirmedCompletionCount(OWNER, NOW)).toBe(9);
     const refused = await trialityNext(OWNER, NOW, { embedFn: null });
     expect(refused.refused).toBe('sparse_history');
     if (refused.refused) { expect(refused.have).toBe(9); expect(refused.need).toBe(10); }
@@ -144,7 +144,7 @@ describe('capacity filter (§1 pipeline order)', () => {
          VALUES (uuid7(), ?, 'standup', 'meeting', ?, ?, 1)`,
       )
       .run(OWNER, iso(40), iso(70));
-    expect(rawFreeGapMinutes(OWNER, NOW)).toBe(40);
+    expect(await rawFreeGapMinutes(OWNER, NOW)).toBe(40);
 
     insertTask('quick email', { estimate: 15 });
     const bigId = insertTask('deep work session', { estimate: 120 });
@@ -427,7 +427,7 @@ describe('getWeights seam (T8 plug point)', () => {
     if (res.refused) throw new Error('unexpected refusal');
     for (const p of res.picks) if (p) expect(p.scores.total).toBe(p.scores.H);
     // And the default seam returns the §5 constants.
-    expect(getWeights(OWNER, 'habitual')).toEqual(DEFAULT_WEIGHTS.habitual);
+    expect(await getWeights(OWNER, 'habitual')).toEqual(DEFAULT_WEIGHTS.habitual);
   });
 });
 
@@ -439,7 +439,7 @@ describe('log helpers (append-only, once-only)', () => {
     if (res.refused) throw new Error('unexpected refusal');
     // The 4th argument mirrors both production call sites: confidence is serialized by
     // the CALLER and handed over opaque, so this module never learns what is in it.
-    const ids = logShown(OWNER, NOW, res.picks, attachConfidence(res.picks, res.vector).map(serializeConfidence));
+    const ids = await logShown(OWNER, NOW, res.picks, attachConfidence(res.picks, res.vector).map(serializeConfidence));
     const firstId = ids.find((x): x is string => !!x)!;
     const row = sqlite.prepare(`SELECT slot, outcome, scores FROM triality_log WHERE id = ?`).get(firstId) as {
       slot: string; outcome: string; scores: string;
@@ -448,9 +448,9 @@ describe('log helpers (append-only, once-only)', () => {
     const scores = JSON.parse(row.scores);
     for (const k of ['F', 'H', 'Q', 'N', 'C', 'total', 'ternary']) expect(k in scores).toBe(true);
 
-    expect(stampOutcome(OWNER, firstId, 'staged', NOW).changed).toBe(true);
-    expect(stampOutcome(OWNER, firstId, 'dismissed', NOW).changed).toBe(false); // once-only
-    expect(stampOutcome('someone-else', firstId, 'opened', NOW).changed).toBe(false); // cross-tenant no-op
+    expect((await stampOutcome(OWNER, firstId, 'staged', NOW)).changed).toBe(true);
+    expect((await stampOutcome(OWNER, firstId, 'dismissed', NOW)).changed).toBe(false); // once-only
+    expect((await stampOutcome('someone-else', firstId, 'opened', NOW)).changed).toBe(false); // cross-tenant no-op
     const after = sqlite.prepare(`SELECT outcome FROM triality_log WHERE id = ?`).get(firstId) as { outcome: string };
     expect(after.outcome).toBe('staged');
   });
@@ -615,7 +615,7 @@ const onlyN: SlotWeights = { F: 0, H: 0, Q: 0, N: 1, C: 0 };
 const onlyH: SlotWeights = { F: 0, H: 1, Q: 0, N: 0, C: 0 };
 
 describe('E1–E3 — confidence can never reach ranking', () => {
-  it('E1 — the engine never names the confidence module in code (import graph)', () => {
+  it('E1 — the engine never names the confidence module in code (import graph)', async () => {
     // WHAT THIS PROVES: the very first line of a change that wires confidence back into
     // scoring — a runtime import, a type-only import, a re-export, a dynamic import with
     // a literal specifier — turns this red, before any number moves. Cheap and early.
@@ -993,24 +993,24 @@ describe('E9–E11 — the honest-zero branches and the dims that are actually r
 });
 
 describe('E12–E16 — the situation, the isolation, and what gets written', () => {
-  it('E12 — meta.active is 12 with work hours, 11 without, and never 13', () => {
+  it('E12 — meta.active is 12 with work hours, 11 without, and never 13', async () => {
     // The coverage denominator. `memory_context` encodes a constant and therefore
     // reports inactive in BOTH flag states (the v2.1 truthfulness fix): an inert dim
     // counted as active would understate coverage permanently and invisibly, because
     // it always reads 0.
     expect(DIM_REGISTRY.length).toBe(13);
 
-    const withHours = buildSituationVector(OWNER, NOW);
+    const withHours = await buildSituationVector(OWNER, NOW);
     expect(withHours.meta.active).not.toContain('memory_context');
     expect(withHours.meta.active.length).toBe(12);
 
     sqlite.prepare(`UPDATE scheduling_prefs SET memory_pull_enabled = 1 WHERE owner_id = ?`).run(OWNER);
-    expect(buildSituationVector(OWNER, NOW).meta.active).not.toContain('memory_context');
+    expect((await buildSituationVector(OWNER, NOW)).meta.active).not.toContain('memory_context');
 
     // FIRM_AT/TENTATIVE_AT are chosen so the bands mean the same DIM COUNT at both
     // denominators — which is only worth anything if 11 is genuinely reachable.
     sqlite.prepare(`UPDATE scheduling_prefs SET workday_start = NULL, workday_end = NULL WHERE owner_id = ?`).run(OWNER);
-    const noHours = buildSituationVector(OWNER, NOW);
+    const noHours = await buildSituationVector(OWNER, NOW);
     expect(noHours.meta.active).not.toContain('in_work_hours');
     expect(noHours.meta.active.length).toBe(11);
   });
@@ -1063,7 +1063,7 @@ describe('E12–E16 — the situation, the isolation, and what gets written', ()
     const res = await trialityNext(OWNER, NOW, { embedFn: null });
     if (res.refused) throw new Error('unexpected refusal');
     const confidences = attachConfidence(res.picks, res.vector);
-    logShown(OWNER, NOW, res.picks, confidences.map(serializeConfidence));
+    await logShown(OWNER, NOW, res.picks, confidences.map(serializeConfidence));
 
     const rows = sqlite
       .prepare(`SELECT slot, confidence FROM triality_log WHERE owner_id = ? ORDER BY id ASC`)
@@ -1107,7 +1107,7 @@ describe('E12–E16 — the situation, the isolation, and what gets written', ()
 
     const confidences = attachConfidence(res.picks, res.vector);
     expect(confidences).toEqual([null, null, null]);
-    expect(logShown(OWNER, NOW, res.picks, confidences.map(serializeConfidence))).toEqual([null, null, null]);
+    expect(await logShown(OWNER, NOW, res.picks, confidences.map(serializeConfidence))).toEqual([null, null, null]);
     expect((sqlite.prepare(`SELECT COUNT(*) AS c FROM triality_log`).get() as { c: number }).c).toBe(0);
   });
 });

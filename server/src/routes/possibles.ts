@@ -47,8 +47,8 @@ export function possiblesRouter() {
     // engine autonomy); a start-less task keeps the TM-5 trust-gated hands-off
     // auto-block (estimate-bearing only; no-op in Cautious/Balanced).
     try {
-      if (res.task.scheduledFor) placeStartAnchoredTask(owner, res.taskId);
-      else autoScheduleOnIngest(owner, { requireEstimate: true });
+      if (res.task.scheduledFor) await placeStartAnchoredTask(owner, res.taskId);
+      else await autoScheduleOnIngest(owner, { requireEstimate: true });
     } catch (err) {
       // Best-effort — promote already succeeded; surface the reason so a placement
       // regression is diagnosable rather than silently invisible.

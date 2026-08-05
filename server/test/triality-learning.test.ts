@@ -118,12 +118,12 @@ describe('constants (§6b — cited, never configurable)', () => {
 });
 
 describe('determinism', () => {
-  it('same log fixture twice → float-exact identical stored weights', () => {
+  it('same log fixture twice → float-exact identical stored weights', async () => {
     seedCovaryingLog();
     seedCovaryingLog({ slot: 'novel', highOutcome: 'opened', lowOutcome: 'shown', component: 'N' });
-    const first = calibrateTriality(OWNER, NOW);
+    const first = await calibrateTriality(OWNER, NOW);
     const rowsFirst = (['habitual', 'contextual', 'novel'] as Slot[]).map((s) => storedRow(s));
-    const second = calibrateTriality(OWNER, NOW);
+    const second = await calibrateTriality(OWNER, NOW);
     const rowsSecond = (['habitual', 'contextual', 'novel'] as Slot[]).map((s) => storedRow(s));
     expect(second).toEqual(first);
     expect(rowsSecond).toEqual(rowsFirst); // raw JSON strings — byte-for-byte, not "close enough"
@@ -142,23 +142,23 @@ describe('reward map (§6b)', () => {
     expect(rowReward('shown', 'not-a-date', NOW)).toBeNull();
   });
 
-  it('each outcome kind moves the learned weight in the documented direction', () => {
+  it('each outcome kind moves the learned weight in the documented direction', async () => {
     // A single outcome kind cannot be isolated: delta is a COVARIANCE, so a log with
     // uniform reward yields exactly 0. Each kind is therefore measured against the
     // same contrast group (10 low-F `opened` rows), which orders them by reward.
-    const learnedF = (outcome: string): number => {
+    const learnedF = async (outcome: string): Promise<number> => {
       resetDb();
       for (let i = 0; i < 10; i++) {
         logRow({ outcome, scores: { F: 1, H: 0.5, Q: 0.5 }, ageDays: 3 + i });
         logRow({ outcome: 'opened', scores: { F: 0, H: 0.5, Q: 0.5 }, ageDays: 3 + i });
       }
-      calibrateTriality(OWNER, NOW);
-      return getWeights(OWNER, 'habitual').F;
+      await calibrateTriality(OWNER, NOW);
+      return (await getWeights(OWNER, 'habitual')).F;
     };
-    const staged = learnedF('staged');
-    const opened = learnedF('opened');
-    const ignored = learnedF('shown');   // >24h old ⇒ ignored, weak negative
-    const dismissed = learnedF('dismissed');
+    const staged = await learnedF('staged');
+    const opened = await learnedF('opened');
+    const ignored = await learnedF('shown');   // >24h old ⇒ ignored, weak negative
+    const dismissed = await learnedF('dismissed');
     const dflt = DEFAULT_WEIGHTS.habitual.F;
 
     expect(staged).toBeGreaterThan(dflt);
@@ -168,13 +168,13 @@ describe('reward map (§6b)', () => {
     expect(staged).toBeGreaterThan(opened);
   });
 
-  it('a fresh shown row is excluded from BOTH the sample count and the math', () => {
+  it('a fresh shown row is excluded from BOTH the sample count and the math', async () => {
     seedCovaryingLog();                                       // 20 decided rows
-    const decidedOnly = calibrateTriality(OWNER, NOW);
+    const decidedOnly = await calibrateTriality(OWNER, NOW);
     const weightsDecidedOnly = storedRow('habitual')!.weights;
 
     logRows(6, { outcome: 'shown', scores: { F: 1, H: 0, Q: 0 }, ageDays: 0.25 }); // pending
-    const withPending = calibrateTriality(OWNER, NOW);
+    const withPending = await calibrateTriality(OWNER, NOW);
     expect(withPending.outcomeRows).toBe(decidedOnly.outcomeRows);
     expect(storedRow('habitual')!.sample_count).toBe(OUTCOME_FLOOR);
     expect(storedRow('habitual')!.weights).toBe(weightsDecidedOnly); // math untouched
@@ -240,7 +240,7 @@ describe('collapseImpressions (§6b — UI remounts are not evidence)', () => {
     expect(out.map((r) => r.id)).toEqual(['1', '2', '3', '4']); // first-seen order preserved
   });
 
-  it('earliest-wins survives the DB read: the group votes as one IGNORED row', () => {
+  it('earliest-wins survives the DB read: the group votes as one IGNORED row', async () => {
     // 19 real decided rows — one short of the floor. A 4-remount group on a single
     // day supplies the 20th ONLY if the earliest row represents it (37.5h ⇒ ignored);
     // if the latest remount won, the group would read pending and nothing is written.
@@ -253,12 +253,12 @@ describe('collapseImpressions (§6b — UI remounts are not evidence)', () => {
         shownAt: msAgo(hours * 3_600_000), scores: { F: 0.5, H: 0.5, Q: 0.5 },
       });
     });
-    const r = calibrateTriality(OWNER, NOW);
+    const r = await calibrateTriality(OWNER, NOW);
     expect(r.outcomeRows).toBe(20); // 19 + the group's single ignored vote
     expect(storedRow('habitual')!.sample_count).toBe(20);
   });
 
-  it('25 impressions of ONE suggestion on ONE day cannot clear the floor', () => {
+  it('25 impressions of ONE suggestion on ONE day cannot clear the floor', async () => {
     // The bug this closes: navigation manufacturing evidence. 25 rows, all >24h old
     // so each WOULD be an `ignored` vote on its own, but they are one suggestion on
     // one day ⇒ one vote ⇒ nowhere near OUTCOME_FLOOR, so no row is written and the
@@ -267,25 +267,25 @@ describe('collapseImpressions (§6b — UI remounts are not evidence)', () => {
     for (let i = 0; i < 25; i++) {
       logRow({ outcome: 'shown', ref: 'same-task', shownAt: msAgo((72 + i / 60) * 3_600_000) });
     }
-    const r = calibrateTriality(OWNER, NOW);
+    const r = await calibrateTriality(OWNER, NOW);
     expect(r.outcomeRows).toBe(1);
     expect(r.slotsWritten).toBe(0);
     expect(r.slotsFloored).toBe(3);
     expect(storedRow('habitual')).toBeNull();
-    expect(getWeights(OWNER, 'habitual')).toEqual(DEFAULT_WEIGHTS.habitual);
+    expect(await getWeights(OWNER, 'habitual')).toEqual(DEFAULT_WEIGHTS.habitual);
   });
 
-  it('the SAME suggestion on 20 different days is 20 votes', () => {
+  it('the SAME suggestion on 20 different days is 20 votes', async () => {
     // The other half of the rule: the collapse is per DAY, so genuine repeat
     // engagement with one recurring action is genuine repeat evidence.
     for (let i = 0; i < 20; i++) logRow({ outcome: 'staged', ref: 'daily-thing', ageDays: 3 + i });
-    const r = calibrateTriality(OWNER, NOW);
+    const r = await calibrateTriality(OWNER, NOW);
     expect(r.outcomeRows).toBe(20);
     expect(r.slotsWritten).toBe(1);
     expect(storedRow('habitual')!.sample_count).toBe(20);
   });
 
-  it('extra impressions of an already-decided suggestion change NOTHING (byte-identical)', () => {
+  it('extra impressions of an already-decided suggestion change NOTHING (byte-identical)', async () => {
     // The counterexample that motivated the fix. 10 staged @F=0.6 + 10 dismissed
     // @F=0.5, all distinct suggestions ⇒ 20 votes and delta_F = +0.05.
     // Explicit ascending ids: byte-identity is an assertion about float summation
@@ -298,7 +298,7 @@ describe('collapseImpressions (§6b — UI remounts are not evidence)', () => {
       logRow({ id: seqId(2 * i), outcome: 'staged', ref, scores: { F: 0.6, H: 0.5, Q: 0.5 }, ageDays: 3 + i });
       logRow({ id: seqId(2 * i + 1), outcome: 'dismissed', ref: `down-${i}`, scores: { F: 0.5, H: 0.5, Q: 0.5 }, ageDays: 3 + i });
     }
-    const firstRun = calibrateTriality(OWNER, NOW);
+    const firstRun = await calibrateTriality(OWNER, NOW);
     const W = storedRow('habitual')!;
     expect(W.sample_count).toBe(20);
 
@@ -311,7 +311,7 @@ describe('collapseImpressions (§6b — UI remounts are not evidence)', () => {
         shownAt: msAgo((72 + (i + 1) / 60) * 3_600_000), scores: { F: 0.6, H: 0.5, Q: 0.5 },
       });
     }
-    const secondRun = calibrateTriality(OWNER, NOW);
+    const secondRun = await calibrateTriality(OWNER, NOW);
     expect(secondRun).toEqual(firstRun);
     const after = storedRow('habitual')!;
     expect(after.sample_count).toBe(20);        // NOT 60
@@ -368,19 +368,19 @@ describe('clamps + renormalization (the §6b contract)', () => {
     }
   });
 
-  it('a uniform-reward log (all dismissed) leaves the defaults standing', () => {
+  it('a uniform-reward log (all dismissed) leaves the defaults standing', async () => {
     // The honest consequence of a covariance rule: blame spread evenly over every
     // pick says nothing about WHICH component earned it, so nothing moves.
     for (let i = 0; i < OUTCOME_FLOOR; i++) {
       logRow({ outcome: 'dismissed', scores: { F: i / OUTCOME_FLOOR, H: 1 - i / OUTCOME_FLOOR, Q: 0.5 }, ageDays: 3 + i });
     }
-    const r = calibrateTriality(OWNER, NOW);
+    const r = await calibrateTriality(OWNER, NOW);
     expect(r.slotsWritten).toBe(1);
-    const w = getWeights(OWNER, 'habitual');
+    const w = await getWeights(OWNER, 'habitual');
     for (const k of COMPONENTS) expect(w[k]).toBeCloseTo(DEFAULT_WEIGHTS.habitual[k], 12);
   });
 
-  it('out-of-range scores are ABSENT, so their components keep their defaults', () => {
+  it('out-of-range scores are ABSENT, so their components keep their defaults', async () => {
     // Every engine component is provably in [0,1], so a stored 1e6 is a corrupt or
     // hand-edited row, not a score. parseScores rejects it, which is what caps
     // |delta_k| at 0.5 by construction — the clamp never has to save us from a
@@ -389,11 +389,11 @@ describe('clamps + renormalization (the §6b contract)', () => {
       logRow({ outcome: 'staged', scores: { F: 1e6, H: -1e6, Q: 0.5 }, ageDays: 3 + i });
       logRow({ outcome: 'dismissed', scores: { F: -1e6, H: 1e6, Q: 0.5 }, ageDays: 3 + i });
     }
-    calibrateTriality(OWNER, NOW);
+    await calibrateTriality(OWNER, NOW);
     // The rows are still DECIDED outcomes — they count toward the floor, they just
     // vote on nothing. (Q is in range but constant ⇒ zero covariance either way.)
     expect(storedRow('habitual')!.sample_count).toBe(OUTCOME_FLOOR);
-    const w = getWeights(OWNER, 'habitual');
+    const w = await getWeights(OWNER, 'habitual');
     for (const k of COMPONENTS) expect(w[k]).toBeCloseTo(DEFAULT_WEIGHTS.habitual[k], 12);
     expect(sumOf(w)).toBeCloseTo(sumOf(DEFAULT_WEIGHTS.habitual), 12);
     for (const k of COMPONENTS) {
@@ -402,7 +402,7 @@ describe('clamps + renormalization (the §6b contract)', () => {
     }
   });
 
-  it('IN-RANGE extremes (0 vs 1, opposing rewards) DO move the weights', () => {
+  it('IN-RANGE extremes (0 vs 1, opposing rewards) DO move the weights', async () => {
     // The strongest signal the engine can legitimately emit: perfect anti-correlated
     // pair of components at the ends of their real range. delta reaches ±0.5 here,
     // its maximum possible magnitude given |reward| ≤ 1 and s ∈ [0,1].
@@ -410,8 +410,8 @@ describe('clamps + renormalization (the §6b contract)', () => {
       logRow({ outcome: 'staged', scores: { F: 1, H: 0, Q: 0.5 }, ageDays: 3 + i });
       logRow({ outcome: 'dismissed', scores: { F: 0, H: 1, Q: 0.5 }, ageDays: 3 + i });
     }
-    calibrateTriality(OWNER, NOW);
-    const w = getWeights(OWNER, 'habitual');
+    await calibrateTriality(OWNER, NOW);
+    const w = await getWeights(OWNER, 'habitual');
     expect(w.F).toBeCloseTo(0.5, 12);  // 0.40 · (1 + 0.5·+0.5), sum already 1.0
     expect(w.H).toBeCloseTo(0.3, 12);  // 0.40 · (1 + 0.5·−0.5)
     expect(w.F).toBeGreaterThan(DEFAULT_WEIGHTS.habitual.F);
@@ -423,7 +423,7 @@ describe('clamps + renormalization (the §6b contract)', () => {
     }
   });
 
-  it('every STORED weight stays inside its multiplicative bounds, for every slot', () => {
+  it('every STORED weight stays inside its multiplicative bounds, for every slot', async () => {
     // Asserted on what is WRITTEN, not on the intermediate `clamped` object: the
     // §6b contract is about the row scoring reads back, and renormalization happens
     // AFTER the clamp, so only the stored value can prove the contract holds.
@@ -438,7 +438,7 @@ describe('clamps + renormalization (the §6b contract)', () => {
         logRow({ slot, outcome: 'dismissed', scores: { F: 0, H: 1, Q: 0, N: 1, C: 0 }, ageDays: 3 + i });
       }
     }
-    expect(calibrateTriality(OWNER, NOW).slotsWritten).toBe(3);
+    expect((await calibrateTriality(OWNER, NOW)).slotsWritten).toBe(3);
     for (const slot of SLOTS) {
       const stored = JSON.parse(storedRow(slot)!.weights) as SlotWeights;
       expect(sumOf(stored)).toBeCloseTo(sumOf(DEFAULT_WEIGHTS[slot]), 12);
@@ -456,20 +456,20 @@ describe('clamps + renormalization (the §6b contract)', () => {
 });
 
 describe('zero-default invariance (a slot cannot change its character)', () => {
-  it("habitual's N and C stay exactly 0 no matter what the log says", () => {
+  it("habitual's N and C stay exactly 0 no matter what the log says", async () => {
     // Both components scream: N covaries perfectly with reward, C anti-covaries.
     for (let i = 0; i < 10; i++) {
       logRow({ outcome: 'staged', scores: { F: 0.5, H: 0.5, Q: 0.5, N: 1, C: 0 }, ageDays: 3 + i });
       logRow({ outcome: 'dismissed', scores: { F: 0.5, H: 0.5, Q: 0.5, N: 0, C: 1 }, ageDays: 3 + i });
     }
-    calibrateTriality(OWNER, NOW);
-    const w = getWeights(OWNER, 'habitual');
+    await calibrateTriality(OWNER, NOW);
+    const w = await getWeights(OWNER, 'habitual');
     expect(w.N).toBe(0);
     expect(w.C).toBe(0);
     // Same argument, contextual's unused axes.
     seedCovaryingLog({ slot: 'contextual', component: 'C' });
-    calibrateTriality(OWNER, NOW);
-    const ctx = getWeights(OWNER, 'contextual');
+    await calibrateTriality(OWNER, NOW);
+    const ctx = await getWeights(OWNER, 'contextual');
     expect(ctx.Q).toBe(0);
     expect(ctx.C).toBe(0);
     // A 0 default is 0 at the rule level too, whatever delta arrives.
@@ -478,43 +478,43 @@ describe('zero-default invariance (a slot cannot change its character)', () => {
 });
 
 describe('floor (§6b — learning never runs on noise)', () => {
-  it('19 decided rows write nothing; the 20th flips the slot to written', () => {
+  it('19 decided rows write nothing; the 20th flips the slot to written', async () => {
     for (let i = 0; i < 19; i++) {
       logRow({ outcome: i % 2 === 0 ? 'staged' : 'dismissed', scores: { F: i % 2, H: 0.5, Q: 0.5 }, ageDays: 3 + i });
     }
     logRows(5, { outcome: 'shown', scores: { F: 1, H: 1, Q: 1 }, ageDays: 0.1 }); // pending, cannot help
-    const floored = calibrateTriality(OWNER, NOW);
+    const floored = await calibrateTriality(OWNER, NOW);
     expect(floored).toEqual({ outcomeRows: 19, slotsWritten: 0, slotsFloored: 3, floor: OUTCOME_FLOOR });
     expect(storedRow('habitual')).toBeNull();
-    expect(getWeights(OWNER, 'habitual')).toEqual(DEFAULT_WEIGHTS.habitual); // absence == defaults
+    expect(await getWeights(OWNER, 'habitual')).toEqual(DEFAULT_WEIGHTS.habitual); // absence == defaults
 
     logRow({ outcome: 'dismissed', scores: { F: 1, H: 0.5, Q: 0.5 }, ageDays: 25 });
-    const written = calibrateTriality(OWNER, NOW);
+    const written = await calibrateTriality(OWNER, NOW);
     expect(written).toEqual({ outcomeRows: 20, slotsWritten: 1, slotsFloored: 2, floor: OUTCOME_FLOOR });
     expect(storedRow('habitual')!.sample_count).toBe(20);
     expect(storedRow('habitual')!.computed_date).toBe(NOW.toISOString().slice(0, 10)); // owner-local day (UTC prefs)
   });
 
-  it('rows outside the 90-day window are not evidence', () => {
+  it('rows outside the 90-day window are not evidence', async () => {
     seedCovaryingLog();
     logRows(10, { outcome: 'staged', scores: { F: 1 }, ageDays: LEARNING_WINDOW_DAYS + 1 });
-    expect(calibrateTriality(OWNER, NOW).outcomeRows).toBe(OUTCOME_FLOOR);
+    expect((await calibrateTriality(OWNER, NOW)).outcomeRows).toBe(OUTCOME_FLOOR);
   });
 });
 
 describe('stale-row hygiene', () => {
-  it('a slot that drops below the floor loses its row', () => {
+  it('a slot that drops below the floor loses its row', async () => {
     seedCovaryingLog();
-    expect(calibrateTriality(OWNER, NOW).slotsWritten).toBe(1);
+    expect((await calibrateTriality(OWNER, NOW)).slotsWritten).toBe(1);
     expect(storedRow('habitual')).not.toBeNull();
 
     // Evidence shrinks (rows aged out, or the owner reset their log).
     sqlite.prepare(`DELETE FROM triality_log WHERE id IN (SELECT id FROM triality_log LIMIT 3)`).run();
-    const after = calibrateTriality(OWNER, NOW);
+    const after = await calibrateTriality(OWNER, NOW);
     expect(after.slotsWritten).toBe(0);
     expect(after.slotsFloored).toBe(3);
     expect(storedRow('habitual')).toBeNull(); // a shrinking sample must not keep old weights alive
-    expect(getWeights(OWNER, 'habitual')).toEqual(DEFAULT_WEIGHTS.habitual);
+    expect(await getWeights(OWNER, 'habitual')).toEqual(DEFAULT_WEIGHTS.habitual);
   });
 });
 
@@ -524,50 +524,50 @@ describe('WHO rule (owner ruling 2026-07-16 — a cron/agent write must not stam
     const audits = () => (sqlite.prepare(`SELECT COUNT(*) AS c FROM audit_log`).get() as { c: number }).c;
     seedCovaryingLog();
     const before = audits();
-    expect(calibrateTriality(OWNER, NOW).slotsWritten).toBe(1); // it really wrote something
+    expect((await calibrateTriality(OWNER, NOW)).slotsWritten).toBe(1); // it really wrote something
     expect(audits()).toBe(before);
     // …and the DELETE half of the wholesale replacement is equally unstamped.
     sqlite.prepare(`DELETE FROM triality_log WHERE id IN (SELECT id FROM triality_log LIMIT 3)`).run();
-    expect(calibrateTriality(OWNER, NOW).slotsWritten).toBe(0);
+    expect((await calibrateTriality(OWNER, NOW)).slotsWritten).toBe(0);
     expect(storedRow('habitual')).toBeNull();
     expect(audits()).toBe(before);
   });
 });
 
 describe('per-owner isolation', () => {
-  it("each owner's weights derive from their own log only", () => {
+  it("each owner's weights derive from their own log only", async () => {
     createOwner();
     // Owner A: high F accepted. Owner B: the exact opposite, plus too few rows.
     seedCovaryingLog();
     seedCovaryingLog({ owner: SECOND_OWNER_ID, highOutcome: 'dismissed', lowOutcome: 'staged' });
 
-    const a = calibrateTriality(OWNER, NOW);
+    const a = await calibrateTriality(OWNER, NOW);
     expect(a.outcomeRows).toBe(OUTCOME_FLOOR); // B's 20 rows are invisible here
     expect(storedRow('habitual', SECOND_OWNER_ID)).toBeNull(); // A's run never writes for B
 
-    const b = calibrateTriality(SECOND_OWNER_ID, NOW);
+    const b = await calibrateTriality(SECOND_OWNER_ID, NOW);
     expect(b.outcomeRows).toBe(OUTCOME_FLOOR);
-    const wA = getWeights(OWNER, 'habitual');
-    const wB = getWeights(SECOND_OWNER_ID, 'habitual');
+    const wA = await getWeights(OWNER, 'habitual');
+    const wB = await getWeights(SECOND_OWNER_ID, 'habitual');
     expect(wA.F).toBeGreaterThan(DEFAULT_WEIGHTS.habitual.F);
     expect(wB.F).toBeLessThan(DEFAULT_WEIGHTS.habitual.F);
     // B's run must not have disturbed A's row.
-    expect(getWeights(OWNER, 'habitual')).toEqual(wA);
+    expect(await getWeights(OWNER, 'habitual')).toEqual(wA);
   });
 
-  it("one owner's floored slot does not delete another owner's row", () => {
+  it("one owner's floored slot does not delete another owner's row", async () => {
     createOwner();
     seedCovaryingLog();
     logRows(4, { owner: SECOND_OWNER_ID, outcome: 'staged', scores: { F: 1 } });
-    calibrateTriality(OWNER, NOW);
-    calibrateTriality(SECOND_OWNER_ID, NOW);
+    await calibrateTriality(OWNER, NOW);
+    await calibrateTriality(SECOND_OWNER_ID, NOW);
     expect(storedRow('habitual')).not.toBeNull();
     expect(storedRow('habitual', SECOND_OWNER_ID)).toBeNull();
   });
 });
 
 describe('malformed evidence', () => {
-  it('unparseable scores JSON neither throws nor poisons the other components', () => {
+  it('unparseable scores JSON neither throws nor poisons the other components', async () => {
     // Every row carries a usable H; F is non-numeric on the staged half and CONSTANT
     // on the dismissed half — so F receives no signal while H learns normally.
     for (let i = 0; i < 10; i++) {
@@ -577,21 +577,22 @@ describe('malformed evidence', () => {
     logRow({ outcome: 'staged', scores: 'null', ageDays: 30 });          // valid JSON, not an object
     logRow({ outcome: 'dismissed', scores: '{"H":1,"Q":', ageDays: 30 }); // truncated ⇒ the WHOLE row votes on nothing
 
-    expect(() => calibrateTriality(OWNER, NOW)).not.toThrow();
+    // A rejected promise fails the test — the async form of "does NOT throw".
+    await calibrateTriality(OWNER, NOW);
     const row = storedRow('habitual')!;
     expect(row.sample_count).toBe(22); // a corrupt row is still a decided outcome
-    const w = getWeights(OWNER, 'habitual');
+    const w = await getWeights(OWNER, 'habitual');
     expect(w.H).toBeGreaterThan(DEFAULT_WEIGHTS.habitual.H);
     // F got no usable variance, so its share relative to Q is untouched (both moved
     // only by the shared renormalization factor).
     expect(w.F / w.Q).toBeCloseTo(DEFAULT_WEIGHTS.habitual.F / DEFAULT_WEIGHTS.habitual.Q, 12);
   });
 
-  it('a truncated-JSON row that yields NO components still counts, and delta is 0', () => {
+  it('a truncated-JSON row that yields NO components still counts, and delta is 0', async () => {
     logRows(OUTCOME_FLOOR, { outcome: 'staged', scores: '{oops' });
-    calibrateTriality(OWNER, NOW);
+    await calibrateTriality(OWNER, NOW);
     expect(componentDeltas([{ reward: 1, scores: {} }])).toEqual({ F: 0, H: 0, Q: 0, N: 0, C: 0 });
-    expect(getWeights(OWNER, 'habitual')).toEqual(DEFAULT_WEIGHTS.habitual);
+    expect(await getWeights(OWNER, 'habitual')).toEqual(DEFAULT_WEIGHTS.habitual);
   });
 });
 
@@ -699,14 +700,14 @@ describe('end-to-end adaptation (the test that justifies the feature)', () => {
       logRow({ outcome: 'staged', scores: { F: 0, H: 1, Q: 0.5, N: 0, C: 0 }, ageDays: 3 + i });
       logRow({ outcome: 'dismissed', scores: { F: 1, H: 0, Q: 0.5, N: 0, C: 0 }, ageDays: 3 + i });
     }
-    const res = calibrateTriality(OWNER, NOW);
+    const res = await calibrateTriality(OWNER, NOW);
     expect(res).toEqual({ outcomeRows: 20, slotsWritten: 1, slotsFloored: 2, floor: OUTCOME_FLOOR });
 
-    const learned = getWeights(OWNER, 'habitual');
+    const learned = await getWeights(OWNER, 'habitual');
     expect(learned.H).toBeCloseTo(0.5, 6);  // 0.40 · (1 + 0.5·0.5)
     expect(learned.F).toBeCloseTo(0.3, 6);  // 0.40 · (1 − 0.5·0.5)
     expect(learned.Q).toBeCloseTo(0.2, 6);  // no variance in Q ⇒ untouched
-    expect(getWeights(OWNER, 'contextual')).toEqual(DEFAULT_WEIGHTS.contextual); // floored slots stand
+    expect(await getWeights(OWNER, 'contextual')).toEqual(DEFAULT_WEIGHTS.contextual); // floored slots stand
 
     const after = await trialityNext(OWNER, NOW, { embedFn: null });
     if (after.refused) throw new Error('unexpected refusal');

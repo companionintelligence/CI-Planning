@@ -29,7 +29,7 @@
  * Pure engine: no snapshot, no console, no process, no `Date.now()` — callers
  * (the CLI script, the P1 prune, the P2 endpoint) own snapshotting + I/O.
  */
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { occurrencesBetween, MAX_SPAN_DAYS } from './recurrence.js';
 import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
 
@@ -113,12 +113,11 @@ function parseExdates(raw: string | null): string[] {
   }
 }
 
-function ownerTimezone(owner: string): string {
-  return (
-    (sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as
-      | { timezone: string | null }
-      | undefined)?.timezone || serverTimezone()
-  );
+async function ownerTimezone(owner: string): Promise<string> {
+  const row = await store()
+    .prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`)
+    .get<{ timezone: string | null }>(owner);
+  return row?.timezone || serverTimezone();
 }
 
 interface BlockTemplateRow {
@@ -144,7 +143,7 @@ interface PatternRuleRow {
  * report (also computed in `dryRun`, where nothing is written). Single transaction:
  * suppress first, then delete, so a template's instance can never race back in.
  */
-export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult {
+export async function clearPlannerRange(input: ClearRangeInput): Promise<ClearRangeResult> {
   const { owner, start } = input;
   const end = input.end ?? null;
   const suppress = input.suppress ?? 'auto';
@@ -168,7 +167,7 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult {
 
   const mode: 'open-ended' | 'bounded' = end ? 'bounded' : 'open-ended';
 
-  const tz = ownerTimezone(owner);
+  const tz = await ownerTimezone(owner);
   const startUTC = zonedWallTimeToUTC(start, '00:00', tz); // inclusive lower (local midnight, UTC)
   const endExclusiveUTC = end ? zonedWallTimeToUTC(addDays(end, 1), '00:00', tz) : null; // exclusive upper
   // Open-ended "does this rule still fire on/after start?" needs a finite probe.
@@ -192,9 +191,9 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult {
   }
   blockWhere.push(`NOT (${isBlockTemplate})`);
   if (autoOnly) blockWhere.push(`(${autoPredicate})`);
-  const blocksToDelete = sqlite
+  const blocksToDelete = await store()
     .prepare(`SELECT id FROM time_blocks WHERE ${blockWhere.join(' AND ')}`)
-    .all(...blockArgs) as { id: string }[];
+    .all<{ id: string }>(...blockArgs);
 
   // ---- daily_plan to delete (owner-scoped) -----------------------------------
   const dpWhere = [`owner_id = ?`, `date >= ?`];
@@ -204,7 +203,7 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult {
     dpArgs.push(end);
   }
   const dailyPlanDeleted = clearDailyPlan
-    ? (sqlite.prepare(`SELECT COUNT(*) AS n FROM daily_plan WHERE ${dpWhere.join(' AND ')}`).get(...dpArgs) as { n: number }).n
+    ? (await store().prepare(`SELECT COUNT(*) AS n FROM daily_plan WHERE ${dpWhere.join(' AND ')}`).get<{ n: number }>(...dpArgs))!.n
     : 0;
 
   // ---- enumerate generators + plan suppression ops ---------------------------
@@ -215,12 +214,12 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult {
 
   if (suppress === 'auto') {
     // Block templates (owner-scoped, T1).
-    const templates = sqlite
+    const templates = await store()
       .prepare(
         `SELECT id, title, recurrence_rule AS rule, recurrence_dtstart AS dtstart, start_at, recurrence_exdates AS ex
            FROM time_blocks WHERE owner_id = ? AND ${isBlockTemplate}`,
       )
-      .all(owner) as BlockTemplateRow[];
+      .all<BlockTemplateRow>(owner);
     for (const t of templates) {
       const existing = parseExdates(t.ex);
       let hits: string[] = [];
@@ -246,7 +245,7 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult {
     }
 
     // Patterns (owner-scoped): Routine rule on the pattern row; Habit rule on the member task.
-    const patternRows = sqlite
+    const patternRows = await store()
       .prepare(
         `SELECT p.id, p.name, p.recurrence_rule AS rule, p.recurrence_dtstart AS dtstart, pt.name AS type_name, 'pattern' AS src, NULL AS task_id
            FROM patterns p JOIN pattern_types pt ON pt.id = p.type_id
@@ -258,7 +257,7 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult {
            JOIN tasks t ON t.id = ptk.task_id
           WHERE p.owner_id = ? AND pt.name = 'Habit' AND t.recurrence_rule IS NOT NULL AND t.recurrence_parent_id IS NULL`,
       )
-      .all(owner, owner) as PatternRuleRow[];
+      .all<PatternRuleRow>(owner, owner);
     // The UNION emits one row per rule-bearing SOURCE, so a Habit with N recurring
     // member tasks yields N rows sharing p.id. Group by pattern and process EVERY
     // rule — capping only the first would leave the others firing, and the pattern
@@ -306,7 +305,7 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult {
         generators.push({ kind: 'pattern', id: pid, label, action: 'until-cap', daysSuppressed: 0, oldRule: first.rule, newRule: capRule(first.rule, untilToken(start, tz)) });
       } else {
         const already = new Set(
-          (sqlite.prepare(`SELECT date FROM pattern_day_optouts WHERE owner_id = ? AND pattern_id = ?`).all(owner, pid) as { date: string }[]).map((r) => r.date),
+          (await store().prepare(`SELECT date FROM pattern_day_optouts WHERE owner_id = ? AND pattern_id = ?`).all<{ date: string }>(owner, pid)).map((r) => r.date),
         );
         const fresh = [...allHits].filter((d) => !already.has(d)).sort();
         for (const d of fresh) optoutOps.push({ patternId: pid, day: d });
@@ -319,34 +318,33 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult {
   if (dryRun) return result;
 
   // ---- write (one atomic transaction: suppress first, then delete) -----------
-  const delTags = sqlite.prepare(`DELETE FROM entity_tags WHERE entity_kind = 'time_block' AND entity_id = ?`);
+  const delTags = store().prepare(`DELETE FROM entity_tags WHERE entity_kind = 'time_block' AND entity_id = ?`);
   // Phase B (0134): entity_categories spans tables (no FK to time_blocks) — clean it
   // wherever entity_tags is cleaned, or hard-deleted blocks leave orphan category rows.
-  const delCats = sqlite.prepare(`DELETE FROM entity_categories WHERE entity_kind = 'time_block' AND entity_id = ?`);
-  const delBlock = sqlite.prepare(`DELETE FROM time_blocks WHERE id = ? AND owner_id = ?`);
-  const capTB = sqlite.prepare(`UPDATE time_blocks SET recurrence_rule = ? WHERE id = ? AND owner_id = ?`);
-  const capPat = sqlite.prepare(`UPDATE patterns SET recurrence_rule = ? WHERE id = ?`);
-  const capTask = sqlite.prepare(`UPDATE tasks SET recurrence_rule = ? WHERE id = ?`);
-  const setExdates = sqlite.prepare(`UPDATE time_blocks SET recurrence_exdates = ? WHERE id = ? AND owner_id = ?`);
-  const insOptout = sqlite.prepare(`INSERT OR IGNORE INTO pattern_day_optouts (owner_id, pattern_id, date) VALUES (?, ?, ?)`);
+  const delCats = store().prepare(`DELETE FROM entity_categories WHERE entity_kind = 'time_block' AND entity_id = ?`);
+  const delBlock = store().prepare(`DELETE FROM time_blocks WHERE id = ? AND owner_id = ?`);
+  const capTB = store().prepare(`UPDATE time_blocks SET recurrence_rule = ? WHERE id = ? AND owner_id = ?`);
+  const capPat = store().prepare(`UPDATE patterns SET recurrence_rule = ? WHERE id = ?`);
+  const capTask = store().prepare(`UPDATE tasks SET recurrence_rule = ? WHERE id = ?`);
+  const setExdates = store().prepare(`UPDATE time_blocks SET recurrence_exdates = ? WHERE id = ? AND owner_id = ?`);
+  const insOptout = store().prepare(`INSERT OR IGNORE INTO pattern_day_optouts (owner_id, pattern_id, date) VALUES (?, ?, ?)`);
   const dpDeleteSql = `DELETE FROM daily_plan WHERE ${dpWhere.join(' AND ')}`;
 
-  const run = sqlite.transaction(() => {
+  await store().transaction(async () => {
     // time_blocks caps carry owner_id; pattern/task caps (owner-scoped via their reads
     // above) update their own tables by id.
     for (const c of capOps) {
-      if (c.table === 'time_blocks') capTB.run(c.rule, c.id, owner);
-      else (c.table === 'patterns' ? capPat : capTask).run(c.rule, c.id);
+      if (c.table === 'time_blocks') await capTB.run(c.rule, c.id, owner);
+      else await (c.table === 'patterns' ? capPat : capTask).run(c.rule, c.id);
     }
-    for (const e of exdateOps) setExdates.run(e.merged, e.id, owner);
-    for (const o of optoutOps) insOptout.run(owner, o.patternId, o.day);
+    for (const e of exdateOps) await setExdates.run(e.merged, e.id, owner);
+    for (const o of optoutOps) await insOptout.run(owner, o.patternId, o.day);
     for (const b of blocksToDelete) {
-      delTags.run(b.id);
-      delCats.run(b.id);
-      delBlock.run(b.id, owner);
+      await delTags.run(b.id);
+      await delCats.run(b.id);
+      await delBlock.run(b.id, owner);
     }
-    if (clearDailyPlan) sqlite.prepare(dpDeleteSql).run(...dpArgs);
+    if (clearDailyPlan) await store().prepare(dpDeleteSql).run(...dpArgs);
   });
-  run();
   return result;
 }

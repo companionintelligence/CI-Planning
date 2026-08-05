@@ -46,7 +46,7 @@ export function llmRouter() {
         mode: config.google.mode,
         liveEnabled: config.google.mode === 'live',
         source: config.google.envPinned ? 'env' : config.google.mode === 'live' ? 'app' : 'off',
-        connections: connectionHealth(currentOwnerId()),
+        connections: await connectionHealth(currentOwnerId()),
       },
       // Phase H: whether Web Push can actually deliver (VAPID keys present). In-app
       // SSE reminders work regardless; this lets the client/diagnostics show push status.

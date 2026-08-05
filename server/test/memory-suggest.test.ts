@@ -165,9 +165,9 @@ describe('staging from the fixture graph', () => {
 
   it('caps pending memory possibles within a staging pass; the auto-promote then drains the queue (AF-3)', async () => {
     // 5 pre-existing pending rows (staged outside the agent) fill the cap …
-    await run(() => {
+    await run(async () => {
       for (let i = 0; i < MEMORY_PENDING_CAP; i++) {
-        upsertPossible(
+        await upsertPossible(
           { title: `Filler ${i}`, priority: 3, tags: [], confidence: 0.5 },
           'memory',
           `ci:filler-${i}`,
@@ -199,9 +199,9 @@ describe('staging from the fixture graph', () => {
     // Two near-identical pre-existing pending memory rows: the run-end batch's inline
     // dedupe marks one 'duplicate', and the result now SAYS so (count parity with the
     // gmail/gcal IngestResult — previously the duplicate was silently discarded).
-    await run(() => {
-      upsertPossible({ title: 'Buy milk', priority: 3, tags: [], confidence: 0.5 }, 'memory', 'ci:milk-a', {});
-      upsertPossible({ title: 'Buy milk please', priority: 3, tags: [], confidence: 0.5 }, 'memory', 'ci:milk-b', {});
+    await run(async () => {
+      await upsertPossible({ title: 'Buy milk', priority: 3, tags: [], confidence: 0.5 }, 'memory', 'ci:milk-a', {});
+      await upsertPossible({ title: 'Buy milk please', priority: 3, tags: [], confidence: 0.5 }, 'memory', 'ci:milk-b', {});
     });
     // Deterministic embeddings: the milk pair is near-identical (cosine ≈ 0.995); every
     // other title gets its own orthogonal axis so the 2 fixture events never collide.

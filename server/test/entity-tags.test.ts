@@ -121,9 +121,9 @@ describe('CON-3 orphan-free cascade (the integrity gate)', () => {
     const ftId = ft.body.task.id as string;
     // AF-11: the API no longer writes routine rows — seed LEGACY ones raw (pre-0120
     // data) to prove the delete cascade still clears them.
-    syncEntityTags('routine', patId, ['morning'], OWNER);
+    await syncEntityTags('routine', patId, ['morning'], OWNER);
     // fast tasks aren't tagged by the route — simulate a user tagging one.
-    syncEntityTags('task', ftId, ['mobility'], OWNER);
+    await syncEntityTags('task', ftId, ['mobility'], OWNER);
     expect(tagRows('routine', patId)).toEqual(['morning']);
     expect(tagRows('task', ftId)).toEqual(['mobility']);
 
@@ -138,7 +138,7 @@ describe('CON-3 orphan-free cascade (the integrity gate)', () => {
     const patId = pat.body.pattern.id as string;
     const ft = await api(srv.url, `/api/patterns/${patId}/fast-tasks`, { method: 'POST', json: { title: 'Quick' } });
     const ftId = ft.body.task.id as string;
-    syncEntityTags('task', ftId, ['x'], OWNER);
+    await syncEntityTags('task', ftId, ['x'], OWNER);
     expect(tagRows('task', ftId)).toEqual(['x']);
 
     await api(srv.url, `/api/patterns/${patId}/fast-tasks/${ftId}`, { method: 'DELETE' });
@@ -148,11 +148,11 @@ describe('CON-3 orphan-free cascade (the integrity gate)', () => {
 });
 
 describe('W4a — entity_tags.created_at (Taggable taggedAt)', () => {
-  it('a fresh entity_tags insert gets a non-null created_at from the DB default', () => {
+  it('a fresh entity_tags insert gets a non-null created_at from the DB default', async () => {
     const taskId = (sqlite
       .prepare(`INSERT INTO tasks (id, owner_id, title, status) VALUES (uuid7(), ?, 'Timed', 'open') RETURNING id`)
       .get(OWNER) as { id: string }).id;
-    syncEntityTags('task', taskId, ['work'], OWNER); // via services/tags.ts insertAssoc
+    await syncEntityTags('task', taskId, ['work'], OWNER); // via services/tags.ts insertAssoc
 
     const rows = sqlite
       .prepare(`SELECT created_at FROM entity_tags WHERE entity_kind = 'task' AND entity_id = ?`)
@@ -183,28 +183,28 @@ describe('W4a — entity_tags.created_at (Taggable taggedAt)', () => {
     expect(row.created_at).toBeTruthy(); // DB default, not app-stamped
   });
 
-  it('no live entity_tags row has a null created_at (structural DB-default invariant)', () => {
+  it('no live entity_tags row has a null created_at (structural DB-default invariant)', async () => {
     const taskId = (sqlite
       .prepare(`INSERT INTO tasks (id, owner_id, title, status) VALUES (uuid7(), ?, 'A', 'open') RETURNING id`)
       .get(OWNER) as { id: string }).id;
-    syncEntityTags('task', taskId, ['x', 'y'], OWNER);
+    await syncEntityTags('task', taskId, ['x', 'y'], OWNER);
     const nulls = (sqlite.prepare(`SELECT COUNT(*) AS c FROM entity_tags WHERE created_at IS NULL`).get() as { c: number }).c;
     expect(nulls).toBe(0);
   });
 
-  it('entityTagsFull returns id + name + non-null createdAt for every applied tag', () => {
+  it('entityTagsFull returns id + name + non-null createdAt for every applied tag', async () => {
     const taskId = (sqlite
       .prepare(`INSERT INTO tasks (id, owner_id, title, status) VALUES (uuid7(), ?, 'Full', 'open') RETURNING id`)
       .get(OWNER) as { id: string }).id;
-    syncEntityTags('task', taskId, ['alpha', 'beta'], OWNER);
-    const full = entityTagsFull('task', taskId);
+    await syncEntityTags('task', taskId, ['alpha', 'beta'], OWNER);
+    const full = await entityTagsFull('task', taskId);
     expect(full.map((t) => t.name).sort()).toEqual(['alpha', 'beta']);
     for (const t of full) {
       expect(t.tagId).toBeTruthy();
       expect(t.createdAt).toBeTruthy();
     }
     // An entity with no tags → [].
-    expect(entityTagsFull('task', 'nope')).toEqual([]);
+    expect(await entityTagsFull('task', 'nope')).toEqual([]);
   });
 });
 

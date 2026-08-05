@@ -84,7 +84,7 @@ describe('createBlock', () => {
 
   it('AF-4: a block may carry BOTH a direction tag and a category (create + update), both persist', async () => {
     const catId = (sqlite.prepare(`INSERT INTO tags (id, owner_id, name, kind) VALUES (uuid7(), ?, 'cat', 'category') RETURNING id`).get(OWNER) as { id: string }).id;
-    setCategoryPref(OWNER, catId, { color_token: 'chart-2' });
+    await setCategoryPref(OWNER, catId, { color_token: 'chart-2' });
 
     // Create with both → succeeds, both persist, and the entity_tags level-1 mirror
     // still fires even with a category present.
@@ -114,7 +114,7 @@ describe('createBlock', () => {
 
   it('AF-9 wizard shape: tag + secondary_tags + category_id together — level 1 = the single primary, level 2 = secondaries, all three read back', async () => {
     const catId = (sqlite.prepare(`INSERT INTO tags (id, owner_id, name, kind) VALUES (uuid7(), ?, 'cat', 'category') RETURNING id`).get(OWNER) as { id: string }).id;
-    setCategoryPref(OWNER, catId, { color_token: 'chart-2' });
+    await setCategoryPref(OWNER, catId, { color_token: 'chart-2' });
 
     const res = unwrap(await createBlock(OWNER, {
       title: 'Wizard', tag: 'work', secondary_tags: ['deep', 'errand'], category_id: catId,
@@ -136,7 +136,7 @@ describe('createBlock', () => {
 
   it('AF-4 color precedence: with both tag and category set, the category-frozen color_token wins at create', async () => {
     const catId = (sqlite.prepare(`INSERT INTO tags (id, owner_id, name, kind) VALUES (uuid7(), ?, 'cat', 'category') RETURNING id`).get(OWNER) as { id: string }).id;
-    setCategoryPref(OWNER, catId, { color_token: 'chart-4' });
+    await setCategoryPref(OWNER, catId, { color_token: 'chart-4' });
     const res = unwrap(await createBlock(OWNER, { title: 'Both', tag: 'work', category_id: catId, start_at: at('09:00'), end_at: at('10:00') }));
     // Direction styling is unchanged; the block's frozen color comes from the category.
     expect(res.block.colorToken).toBe('chart-4');
@@ -250,7 +250,7 @@ describe('owner-scoping (W3.2) — a cross-owner id is rejected with no mutation
     createOwner();
     const foreignContainer = insertBlock(SECOND_OWNER_ID, { title: 'Foreign container', block_kind: 'timeblock', start_at: at('09:00'), end_at: at('12:00') });
     const foreignTask = insertTask(SECOND_OWNER_ID, 'Foreign task', { estimated_minutes: 30 });
-    const result = addTasksToBlock(OWNER, foreignContainer, [foreignTask]);
+    const result = await addTasksToBlock(OWNER, foreignContainer, [foreignTask]);
     expect(result).toEqual({ blockId: foreignContainer, blocksCreated: 0, placed: 0, unplaced: 0, skipped: 0 });
     const children = sqlite.prepare(`SELECT COUNT(*) AS n FROM time_blocks WHERE parent_block_id = ?`).get(foreignContainer) as { n: number };
     expect(children.n).toBe(0);
@@ -271,7 +271,7 @@ describe('owner-scoping (W3.2) — a cross-owner id is rejected with no mutation
       start_at: at('11:00'), end_at: at('12:00'),
     });
 
-    const result = clearDayAutoBlocks(OWNER, DAY);
+    const result = await clearDayAutoBlocks(OWNER, DAY);
     expect(result.removedCount).toBe(1); // only the caller's own block
 
     expect(sqlite.prepare(`SELECT 1 FROM time_blocks WHERE id = ?`).get(foreignAuto)).toBeTruthy(); // untouched

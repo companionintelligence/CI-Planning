@@ -14,7 +14,7 @@
  * setup mirrors `placeFlightPlan`: a block's range when `blockId` is given,
  * otherwise the workday from `scheduling_prefs`.
  */
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { broadcast } from '../routes/sse.js';
 import { serverTimezone, zonedWallTimeToUTC, localDateInTZ } from '../lib/tz.js';
 import { localISODate, addDays } from '../lib/dates.js';
@@ -49,8 +49,8 @@ interface MemberTask {
   estimated_minutes: number | null;
 }
 
-function tagsOf(taskId: string): string[] {
-  return taskTagNames(taskId);
+async function tagsOf(taskId: string): Promise<string[]> {
+  return await taskTagNames(taskId);
 }
 
 /**
@@ -58,10 +58,10 @@ function tagsOf(taskId: string): string[] {
  * recurrence templates redirect to today's materialized instance when one
  * exists; completed/skipped/cancelled tasks are dropped.
  */
-function resolveMembers(owner: string, patternId: string, date: string): MemberTask[] {
+async function resolveMembers(owner: string, patternId: string, date: string): Promise<MemberTask[]> {
   // Owner-scope the membership join: even if a stray pattern_tasks row references
   // another owner's task, its title/estimate must never surface on this owner's planner.
-  const members = sqlite
+  const members = await store()
     .prepare(
       `SELECT t.id AS task_id, t.title, t.estimated_minutes, t.status,
               t.recurrence_rule, t.recurrence_parent_id
@@ -69,14 +69,14 @@ function resolveMembers(owner: string, patternId: string, date: string): MemberT
         WHERE pt.pattern_id = ? AND t.owner_id = ?
         ORDER BY pt.position, pt.task_id`
     )
-    .all(patternId, owner) as {
+    .all<{
       task_id: string;
       title: string;
       estimated_minutes: number | null;
       status: string;
       recurrence_rule: string | null;
       recurrence_parent_id: string | null;
-    }[];
+    }>(patternId, owner);
 
   const out: MemberTask[] = [];
   for (const m of members) {
@@ -85,9 +85,9 @@ function resolveMembers(owner: string, patternId: string, date: string): MemberT
     // stays (placed for the day). Skip an instance already resolved (done/skipped/
     // cancelled) so a completed occurrence isn't re-placed.
     if (m.recurrence_rule && m.recurrence_parent_id == null) {
-      const inst = sqlite
+      const inst = await store()
         .prepare(`SELECT id, title, estimated_minutes, status FROM tasks WHERE recurrence_parent_id = ? AND occurrence_date = ? AND owner_id = ?`)
-        .get(m.task_id, date, owner) as { id: string; title: string; estimated_minutes: number | null; status: string } | undefined;
+        .get<{ id: string; title: string; estimated_minutes: number | null; status: string }>(m.task_id, date, owner);
       if (inst) {
         if (['completed', 'done', 'skipped', 'cancelled', 'missed'].includes(inst.status)) continue;
         out.push({ task_id: inst.id, title: inst.title, estimated_minutes: inst.estimated_minutes });
@@ -108,20 +108,20 @@ function resolveMembers(owner: string, patternId: string, date: string): MemberT
  * parent_block_id on the placed blocks (so the new tasks join that Plan's
  * grouped-movement group — see PR-C).
  */
-export function placePatternOnDay(
+export async function placePatternOnDay(
   owner: string,
   patternId: string,
   opts: { date?: string; blockId?: string | null } = {}
-): PlacePatternResult {
+): Promise<PlacePatternResult> {
   const date = opts.date ?? localISODate();
 
-  return sqlite.transaction((): PlacePatternResult => {
+  return await store().transaction(async (): Promise<PlacePatternResult> => {
     // Per-day opt-out (0074): a user who deletes a lazily-placed container removes
     // that (pattern, day) — honour it so the block doesn't regenerate on the next
     // read. Only the free/auto path checks this; an explicit "place into this Plan"
     // (blockId given) is deliberate and overrides the opt-out.
     if (opts.blockId == null) {
-      const optedOut = sqlite
+      const optedOut = await store()
         .prepare(`SELECT 1 FROM pattern_day_optouts WHERE owner_id = ? AND pattern_id = ? AND date = ? LIMIT 1`)
         .get(owner, String(patternId), date);
       if (optedOut) {
@@ -129,9 +129,9 @@ export function placePatternOnDay(
       }
     }
 
-    const prefs = sqlite
+    const prefs = await store()
       .prepare(`SELECT timezone, workday_start, workday_end, min_break_minutes, max_focus_block_minutes FROM scheduling_prefs WHERE owner_id = ?`)
-      .get(owner) as PrefsRow | undefined;
+      .get<PrefsRow>(owner);
     const tz = prefs?.timezone || serverTimezone();
 
     // Window (block's range or the workday).
@@ -140,9 +140,9 @@ export function placePatternOnDay(
     let blockTag: string | null = null;
     let parentBlockId: string | null = opts.blockId ?? null;
     if (parentBlockId != null) {
-      const block = sqlite.prepare(`SELECT start_at, end_at, tag FROM time_blocks WHERE id = ? AND owner_id = ?`).get(parentBlockId, owner) as
-        | { start_at: string; end_at: string; tag: string | null }
-        | undefined;
+      const block = await store()
+        .prepare(`SELECT start_at, end_at, tag FROM time_blocks WHERE id = ? AND owner_id = ?`)
+        .get<{ start_at: string; end_at: string; tag: string | null }>(parentBlockId, owner);
       if (!block) {
         return { patternId, date, blocksCreated: 0, placed: 0, unplaced: 0, skippedAlreadyPlaced: false };
       }
@@ -163,7 +163,7 @@ export function placePatternOnDay(
     const dayStartISO = zonedWallTimeToUTC(date, '00:00', tz);
     const dayEndMs = Date.parse(dayStartISO) + 24 * 60 * 60_000;
     const dayEndISO = new Date(dayEndMs).toISOString();
-    const marker = sqlite
+    const marker = await store()
       .prepare(
         `SELECT 1 FROM time_blocks
           WHERE owner_id = ? AND source_kind = 'pattern' AND source_ref = ?
@@ -177,8 +177,14 @@ export function placePatternOnDay(
     }
 
     // Members → placeable tasks.
-    let toPlace = resolveMembers(owner, patternId, date);
-    if (blockTag) toPlace = toPlace.filter((t) => tagsOf(t.task_id).includes(blockTag!));
+    let toPlace = await resolveMembers(owner, patternId, date);
+    if (blockTag) {
+      // An explicit loop, not `.filter`: tagsOf is async now, and a promise predicate is
+      // always truthy — every member would pass and the block's tag would stop filtering.
+      const kept: MemberTask[] = [];
+      for (const t of toPlace) if ((await tagsOf(t.task_id)).includes(blockTag)) kept.push(t);
+      toPlace = kept;
+    }
     if (toPlace.length === 0) {
       return { patternId, date, blocksCreated: 0, placed: 0, unplaced: 0, skippedAlreadyPlaced: false };
     }
@@ -186,13 +192,15 @@ export function placePatternOnDay(
     // Shared obstacle set: locked + meetings + every non-completed task block,
     // so a pattern never stacks on existing work (manual or auto). When scoped
     // to a Plan we exclude that Plan from its own obstacle set (it's the target).
-    const fixed = dayObstacles(owner, windowStartMs, windowEndMs, { excludeBlockId: parentBlockId });
+    const fixed = await dayObstacles(owner, windowStartMs, windowEndMs, { excludeBlockId: parentBlockId });
 
     const breakMs = (prefs?.min_break_minutes ?? 10) * MS_PER_MIN;
     const maxFocusMs = Math.max((prefs?.max_focus_block_minutes ?? 90) * MS_PER_MIN, MIN_SESSION_MS);
     const gaps = buildGaps(windowStartMs, windowEndMs, fixed, breakMs);
 
-    const ins = sqlite.prepare(
+    // `prepare` is synchronous on the facade (only get/all/run are async), so this stays
+    // a plain reused statement — the conformance suite pins that reusability.
+    const ins = store().prepare(
       `INSERT INTO time_blocks (id, task_id, owner_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status, parent_block_id)
        VALUES (uuid7(), ?, ?, ?, 'task', ?, ?, 0, 1, 'pattern', ?, 'planned', ?) RETURNING id`
     );
@@ -200,9 +208,9 @@ export function placePatternOnDay(
     // scheduling-intent fields (so its calendar icon has a date) and flip open →
     // scheduled. syncTaskFromBlock self-guards to the earliest placement, so calling
     // it per-session is correct; applyTaskPlacementStatus is idempotent after the flip.
-    const syncPlacedMember = (blockId: string, taskId: string) => {
-      syncTaskFromBlock(blockId, owner);
-      applyTaskPlacementStatus(taskId, owner);
+    const syncPlacedMember = async (blockId: string, taskId: string) => {
+      await syncTaskFromBlock(blockId, owner);
+      await applyTaskPlacementStatus(taskId, owner);
     };
     let blocksCreated = 0;
     let placed = 0;
@@ -219,8 +227,8 @@ export function placePatternOnDay(
           if (!pick) break;
           const startMs = pick.gap.cursor;
           const endMs = startMs + pick.len;
-          const { id: bid } = ins.get(t.task_id, owner, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), String(patternId), parentBlockId) as { id: string };
-          syncPlacedMember(bid, t.task_id);
+          const { id: bid } = (await ins.get<{ id: string }>(t.task_id, owner, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), String(patternId), parentBlockId))!;
+          await syncPlacedMember(bid, t.task_id);
           pick.gap.cursor = endMs + breakMs;
           blocksCreated++;
           placedSessions++;
@@ -233,9 +241,7 @@ export function placePatternOnDay(
       // existing move-group then moves the whole routine together — "a container like a
       // time-block". The container shares the pattern marker so it's idempotent, survives
       // clear-day (source_kind='pattern'), and cascades on delete.
-      const meta = sqlite.prepare(`SELECT name FROM patterns WHERE id = ?`).get(patternId) as
-        | { name: string }
-        | undefined;
+      const meta = await store().prepare(`SELECT name FROM patterns WHERE id = ?`).get<{ name: string }>(patternId);
       // AF-11: the container stamp comes from the routine's DERIVED direction union
       // (patterns.tag is authored-no-more and NULL after 0120). The stamp is cosmetic
       // (§7b — placement never reads it), but downstream single-tag readers exist
@@ -243,7 +249,7 @@ export function placePatternOnDay(
       // derived direction lands in the `tag` column (+ entity_tags level 1, matching
       // API-created blocks) and the REST become level-2 secondary tags — same shape
       // applyBlockTagLevels writes. No derived direction → no stamp.
-      const derivedDirs = routineDerivedTags(patternId).directions;
+      const derivedDirs = (await routineDerivedTags(patternId)).directions;
       const containerTag = derivedDirs[0] ?? null;
       const seq: { task: MemberTask; lenMs: number }[] = [];
       for (const t of toPlace) {
@@ -265,22 +271,24 @@ export function placePatternOnDay(
         if (layout.length > 0) {
           // Container first (so the FK parent exists before its children).
           const containerEndMs = layout[layout.length - 1].endMs;
-          const containerId = (sqlite
+          // Parens around the whole await: `await f(…).id` would read `.id` off the
+          // PENDING promise and silently yield undefined.
+          const containerId = (await store()
             .prepare(
               `INSERT INTO time_blocks (id, owner_id, title, block_kind, block_type, tag, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status)
                VALUES (uuid7(), ?, ?, 'timeblock', 'scheduled', ?, ?, ?, 0, 1, 'pattern', ?, 'planned') RETURNING id`,
             )
-            .get(owner, meta?.name ?? 'Routine', containerTag, new Date(pick.gap.cursor).toISOString(), new Date(containerEndMs).toISOString(), String(patternId)) as { id: string }).id;
+            .get<{ id: string }>(owner, meta?.name ?? 'Routine', containerTag, new Date(pick.gap.cursor).toISOString(), new Date(containerEndMs).toISOString(), String(patternId)))!.id;
           if (derivedDirs.length > 0) {
-            syncLeveledEntityTags('time_block', containerId, [
+            await syncLeveledEntityTags('time_block', containerId, [
               { level: 1, names: [derivedDirs[0]] },
               { level: 2, names: derivedDirs.slice(1) },
             ], owner);
           }
           const placedTaskIds = new Set<string>();
           for (const l of layout) {
-            const { id: bid } = ins.get(l.task.task_id, owner, l.task.title, new Date(l.startMs).toISOString(), new Date(l.endMs).toISOString(), String(patternId), containerId) as { id: string };
-            syncPlacedMember(bid, l.task.task_id);
+            const { id: bid } = (await ins.get<{ id: string }>(l.task.task_id, owner, l.task.title, new Date(l.startMs).toISOString(), new Date(l.endMs).toISOString(), String(patternId), containerId))!;
+            await syncPlacedMember(bid, l.task.task_id);
             blocksCreated++;
             placedTaskIds.add(l.task.task_id);
           }
@@ -293,7 +301,7 @@ export function placePatternOnDay(
     }
     broadcast(owner, 'pattern:placed', { patternId, date, blocksCreated, placed, unplaced });
     return { patternId, date, blocksCreated, placed, unplaced, skippedAlreadyPlaced: false };
-  })();
+  });
 }
 
 // ── Pattern recurrence + nightly auto-place (Phase D) ──────────────────────────
@@ -309,13 +317,13 @@ interface RecurringPattern {
  * Ritual rows are excluded — the type is hidden behind a flag in V1. Patterns
  * with no rule are ignored.
  */
-export function patternsRecurringOnDate(owner: string, today: string): RecurringPattern[] {
-  const tz = (sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as { timezone: string | null } | undefined)?.timezone || serverTimezone();
+export async function patternsRecurringOnDate(owner: string, today: string): Promise<RecurringPattern[]> {
+  const tz = (await store().prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get<{ timezone: string | null }>(owner))?.timezone || serverTimezone();
   // Routine patterns carry the recurrence on the PATTERN row. Habit patterns carry
   // it on the member habit TASK (`tasks.is_habit` + recurrence on the task template) —
   // `ensureHabitPattern` never copies a rule onto the pattern — so we read the habit's
   // rule from its member task. Union both sources.
-  const rows = sqlite
+  const rows = await store()
     .prepare(
       `SELECT p.id, p.name, p.recurrence_rule AS rule, p.recurrence_dtstart AS dtstart, pt.name AS type_name
          FROM patterns p
@@ -330,7 +338,7 @@ export function patternsRecurringOnDate(owner: string, today: string): Recurring
         WHERE p.owner_id = ? AND pt.name = 'Habit'
           AND t.recurrence_rule IS NOT NULL AND t.recurrence_parent_id IS NULL`
     )
-    .all(owner, owner) as { id: string; name: string; rule: string; dtstart: string | null; type_name: string }[];
+    .all<{ id: string; name: string; rule: string; dtstart: string | null; type_name: string }>(owner, owner);
 
   const out: RecurringPattern[] = [];
   const seen = new Set<string>();
@@ -360,10 +368,10 @@ export function patternsRecurringOnDate(owner: string, today: string): Recurring
  * mid-day appears on the board the moment that day is next read, without any
  * cron in the loop.
  */
-export function ensurePatternsForRange(owner: string, fromUtcISO: string, toUtcISO: string): { placed: number; blocksCreated: number } {
-  const prefsRow = sqlite
+export async function ensurePatternsForRange(owner: string, fromUtcISO: string, toUtcISO: string): Promise<{ placed: number; blocksCreated: number }> {
+  const prefsRow = await store()
     .prepare(`SELECT timezone, enable_routines, recurrence_horizon_days FROM scheduling_prefs WHERE owner_id = ?`)
-    .get(owner) as { timezone: string | null; enable_routines: number | null; recurrence_horizon_days: number | null } | undefined;
+    .get<{ timezone: string | null; enable_routines: number | null; recurrence_horizon_days: number | null }>(owner);
   const tz = prefsRow?.timezone || serverTimezone();
   // Routines are gated behind a feature flag (0073, default OFF). When disabled,
   // recurring Routine patterns must NOT auto-place: otherwise a user-deleted
@@ -382,9 +390,12 @@ export function ensurePatternsForRange(owner: string, fromUtcISO: string, toUtcI
   let placed = 0;
   let blocksCreated = 0;
   for (const day of days) {
-    for (const p of patternsRecurringOnDate(owner, day)) {
+    // Sequential on purpose: each placement reads the marker rows the previous one
+    // wrote, so running the days (or the patterns within a day) concurrently would
+    // let two placements both miss the marker and double-place.
+    for (const p of await patternsRecurringOnDate(owner, day)) {
       if (p.type_name === 'Routine' && !routinesEnabled) continue;
-      const r = placePatternOnDay(owner, p.id, { date: day });
+      const r = await placePatternOnDay(owner, p.id, { date: day });
       if (!r.skippedAlreadyPlaced && r.blocksCreated > 0) placed++;
       blocksCreated += r.blocksCreated;
     }

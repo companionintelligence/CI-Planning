@@ -60,9 +60,9 @@ function fullDayMeeting(): void {
  * can't re-place it. Models a genuine disruption: a COMMITTED placement gets knocked
  * out (gap-close reflow only re-packs already-placed work — it never intakes backlog).
  */
-function placeThenFillDay(taskId: string): void {
+async function placeThenFillDay(taskId: string): Promise<void> {
   stage(taskId);
-  placeFlightPlan(OWNER, { date: DATE }); // task holds a real slot on the open day...
+  await placeFlightPlan(OWNER, { date: DATE }); // task holds a real slot on the open day...
   fullDayMeeting();                        // ...then the day fills up — reflow loses it
 }
 function setAutoDefense(on: boolean): void {
@@ -78,67 +78,67 @@ const diffOf = (over: Partial<ReflowDiff> = {}): ReflowDiff => ({ moved: [], rem
 let srv: TestServer;
 beforeAll(async () => { srv = await startTestServer(); });
 afterAll(async () => { await srv.close(); });
-beforeEach(() => {
+beforeEach(async () => {
   resetDb();
   sqlite.exec(`DELETE FROM flight_plan`);
   sqlite.exec(`DELETE FROM daily_plan WHERE owner_id = '${OWNER}'`);
   sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC', workday_start = '09:00', workday_end = '18:00', planning_mode = 'basic' WHERE owner_id = ?`).run(OWNER);
-  _resetReplanState();
+  await _resetReplanState();
   mockBroadcast.mockClear();
 });
 
 describe('isBigDisruption', () => {
-  it('true when a high-priority (P≤2) task is unplaced', () => {
+  it('true when a high-priority (P≤2) task is unplaced', async () => {
     const p1 = insertTask('Important', 1);
-    expect(isBigDisruption(diffOf({ unplaced: [p1] }))).toBe(true);
+    expect(await isBigDisruption(diffOf({ unplaced: [p1] }))).toBe(true);
   });
-  it('true when a high-priority task was removed (lost its slot)', () => {
+  it('true when a high-priority task was removed (lost its slot)', async () => {
     const p2 = insertTask('Also important', 2);
-    expect(isBigDisruption(diffOf({ removed: [{ block_id: 'b', task_id: p2 }] }))).toBe(true);
+    expect(await isBigDisruption(diffOf({ removed: [{ block_id: 'b', task_id: p2 }] }))).toBe(true);
   });
-  it('false when only a low-priority task is at risk (routine backlog ≠ disruption)', () => {
+  it('false when only a low-priority task is at risk (routine backlog ≠ disruption)', async () => {
     const p3 = insertTask('Whenever', 3);
-    expect(isBigDisruption(diffOf({ unplaced: [p3] }))).toBe(false);
+    expect(await isBigDisruption(diffOf({ unplaced: [p3] }))).toBe(false);
   });
-  it('false for an empty diff', () => {
-    expect(isBigDisruption(diffOf())).toBe(false);
+  it('false for an empty diff', async () => {
+    expect(await isBigDisruption(diffOf())).toBe(false);
   });
 });
 
 describe('reactive reflow → nudge (no LLM in the hot path)', () => {
-  it('a big disruption raises exactly one replan:suggested, de-duped within the day', () => {
+  it('a big disruption raises exactly one replan:suggested, de-duped within the day', async () => {
     vi.useFakeTimers();
     try {
       setAutoDefense(true);
       const p1 = insertTask('Crunch', 1);
       seedDailyPlan(p1, 0);
-      placeThenFillDay(p1); // placed P1, then the day fills → P1 knocked out → big disruption
+      await placeThenFillDay(p1); // placed P1, then the day fills → P1 knocked out → big disruption
 
       requestReplan('task:updated', OWNER, DATE);
-      vi.advanceTimersByTime(1500);
+      await vi.advanceTimersByTimeAsync(1500);
       expect(eventCount('replan:suggested')).toBe(1);
-      expect(outstandingSuggestion(OWNER)?.date).toBe(DATE);
+      expect((await outstandingSuggestion(OWNER))?.date).toBe(DATE);
 
       // A second disruption the same day must NOT raise a second nudge.
       requestReplan('task:updated', OWNER, DATE);
-      vi.advanceTimersByTime(1500);
+      await vi.advanceTimersByTimeAsync(1500);
       expect(eventCount('replan:suggested')).toBe(1);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('nudge-first invariant: reflow surfaces a nudge but never re-authors daily_plan', () => {
+  it('nudge-first invariant: reflow surfaces a nudge but never re-authors daily_plan', async () => {
     vi.useFakeTimers();
     try {
       setAutoDefense(true);
       const p1 = insertTask('Crunch', 1);
       seedDailyPlan(p1, 0);
-      placeThenFillDay(p1);
+      await placeThenFillDay(p1);
 
       const before = dailyPlan();
       requestReplan('task:updated', OWNER, DATE);
-      vi.advanceTimersByTime(1500);
+      await vi.advanceTimersByTimeAsync(1500);
 
       expect(eventCount('replan:suggested')).toBe(1);
       // The day plan is untouched by reflow — authoring only happens on accept.
@@ -149,18 +149,18 @@ describe('reactive reflow → nudge (no LLM in the hot path)', () => {
     }
   });
 
-  it('no nudge when only a low-priority task is at risk', () => {
+  it('no nudge when only a low-priority task is at risk', async () => {
     vi.useFakeTimers();
     try {
       setAutoDefense(true);
       const p3 = insertTask('Low', 3);
       seedDailyPlan(p3, 0);
-      placeThenFillDay(p3);
+      await placeThenFillDay(p3);
 
       requestReplan('task:updated', OWNER, DATE);
-      vi.advanceTimersByTime(1500);
+      await vi.advanceTimersByTimeAsync(1500);
       expect(eventCount('replan:suggested')).toBe(0);
-      expect(outstandingSuggestion(OWNER)).toBeUndefined();
+      expect(await outstandingSuggestion(OWNER)).toBeUndefined();
     } finally {
       vi.useRealTimers();
     }
@@ -195,28 +195,28 @@ describe('POST /api/plan/reauthor/dismiss', () => {
     setAutoDefense(true);
     const p1 = insertTask('Crunch', 1);
     seedDailyPlan(p1, 0);
-    placeThenFillDay(p1);
+    await placeThenFillDay(p1);
     requestReplan('task:updated', OWNER, DATE);
-    vi.advanceTimersByTime(1500);
+    await vi.advanceTimersByTimeAsync(1500);
     vi.useRealTimers();
-    expect(outstandingSuggestion(OWNER)).toBeTruthy();
+    expect(await outstandingSuggestion(OWNER)).toBeTruthy();
 
     const res = await api(srv.url, '/api/plan/reauthor/dismiss', { method: 'POST', json: { date: DATE } });
     expect(res.status).toBe(200);
-    expect(outstandingSuggestion(OWNER)).toBeUndefined();
+    expect(await outstandingSuggestion(OWNER)).toBeUndefined();
     expect(eventCount('replan:dismissed')).toBe(1);
   });
 });
 
 describe('restart-durable nudge (replan_suggestions table)', () => {
-  it('persists the outstanding suggestion to the DB, so it survives a server restart', () => {
+  it('persists the outstanding suggestion to the DB, so it survives a server restart', async () => {
     vi.useFakeTimers();
     setAutoDefense(true);
     const p1 = insertTask('Crunch', 1);
     seedDailyPlan(p1, 0);
-    placeThenFillDay(p1);
+    await placeThenFillDay(p1);
     requestReplan('task:updated', OWNER, DATE);
-    vi.advanceTimersByTime(1500);
+    await vi.advanceTimersByTimeAsync(1500);
     vi.useRealTimers();
 
     // The suggestion is a row in replan_suggestions (not an in-memory Map) — a fresh
@@ -227,10 +227,10 @@ describe('restart-durable nudge (replan_suggestions table)', () => {
     expect(row).toBeTruthy();
     expect(row!.date).toBe(DATE);
     expect(row!.at_risk).toBeGreaterThanOrEqual(1);
-    expect(outstandingSuggestion(OWNER)).toEqual({ date: DATE, reason: 'task:updated', summary: row!.summary, atRisk: row!.at_risk });
+    expect(await outstandingSuggestion(OWNER)).toEqual({ date: DATE, reason: 'task:updated', summary: row!.summary, atRisk: row!.at_risk });
 
     // Clearing removes the row.
-    clearSuggestion(OWNER);
+    await clearSuggestion(OWNER);
     expect(sqlite.prepare(`SELECT 1 FROM replan_suggestions WHERE owner_id = ?`).get(OWNER)).toBeUndefined();
   });
 });
@@ -247,9 +247,9 @@ describe('GET /api/plan/suggestion (reload-durable nudge)', () => {
     setAutoDefense(true);
     const p1 = insertTask('Crunch', 1);
     seedDailyPlan(p1, 0);
-    placeThenFillDay(p1);
+    await placeThenFillDay(p1);
     requestReplan('task:updated', OWNER, DATE);
-    vi.advanceTimersByTime(1500);
+    await vi.advanceTimersByTimeAsync(1500);
     vi.useRealTimers();
 
     const got = await api(srv.url, '/api/plan/suggestion');

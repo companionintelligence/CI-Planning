@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { newId } from '../lib/ids.js';
 import { localDateInTZ, todayInTZ } from '../lib/tz.js';
@@ -118,36 +118,36 @@ function hydrate(row: SessionRow): PlanningSession {
 }
 
 /** Owner-scoped fetch of the raw row — the single place the scoping predicate lives. */
-function rawById(id: string, owner: string): SessionRow | undefined {
-  return sqlite
+async function rawById(id: string, owner: string): Promise<SessionRow | undefined> {
+  return store()
     .prepare(`SELECT * FROM planning_sessions WHERE id = ? AND owner_id = ?`)
-    .get(id, owner) as SessionRow | undefined;
+    .get<SessionRow>(id, owner);
 }
 
 /** Open a session on a branch. Invalid branch → `{ ok: false }` (route: 422). */
-export function openSession(entryBranch: string): SessionResult<PlanningSession> {
+export async function openSession(entryBranch: string): Promise<SessionResult<PlanningSession>> {
   if (!ENTRY_BRANCHES.has(entryBranch)) {
     return { ok: false, error: `entry_branch must be one of: ${[...ENTRY_BRANCHES].join(', ')}` };
   }
   const owner = currentOwnerId();
   const id = newId();
-  sqlite
+  await store()
     .prepare(`INSERT INTO planning_sessions (id, owner_id, entry_branch) VALUES (?, ?, ?)`)
     .run(id, owner, entryBranch);
   // Re-read so the DB's own CURRENT_TIMESTAMP defaults are what we return.
-  return { ok: true, value: hydrate(rawById(id, owner) as SessionRow) };
+  return { ok: true, value: hydrate((await rawById(id, owner)) as SessionRow) };
 }
 
 /**
  * Append one message to the transcript. `ts` is stamped server-side when absent — a
  * client clock must not decide log ordering. Unknown id / other owner → `undefined`.
  */
-export function appendTranscript(
+export async function appendTranscript(
   id: string,
   message: { role: string; text: string; ts?: string; kind?: string },
-): SessionResult<PlanningSession> | undefined {
+): Promise<SessionResult<PlanningSession> | undefined> {
   const owner = currentOwnerId();
-  const row = rawById(id, owner);
+  const row = await rawById(id, owner);
   if (!row) return undefined;
   if (!MESSAGE_ROLES.has(message.role)) {
     return { ok: false, error: `message.role must be one of: ${[...MESSAGE_ROLES].join(', ')}` };
@@ -160,20 +160,20 @@ export function appendTranscript(
     ...(message.kind ? { kind: String(message.kind) } : {}),
   };
   const next = [...hydrate(row).transcript, entry];
-  sqlite
+  await store()
     .prepare(`UPDATE planning_sessions SET transcript = ? WHERE id = ? AND owner_id = ?`)
     .run(JSON.stringify(next), id, owner);
-  return { ok: true, value: hydrate(rawById(id, owner) as SessionRow) };
+  return { ok: true, value: hydrate((await rawById(id, owner)) as SessionRow) };
 }
 
 /** Replace the whole transcript. Unknown id / other owner → `undefined`. */
-export function setTranscript(id: string, arr: TranscriptMessage[]): PlanningSession | undefined {
+export async function setTranscript(id: string, arr: TranscriptMessage[]): Promise<PlanningSession | undefined> {
   const owner = currentOwnerId();
-  if (!rawById(id, owner)) return undefined;
-  sqlite
+  if (!(await rawById(id, owner))) return undefined;
+  await store()
     .prepare(`UPDATE planning_sessions SET transcript = ? WHERE id = ? AND owner_id = ?`)
     .run(JSON.stringify(Array.isArray(arr) ? arr : []), id, owner);
-  return hydrate(rawById(id, owner) as SessionRow);
+  return hydrate((await rawById(id, owner)) as SessionRow);
 }
 
 /**
@@ -181,12 +181,12 @@ export function setTranscript(id: string, arr: TranscriptMessage[]): PlanningSes
  * `llmUsed` are only written when supplied, so a close can't blank a summary an
  * earlier call already stored. Unknown id / other owner → `undefined`.
  */
-export function closeSession(
+export async function closeSession(
   id: string,
   patch: { status: string; summary?: string; llmUsed?: boolean },
-): SessionResult<PlanningSession> | undefined {
+): Promise<SessionResult<PlanningSession> | undefined> {
   const owner = currentOwnerId();
-  if (!rawById(id, owner)) return undefined;
+  if (!(await rawById(id, owner))) return undefined;
   if (!SESSION_STATUSES.has(patch.status)) {
     return { ok: false, error: `status must be one of: ${[...SESSION_STATUSES].join(', ')}` };
   }
@@ -194,22 +194,22 @@ export function closeSession(
   const vals: unknown[] = [new Date().toISOString(), patch.status];
   if (patch.summary !== undefined) { sets.push('summary = ?'); vals.push(patch.summary); }
   if (patch.llmUsed !== undefined) { sets.push('llm_used = ?'); vals.push(patch.llmUsed ? 1 : 0); }
-  sqlite
+  await store()
     .prepare(`UPDATE planning_sessions SET ${sets.join(', ')} WHERE id = ? AND owner_id = ?`)
     .run(...vals, id, owner);
-  return { ok: true, value: hydrate(rawById(id, owner) as SessionRow) };
+  return { ok: true, value: hydrate((await rawById(id, owner)) as SessionRow) };
 }
 
 /** Every session of the current owner, newest first (the Logs tab's order). */
-export function listSessions(): PlanningSession[] {
-  const rows = sqlite
+export async function listSessions(): Promise<PlanningSession[]> {
+  const rows = await store()
     .prepare(`SELECT * FROM planning_sessions WHERE owner_id = ? ORDER BY started_at DESC`)
-    .all(currentOwnerId()) as SessionRow[];
+    .all<SessionRow>(currentOwnerId());
   return rows.map(hydrate);
 }
 
-export function getSession(id: string): PlanningSession | undefined {
-  const row = rawById(id, currentOwnerId());
+export async function getSession(id: string): Promise<PlanningSession | undefined> {
+  const row = await rawById(id, currentOwnerId());
   return row ? hydrate(row) : undefined;
 }
 
@@ -236,8 +236,8 @@ const clampHorizon = (n: unknown): number => Math.max(1, Math.min(60, Math.floor
  * server-tz `localISODate()` would mis-window scheduled tasks around midnight for any
  * owner in a different zone.
  */
-function ownerToday(owner: string): string {
-  return todayInTZ(ownerTimezone(owner));
+async function ownerToday(owner: string): Promise<string> {
+  return todayInTZ(await ownerTimezone(owner));
 }
 
 /**
@@ -254,7 +254,7 @@ function ownerToday(owner: string): string {
  * Flight-plan / Objectives / Recurring toggles change what this summary shows, never what
  * placement does.
  */
-export function planWeekCandidates(horizonRaw: unknown): PlanWeekCandidates {
+export async function planWeekCandidates(horizonRaw: unknown): Promise<PlanWeekCandidates> {
   const owner = currentOwnerId();
   const horizon = clampHorizon(horizonRaw);
   // NOT a caller-supplied day. `POST /api/auto/fill` takes no date and always resolves
@@ -262,7 +262,7 @@ export function planWeekCandidates(horizonRaw: unknown): PlanWeekCandidates {
   // different task set than the confirm it gates — listing tasks fill will not stage and
   // hiding ones it will. The run's own anchor (selectedDay) is passed straight to
   // /api/auto/run by the client and is a separate concern.
-  const start = ownerToday(owner);
+  const start = await ownerToday(owner);
 
   // Mirrors fillFlightPlanCandidates (autoplan.ts:600) — minus the write and the LIMIT.
   const ELIGIBLE = `
@@ -278,18 +278,18 @@ export function planWeekCandidates(horizonRaw: unknown): PlanWeekCandidates {
                      AND tb.status NOT IN ('completed','skipped','cancelled'))))
        AND id NOT IN (SELECT task_id FROM flight_plan WHERE owner_id = ?)`;
 
-  const { n: openCount } = sqlite
+  const { n: openCount } = (await store()
     .prepare(`SELECT COUNT(*) AS n ${ELIGIBLE}`)
-    .get(owner, start, owner) as { n: number };
+    .get<{ n: number }>(owner, start, owner))!;
 
-  const items = sqlite
+  const items = await store()
     .prepare(`SELECT id, title, priority, due_at ${ELIGIBLE}
               ORDER BY priority, COALESCE(due_at, '9999-12-31'), id LIMIT 20`)
-    .all(owner, start, owner) as CandidateTask[];
+    .all<CandidateTask>(owner, start, owner);
 
-  const { n: fpCount } = sqlite
+  const { n: fpCount } = (await store()
     .prepare(`SELECT COUNT(*) AS n FROM flight_plan WHERE owner_id = ? AND selected = 1`)
-    .get(owner) as { n: number };
+    .get<{ n: number }>(owner))!;
 
   // Open, unstaged tasks carrying a LIVE objective link — an informational subset of
   // open_tasks.
@@ -300,19 +300,19 @@ export function planWeekCandidates(horizonRaw: unknown): PlanWeekCandidates {
   // objective is absent from the live tree), and the objective must be OURS. Joining
   // objective_tasks without joining objectives counts another owner's objective through a
   // cross-owner link row — the same cross-tenant leak #369 closed in buildTree's CTEs.
-  const { n: objCount } = sqlite
+  const { n: objCount } = (await store()
     .prepare(`SELECT COUNT(DISTINCT t.id) AS n FROM tasks t
                 JOIN objective_tasks ot ON ot.task_id = t.id AND ot.linked = 1
                 JOIN objectives o ON o.id = ot.objective_id
                      AND o.owner_id = ? AND o.archived_at IS NULL
                WHERE t.owner_id = ? AND t.status = 'open'
                  AND t.id NOT IN (SELECT task_id FROM flight_plan WHERE owner_id = ?)`)
-    .get(owner, owner, owner) as { n: number };
+    .get<{ n: number }>(owner, owner, owner))!;
 
-  const { n: recCount } = sqlite
+  const { n: recCount } = (await store()
     .prepare(`SELECT COUNT(*) AS n FROM tasks
                WHERE owner_id = ? AND (recurrence_rule IS NOT NULL OR subtype = 'habit')`)
-    .get(owner) as { n: number };
+    .get<{ n: number }>(owner))!;
 
   return {
     horizon,
@@ -325,8 +325,8 @@ export function planWeekCandidates(horizonRaw: unknown): PlanWeekCandidates {
 }
 
 /** `false` when nothing was removed — unknown id or another owner's row alike. */
-export function deleteSession(id: string): boolean {
-  const info = sqlite
+export async function deleteSession(id: string): Promise<boolean> {
+  const info = await store()
     .prepare(`DELETE FROM planning_sessions WHERE id = ? AND owner_id = ?`)
     .run(id, currentOwnerId());
   return info.changes > 0;
@@ -358,15 +358,15 @@ export async function consolidateSessions(ids: unknown): Promise<SessionResult<C
   // Ids belonging to another owner simply don't match this WHERE clause — never leaked,
   // never mutated, same as every other owner-scoped read in this file.
   const placeholders = ids.map(() => '?').join(',');
-  const rows = sqlite
+  const rows = await store()
     .prepare(`SELECT * FROM planning_sessions WHERE owner_id = ? AND id IN (${placeholders}) ORDER BY started_at DESC`)
-    .all(owner, ...ids) as SessionRow[];
+    .all<SessionRow>(owner, ...ids);
   if (rows.length === 0) {
     return { ok: false, error: 'no owned sessions found for the given ids' };
   }
   const sessions = rows.map(hydrate); // newest first (started_at DESC)
 
-  const tz = ownerTimezone(owner);
+  const tz = await ownerTimezone(owner);
   const dates = sessions.map((s) => localDateInTZ(s.started_at, tz)).sort();
   const dateRange = dates[0] === dates[dates.length - 1] ? dates[0] : `${dates[0]} to ${dates[dates.length - 1]}`;
 
@@ -391,7 +391,7 @@ export async function consolidateSessions(ids: unknown): Promise<SessionResult<C
   const copy = await renderCopy('weekly_review', { facts: digest, fallback: digest });
 
   const newest = sessions[0];
-  sqlite
+  await store()
     .prepare(`UPDATE planning_sessions SET summary = ? WHERE id = ? AND owner_id = ?`)
     .run(copy.text, newest.id, owner);
 

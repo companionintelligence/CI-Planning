@@ -1,4 +1,4 @@
-import type { Database } from 'better-sqlite3';
+import { store } from '../db/store.js';
 
 export type SyncEntity = 'task' | 'block' | 'objective' | 'objective_task';
 
@@ -126,9 +126,9 @@ export function applyMonotonic(field: string, row: Record<string, unknown>, valu
  *    and roll back every other op in the batch with it. One bad ref must not do that.
  *  - ANOTHER OWNER'S: live, but not yours — a sync op must not graft your tree onto theirs.
  */
-function clampToLiveParent(sqlite: Database, ownerId: string, value: unknown): unknown {
+async function clampToLiveParent(ownerId: string, value: unknown): Promise<unknown> {
   if (value == null || value === '') return null; // '' is not a parent; normalize (the FK would reject it)
-  const live = sqlite
+  const live = await store()
     .prepare(`SELECT 1 FROM objectives WHERE id = ? AND owner_id = ? AND archived_at IS NULL LIMIT 1`)
     .get(value, ownerId);
   return live ? value : null;
@@ -137,14 +137,14 @@ function clampToLiveParent(sqlite: Database, ownerId: string, value: unknown): u
 /**
  * Apply one op to a row using field-level LWW + monotonic completion.
  * Runs synchronously on the raw better-sqlite3 `Database` so it can be
- * called inside a `sqlite.transaction()` callback.
+ * called inside a `await store().transaction()` callback.
  */
-export function applyOp(sqlite: Database, op: Op, ownerId: string): ApplyResult {
+export async function applyOp(op: Op, ownerId: string): Promise<ApplyResult> {
   const table = ENTITY_TABLE[op.entity];
   const allowed = ENTITY_FIELDS[op.entity];
   if (!table || !allowed) throw Object.assign(new Error('unknown entity'), { status: 400 });
 
-  const row = sqlite.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(op.entityId) as
+  const row = await store().prepare(`SELECT * FROM ${table} WHERE id = ?`).get(op.entityId) as
     Record<string, unknown> | undefined;
   if (!row) throw Object.assign(new Error('not found'), { status: 404 });
 
@@ -156,7 +156,7 @@ export function applyOp(sqlite: Database, op: Op, ownerId: string): ApplyResult 
     throw Object.assign(new Error('not found'), { status: 404 });
   }
   if (op.entity === 'objective_task') {
-    const parentOwner = sqlite
+    const parentOwner = await store()
       .prepare(`SELECT owner_id FROM objectives WHERE id = ?`)
       .get(row['objective_id']) as { owner_id: string } | undefined;
     if (!parentOwner || parentOwner.owner_id !== ownerId) {
@@ -176,7 +176,7 @@ export function applyOp(sqlite: Database, op: Op, ownerId: string): ApplyResult 
       // The tree-shape clamp needs the DB (is the proposed parent live and mine?), which
       // applyMonotonic's (field, row, value) signature can't see — hence the separate step.
       merged[field] = op.entity === 'objective' && field === 'parent_id'
-        ? clampToLiveParent(sqlite, ownerId, value)
+        ? await clampToLiveParent(ownerId, value)
         : applyMonotonic(field, row, value);
       fieldTs[field] = op.clientTs;
     } else {
@@ -196,7 +196,7 @@ export function applyOp(sqlite: Database, op: Op, ownerId: string): ApplyResult 
   setClauses.push('version = ?', 'updated_at = ?', 'field_ts = ?');
   setValues.push(version, updatedAt, JSON.stringify(fieldTs), op.entityId);
 
-  sqlite
+  await store()
     .prepare(`UPDATE ${table} SET ${setClauses.join(', ')} WHERE id = ?`)
     .run(...setValues);
 
@@ -283,19 +283,18 @@ const CAMEL_TO_SNAKE: Record<SyncEntity, Record<string, string>> = {
  * next op silently loses LWW — a cross-tenant write into someone else's merge state.
  * See `cascadeArchiveToDescendants` (services/objectives.ts) for the canonical shape.
  */
-export function stampRow(
-  sqlite: Database,
+export async function stampRow(
   entity: SyncEntity,
   entityId: string,
   camelFields: string[],
-): void {
+): Promise<void> {
   const table = ENTITY_TABLE[entity];
   const map = CAMEL_TO_SNAKE[entity];
   if (!table || !map) return;
   const snakeFields = camelFields.map((f) => map[f]).filter(Boolean);
   if (snakeFields.length === 0) return;
 
-  const row = sqlite
+  const row = await store()
     .prepare(`SELECT version, field_ts FROM ${table} WHERE id = ?`)
     .get(entityId) as { version: number | null; field_ts: string | null } | undefined;
   if (!row) return;
@@ -304,7 +303,7 @@ export function stampRow(
   const fieldTs: Record<string, string> = row.field_ts ? JSON.parse(row.field_ts) : {};
   for (const f of snakeFields) fieldTs[f] = now;
 
-  sqlite
+  await store()
     .prepare(`UPDATE ${table} SET version = ?, updated_at = ?, field_ts = ? WHERE id = ?`)
     .run((row.version ?? 0) + 1, now, JSON.stringify(fieldTs), entityId);
 }
