@@ -23,6 +23,13 @@ jobs:
   video:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      # ONE frozen instant for the whole stage, because it has to be true on both
+      # sides of the wire. capture.config.mjs reads it for the browser clock
+      # (`fixedTime`), and Start app passes it to the server as CP_FIXED_NOW so
+      # the quick-add parse resolves "3pm" against the same day. Setting them
+      # separately is how they drifted apart in the first place.
+      CI_VIDEO_FIXED_TIME: "2026-06-03T18:20:00Z"
     steps:
       - uses: actions/checkout@v4
 
@@ -76,6 +83,14 @@ jobs:
           GOOGLE_MODE: fixture
           PORT: 3848
           VITE_PORT: 5173
+          # The other half of a frozen stage. video/capture.config.mjs pins the
+          # BROWSER clock with `fixedTime`, but the quick-add parse happens
+          # server-side (routes/tasks.ts:184, :206 call parseQuick with no
+          # refNow), so "3pm" resolved against the runner's wall clock. The
+          # add-element-parsed shot then filmed a date that moved every run — a
+          # spurious drift PR every Monday, and a frame that contradicted the
+          # film's own frozen date.
+          CP_FIXED_NOW: ${{ env.CI_VIDEO_FIXED_TIME }}
           # Point every LLM path at a closed port so it takes its deterministic
           # fallback for the whole run (config.ts:263 reads OLLAMA_URL). Three
           # things depend on this: /api/tasks/quick/parse keeps the deterministic

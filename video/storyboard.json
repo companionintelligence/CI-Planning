@@ -327,7 +327,7 @@
         {
           "id": "calendar-month",
           "url": "planning.local/calendar",
-          "alt": "The calendar month grid: six weeks of cells, this week carrying its event chips, today ringed.",
+          "alt": "The calendar month grid: six weeks of cells, this week carrying its event chips, today marked by a filled accent pill on its date number.",
           "motion": "drift-down",
           "capture": {
             "path": "/calendar",

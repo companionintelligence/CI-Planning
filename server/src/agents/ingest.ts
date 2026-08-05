@@ -50,24 +50,53 @@ function normTag(name: string): string {
   return name.toLowerCase().replace(/\s+/g, '-').slice(0, 32);
 }
 
+/**
+ * Resolve a content tag id, creating it if absent.
+ *
+ * SELECT-then-INSERT is not safe here and used to break the seed: ingest runs
+ * under `pool(..., 3, ...)` (scripts/seed-test-data.ts), so three workers can
+ * miss the same absent name and all three INSERT, and the losers fail with
+ * `UNIQUE constraint failed: tags.owner_id, tags.name`. A single upsert closes
+ * the window — the no-op DO UPDATE exists only so RETURNING yields the existing
+ * row on conflict, and it deliberately does NOT touch `kind`, so a name that is
+ * already a direction tag keeps its kind instead of being demoted.
+ */
 async function tagId(name: string): Promise<string> {
   const owner = currentOwnerId();
-  const existing = await store().prepare('SELECT id FROM tags WHERE owner_id = ? AND name = ?').get<{ id: string }>(owner, name);
-  if (existing) return existing.id;
-  return (await store().prepare('INSERT INTO tags (id, owner_id, name) VALUES (uuid7(), ?, ?) RETURNING id').get<{ id: string }>(owner, name))!.id;
+  return (await store()
+    .prepare(
+      `INSERT INTO tags (id, owner_id, name) VALUES (uuid7(), ?, ?)
+         ON CONFLICT(owner_id, name) DO UPDATE SET name = excluded.name
+         RETURNING id`,
+    )
+    .get<{ id: string }>(owner, name))!.id;
 }
 
-/** Resolve a direction tag id, ensuring it exists as a `direction` tag (the kind the
- *  Auto engine matches pattern-block windows against). Self-heals if a reset wiped the seed. */
+/**
+ * Resolve a direction tag id, ensuring it exists as a `direction` tag (the kind the
+ * Auto engine matches pattern-block windows against). Self-heals if a reset wiped the seed.
+ *
+ * Same race as tagId, plus one of its own: the old lookup filtered on
+ * `kind = 'direction'`, so a tag with this name and any other kind was invisible
+ * to the SELECT and the INSERT then hit the (owner_id, name) unique index —
+ * `tags.kind` defaults to 'intention' (migrations/0036), so an intention tag
+ * sharing a direction's name was enough to wedge ingest permanently.
+ *
+ * The upsert resolves both: one row per (owner, name) is all the schema allows,
+ * so a name used as a direction is promoted to one. That is exactly what
+ * migration 0036 does with its own `promote` statement for a pre-existing tag,
+ * and `is_base` is set for the same reason — a direction recreated after a reset
+ * should match what the migration would have created, not a lookalike.
+ */
 async function directionTagId(name: string): Promise<string> {
   const owner = currentOwnerId();
-  const existing = await store()
-    .prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = ? AND kind = 'direction'`)
-    .get<{ id: string }>(owner, name);
-  if (existing) return existing.id;
-  return (
-    await store().prepare(`INSERT INTO tags (id, owner_id, name, kind) VALUES (uuid7(), ?, ?, 'direction') RETURNING id`).get<{ id: string }>(owner, name)
-  )!.id;
+  return (await store()
+    .prepare(
+      `INSERT INTO tags (id, owner_id, name, kind, is_base) VALUES (uuid7(), ?, ?, 'direction', 1)
+         ON CONFLICT(owner_id, name) DO UPDATE SET kind = 'direction', is_base = 1
+         RETURNING id`,
+    )
+    .get<{ id: string }>(owner, name))!.id;
 }
 
 /**
