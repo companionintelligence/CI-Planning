@@ -221,7 +221,7 @@
             "before": [
               { "click": "button.fab" },
               { "waitFor": ".modal input[placeholder^=\"Describe it\"]" },
-              { "fill": [".modal input[placeholder^=\"Describe it\"]", "pay invoice 3pm #invoices ~20m"] }
+              { "fill": [".modal input[placeholder^=\"Describe it\"]", "pay invoice 3pm #work #invoices ~20m"] }
             ],
             "settle": 600,
             "mask": ["div.h-11 span.font-mono"]
@@ -249,7 +249,7 @@
             "before": [
               { "click": "button.fab" },
               { "waitFor": ".modal input[placeholder^=\"Describe it\"]" },
-              { "fill": [".modal input[placeholder^=\"Describe it\"]", "pay invoice 3pm #invoices ~20m"] },
+              { "fill": [".modal input[placeholder^=\"Describe it\"]", "pay invoice 3pm #work #invoices ~20m"] },
               { "press": [".modal input[placeholder^=\"Describe it\"]", "Enter"] },
               { "waitFor": ".modal span.rounded-full:has-text(\"invoices\")" }
             ],
@@ -321,13 +321,13 @@
       "kind": "screen",
       "chapter": "day",
       "seconds": 5.5,
-      "caption": "The month view: where the hours actually went.",
-      "narration": "Step back a month and the shape of where your hours actually went appears.",
+      "caption": "A month at a glance — this week placed, the rest still open.",
+      "narration": "Zoom out to the month: this week placed, and the rest of it still open.",
       "shots": [
         {
           "id": "calendar-month",
           "url": "planning.local/calendar",
-          "alt": "The calendar month grid: six weeks of cells, each with its event chips.",
+          "alt": "The calendar month grid: six weeks of cells, this week carrying its event chips, today ringed.",
           "motion": "drift-down",
           "capture": {
             "path": "/calendar",
