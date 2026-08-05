@@ -165,6 +165,18 @@ jobs:
         working-directory: video
         run: npm run build && npm run check
 
+      # Not redundant — do not delete. The ubuntu-latest image (ubuntu-24.04)
+      # ships NO FFmpeg, and `npm run render` needs BOTH binaries: ffmpeg to
+      # encode the MP4 and ffprobe to probe the media assets. Without this the
+      # render aborts with "FFmpeg not found" and no video is ever produced.
+      # Guarded with the Render step's own condition so a capture-only run
+      # (render=false) does not pay for the apt install.
+      - name: Install FFmpeg
+        if: ${{ github.event_name == 'schedule' || inputs.render }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+
       - name: Render
         if: ${{ github.event_name == 'schedule' || inputs.render }}
         working-directory: video
