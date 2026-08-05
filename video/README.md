@@ -5,7 +5,27 @@
 Generates a **16:9 desktop cut** and a **9:16 mobile cut** of Companion Planning's FTUE and major
 screens, from this repo's own UI. Both are produced from [`storyboard.json`](storyboard.json).
 
+**Videos are built locally, on demand, and are not stored.** There is no GitHub Actions job, no
+uploaded artifact, no committed `.mp4`. A cut is a build output: make one when you need it, then
+delete it. The screenshots under `assets/shots/` stay in git — they are the *input* that lets
+anyone render without booting the app.
+
 ## Quick start
+
+The one command, from a CI-Engineering checkout (`tools/make-videos.mjs`):
+
+```bash
+node tools/make-videos.mjs --list                 # every product, and how many screens each has
+node tools/make-videos.mjs companion-planning     # both cuts, rendered from the committed shots
+```
+
+It runs `ci-video` straight out of the CI-Common checkout on disk, so there is no registry, no
+token and no authentication step. Output lands in `~/Movies/CI-Product-Videos/companion-planning/`,
+outside every repo. It needs `ffmpeg`/`ffprobe` on `PATH` and Node 22+.
+
+`--capture` (re-shoot the screens before rendering) is **not yet wired for this product** — the
+runner has no stage entry for Companion Planning, so it falls back to render-only. To refresh the
+shots, boot the stage and run the capture by hand from this directory:
 
 ```bash
 npm install
@@ -33,6 +53,7 @@ From the repo root:
 export DB_PATH=/tmp/ci-planning-video.db   # throwaway — the seed below is destructive
 export GOOGLE_MODE=fixture                 # sample data; refused in production, fine in dev
 export OLLAMA_URL=http://127.0.0.1:1       # closed port -> every LLM path takes its fallback
+export CP_FIXED_NOW=2026-06-03T18:20:00Z   # same instant capture.config.mjs freezes the browser to
 corepack enable && pnpm install
 pnpm --filter server migrate
 pnpm --filter server seed -- --no-llm --reset
@@ -47,9 +68,8 @@ different task titles, which shows up later as a phantom "UI drift" PR.
 The seeder fills the **backlog** and nothing else, so Today's Planner, Today's Flight-plan,
 Focus and `/balance` all render their empty-state branches. Every one of those shots waits on a
 selector that matches in the empty state too, so they capture **green** and film an empty
-product — which is exactly how thin coverage went unnoticed. This is no longer a human
-checklist; `.github/workflows/video.yml` does it in the **Stage the filmed day** step, and the
-same three commands work locally:
+product — which is exactly how thin coverage went unnoticed. Nothing runs these for you: paste
+them into a shell once the dev server is up, before `npm run capture`.
 
 ```bash
 API=http://localhost:3848/api; JSON='content-type: application/json'; DAY='{"date":"2026-06-03"}'
@@ -72,7 +92,10 @@ Notes on why it is shaped that way:
 1. **The date is not free.** `2026-06-03` is the day `capture.config.mjs` → `fixedTime` freezes
    the clock to, and it is inside the seeded fixture window (`server/test/fixtures/calendar.json`
    spans 2026-05-30 .. 2026-06-06). The client derives "today" from the frozen clock, so the two
-   must agree. Change one and you must change the other.
+   must agree. Change one and you must change the other. It also has to hold on the *server*
+   side: the quick-add parse runs there (`routes/tasks.ts` → `parseQuick`), so without
+   `CP_FIXED_NOW` exported alongside `pnpm dev` the `add-element-parsed` shot films a date taken
+   from your wall clock and contradicts the film's own frozen day.
 2. **No auth headers.** `requireAuth.ts:88-103` binds every `/api` call to `SYSTEM_OWNER` with
    all scopes under `AUTH_MODE=test` — the same owner the seeder writes as.
 3. **Pin the model away.** Export `OLLAMA_URL=http://127.0.0.1:1` alongside `pnpm dev` so every
@@ -104,7 +127,12 @@ picked up automatically from `assets/audio/<sceneId>.mp3`; regenerate it from th
 
 `assets/shots/*.png` and `assets/audio/*.mp3` **are** committed — they are the record of what the
 product looked like, and captures are byte-stable, so a diff in them means the UI genuinely
-changed. `out/` is not committed.
+changed. Keeping them in git is what lets anyone render a cut without booting the app first, and
+what turns a moved screen into a reviewable diff.
+
+The videos themselves are not kept anywhere. `out/` is gitignored, nothing uploads it, and no
+scheduled job re-shoots the screens or opens a refresh PR — when the UI moves, run `npm run
+capture` and commit the new shots in the PR that moved it.
 
 See [CI-Engineering `projects/product-video-pipeline/`](https://github.com/companionintelligence/CI-Engineering/tree/main/projects/product-video-pipeline)
 for the full contract.
