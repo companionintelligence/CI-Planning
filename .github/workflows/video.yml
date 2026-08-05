@@ -19,6 +19,31 @@ concurrency:
   group: video-${{ github.ref }}
   cancel-in-progress: true
 
+# This repo's default GITHUB_TOKEN permission is read-only, so the run could
+# capture, check and upload — and then die on its very last step:
+#
+#   remote: Write access to repository not granted.
+#   fatal: ... The requested URL returned error: 403
+#   Error: The process '/usr/bin/git' failed with exit code 128
+#
+# create-pull-request needs contents to push chore/video-shot-refresh and
+# pull-requests to open the PR. Granting them here rather than flipping the repo
+# default is deliberate: a read-only default with explicit per-workflow
+# escalation is the safer shape, and it keeps the requirement next to the step
+# that needs it.
+#
+# `packages: read` is the third entry and is NOT optional. Declaring this block
+# at all sets every scope you do not list to `none`, so adding only the two write
+# scopes silently revoked the package read the default token had been getting for
+# free, and the job started failing on its FIRST step instead of its last:
+#
+#   npm error 403 Forbidden - GET .../@companionintelligence%2fvideo-kit
+#   - Permission installation not allowed to Read organization package
+permissions:
+  contents: write
+  pull-requests: write
+  packages: read
+
 jobs:
   video:
     runs-on: ubuntu-latest
