@@ -35,6 +35,33 @@ const TAG_RE = /#[\w-]+/g;
 const EST_RE = /~\s*(\d+)\s*m(?:in)?\b/i;
 
 /**
+ * Reference "now" for date resolution when the caller does not supply one.
+ *
+ * `CP_FIXED_NOW` (an ISO instant) pins it. This exists because freezing the
+ * BROWSER clock is only half a frozen stage: the routes call `parseQuick(text)`
+ * with no `refNow` (routes/tasks.ts:184, :206), so a bare time like "3pm"
+ * resolved against the SERVER's wall clock and came back carrying whatever day
+ * the machine was on. The product-video capture pins the browser to
+ * 2026-06-03 via `fixedTime` (video/capture.config.mjs) and then filmed the
+ * server's answer, so the wizard's day chip and footer summary disagreed with
+ * the film's own date and changed on every run.
+ *
+ * Unset — which is every normal deployment — this is `new Date()`, unchanged.
+ * An unparseable value is ignored rather than trusted, because silently
+ * resolving every date against `Invalid Date` is worse than using the real clock.
+ */
+export function referenceNow(): Date {
+  const fixed = process.env.CP_FIXED_NOW;
+  if (!fixed) return new Date();
+  const parsed = new Date(fixed);
+  if (Number.isNaN(parsed.getTime())) {
+    console.warn(`[quickadd] ignoring unparseable CP_FIXED_NOW=${JSON.stringify(fixed)}`);
+    return new Date();
+  }
+  return parsed;
+}
+
+/**
  * Deterministic quick-add parse. `#tags` and the `~Nm` estimate are stripped
  * BEFORE chrono runs, so "~20m" isn't mistaken for a time. chrono (the only date
  * parser — reproducible against a fixed `refNow`) then reads the remainder: a
@@ -43,7 +70,7 @@ const EST_RE = /~\s*(\d+)\s*m(?:in)?\b/i;
  * task is scheduled onto that day and placed at its time). Whatever's left is the
  * title, which is never empty.
  */
-export function parseQuick(input: string, refNow: Date = new Date()): ParsedQuick {
+export function parseQuick(input: string, refNow: Date = referenceNow()): ParsedQuick {
   const tags = [...input.matchAll(TAG_RE)].map((m) => m[0].slice(1).toLowerCase());
   const est = input.match(EST_RE);
 

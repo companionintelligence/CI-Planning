@@ -53,6 +53,19 @@ function parseArgs(argv: string[]): Args {
 /**
  * DESTRUCTIVE. Deletes every task, possible, block and tag in the database — for ALL
  * owners, not just the seed owner. Only ever reached via an explicit `--reset`.
+ *
+ * The three base direction tags are deliberately EXEMPT (`is_base = 1`, set by
+ * migrations/0036_tag_directions.ts). They are schema furniture rather than seed
+ * data, and deleting them took the owner's entire availability pattern with them:
+ * `pattern_blocks.direction_tag_id` is `REFERENCES tags(id) ON DELETE CASCADE`
+ * (migrations/0037_pattern_blocks.ts:31), so with `foreign_keys = ON` a bare
+ * `DELETE FROM tags` cascaded away every default scheduling window. Migration 0037
+ * seeds those windows only for an owner that has no pattern_blocks rows yet, and it
+ * had already run, so nothing ever put them back — a reset left the Auto engine with
+ * no windows to place anything into, silently and permanently.
+ *
+ * Keeping the base rows also keeps their ids stable, so anything already pointing at
+ * a direction still resolves after a reset.
  */
 async function resetData() {
   await store().exec(`
@@ -61,10 +74,10 @@ async function resetData() {
     DELETE FROM time_blocks;
     DELETE FROM possible_tasks;
     DELETE FROM tasks;
-    DELETE FROM tags;
+    DELETE FROM tags WHERE COALESCE(is_base, 0) = 0;
     DELETE FROM job_runs;
   `);
-  logger.info('seed: reset existing tasks/possibles/blocks/tags');
+  logger.info('seed: reset existing tasks/possibles/blocks/tags (base directions kept)');
 }
 
 /** COUNT(*)-style scalar read; a SELECT COUNT always returns a row, `?? 0` is for the type. */
