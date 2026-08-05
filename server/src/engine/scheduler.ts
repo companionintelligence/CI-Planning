@@ -9,7 +9,7 @@
  * deleted routine and container blocks. The user-driven engine (`placeFlightPlan` /
  * reflow, which build on the helpers below) fully superseded it.
  */
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 
 /** A free window in the day, with a moving cursor as blocks are packed in. */
 export interface Gap {
@@ -77,15 +77,15 @@ export function pickGap(gaps: Gap[], wantMs: number): { gap: Gap; len: number } 
  * `excludeBlockId` drops one row (the Plan being filled) so a Plan isn't an
  * obstacle to placing inside itself.
  */
-export function dayObstacles(
+export async function dayObstacles(
   owner: string,
   windowStartMs: number,
   windowEndMs: number,
   opts: { includePlans?: boolean; excludeBlockId?: string | null } = {}
-): { start: number; end: number }[] {
+): Promise<{ start: number; end: number }[]> {
   const windowStartISO = new Date(windowStartMs).toISOString();
   const windowEndISO = new Date(windowEndMs).toISOString();
-  const rows = sqlite
+  const rows = await store()
     .prepare(
       `SELECT id, start_at, end_at FROM time_blocks
         WHERE owner_id = ? AND start_at < ? AND end_at > ?

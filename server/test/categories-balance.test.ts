@@ -74,34 +74,34 @@ describe('entity_categories service — 1–3 per task/time_block', () => {
   }
   beforeEach(() => { resetDb(); seedCats(DIMS); });
 
-  it('replaces the set, caps at 3, preserves order', () => {
+  it('replaces the set, caps at 3, preserves order', async () => {
     const taskId = (sqlite.prepare(`INSERT INTO tasks (id, title, owner_id, status) VALUES (uuid7(), 'T', ?, 'open') RETURNING id`)
       .get(SYSTEM_OWNER) as { id: string }).id;
-    setEntityCategories('task', taskId, categoryIdsForOwner(['finance', 'health', 'career', 'leisure'], SYSTEM_OWNER));
-    expect(entityCategoryNames('task', taskId)).toEqual(['finance', 'health', 'career']); // 4th dropped, order kept
+    await setEntityCategories('task', taskId, await categoryIdsForOwner(['finance', 'health', 'career', 'leisure'], SYSTEM_OWNER));
+    expect(await entityCategoryNames('task', taskId)).toEqual(['finance', 'health', 'career']); // 4th dropped, order kept
 
-    setEntityCategories('task', taskId, categoryIdsForOwner(['growth'], SYSTEM_OWNER));
-    expect(entityCategoryNames('task', taskId)).toEqual(['growth']); // replace, not append
+    await setEntityCategories('task', taskId, await categoryIdsForOwner(['growth'], SYSTEM_OWNER));
+    expect(await entityCategoryNames('task', taskId)).toEqual(['growth']); // replace, not append
 
-    setEntityCategories('task', taskId, []);
-    expect(entityCategoryNames('task', taskId)).toEqual([]); // clear
+    await setEntityCategories('task', taskId, []);
+    expect(await entityCategoryNames('task', taskId)).toEqual([]); // clear
   });
 
-  it('deduplicates and ignores unknown / foreign names', () => {
+  it('deduplicates and ignores unknown / foreign names', async () => {
     const blockId = newId();
-    setEntityCategories('time_block', blockId, categoryIdsForOwner(['health', 'health', 'nonsense', 'career'], SYSTEM_OWNER));
-    expect(entityCategoryNames('time_block', blockId)).toEqual(['health', 'career']);
+    await setEntityCategories('time_block', blockId, await categoryIdsForOwner(['health', 'health', 'nonsense', 'career'], SYSTEM_OWNER));
+    expect(await entityCategoryNames('time_block', blockId)).toEqual(['health', 'career']);
   });
 
-  it('category resolution is owner-scoped', () => {
+  it('category resolution is owner-scoped', async () => {
     sqlite.prepare(`INSERT INTO owners (id, name) VALUES ('owner-z', 'Z')`).run();
-    expect(categoryIdsForOwner(['health'], 'owner-z')).toEqual([]); // owner-z has no categories
+    expect(await categoryIdsForOwner(['health'], 'owner-z')).toEqual([]); // owner-z has no categories
   });
 
-  it('batched reader returns every requested id (empty array when none)', () => {
+  it('batched reader returns every requested id (empty array when none)', async () => {
     const a = newId(), b = newId();
-    setEntityCategories('task', a, categoryIdsForOwner(['career', 'health'], SYSTEM_OWNER));
-    const map = entityCategoryNamesByIds('task', [a, b]);
+    await setEntityCategories('task', a, await categoryIdsForOwner(['career', 'health'], SYSTEM_OWNER));
+    const map = await entityCategoryNamesByIds('task', [a, b]);
     expect(map.get(a)).toEqual(['career', 'health']);
     expect(map.get(b)).toEqual([]);
   });
@@ -118,17 +118,17 @@ describe('Phase B capture — service write/read wiring', () => {
   it('createTask/updateTask round-trip: names in → position-ordered names out; undefined preserves; [] clears', async () => {
     const res = await createTask(SYSTEM_OWNER, { title: 'T', categories: ['finance', 'health'] });
     if (!res.ok) throw new Error('create failed');
-    expect(entityCategoryNames('task', res.task.id)).toEqual(['finance', 'health']);
+    expect(await entityCategoryNames('task', res.task.id)).toEqual(['finance', 'health']);
 
     // A categories-less PATCH preserves the set.
     const up1 = await updateTask(SYSTEM_OWNER, res.task.id, { title: 'T2' });
     expect(up1.ok).toBe(true);
-    expect(entityCategoryNames('task', res.task.id)).toEqual(['finance', 'health']);
+    expect(await entityCategoryNames('task', res.task.id)).toEqual(['finance', 'health']);
 
     // [] clears.
     const up2 = await updateTask(SYSTEM_OWNER, res.task.id, { categories: [] });
     expect(up2.ok).toBe(true);
-    expect(entityCategoryNames('task', res.task.id)).toEqual([]);
+    expect(await entityCategoryNames('task', res.task.id)).toEqual([]);
   });
 
   it('texture override columns ride create/update and default to enabled', async () => {
@@ -163,14 +163,14 @@ describe('Phase B capture — service write/read wiring', () => {
     });
     if (!b.ok) throw new Error('block failed');
     // No own rows → inherits the task's LIVE categories.
-    expect(blockCategoryNames(b.block.id, t.task.id)).toEqual(['health']);
+    expect(await blockCategoryNames(b.block.id, t.task.id)).toEqual(['health']);
     // Re-categorizing the task re-derives with zero block writes.
     await updateTask(SYSTEM_OWNER, t.task.id, { categories: ['leisure', 'health'] });
-    expect(blockCategoryNames(b.block.id, t.task.id)).toEqual(['leisure', 'health']);
+    expect(await blockCategoryNames(b.block.id, t.task.id)).toEqual(['leisure', 'health']);
     // Own rows win once set.
     const up = await updateBlock(SYSTEM_OWNER, b.block.id, { categories: ['finance'] });
     expect(up.ok).toBe(true);
-    expect(blockCategoryNames(b.block.id, t.task.id)).toEqual(['finance']);
+    expect(await blockCategoryNames(b.block.id, t.task.id)).toEqual(['finance']);
   });
 
   it('recallTask clone carries categories (position preserved) + texture override', async () => {
@@ -178,15 +178,15 @@ describe('Phase B capture — service write/read wiring', () => {
     if (!t.ok) throw new Error('create failed');
     const cloned = await recallTask(SYSTEM_OWNER, t.task.id);
     if (!cloned.ok) throw new Error('recall failed');
-    expect(entityCategoryNames('task', cloned.task.id)).toEqual(['growth', 'career']);
+    expect(await entityCategoryNames('task', cloned.task.id)).toEqual(['growth', 'career']);
     expect(cloned.task.textureColorToken).toBe('tag-9');
   });
 
-  it('removeEntityTags purges entity_categories through the same seam (no orphans on hard delete)', () => {
+  it('removeEntityTags purges entity_categories through the same seam (no orphans on hard delete)', async () => {
     const blockId = newId();
-    setEntityCategories('time_block', blockId, categoryIdsForOwner(['health'], SYSTEM_OWNER));
-    expect(entityCategoryNames('time_block', blockId)).toEqual(['health']);
-    removeEntityTags('time_block', blockId);
-    expect(entityCategoryNames('time_block', blockId)).toEqual([]);
+    await setEntityCategories('time_block', blockId, await categoryIdsForOwner(['health'], SYSTEM_OWNER));
+    expect(await entityCategoryNames('time_block', blockId)).toEqual(['health']);
+    await removeEntityTags('time_block', blockId);
+    expect(await entityCategoryNames('time_block', blockId)).toEqual([]);
   });
 });

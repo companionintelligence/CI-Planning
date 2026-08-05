@@ -47,13 +47,13 @@ async function realApi<T = any>(path: string, init?: RequestInit & { json?: unkn
 
 /** Seed a connection_tokens row. Google rows get a real sealed token so disconnect can
  *  decrypt+revoke; the sealed secrets are the ya29./1// prefixes the no-leak guard hunts. */
-function seedToken(opts: { provider?: string; account: string; status?: string; owner?: string }) {
+async function seedToken(opts: { provider?: string; account: string; status?: string; owner?: string }) {
   const payload = JSON.stringify({
     accessToken: 'ya29.SECRET-ACCESS-TOKEN',
     refreshToken: '1//SECRET-REFRESH-TOKEN',
     expiresAt: new Date(Date.now() + 3600_000).toISOString(),
   });
-  const sealed = seal(payload, loadKek());
+  const sealed = seal(payload, await loadKek());
   sqlite
     .prepare(
       `INSERT INTO connection_tokens (id, owner_id, provider, account, iv, auth_tag, ciphertext, key_version, status)
@@ -84,13 +84,13 @@ afterEach(() => {
 });
 
 describe('listConnections() — leak-safe list', () => {
-  it('returns { provider, account, status, createdAt } ordered by provider, account', () => {
+  it('returns { provider, account, status, createdAt } ordered by provider, account', async () => {
     // Insert out of order to prove the ORDER BY, across providers.
-    seedToken({ provider: 'google', account: 'b@x.io', status: 'active' });
-    seedToken({ provider: 'ci_memory', account: 'mem@x.io', status: 'error' });
-    seedToken({ provider: 'google', account: 'a@x.io', status: 'revoked' });
+    await seedToken({ provider: 'google', account: 'b@x.io', status: 'active' });
+    await seedToken({ provider: 'ci_memory', account: 'mem@x.io', status: 'error' });
+    await seedToken({ provider: 'google', account: 'a@x.io', status: 'revoked' });
 
-    const list = listConnections(SYSTEM_OWNER);
+    const list = await listConnections(SYSTEM_OWNER);
     expect(list.map((c) => `${c.provider}/${c.account}`)).toEqual([
       'ci_memory/mem@x.io',
       'google/a@x.io',
@@ -104,13 +104,13 @@ describe('listConnections() — leak-safe list', () => {
     expect(list.find((c) => c.account === 'a@x.io')!.status).toBe('revoked');
   });
 
-  it('returns [] (not null) for an owner with no connections', () => {
-    expect(listConnections(SYSTEM_OWNER)).toEqual([]);
+  it('returns [] (not null) for an owner with no connections', async () => {
+    expect(await listConnections(SYSTEM_OWNER)).toEqual([]);
   });
 
-  it('never leaks token material (no ciphertext/iv/key_version/token values)', () => {
-    seedToken({ provider: 'google', account: 'leak-check@x.io' });
-    const json = JSON.stringify(listConnections(SYSTEM_OWNER));
+  it('never leaks token material (no ciphertext/iv/key_version/token values)', async () => {
+    await seedToken({ provider: 'google', account: 'leak-check@x.io' });
+    const json = JSON.stringify(await listConnections(SYSTEM_OWNER));
     for (const key of ['ciphertext', 'authTag', 'auth_tag', 'key_version', 'accessToken', 'refreshToken']) {
       expect(json).not.toContain(`"${key}"`);
     }
@@ -123,20 +123,20 @@ describe('listConnections() — leak-safe list', () => {
     expect(json).not.toContain(ivHex);
   });
 
-  it('is owner-scoped — never returns another owner\'s rows', () => {
+  it('is owner-scoped — never returns another owner\'s rows', async () => {
     sqlite.prepare(`INSERT INTO owners (id, name) VALUES ('owner-b', 'B')`).run();
-    seedToken({ provider: 'google', account: 'mine@x.io', owner: SYSTEM_OWNER });
-    seedToken({ provider: 'google', account: 'theirs@x.io', owner: 'owner-b' });
+    await seedToken({ provider: 'google', account: 'mine@x.io', owner: SYSTEM_OWNER });
+    await seedToken({ provider: 'google', account: 'theirs@x.io', owner: 'owner-b' });
 
-    const mine = listConnections(SYSTEM_OWNER);
+    const mine = await listConnections(SYSTEM_OWNER);
     expect(mine.map((c) => c.account)).toEqual(['mine@x.io']);
-    expect(listConnections('owner-b').map((c) => c.account)).toEqual(['theirs@x.io']);
+    expect((await listConnections('owner-b')).map((c) => c.account)).toEqual(['theirs@x.io']);
   });
 });
 
 describe('GET /api/connections', () => {
   it('returns 200 { connections: [...] } for the seeded owner, leak-free', async () => {
-    seedToken({ provider: 'google', account: 'get@x.io' });
+    await seedToken({ provider: 'google', account: 'get@x.io' });
     const { status, body } = await realApi<{ connections: ConnectionSummary[] }>('/api/connections', await authHeaders());
     expect(status).toBe(200);
     expect(body.connections).toHaveLength(1);
@@ -162,7 +162,7 @@ describe('GET /api/connections', () => {
 
   it('never shows another owner\'s connections', async () => {
     sqlite.prepare(`INSERT INTO owners (id, name) VALUES ('owner-b', 'B')`).run();
-    seedToken({ provider: 'google', account: 'theirs@x.io', owner: 'owner-b' });
+    await seedToken({ provider: 'google', account: 'theirs@x.io', owner: 'owner-b' });
     const { body } = await realApi<{ connections: ConnectionSummary[] }>('/api/connections', await authHeaders());
     expect(body.connections).toEqual([]); // the api key is SYSTEM_OWNER's
   });
@@ -171,7 +171,7 @@ describe('GET /api/connections', () => {
 describe('DELETE /api/connections/:provider/:account', () => {
   it('revokes (google), deletes the token + outbound_queue rows, returns the pair', async () => {
     const account = 'disc@x.io';
-    seedToken({ provider: 'google', account });
+    await seedToken({ provider: 'google', account });
     // A pending outbound_queue row for the same (owner, provider, account); its block_id
     // FKs time_blocks (FK pragma ON), so seed a real block first.
     const blockId = newId();
@@ -213,7 +213,7 @@ describe('DELETE /api/connections/:provider/:account', () => {
 
   it('deletes a non-google provider WITHOUT attempting a revoke', async () => {
     const account = 'mem@x.io';
-    seedToken({ provider: 'ci_memory', account });
+    await seedToken({ provider: 'ci_memory', account });
 
     let revokeCalled = false;
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
@@ -235,7 +235,7 @@ describe('DELETE /api/connections/:provider/:account', () => {
 
   it('is owner-scoped — cannot delete another owner\'s connection', async () => {
     sqlite.prepare(`INSERT INTO owners (id, name) VALUES ('owner-b', 'B')`).run();
-    seedToken({ provider: 'google', account: 'theirs@x.io', owner: 'owner-b' });
+    await seedToken({ provider: 'google', account: 'theirs@x.io', owner: 'owner-b' });
 
     vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 200 })));
     const { status } = await realApi(`/api/connections/google/${encodeURIComponent('theirs@x.io')}`, {
@@ -251,7 +251,7 @@ describe('DELETE /api/connections/:provider/:account', () => {
 describe('disconnectConnection() — direct unit', () => {
   it('returns true when a row was removed, false when nothing matched', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 200 })));
-    seedToken({ provider: 'google', account: 'unit@x.io' });
+    await seedToken({ provider: 'google', account: 'unit@x.io' });
     expect(await disconnectConnection(SYSTEM_OWNER, 'google', 'unit@x.io')).toBe(true);
     expect(await disconnectConnection(SYSTEM_OWNER, 'google', 'unit@x.io')).toBe(false);
   });

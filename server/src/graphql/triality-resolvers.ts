@@ -1,5 +1,5 @@
 import { GraphQLError } from 'graphql';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { trialityEnabled } from '../lib/flags.js';
 import { writeAudit } from '../lib/audit.js';
@@ -15,9 +15,9 @@ import { attachConfidence, serializeConfidence, type PickConfidence } from '../s
  * WHO rule (the query never audits; a landing stamp audits once).
  */
 
-function gate(): string {
+async function gate(): Promise<string> {
   const owner = currentOwnerId();
-  if (!trialityEnabled(owner)) {
+  if (!(await trialityEnabled(owner))) {
     // The REST 404 posture: a disabled feature's surface looks absent, not broken.
     throw new GraphQLError('Not found', { extensions: { code: 'NOT_FOUND' } });
   }
@@ -62,7 +62,7 @@ const pickToNode = (
 export const trialityResolvers = {
   Query: {
     trialityNext: async () => {
-      const owner = gate();
+      const owner = await gate();
       const now = new Date();
       const res = await trialityNext(owner, now);
       if (res.refused) {
@@ -77,7 +77,7 @@ export const trialityResolvers = {
       // Same three-call ordering as routes/triality.ts — confidence is stamped at show
       // time, so it is computed before the insert.
       const confidences = attachConfidence(res.picks, res.vector);
-      const logIds = logShown(owner, now, res.picks, confidences.map(serializeConfidence));
+      const logIds = await logShown(owner, now, res.picks, confidences.map(serializeConfidence));
       const rationales = await attachRationales(res.picks, res.vector);
       return {
         refused: null,
@@ -89,20 +89,20 @@ export const trialityResolvers = {
     },
   },
   Mutation: {
-    trialityFeedback: (_: unknown, args: { logId: string; outcome: string }) => {
-      const owner = gate();
+    trialityFeedback: async (_: unknown, args: { logId: string; outcome: string }) => {
+      const owner = await gate();
       const outcome = String(args.outcome).toLowerCase();
       if (!isOutcome(outcome)) {
         throw new GraphQLError('outcome must be OPENED, STAGED, or DISMISSED', {
           extensions: { code: 'BAD_USER_INPUT' },
         });
       }
-      const mine = sqlite
+      const mine = await store()
         .prepare(`SELECT 1 FROM triality_log WHERE id = ? AND owner_id = ?`)
         .get(args.logId, owner);
       if (!mine) throw new GraphQLError('Not found', { extensions: { code: 'NOT_FOUND' } });
 
-      const res = stampOutcome(owner, args.logId, outcome, new Date());
+      const res = await stampOutcome(owner, args.logId, outcome, new Date());
       if (res.changed) {
         writeAudit({ ownerId: owner, actor: 'owner', action: 'feedback', entity: `triality:${args.logId}` });
       }

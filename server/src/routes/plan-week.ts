@@ -38,7 +38,7 @@ export function planWeekRouter() {
     if (raw !== undefined && !isValidISODate(raw)) {
       ctx.status = 422; ctx.body = { error: 'anchor must be YYYY-MM-DD' }; return;
     }
-    ctx.body = planWeekReview((raw as string | undefined) ?? defaultAnchorForOwner());
+    ctx.body = await planWeekReview((raw as string | undefined) ?? (await defaultAnchorForOwner()));
   });
 
   /**
@@ -49,7 +49,7 @@ export function planWeekRouter() {
   router.get('/api/plan-week/candidates', async (ctx) => {
     // No `start` param: the staging day is not the caller's to choose — /api/auto/fill
     // resolves ownerToday itself, so the service anchors on the same value and echoes it.
-    ctx.body = planWeekCandidates(ctx.query.horizon);
+    ctx.body = await planWeekCandidates(ctx.query.horizon);
   });
 
   /**
@@ -117,18 +117,18 @@ export function planWeekRouter() {
 
   router.post('/api/plan-week/sessions', async (ctx) => {
     const body = (ctx.request.body ?? {}) as { entry_branch?: string };
-    const res = openSession(String(body.entry_branch ?? ''));
+    const res = await openSession(String(body.entry_branch ?? ''));
     if (!res.ok) { ctx.status = 422; ctx.body = { error: res.error }; return; }
     ctx.status = 201;
     ctx.body = { session: res.value };
   });
 
   router.get('/api/plan-week/sessions', async (ctx) => {
-    ctx.body = { sessions: listSessions() };
+    ctx.body = { sessions: await listSessions() };
   });
 
   router.get('/api/plan-week/sessions/:id', async (ctx) => {
-    const session = getSession(ctx.params.id);
+    const session = await getSession(ctx.params.id);
     if (!session) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     ctx.body = { session };
   });
@@ -148,22 +148,22 @@ export function planWeekRouter() {
       llm_used?: boolean;
     };
 
-    let session = getSession(id);
+    let session = await getSession(id);
     if (!session) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
     if (body.message !== undefined) {
-      const res = appendTranscript(id, body.message);
+      const res = await appendTranscript(id, body.message);
       if (!res) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
       if (!res.ok) { ctx.status = 422; ctx.body = { error: res.error }; return; }
       session = res.value;
     } else if (Array.isArray(body.transcript)) {
-      const next = setTranscript(id, body.transcript);
+      const next = await setTranscript(id, body.transcript);
       if (!next) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
       session = next;
     }
 
     if (body.status !== undefined) {
-      const res = closeSession(id, { status: body.status, summary: body.summary, llmUsed: body.llm_used });
+      const res = await closeSession(id, { status: body.status, summary: body.summary, llmUsed: body.llm_used });
       if (!res) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
       if (!res.ok) { ctx.status = 422; ctx.body = { error: res.error }; return; }
       session = res.value;
@@ -173,7 +173,7 @@ export function planWeekRouter() {
   });
 
   router.delete('/api/plan-week/sessions/:id', async (ctx) => {
-    if (!deleteSession(ctx.params.id)) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    if (!(await deleteSession(ctx.params.id))) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     ctx.body = { ok: true };
   });
 

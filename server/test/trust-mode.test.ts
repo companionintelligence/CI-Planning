@@ -67,37 +67,37 @@ beforeEach(() => {
 });
 
 describe('resolveTrustPolicy (TM-2; AF-3 = auto-block only)', () => {
-  it('cautious → no auto-block', () => {
+  it('cautious → no auto-block', async () => {
     setTrust('cautious');
-    expect(resolveTrustPolicy(OWNER)).toEqual({ mode: 'cautious', autoBlock: false });
+    expect(await resolveTrustPolicy(OWNER)).toEqual({ mode: 'cautious', autoBlock: false });
   });
-  it('balanced (default) → no auto-block', () => {
+  it('balanced (default) → no auto-block', async () => {
     setTrust('balanced');
-    expect(resolveTrustPolicy(OWNER)).toEqual({ mode: 'balanced', autoBlock: false });
+    expect(await resolveTrustPolicy(OWNER)).toEqual({ mode: 'balanced', autoBlock: false });
   });
-  it('hands_off → auto-block', () => {
+  it('hands_off → auto-block', async () => {
     setTrust('hands_off');
-    expect(resolveTrustPolicy(OWNER)).toEqual({ mode: 'hands_off', autoBlock: true });
+    expect(await resolveTrustPolicy(OWNER)).toEqual({ mode: 'hands_off', autoBlock: true });
   });
-  it('missing prefs row → safe balanced default', () => {
-    expect(resolveTrustPolicy('00000000-0000-0000-0000-000000000000')).toEqual({ mode: 'balanced', autoBlock: false });
+  it('missing prefs row → safe balanced default', async () => {
+    expect(await resolveTrustPolicy('00000000-0000-0000-0000-000000000000')).toEqual({ mode: 'balanced', autoBlock: false });
   });
 });
 
 describe('fillFlightPlanCandidates requireEstimate (TM-3)', () => {
-  it('stages only estimate-bearing tasks when requireEstimate is set', () => {
+  it('stages only estimate-bearing tasks when requireEstimate is set', async () => {
     makeTask('Has estimate', { est: 45 });
     makeTask('No estimate', { est: null });
 
-    const added = fillFlightPlanCandidates(OWNER, { requireEstimate: true });
+    const added = await fillFlightPlanCandidates(OWNER, { requireEstimate: true });
     expect(added).toBe(1);
     expect(stagedTitles()).toEqual(['Has estimate']);
   });
-  it('stages all candidates without the flag (byte-compatible default)', () => {
+  it('stages all candidates without the flag (byte-compatible default)', async () => {
     makeTask('Has estimate', { est: 45 });
     makeTask('No estimate', { est: null });
 
-    const added = fillFlightPlanCandidates(OWNER);
+    const added = await fillFlightPlanCandidates(OWNER);
     expect(added).toBe(2);
     expect(stagedCount()).toBe(2);
   });
@@ -161,13 +161,13 @@ describe('promotePossibles is unconditional (AF-3 — promotion facet deliberate
 });
 
 describe('hands-off auto-block places estimate-bearing work only (TM-5)', () => {
-  it('places a tag-matched estimate-bearing task, leaves an estimate-less one unplaced', () => {
+  it('places a tag-matched estimate-bearing task, leaves an estimate-less one unplaced', async () => {
     setTrust('hands_off');
     const plan = makePlan('errands', `${DATE}T16:00:00.000Z`, `${DATE}T18:00:00.000Z`);
     makeTask('Buy stamps', { est: 30, tag: 'errands' });
     makeTask('Vague errand', { est: null, tag: 'errands' });
 
-    autoScheduleOnIngest(OWNER, { date: DATE, requireEstimate: true });
+    await autoScheduleOnIngest(OWNER, { date: DATE, requireEstimate: true });
 
     const blocks = sqlite
       .prepare(`SELECT title, parent_block_id FROM time_blocks WHERE block_kind = 'task' AND is_auto = 1`)

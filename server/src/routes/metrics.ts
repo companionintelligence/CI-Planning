@@ -1,5 +1,5 @@
 import Router from '@koa/router';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { trialityEnabled } from '../lib/flags.js';
 import { taskMetrics } from '../services/task-metrics.js';
@@ -18,9 +18,10 @@ export function metricsRouter() {
 
   // GET /api/metrics/tasks?days=30 — the two-axis rollup. `days` is clamped inside the
   // service (1..365), so a hostile or fat-fingered value can't turn this into a full scan.
-  router.get('/api/metrics/tasks', (ctx) => {
+  router.get('/api/metrics/tasks', async (ctx) => {
     const days = Number((ctx.query.days as string) ?? '30');
-    ctx.body = taskMetrics(currentOwnerId(), days);
+    // Koa does NOT await a Promise assigned to ctx.body — it would serialize as {}.
+    ctx.body = await taskMetrics(currentOwnerId(), days);
   });
 
   // GET /api/metrics/calibration?scope_kind=global&scope_ref=&limit=90 — the dated
@@ -31,21 +32,21 @@ export function metricsRouter() {
   // rollup whose rows are replaced wholesale by the nightly job, so it holds exactly one
   // reading — today's. The history table exists precisely because that made improvement
   // over time unmeasurable.
-  router.get('/api/metrics/calibration', (ctx) => {
+  router.get('/api/metrics/calibration', async (ctx) => {
     const owner = currentOwnerId();
     const scopeKind = (ctx.query.scope_kind as string) || 'global';
     const scopeRef = (ctx.query.scope_ref as string) ?? '';
     const limit = Math.max(1, Math.min(365, Number(ctx.query.limit ?? 90) || 90));
     // Newest `limit` rows, then flipped to chronological — a plain ASC + LIMIT would
     // return the OLDEST readings and silently stop updating once history exceeded it.
-    const rows = sqlite
+    const rows = await store()
       .prepare(
         `SELECT computed_date, sample_count, bias_ratio, p25, p50, p75
            FROM calibration_history
           WHERE owner_id = ? AND scope_kind = ? AND scope_ref = ?
           ORDER BY computed_date DESC LIMIT ?`,
       )
-      .all(owner, scopeKind, scopeRef, limit) as Record<string, unknown>[];
+      .all<Record<string, unknown>>(owner, scopeKind, scopeRef, limit);
     ctx.body = { scope_kind: scopeKind, scope_ref: scopeRef, readings: rows.reverse() };
   });
 
@@ -54,15 +55,16 @@ export function metricsRouter() {
   // uptake trend, deficit response ("moved with", never "because"), and learned
   // weights (null until the learning wave writes them). 404 while the flag is
   // off — same posture as every other Triality surface.
-  router.get('/api/metrics/triality', (ctx) => {
+  router.get('/api/metrics/triality', async (ctx) => {
     const owner = currentOwnerId();
-    if (!trialityEnabled(owner)) {
+    if (!(await trialityEnabled(owner))) {
       ctx.status = 404;
       ctx.body = { error: 'Not found' };
       return;
     }
     const days = Number((ctx.query.days as string) ?? '30');
-    ctx.body = trialityMetrics(owner, new Date(), days);
+    // Koa does NOT await a Promise assigned to ctx.body — it would serialize as {}.
+    ctx.body = await trialityMetrics(owner, new Date(), days);
   });
 
   return router;

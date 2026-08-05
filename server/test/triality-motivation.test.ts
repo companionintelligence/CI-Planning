@@ -128,12 +128,12 @@ describe('never-re-tag contract', () => {
   it('applyMachineMotivation fills blanks only — user and prior machine labels stand', async () => {
     const userSet = await api(srv.url, '/api/tasks', { method: 'POST', json: { title: 'mine', motivation: 'me' } });
     const userId = userSet.body.task.id;
-    expect(applyMachineMotivation(SYSTEM_OWNER, userId, 'them')).toBe(false);
+    expect(await applyMachineMotivation(SYSTEM_OWNER, userId, 'them')).toBe(false);
 
     const blank = await api(srv.url, '/api/tasks', { method: 'POST', json: { title: 'unlabeled thing' } });
     const blankId = blank.body.task.id;
-    expect(applyMachineMotivation(SYSTEM_OWNER, blankId, 'us')).toBe(true);
-    expect(applyMachineMotivation(SYSTEM_OWNER, blankId, 'them')).toBe(false); // second pass no-ops
+    expect(await applyMachineMotivation(SYSTEM_OWNER, blankId, 'us')).toBe(true);
+    expect(await applyMachineMotivation(SYSTEM_OWNER, blankId, 'them')).toBe(false); // second pass no-ops
 
     const row = sqlite
       .prepare(`SELECT motivation, motivation_source FROM tasks WHERE id = ?`)
@@ -144,6 +144,6 @@ describe('never-re-tag contract', () => {
 
   it('is owner-scoped — another owner cannot be machine-tagged across tenants', async () => {
     const t = await api(srv.url, '/api/tasks', { method: 'POST', json: { title: 'not yours' } });
-    expect(applyMachineMotivation('some-other-owner', t.body.task.id, 'me')).toBe(false);
+    expect(await applyMachineMotivation('some-other-owner', t.body.task.id, 'me')).toBe(false);
   });
 });

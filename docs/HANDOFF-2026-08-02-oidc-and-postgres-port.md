@@ -10,9 +10,10 @@
 >   against a real Postgres 17.
 > - **The app still runs on SQLite.** `DATABASE_URL` and `STORE_BACKEND` are opt-in and
 >   inert by default. Nothing about the running system changed.
-> - **Pass A (the call-site migration) is ~0.3% done** — 3 files of 101. The remaining
->   work is **2,592 statements across 299 files**, and §5 explains why it must be done by
->   hand.
+> - **Pass A is now COMPLETE** — see `HANDOFF-2026-08-02-pass-a-complete.md`. This box
+>   originally said "~0.3% done, 3 files of 101"; all 101 are ported and zero raw
+>   `sqlite` statements remain outside the seam. §5's findings still stand and are why
+>   it was done by hand — the estimate below is history, not a plan.
 > - **One PR open: #462** (writeAudit). Everything else is merged.
 > - **My burn-down estimate was wrong twice, in the same direction.** See §4.1 before
 >   trusting any number in an earlier commit message.
@@ -215,10 +216,11 @@ that way.
 
 ## 7. Open questions for the owner
 
-1. **Is pass A worth finishing?** 2,592 statements across 299 files, by hand, is a large
-   multi-week effort with no user-visible benefit on its own. The foundation is merged
-   and inert, so pausing costs nothing and leaves no half-migrated state. Worth an
-   explicit decision rather than drift.
+1. ~~**Is pass A worth finishing?**~~ **ANSWERED — it was finished.** All 101 files are
+   ported; the suite stayed green at every commit and the app still runs on SQLite. The
+   open question is now the cutover itself: see
+   `HANDOFF-2026-08-02-pass-a-complete.md` §8 for the ordered steps, and §4 for the one
+   schema defect that blocks the flip.
 2. **Does the shared-database plan still hold?** The port assumes one Postgres with
    `planning.*` beside `ci.*`. Nothing yet reads across the boundary — if that
    integration is not actually coming, a separate database would be simpler.

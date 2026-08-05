@@ -1,13 +1,13 @@
 import Router from '@koa/router';
 import type Koa from 'koa';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { config } from '../lib/config.js';
 import { logger } from '../lib/logger.js';
 import { currentScopes, currentOwnerId } from '../lib/context.js';
 import { hasAdminScope, normalizeRole, OWNER_ROLES, type OwnerRole } from '../lib/auth/scopes.js';
 import { issueResetToken } from '../lib/auth/resetToken.js';
 import { bumpSessionEpoch } from '../lib/auth/session.js';
-import { provisionOwner, deleteOwner, listOwners, operatorCount, type OwnerAccount } from '../lib/owners.js';
+import { provisionOwner, deleteOwner, listOwners, operatorCount, LastOperatorError, type OwnerAccount } from '../lib/owners.js';
 import { SYSTEM_OWNER_ID } from '../lib/ids.js';
 import { writeAudit } from '../lib/audit.js';
 import { sendMail } from '../lib/mail/index.js';
@@ -55,7 +55,7 @@ export type InviteResult = { delivery: 'email'; to: string } | { delivery: 'link
  */
 async function sendInvite(target: OwnerAccount): Promise<InviteResult> {
   const fresh = !target.hasPassword; // first invite vs. reset of an active account
-  const raw = issueResetToken(target.id, fresh ? INVITE_TTL_MS : undefined);
+  const raw = await issueResetToken(target.id, fresh ? INVITE_TTL_MS : undefined);
   const link = `${config.mail.appBaseUrl}/reset-password?token=${encodeURIComponent(raw)}`;
   if (!config.mail.host) return { delivery: 'link', link };
 
@@ -82,16 +82,15 @@ async function sendInvite(target: OwnerAccount): Promise<InviteResult> {
 }
 
 /** One real (non-sentinel) account row, or undefined. */
-function getAccount(id: string): OwnerAccount | undefined {
+async function getAccount(id: string): Promise<OwnerAccount | undefined> {
   if (id === SYSTEM_OWNER_ID) return undefined;
-  const r = sqlite
+  const r = await store()
     .prepare(
       `SELECT id, name, username, email, role, password_hash IS NOT NULL AS has_password
          FROM owners WHERE id = ? AND id <> ?`,
     )
-    .get(id, SYSTEM_OWNER_ID) as
-    | { id: string; name: string; username: string | null; email: string | null; role: string; has_password: number }
-    | undefined;
+    .get<{ id: string; name: string; username: string | null; email: string | null; role: string; has_password: number }>(
+      id, SYSTEM_OWNER_ID);
   if (!r) return undefined;
   // normalizeRole: a hand-edited role string leaves the union the client types
   // expect — read it as 'viewer', the role whose scopes it effectively grants.
@@ -102,9 +101,9 @@ export function accountsRouter() {
   const router = new Router();
 
   // GET /api/accounts — every real owner (sentinel excluded), creation order.
-  router.get('/api/accounts', (ctx) => {
+  router.get('/api/accounts', async (ctx) => {
     if (!requireAdmin(ctx)) return;
-    ctx.body = { accounts: listOwners() };
+    ctx.body = { accounts: await listOwners() };
   });
 
   // POST /api/accounts — create a local account and send its invite. Body:
@@ -130,7 +129,7 @@ export function accountsRouter() {
 
     let id: string;
     try {
-      id = provisionOwner({
+      id = await provisionOwner({
         name: (typeof body.name === 'string' && body.name.trim()) || username,
         username,
         email,
@@ -143,7 +142,7 @@ export function accountsRouter() {
       }
       throw err;
     }
-    const account = getAccount(id)!;
+    const account = (await getAccount(id))!;
     const invite = await sendInvite(account);
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `account:${id}` });
     ctx.status = 201;
@@ -155,7 +154,7 @@ export function accountsRouter() {
   // newest link supersedes any outstanding one (issueResetToken drops siblings).
   router.post('/api/accounts/:id/invite', async (ctx) => {
     if (!requireAdmin(ctx)) return;
-    const target = getAccount(ctx.params.id);
+    const target = await getAccount(ctx.params.id);
     if (!target) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     if (!target.username) {
       // An OIDC-only account has no local login — a password would be inert; they
@@ -188,7 +187,7 @@ export function accountsRouter() {
       ctx.status = 400; ctx.body = { error: 'email must be an email address or null' }; return;
     }
 
-    const target = getAccount(ctx.params.id);
+    const target = await getAccount(ctx.params.id);
     if (!target) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
     const roleChanged = body.role !== undefined && body.role !== target.role;
@@ -197,7 +196,7 @@ export function accountsRouter() {
       // under concurrent PATCHes (a check-then-write pair could let two demotions
       // both pass the count and leave zero operators). The UPDATE refuses to fire
       // when the target is the final operator and the new role isn't operator.
-      const res = sqlite
+      const res = await store()
         .prepare(
           `UPDATE owners SET role = @role
              WHERE id = @id AND NOT (
@@ -214,32 +213,40 @@ export function accountsRouter() {
       await bumpSessionEpoch(target.id);
     }
     if (typeof body.name === 'string') {
-      sqlite.prepare(`UPDATE owners SET name = ? WHERE id = ?`).run(body.name.trim(), target.id);
+      await store().prepare(`UPDATE owners SET name = ? WHERE id = ?`).run(body.name.trim(), target.id);
     }
     if (body.email !== undefined) {
-      sqlite.prepare(`UPDATE owners SET email = ? WHERE id = ?`).run(body.email === null ? null : (body.email as string).trim(), target.id);
+      await store().prepare(`UPDATE owners SET email = ? WHERE id = ?`).run(body.email === null ? null : (body.email as string).trim(), target.id);
     }
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'update', entity: `account:${target.id}` });
-    ctx.body = { account: getAccount(target.id) };
+    ctx.body = { account: await getAccount(target.id) };
   });
 
   // DELETE /api/accounts/:id — permanently delete an account and ALL its data.
   // Refuses yourself (use another operator) and the last operator (lockout).
-  router.delete('/api/accounts/:id', (ctx) => {
+  router.delete('/api/accounts/:id', async (ctx) => {
     if (!requireAdmin(ctx)) return;
-    const target = getAccount(ctx.params.id);
+    const target = await getAccount(ctx.params.id);
     if (!target) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     if (target.id === currentOwnerId()) {
       ctx.status = 409; ctx.body = { error: 'cannot delete your own account' }; return;
     }
-    // Check-then-delete is safe from interleaving here: better-sqlite3 is
-    // synchronous and this handler has no await between the count and the delete,
-    // so no other request can run in between. (deleteOwner opens its own
-    // transaction, so the pair can't be wrapped in an outer one — no nesting.)
-    if (target.role === 'operator' && operatorCount() <= 1) {
+    // Fast-path refusal for the common case. This pre-check is ADVISORY under the
+    // async facade (an await now sits between count and delete, so two concurrent
+    // DELETEs could both pass it) — the atomic enforcement is the guarded
+    // owners-row DELETE inside deleteOwner's transaction, surfaced as
+    // LastOperatorError and mapped to the same 409 below.
+    if (target.role === 'operator' && (await operatorCount()) <= 1) {
       ctx.status = 409; ctx.body = { error: 'cannot delete the last operator' }; return;
     }
-    deleteOwner(target.id); // refuses the sentinel internally as well
+    try {
+      await deleteOwner(target.id); // refuses the sentinel internally as well
+    } catch (err) {
+      if (err instanceof LastOperatorError) {
+        ctx.status = 409; ctx.body = { error: 'cannot delete the last operator' }; return;
+      }
+      throw err;
+    }
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'delete', entity: `account:${target.id}` });
     ctx.body = { ok: true };
   });

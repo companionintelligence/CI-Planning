@@ -64,39 +64,39 @@ beforeEach(() => {
 });
 
 describe('resolveTemplateId', () => {
-  it('maps an instance to its template, a template to itself, a normal task to null', () => {
+  it('maps an instance to its template, a template to itself, a normal task to null', async () => {
     const tpl = insertTemplate();
     const inst = insertInstance(tpl, '2026-06-10');
     const normal = (sqlite.prepare(`INSERT INTO tasks (id, title, owner_id, status) VALUES (uuid7(), 'n', ?, 'open') RETURNING id`).get(OWNER) as { id: string }).id;
 
-    expect(resolveTemplateId(inst)).toBe(tpl);
-    expect(resolveTemplateId(tpl)).toBe(tpl);
-    expect(resolveTemplateId(normal)).toBeNull();
-    expect(resolveTemplateId('999999')).toBeNull();
+    expect(await resolveTemplateId(inst)).toBe(tpl);
+    expect(await resolveTemplateId(tpl)).toBe(tpl);
+    expect(await resolveTemplateId(normal)).toBeNull();
+    expect(await resolveTemplateId('999999')).toBeNull();
   });
 });
 
 describe('skipInstance', () => {
-  it('marks the instance skipped and adds its day to the template EXDATE', () => {
+  it('marks the instance skipped and adds its day to the template EXDATE', async () => {
     const tpl = insertTemplate();
     const inst = insertInstance(tpl, '2026-06-10');
 
-    const res = skipInstance(inst);
+    const res = await skipInstance(inst);
 
     expect(res).toMatchObject({ ok: true, templateId: tpl, date: '2026-06-10' });
     expect(statusOf(inst)).toBe('skipped');
     expect(exdatesOf(tpl)).toContain('2026-06-10');
   });
 
-  it('is durable across a regenerate — the skipped day is not re-materialized', () => {
+  it('is durable across a regenerate — the skipped day is not re-materialized', async () => {
     const tpl = insertTemplate({ rule: 'FREQ=DAILY' });
     const inst = insertInstance(tpl, '2026-06-10');
-    skipInstance(inst);
+    await skipInstance(inst);
 
     // Delete the skipped row to isolate EXDATE from the unique-index guard, then
     // regenerate a window that covers 06-10.
     sqlite.prepare(`DELETE FROM tasks WHERE id = ?`).run(inst);
-    runWithOwner(OWNER, ALL_SCOPES, () => generateRecurrences({ today: '2026-06-09', horizonDays: 3 }));
+    await runWithOwner(OWNER, ALL_SCOPES, async () => await generateRecurrences({ today: '2026-06-09', horizonDays: 3 }));
 
     // 06-10 stays excluded by EXDATE; 06-09, 06-11, 06-12 are created.
     const days = sqlite
@@ -105,50 +105,50 @@ describe('skipInstance', () => {
     expect(days.map((x) => x.d)).toEqual(['2026-06-09', '2026-06-11', '2026-06-12']);
   });
 
-  it('rejects a non-instance (template or normal task) and a missing id', () => {
+  it('rejects a non-instance (template or normal task) and a missing id', async () => {
     const tpl = insertTemplate();
-    expect(skipInstance(tpl)).toEqual({ ok: false, reason: 'not_instance' });
-    expect(skipInstance('424242')).toEqual({ ok: false, reason: 'not_found' });
+    expect(await skipInstance(tpl)).toEqual({ ok: false, reason: 'not_instance' });
+    expect(await skipInstance('424242')).toEqual({ ok: false, reason: 'not_found' });
   });
 });
 
 describe('computeStreak', () => {
-  it('counts consecutive done back from today; today-open is pending and does not break', () => {
+  it('counts consecutive done back from today; today-open is pending and does not break', async () => {
     const tpl = insertTemplate({ subtype: 'habit' });
     insertInstance(tpl, '2026-06-07', 'done');
     insertInstance(tpl, '2026-06-08', 'done');
     insertInstance(tpl, '2026-06-09', 'done');
     insertInstance(tpl, '2026-06-10', 'open'); // today, not done yet
 
-    const s = computeStreak(tpl, '2026-06-10');
+    const s = await computeStreak(tpl, '2026-06-10');
     expect(s?.current).toBe(3);
     expect(s?.recent.map((r) => r.date)).toEqual(['2026-06-07', '2026-06-08', '2026-06-09', '2026-06-10']);
   });
 
-  it('a skipped or missed day breaks the streak', () => {
+  it('a skipped or missed day breaks the streak', async () => {
     const tpl = insertTemplate({ subtype: 'habit' });
     insertInstance(tpl, '2026-06-07', 'done');
     insertInstance(tpl, '2026-06-08', 'skipped');
     insertInstance(tpl, '2026-06-09', 'done');
     insertInstance(tpl, '2026-06-10', 'open');
 
-    expect(computeStreak(tpl, '2026-06-10')?.current).toBe(1); // only 06-09 before the 06-08 skip
+    expect((await computeStreak(tpl, '2026-06-10'))?.current).toBe(1); // only 06-09 before the 06-08 skip
   });
 
-  it('resolves the template when passed an instance id, and returns null for a non-recurring task', () => {
+  it('resolves the template when passed an instance id, and returns null for a non-recurring task', async () => {
     const tpl = insertTemplate({ subtype: 'habit' });
     const inst = insertInstance(tpl, '2026-06-09', 'done');
     insertInstance(tpl, '2026-06-10', 'done');
 
-    expect(computeStreak(inst, '2026-06-10')?.current).toBe(2); // via the instance id
+    expect((await computeStreak(inst, '2026-06-10'))?.current).toBe(2); // via the instance id
 
     const normal = (sqlite.prepare(`INSERT INTO tasks (id, title, owner_id, status) VALUES (uuid7(), 'n', ?, 'open') RETURNING id`).get(OWNER) as { id: string }).id;
-    expect(computeStreak(normal, '2026-06-10')).toBeNull();
+    expect(await computeStreak(normal, '2026-06-10')).toBeNull();
   });
 });
 
 describe('deleteFutureOpenInstances', () => {
-  it('drops future open instances, preserves past + completed + skipped', () => {
+  it('drops future open instances, preserves past + completed + skipped', async () => {
     const tpl = insertTemplate();
     insertInstance(tpl, '2026-06-08', 'done'); // past done
     insertInstance(tpl, '2026-06-09', 'skipped'); // past skipped
@@ -156,7 +156,7 @@ describe('deleteFutureOpenInstances', () => {
     insertInstance(tpl, '2026-06-11', 'open'); // future open
     insertInstance(tpl, '2026-06-12', 'open'); // future open
 
-    const deleted = deleteFutureOpenInstances(tpl, '2026-06-10');
+    const deleted = await deleteFutureOpenInstances(tpl, '2026-06-10');
 
     expect(deleted).toBe(3); // 06-10, 06-11, 06-12 (>= today, open)
     const remaining = sqlite

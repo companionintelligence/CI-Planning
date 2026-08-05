@@ -20,13 +20,13 @@ export function objectivesRouter() {
   // the panel can render meaningfully). The default tree excludes archived rows.
   router.get('/api/objectives', async (ctx) => {
     const owner = currentOwnerId();
-    if (ctx.query.archived === '1') { ctx.body = { objectives: listArchivedObjectiveRows(owner) }; return; }
-    ctx.body = { objectives: buildTree(owner) };
+    if (ctx.query.archived === '1') { ctx.body = { objectives: await listArchivedObjectiveRows(owner) }; return; }
+    ctx.body = { objectives: await buildTree(owner) };
   });
 
   router.post('/api/objectives', async (ctx) => {
     const owner = currentOwnerId();
-    const res = createObjective(owner, (ctx.request.body ?? {}) as Parameters<typeof createObjective>[1]);
+    const res = await createObjective(owner, (ctx.request.body ?? {}) as Parameters<typeof createObjective>[1]);
     if (!res.ok) {
       if (res.error === 'title_required') { ctx.status = 422; ctx.body = { error: 'title is required' }; return; }
       ctx.status = 422; ctx.body = { error: 'parent_id not found' }; return;
@@ -38,7 +38,7 @@ export function objectivesRouter() {
 
   router.patch('/api/objectives/:id', async (ctx) => {
     const owner = currentOwnerId();
-    const res = updateObjective(owner, ctx.params.id, (ctx.request.body ?? {}) as Parameters<typeof updateObjective>[2]);
+    const res = await updateObjective(owner, ctx.params.id, (ctx.request.body ?? {}) as Parameters<typeof updateObjective>[2]);
     if (!res.ok) {
       if (res.error === 'not_found') { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
       if (res.error === 'parent_not_found') { ctx.status = 422; ctx.body = { error: 'parent_id not found' }; return; }
@@ -55,7 +55,7 @@ export function objectivesRouter() {
   // the tree, which is exactly what that event means to them.
   router.delete('/api/objectives/:id', async (ctx) => {
     const owner = currentOwnerId();
-    const res = archiveObjective(owner, ctx.params.id);
+    const res = await archiveObjective(owner, ctx.params.id);
     if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     broadcast(owner, 'objective:deleted', { id: ctx.params.id });
     ctx.body = { ok: true };
@@ -63,7 +63,7 @@ export function objectivesRouter() {
 
   router.post('/api/objectives/:id/restore', async (ctx) => {
     const owner = currentOwnerId();
-    const res = restoreObjective(owner, ctx.params.id);
+    const res = await restoreObjective(owner, ctx.params.id);
     if (!res.ok) {
       if (res.error === 'subtree_member') {
         ctx.status = 422;
@@ -79,7 +79,7 @@ export function objectivesRouter() {
   // Request permanent deletion — reversible until the deadline (PURGE_WINDOW_HOURS).
   router.post('/api/objectives/:id/purge', async (ctx) => {
     const owner = currentOwnerId();
-    const res = requestPurge(owner, ctx.params.id);
+    const res = await requestPurge(owner, ctx.params.id);
     if (!res.ok) {
       if (res.error === 'not_found') { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
       if (res.error === 'not_archived') { ctx.status = 422; ctx.body = { error: 'archive it first' }; return; }
@@ -97,7 +97,7 @@ export function objectivesRouter() {
   // The reversal — cancel a pending permanent deletion.
   router.delete('/api/objectives/:id/purge', async (ctx) => {
     const owner = currentOwnerId();
-    const res = cancelPurge(owner, ctx.params.id);
+    const res = await cancelPurge(owner, ctx.params.id);
     if (!res.ok) {
       if (res.error === 'subtree_member') {
         ctx.status = 422;
@@ -114,7 +114,7 @@ export function objectivesRouter() {
     const owner = currentOwnerId();
     const objId = ctx.params.id;
     const body = (ctx.request.body ?? {}) as { task_id?: string };
-    const res = linkTaskToObjective(owner, objId, body.task_id);
+    const res = await linkTaskToObjective(owner, objId, body.task_id);
     if (!res.ok) {
       if (res.error === 'objective_not_found') { ctx.status = 404; ctx.body = { error: 'objective not found' }; return; }
       if (res.error === 'task_id_required') { ctx.status = 422; ctx.body = { error: 'task_id is required' }; return; }
@@ -130,7 +130,7 @@ export function objectivesRouter() {
   router.delete('/api/objectives/:id/tasks/:taskId', async (ctx) => {
     const owner = currentOwnerId();
     const { id: objId, taskId } = ctx.params;
-    const { linkId } = unlinkTaskFromObjective(owner, objId, taskId);
+    const { linkId } = await unlinkTaskFromObjective(owner, objId, taskId);
     broadcast(owner, 'objective:updated', { id: objId });
     if (linkId) broadcast(owner, 'objective_task:updated', { id: linkId });
     ctx.body = { ok: true };
@@ -138,7 +138,7 @@ export function objectivesRouter() {
 
   // Explicit trigger for tests and manual cache refresh; the nightly job does this for all.
   router.post('/api/objectives/:id/recompute', async (ctx) => {
-    const res = recomputeObjective(currentOwnerId(), ctx.params.id);
+    const res = await recomputeObjective(currentOwnerId(), ctx.params.id);
     if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     ctx.body = { ok: true };
   });

@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { open, loadKek } from './crypto/index.js';
 import { logger } from './logger.js';
 import { revoke } from '../connectors/index.js';
@@ -49,19 +49,20 @@ interface SyncRunRow {
  *  - if open() throws (tamper/wrong key) → 'inactive', expiresAt null, log a redacted
  *    warning (NEVER the ciphertext). A bad row must NOT 500 the /api/integrations endpoint.
  */
-export function connectionHealth(ownerId: string): ConnectionHealth[] {
-  const tokens = sqlite
+export async function connectionHealth(ownerId: string): Promise<ConnectionHealth[]> {
+  const tokens = await store()
     .prepare(
       `SELECT account, iv, auth_tag, ciphertext, status
          FROM connection_tokens
         WHERE owner_id = ? AND provider = 'google'
         ORDER BY account ASC`,
     )
-    .all(ownerId) as TokenRow[];
+    .all<TokenRow>(ownerId);
 
   const now = Date.now();
 
-  return tokens.map((row): ConnectionHealth => {
+  const out: ConnectionHealth[] = [];
+  for (const row of tokens) {
     let status: ConnectionHealth['status'];
     let expiresAt: string | null = null;
 
@@ -72,7 +73,7 @@ export function connectionHealth(ownerId: string): ConnectionHealth[] {
       try {
         const plain = open(
           { iv: row.iv, authTag: row.auth_tag, ciphertext: row.ciphertext },
-          loadKek(),
+          await loadKek(),
         );
         const exp = extractExpiresAt(plain);
         expiresAt = exp;
@@ -91,18 +92,19 @@ export function connectionHealth(ownerId: string): ConnectionHealth[] {
       }
     }
 
-    const sync = latestSyncRun(ownerId, 'google', row.account);
+    const sync = await latestSyncRun(ownerId, 'google', row.account);
 
-    return {
+    out.push({
       provider: 'google',
       account: row.account,
       status,
       expiresAt,
-      mappedEventCount: mappedEventCount(ownerId, row.account),
+      mappedEventCount: await mappedEventCount(ownerId, row.account),
       lastSyncAt: sync ? sync.finished_at ?? sync.started_at : null,
       lastError: sync && sync.status === 'error' ? sync.log : null,
-    };
-  });
+    });
+  }
+  return out;
 }
 
 /**
@@ -136,15 +138,15 @@ function extractExpiresAt(plain: string): string | null {
 }
 
 /** COUNT(*) of external_events mapped to this (owner, 'google', account). */
-function mappedEventCount(ownerId: string, account: string): number {
-  const row = sqlite
+async function mappedEventCount(ownerId: string, account: string): Promise<number> {
+  const row = await store()
     .prepare(
       `SELECT COUNT(*) AS n
          FROM external_events
         WHERE owner_id = ? AND provider = 'google' AND account = ?`,
     )
-    .get(ownerId, account) as { n: number };
-  return row.n;
+    .get<{ n: number }>(ownerId, account);
+  return row!.n;
 }
 
 /**
@@ -152,8 +154,8 @@ function mappedEventCount(ownerId: string, account: string): number {
  * NB: job_runs is not owner-scoped (system actor), so the join is by kind only — this
  * mirrors the shared nightly cron. ORDER BY started_at DESC LIMIT 1.
  */
-function latestSyncRun(_ownerId: string, _provider: string, _account: string): SyncRunRow | undefined {
-  return sqlite
+async function latestSyncRun(_ownerId: string, _provider: string, _account: string): Promise<SyncRunRow | undefined> {
+  return store()
     .prepare(
       `SELECT jr.finished_at, jr.started_at, jr.status, jr.log
          FROM job_runs jr
@@ -162,7 +164,7 @@ function latestSyncRun(_ownerId: string, _provider: string, _account: string): S
         ORDER BY jr.started_at DESC
         LIMIT 1`,
     )
-    .get() as SyncRunRow | undefined;
+    .get<SyncRunRow>();
 }
 
 /**
@@ -187,15 +189,15 @@ export interface ConnectionSummary {
  * a user whose Google integration is `off` must still see (and be able to drop) the
  * stored token — visibility of stored connections is exactly what this surface is for.
  */
-export function listConnections(ownerId: string): ConnectionSummary[] {
-  const rows = sqlite
+export async function listConnections(ownerId: string): Promise<ConnectionSummary[]> {
+  const rows = await store()
     .prepare(
       `SELECT provider, account, status, created_at
          FROM connection_tokens
         WHERE owner_id = ?
         ORDER BY provider, account`,
     )
-    .all(ownerId) as { provider: string; account: string; status: string; created_at: string }[];
+    .all<{ provider: string; account: string; status: string; created_at: string }>(ownerId);
   return rows.map((r) => ({
     provider: r.provider,
     account: r.account,
@@ -223,17 +225,15 @@ export async function disconnectConnection(
 ): Promise<boolean> {
   if (provider === 'google') {
     // Best-effort revoke using the stored refresh token (decrypted just-in-time).
-    const tokRow = sqlite
+    const tokRow = await store()
       .prepare(
         'SELECT iv, auth_tag, ciphertext FROM connection_tokens WHERE owner_id = ? AND provider = ? AND account = ?',
       )
-      .get(ownerId, provider, account) as
-      | { iv: string; auth_tag: string; ciphertext: string }
-      | undefined;
+      .get<{ iv: string; auth_tag: string; ciphertext: string }>(ownerId, provider, account);
     if (tokRow) {
       try {
         const decoded = JSON.parse(
-          open({ iv: tokRow.iv, authTag: tokRow.auth_tag, ciphertext: tokRow.ciphertext }, loadKek()),
+          open({ iv: tokRow.iv, authTag: tokRow.auth_tag, ciphertext: tokRow.ciphertext }, await loadKek()),
         ) as { refreshToken?: string; accessToken?: string };
         const token = decoded.refreshToken || decoded.accessToken;
         if (token) await revoke(token);
@@ -243,10 +243,10 @@ export async function disconnectConnection(
     }
   }
 
-  const delTokens = sqlite
+  const delTokens = await store()
     .prepare('DELETE FROM connection_tokens WHERE owner_id = ? AND provider = ? AND account = ?')
     .run(ownerId, provider, account);
-  sqlite
+  await store()
     .prepare('DELETE FROM outbound_queue WHERE owner_id = ? AND provider = ? AND account = ?')
     .run(ownerId, provider, account);
 

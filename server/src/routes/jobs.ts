@@ -29,7 +29,7 @@ export function jobsRouter() {
   // GET /api/jobs — admin-only.
   router.get('/api/jobs', async (ctx) => {
     if (!requireAdmin(ctx)) return;
-    ctx.body = { jobs: listJobs() };
+    ctx.body = { jobs: await listJobs() };
   });
 
   /**

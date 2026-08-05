@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { writeAudit } from '../lib/audit.js';
 
 /**
@@ -16,7 +16,7 @@ import { writeAudit } from '../lib/audit.js';
  * ticket, like flight-plan's Auto and patterns' promote). They reuse the shared
  * `parseTasks`/`serializeBlock`/`materializeTemplateTasks` helpers exported here.
  *
- * better-sqlite3 is synchronous; these are plain sync functions.
+ * Async via the store facade (pass A) — formerly sync on raw better-sqlite3.
  */
 
 export interface TemplateTask {
@@ -61,21 +61,21 @@ export const serializeBlock = (b: Record<string, unknown>) => ({
  * the task blocks to a container (apply-to-block) or leaves them loose (instantiate,
  * pass null — byte-identical to the pre-refactor behavior). Returns the new task ids.
  */
-export function materializeTemplateTasks(owner: string, baseMs: number, templateTasks: TemplateTask[], parentBlockId: string | null): string[] {
-  const insTask = sqlite.prepare(
+export async function materializeTemplateTasks(owner: string, baseMs: number, templateTasks: TemplateTask[], parentBlockId: string | null): Promise<string[]> {
+  const insTask = store().prepare(
     `INSERT INTO tasks (id, title, estimated_minutes, owner_id, status, priority, source_kind) VALUES (uuid7(), ?, ?, ?, 'open', 3, 'manual') RETURNING id`,
   );
-  const insBlock = sqlite.prepare(
+  const insBlock = store().prepare(
     `INSERT INTO time_blocks (id, task_id, owner_id, title, block_kind, tag, start_at, end_at, is_locked, is_auto, source_kind, status, parent_block_id)
      VALUES (uuid7(), ?, ?, ?, 'task', ?, ?, ?, 0, 0, 'manual', 'planned', ?)`,
   );
   const createdTaskIds: string[] = [];
   for (const tk of templateTasks) {
     const est = tk.estimated_minutes ?? 30;
-    const id = (insTask.get(tk.title, tk.estimated_minutes ?? null, owner) as { id: string }).id;
+    const id = (await insTask.get<{ id: string }>(tk.title, tk.estimated_minutes ?? null, owner))!.id;
     const s = new Date(baseMs + (tk.offset_minutes ?? 0) * 60_000).toISOString();
     const e = new Date(Date.parse(s) + est * 60_000).toISOString();
-    insBlock.run(id, owner, tk.title, tk.tag ?? null, s, e, parentBlockId);
+    await insBlock.run(id, owner, tk.title, tk.tag ?? null, s, e, parentBlockId);
     createdTaskIds.push(id);
   }
   return createdTaskIds;
@@ -84,13 +84,13 @@ export function materializeTemplateTasks(owner: string, baseMs: number, template
 // ── CRUD (owner-scoped; shared by REST + GraphQL) ─────────────────────────────
 
 /** The owner's saved templates, ordered by name. */
-export function listBlockTemplates(owner: string): TemplateRow[] {
-  return sqlite.prepare(`SELECT * FROM block_templates WHERE owner_id = ? ORDER BY name`).all(owner) as TemplateRow[];
+export async function listBlockTemplates(owner: string): Promise<TemplateRow[]> {
+  return store().prepare(`SELECT * FROM block_templates WHERE owner_id = ? ORDER BY name`).all<TemplateRow>(owner);
 }
 
 /** One of the owner's templates by id, or undefined (a cross-owner id is invisible). */
-export function getBlockTemplate(owner: string, id: string): TemplateRow | undefined {
-  return sqlite.prepare(`SELECT * FROM block_templates WHERE id = ? AND owner_id = ?`).get(id, owner) as TemplateRow | undefined;
+export async function getBlockTemplate(owner: string, id: string): Promise<TemplateRow | undefined> {
+  return store().prepare(`SELECT * FROM block_templates WHERE id = ? AND owner_id = ?`).get<TemplateRow>(id, owner);
 }
 
 /**
@@ -110,12 +110,12 @@ export type CreateResult = { ok: true; row: TemplateRow } | { ok: false; error: 
 
 /** Create a template. `name` is required (422 in REST); `default_minutes` defaults to 60;
  *  an empty/absent `tasks` array stores NULL (mirrors the REST handler exactly). */
-export function createBlockTemplate(owner: string, input: CreateBlockTemplateInput): CreateResult {
+export async function createBlockTemplate(owner: string, input: CreateBlockTemplateInput): Promise<CreateResult> {
   if (!input.name?.trim()) return { ok: false, error: 'name_required' };
   const tasksJson = Array.isArray(input.tasks) && input.tasks.length ? JSON.stringify(input.tasks) : null;
-  const row = sqlite
+  const row = (await store()
     .prepare(`INSERT INTO block_templates (id, owner_id, name, tag, default_minutes, tasks) VALUES (uuid7(), ?, ?, ?, ?, ?) RETURNING *`)
-    .get(owner, input.name.trim(), normalizeTag(input.tag), input.default_minutes ?? 60, tasksJson) as TemplateRow;
+    .get<TemplateRow>(owner, input.name.trim(), normalizeTag(input.tag), input.default_minutes ?? 60, tasksJson))!;
   writeAudit({ ownerId: owner, actor: 'owner', action: 'create', entity: `block-template:${row.id}` });
   return { ok: true, row };
 }
@@ -133,21 +133,21 @@ export type UpsertResult = { ok: true; kind: 'created' | 'updated'; row: Templat
  * On a miss this IS createBlockTemplate — blank-name rejection identical. SSE stays
  * transport-side (route fires block_template:created/updated off `kind`).
  */
-export function upsertBlockTemplateByName(owner: string, input: CreateBlockTemplateInput): UpsertResult {
+export async function upsertBlockTemplateByName(owner: string, input: CreateBlockTemplateInput): Promise<UpsertResult> {
   const name = input.name?.trim();
   if (!name) return { ok: false, error: 'name_required' };
-  const existing = sqlite
+  const existing = await store()
     .prepare(`SELECT * FROM block_templates WHERE owner_id = ? AND name = ? COLLATE NOCASE ORDER BY id LIMIT 1`)
-    .get(owner, name) as TemplateRow | undefined;
+    .get<TemplateRow>(owner, name);
   if (existing) {
     const tasksJson = Array.isArray(input.tasks) && input.tasks.length ? JSON.stringify(input.tasks) : null;
-    const row = sqlite
+    const row = (await store()
       .prepare(`UPDATE block_templates SET tag = ?, default_minutes = ?, tasks = ? WHERE id = ? AND owner_id = ? RETURNING *`)
-      .get(normalizeTag(input.tag), input.default_minutes ?? 60, tasksJson, existing.id, owner) as TemplateRow;
+      .get<TemplateRow>(normalizeTag(input.tag), input.default_minutes ?? 60, tasksJson, existing.id, owner))!;
     writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: `block-template:${row.id}` });
     return { ok: true, kind: 'updated', row };
   }
-  const created = createBlockTemplate(owner, input);
+  const created = await createBlockTemplate(owner, input);
   if (!created.ok) return created; // unreachable (name already validated); keeps the type honest
   return { ok: true, kind: 'created', row: created.row };
 }
@@ -161,19 +161,19 @@ export type UpdateResult = { ok: true; row: TemplateRow } | { ok: false; error: 
  * a blank name is rejected (name_required). The saved `tasks` are captured via "save as
  * template", so this never touches them — mirrors the REST PATCH exactly.
  */
-export function updateBlockTemplate(owner: string, id: string, input: UpdateBlockTemplateInput): UpdateResult {
-  const existing = getBlockTemplate(owner, id);
+export async function updateBlockTemplate(owner: string, id: string, input: UpdateBlockTemplateInput): Promise<UpdateResult> {
+  const existing = await getBlockTemplate(owner, id);
   if (!existing) return { ok: false, error: 'not_found' };
   const name = input.name !== undefined ? input.name.trim() : existing.name;
   if (!name) return { ok: false, error: 'name_required' };
-  const row = sqlite
+  const row = (await store()
     .prepare(`UPDATE block_templates SET name = ?, tag = ?, default_minutes = ? WHERE id = ? AND owner_id = ? RETURNING *`)
-    .get(
+    .get<TemplateRow>(
       name,
       input.tag !== undefined ? normalizeTag(input.tag) : existing.tag,
       input.default_minutes !== undefined ? input.default_minutes : existing.default_minutes,
       id, owner,
-    ) as TemplateRow;
+    ))!;
   writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: `block-template:${row.id}` });
   return { ok: true, row };
 }
@@ -181,8 +181,8 @@ export function updateBlockTemplate(owner: string, id: string, input: UpdateBloc
 export type DeleteResult = { ok: true } | { ok: false; error: 'not_found' };
 
 /** Delete a template (owner-scoped). An unknown/cross-owner id is not_found. */
-export function deleteBlockTemplate(owner: string, id: string): DeleteResult {
-  const r = sqlite.prepare(`DELETE FROM block_templates WHERE id = ? AND owner_id = ?`).run(id, owner);
+export async function deleteBlockTemplate(owner: string, id: string): Promise<DeleteResult> {
+  const r = await store().prepare(`DELETE FROM block_templates WHERE id = ? AND owner_id = ?`).run(id, owner);
   if (r.changes === 0) return { ok: false, error: 'not_found' };
   writeAudit({ ownerId: owner, actor: 'owner', action: 'delete', entity: `block-template:${id}` });
   return { ok: true };

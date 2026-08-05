@@ -36,11 +36,11 @@ describe('defaultAnchorForOwner — owner timezone, not the server clock', () =>
   const setTz = (tz: string) =>
     sqlite.prepare(`UPDATE scheduling_prefs SET timezone = ? WHERE owner_id = ?`).run(tz, SYSTEM_OWNER);
 
-  it('derives today in the owner zone, so far-east and far-west owners can differ by a week', () => {
+  it('derives today in the owner zone, so far-east and far-west owners can differ by a week', async () => {
     setTz('Pacific/Auckland');
-    const east = defaultAnchorForOwner(SYSTEM_OWNER);
+    const east = await defaultAnchorForOwner(SYSTEM_OWNER);
     setTz('Pacific/Niue');
-    const west = defaultAnchorForOwner(SYSTEM_OWNER);
+    const west = await defaultAnchorForOwner(SYSTEM_OWNER);
 
     // Both must be real anchors...
     for (const a of [east, west]) expect(a).toMatch(/^\d{4}-\d{2}-\d{2}$/);
@@ -70,7 +70,7 @@ describe('GET /api/plan-week/review', () => {
   it('defaults to the week that just ended and echoes the anchor it used', async () => {
     const r = await get();
     expect(r.status).toBe(200);
-    expect(r.body.anchor).toBe(defaultAnchorForOwner(SYSTEM_OWNER));
+    expect(r.body.anchor).toBe(await defaultAnchorForOwner(SYSTEM_OWNER));
     // The anchor must fall inside the returned week...
     expect(r.body.week.days).toContain(r.body.anchor);
     expect(r.body.week.days).toHaveLength(7);

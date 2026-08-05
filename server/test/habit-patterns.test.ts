@@ -40,26 +40,26 @@ beforeEach(() => {
 });
 
 describe('habit → pattern bridge', () => {
-  it('ensureHabitPattern links a habit to a Habit-type pattern, idempotently', () => {
+  it('ensureHabitPattern links a habit to a Habit-type pattern, idempotently', async () => {
     const t = insertHabitTemplate('Meditate');
-    ensureHabitPattern(t, OWNER, 'Meditate');
+    await ensureHabitPattern(t, OWNER, 'Meditate');
     expect(habitPatternsFor(t).map((p) => p.name)).toEqual(['Meditate']);
-    ensureHabitPattern(t, OWNER, 'Meditate'); // again
+    await ensureHabitPattern(t, OWNER, 'Meditate'); // again
     expect(habitPatternsFor(t).length).toBe(1); // no duplicate
   });
 
-  it('ensureHabitPattern links multiple habit templates, idempotently', () => {
+  it('ensureHabitPattern links multiple habit templates, idempotently', async () => {
     const a = insertHabitTemplate('Stretch');
     const b = insertHabitTemplate('Read');
-    ensureHabitPattern(a, OWNER, 'Stretch');
-    ensureHabitPattern(b, OWNER, 'Read');
+    await ensureHabitPattern(a, OWNER, 'Stretch');
+    await ensureHabitPattern(b, OWNER, 'Read');
     expect(habitPatternsFor(a).length).toBe(1);
     expect(habitPatternsFor(b).length).toBe(1);
-    ensureHabitPattern(a, OWNER, 'Stretch'); // re-run is a no-op
+    await ensureHabitPattern(a, OWNER, 'Stretch'); // re-run is a no-op
     expect(habitPatternsFor(a).length).toBe(1);
   });
 
-  it('ensureHabitPattern does not affect unrelated instances', () => {
+  it('ensureHabitPattern does not affect unrelated instances', async () => {
     const tpl = insertHabitTemplate('Walk');
     const inst = (
       sqlite
@@ -69,7 +69,7 @@ describe('habit → pattern bridge', () => {
         )
         .get(OWNER, tpl) as { id: string }
     ).id;
-    ensureHabitPattern(tpl, OWNER, 'Walk');
+    await ensureHabitPattern(tpl, OWNER, 'Walk');
     expect(habitPatternsFor(tpl).length).toBe(1);
     expect(habitPatternsFor(inst).length).toBe(0); // never called for instance
   });

@@ -25,7 +25,7 @@ export function notificationsRouter() {
       subscription?: { endpoint?: string; keys?: { p256dh?: string; auth?: string } };
     };
     const sub = body.subscription;
-    const res = subscribePushChecked(currentOwnerId(), {
+    const res = await subscribePushChecked(currentOwnerId(), {
       endpoint: sub?.endpoint,
       p256dh: sub?.keys?.p256dh,
       auth: sub?.keys?.auth,
@@ -38,7 +38,7 @@ export function notificationsRouter() {
   // DELETE /api/push/subscribe — { endpoint }. Remove on unsubscribe.
   router.delete('/api/push/subscribe', async (ctx) => {
     const body = (ctx.request.body ?? {}) as { endpoint?: string };
-    const res = unsubscribePushChecked(currentOwnerId(), body.endpoint);
+    const res = await unsubscribePushChecked(currentOwnerId(), body.endpoint);
     if (!res.ok) { ctx.status = 400; ctx.body = { error: 'endpoint is required' }; return; }
     ctx.body = { ok: true };
   });
@@ -48,7 +48,7 @@ export function notificationsRouter() {
   // GET /api/reminders — the owner's live reminders (not cancelled), soonest first.
   router.get('/api/reminders', async (ctx) => {
     ctx.body = {
-      reminders: listReminders(currentOwnerId()).map((r) => ({
+      reminders: (await listReminders(currentOwnerId())).map((r) => ({
         id: r.id, task_id: r.task_id, block_id: r.block_id, fire_at: r.fire_at, status: r.status, fired_at: r.fired_at,
       })),
     };
@@ -61,7 +61,7 @@ export function notificationsRouter() {
     const body = (ctx.request.body ?? {}) as {
       taskId?: string; blockId?: string; fireAt?: string; date?: string; time?: string;
     };
-    const res = createReminderChecked(currentOwnerId(), body);
+    const res = await createReminderChecked(currentOwnerId(), body);
     if (!res.ok) {
       const error = res.error === 'target' ? 'exactly one of taskId or blockId is required' : 'fireAt (UTC ISO) or date+time is required';
       ctx.status = 422; ctx.body = { error }; return;
@@ -73,7 +73,7 @@ export function notificationsRouter() {
 
   // DELETE /api/reminders/:id — soft-cancel (keeps the row, off the dispatcher).
   router.delete('/api/reminders/:id', async (ctx) => {
-    const res = cancelReminderChecked(currentOwnerId(), ctx.params.id);
+    const res = await cancelReminderChecked(currentOwnerId(), ctx.params.id);
     if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     broadcast(currentOwnerId(), 'reminder:cancelled', { id: ctx.params.id });
     ctx.body = { ok: true };
@@ -84,7 +84,7 @@ export function notificationsRouter() {
   // and schedules exactly one new one — no double-fire.
   router.post('/api/reminders/:id/snooze', async (ctx) => {
     const body = (ctx.request.body ?? {}) as { minutes?: number };
-    const res = snoozeReminderChecked(currentOwnerId(), ctx.params.id, body.minutes);
+    const res = await snoozeReminderChecked(currentOwnerId(), ctx.params.id, body.minutes);
     if (!res.ok) {
       if (res.error === 'bad_minutes') { ctx.status = 422; ctx.body = { error: 'minutes must be a positive number' }; return; }
       ctx.status = 404; ctx.body = { error: 'not found' }; return;

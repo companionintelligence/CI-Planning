@@ -1,5 +1,5 @@
 import Router from '@koa/router';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { broadcast } from './sse.js';
 import { currentOwnerId } from '../lib/context.js';
 import { localISODate } from '../lib/dates.js';
@@ -95,7 +95,7 @@ export function blocksRouter() {
     broadcast(currentOwnerId(), 'block:created', result.api);
     if (result.syncedTaskId) broadcast(currentOwnerId(), 'task:updated', { id: result.syncedTaskId });
 
-    enqueueOutbound(result.block.id);
+    await enqueueOutbound(result.block.id);
     ctx.status = 201;
     ctx.body = { block: result.api };
   });
@@ -131,11 +131,11 @@ export function blocksRouter() {
     // instead would rewrite earlier occurrences too.
     let targetId = id;
     if ((ctx.query.scope as string) === 'following') {
-      const inst = sqlite
+      const inst = await store()
         .prepare(`SELECT recurrence_parent_id, occurrence_date FROM time_blocks WHERE id = ? AND owner_id = ?`)
-        .get(id, owner) as { recurrence_parent_id: string | null; occurrence_date: string | null } | undefined;
+        .get<{ recurrence_parent_id: string | null; occurrence_date: string | null }>(id, owner);
       if (inst?.recurrence_parent_id && inst.occurrence_date) {
-        const fork = forkSeriesAt(owner, 'time_blocks', inst.recurrence_parent_id, inst.occurrence_date, newId());
+        const fork = await forkSeriesAt(owner, 'time_blocks', inst.recurrence_parent_id, inst.occurrence_date, newId());
         if (!fork.ok) {
           ctx.status = 422;
           ctx.body = { error: 'Could not split this series — its repeat rule could not be bounded' };
@@ -165,7 +165,7 @@ export function blocksRouter() {
     broadcast(owner, 'block:updated', result.api);
     if (result.syncedTaskId) broadcast(owner, 'task:updated', { id: result.syncedTaskId });
 
-    enqueueOutbound(id); // I9 + writeback gate handled inside enqueueOutbound
+    await enqueueOutbound(id); // I9 + writeback gate handled inside enqueueOutbound
     ctx.body = { block: result.api };
   });
 
@@ -198,7 +198,7 @@ export function blocksRouter() {
   // never writes.
   router.post('/api/blocks/:id/extend', async (ctx) => {
     const owner = currentOwnerId();
-    if (!timeSenseEnabled(owner)) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
+    if (!(await timeSenseEnabled(owner))) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
     const body = (ctx.request.body ?? {}) as { minutes?: number; confirm?: boolean };
     const minutes = Math.round(Number(body.minutes ?? 10));
     if (!Number.isFinite(minutes) || minutes <= 0) {
@@ -207,7 +207,7 @@ export function blocksRouter() {
 
     let plan;
     try {
-      plan = extendBlock(ctx.params.id, minutes, { commit: false }, owner);
+      plan = await extendBlock(ctx.params.id, minutes, { commit: false }, owner);
     } catch (err) {
       ctx.status = 404; ctx.body = { error: (err as Error).message }; return;
     }
@@ -218,14 +218,14 @@ export function blocksRouter() {
     if (plan.movedSet.length > 0 && !body.confirm) { ctx.body = { ...plan, committed: false }; return; }
 
     // Silent fit, or a confirmed move → apply.
-    const applied = extendBlock(ctx.params.id, minutes, { commit: true }, owner);
+    const applied = await extendBlock(ctx.params.id, minutes, { commit: true }, owner);
     broadcast(owner, 'block:updated', { id: ctx.params.id, extended: minutes, moved: applied.movedSet.length });
     // Mirror the new times back onto every affected task — the extended block AND
     // each cascade-moved block — so task_time/scheduled_for and armed reminders
     // don't drift from the block that actually moved (as move-group does).
     const affectedTasks = new Set<string>();
     for (const bid of [ctx.params.id, ...applied.movedSet.map((m) => m.block_id)]) {
-      const t = syncTaskFromBlock(bid, owner);
+      const t = await syncTaskFromBlock(bid, owner);
       if (t) affectedTasks.add(t);
     }
     for (const t of affectedTasks) broadcast(owner, 'task:updated', { id: t });
@@ -239,17 +239,17 @@ export function blocksRouter() {
   // DELETE clears them (ritual dismissed / block finished in-tab).
   router.post('/api/blocks/:id/focus-reminders', async (ctx) => {
     const owner = currentOwnerId();
-    if (!timeSenseEnabled(owner)) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
-    const exists = sqlite.prepare(`SELECT 1 FROM time_blocks WHERE id = ? AND owner_id = ?`).get(ctx.params.id, owner);
+    if (!(await timeSenseEnabled(owner))) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
+    const exists = await store().prepare(`SELECT 1 FROM time_blocks WHERE id = ? AND owner_id = ?`).get(ctx.params.id, owner);
     if (!exists) { ctx.status = 404; ctx.body = { error: 'block not found' }; return; }
-    const armed = syncBlockFocusReminders(owner, ctx.params.id);
+    const armed = await syncBlockFocusReminders(owner, ctx.params.id);
     ctx.body = { ok: true, armed };
   });
 
   router.delete('/api/blocks/:id/focus-reminders', async (ctx) => {
     const owner = currentOwnerId();
-    if (!timeSenseEnabled(owner)) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
-    clearBlockFocusReminders(ctx.params.id);
+    if (!(await timeSenseEnabled(owner))) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
+    await clearBlockFocusReminders(ctx.params.id);
     ctx.body = { ok: true };
   });
 
@@ -260,25 +260,24 @@ export function blocksRouter() {
   // non-repeating line per block-end. Flag-gated (404 off).
   router.get('/api/blocks/:id/whats-next', async (ctx) => {
     const owner = currentOwnerId();
-    if (!timeSenseEnabled(owner)) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
-    const block = sqlite
+    if (!(await timeSenseEnabled(owner))) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
+    const block = await store()
       .prepare(`SELECT id, end_at FROM time_blocks WHERE id = ? AND owner_id = ?`)
-      .get(ctx.params.id, owner) as { id: string; end_at: string } | undefined;
+      .get<{ id: string; end_at: string }>(ctx.params.id, owner);
     if (!block) { ctx.status = 404; ctx.body = { error: 'block not found' }; return; }
-    const next = sqlite
+    const next = await store()
       .prepare(
         `SELECT title, start_at FROM time_blocks
           WHERE owner_id = ? AND id != ? AND block_kind != 'timeblock' AND start_at >= ?
           ORDER BY start_at LIMIT 1`,
       )
-      .get(owner, block.id, block.end_at) as { title: string; start_at: string } | undefined;
+      .get<{ title: string; start_at: string }>(owner, block.id, block.end_at);
     // Blocks are stored as UTC instants; render the wall-clock in the owner's zone.
     // NEVER slice the ISO string for HH:MM (grid.ts invariant) — that leaks UTC to a
     // non-UTC user, mismatching the calendar's local display.
     const tz =
-      (sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as
-        | { timezone: string | null }
-        | undefined)?.timezone || serverTimezone();
+      (await store().prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get<{ timezone: string | null }>(owner))
+        ?.timezone || serverTimezone();
     const copy = await renderCopy(
       't4_whats_next',
       next ? { next: next.title, next_time: utcToZonedWallTime(next.start_at, tz) } : {},
@@ -292,18 +291,18 @@ export function blocksRouter() {
   // — Auto lands it later, inheriting the task's own defaults (no clone). Flag-gated.
   router.post('/api/blocks/:id/reschedule', async (ctx) => {
     const owner = currentOwnerId();
-    if (!timeSenseEnabled(owner)) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
+    if (!(await timeSenseEnabled(owner))) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
     const id = ctx.params.id;
 
-    const block = sqlite
+    const block = await store()
       .prepare(`SELECT id, task_id FROM time_blocks WHERE id = ? AND owner_id = ?`)
-      .get(id, owner) as { id: string; task_id: string | null } | undefined;
+      .get<{ id: string; task_id: string | null }>(id, owner);
     if (!block) { ctx.status = 404; ctx.body = { error: 'block not found' }; return; }
     if (!block.task_id) { ctx.status = 422; ctx.body = { error: 'block has no task to reschedule' }; return; }
 
-    const t = sqlite
+    const t = await store()
       .prepare(`SELECT recurrence_parent_id, status FROM tasks WHERE id = ? AND owner_id = ?`)
-      .get(block.task_id, owner) as { recurrence_parent_id: string | null; status: string } | undefined;
+      .get<{ recurrence_parent_id: string | null; status: string }>(block.task_id, owner);
     if (!t) { ctx.status = 404; ctx.body = { error: 'task not found' }; return; }
     // "Schedule again" is for unfinished work only — a done/cancelled task must not
     // be re-staged (Auto would place a fresh block for already-closed work).
@@ -313,30 +312,30 @@ export function blocksRouter() {
     // Same guard as the stage endpoint: series instances re-land via their RRULE.
     if (t.recurrence_parent_id) { ctx.status = 422; ctx.body = { error: 'series instances re-land via their rule, not reschedule' }; return; }
 
-    const nextPos = (sqlite
+    const nextPos = ((await store()
       .prepare(`SELECT COALESCE(MAX(position), 0) + 1 AS n FROM flight_plan WHERE owner_id = ?`)
-      .get(owner) as { n: number }).n;
+      .get<{ n: number }>(owner)))!.n;
 
     let staged = false;
-    sqlite.transaction(() => {
+    await store().transaction(async () => {
       // Attempt 1 becomes history — skipped, not deleted. The partial time_entry is
       // left as-is: the task stays open, and calibration only reads DONE tasks, so
       // the partial never enters estimate_calibration (§1.1b / N L169) — no flag needed.
       // Phase L: `skipped` is mergeable and unpinned, so without the stamp a queued op
       // still calling this block 'planned' would win LWW and resurrect the abandoned
       // attempt. (revertTaskPlacementStatus stamps the task side itself.)
-      const info = sqlite.prepare(`UPDATE time_blocks SET status = 'skipped' WHERE id = ? AND owner_id = ?`).run(id, owner);
-      if (info.changes > 0) stampRow(sqlite, 'block', id, ['status']);
-      staged = sqlite
+      const info = await store().prepare(`UPDATE time_blocks SET status = 'skipped' WHERE id = ? AND owner_id = ?`).run(id, owner);
+      if (info.changes > 0) await stampRow('block', id, ['status']);
+      staged = (await store()
         .prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, source_kind, source_ref, selected, position) VALUES (?, ?, 'reschedule', NULL, 1, ?)`)
-        .run(owner, block.task_id, nextPos).changes > 0;
+        .run(owner, block.task_id, nextPos)).changes > 0;
       // Z4: a skipped attempt's focus cues must not fire for the abandoned block.
-      clearBlockFocusReminders(id);
-    })();
+      await clearBlockFocusReminders(id);
+    });
 
     // Flip the task back to open (it was 'scheduled' while it held the block) so Auto
     // re-places it; broadcast so the board drops the skipped block and shows the stage.
-    if (revertTaskPlacementStatus(block.task_id, owner)) broadcast(owner, 'task:updated', { id: block.task_id });
+    if (await revertTaskPlacementStatus(block.task_id, owner)) broadcast(owner, 'task:updated', { id: block.task_id });
     broadcast(owner, 'block:updated', { id, rescheduled: block.task_id });
     broadcast(owner, 'flight_plan:updated', { added: staged ? 1 : 0 });
     writeAudit({ ownerId: owner, actor: 'owner', action: 'reschedule', entity: `block:${id}` });
@@ -371,7 +370,7 @@ export function blocksRouter() {
     const owner = currentOwnerId();
 
     // Verify ownership before any side effects (e.g. remote deletes).
-    if (!sqlite.prepare(`SELECT 1 FROM time_blocks WHERE id = ? AND owner_id = ?`).get(id, owner)) {
+    if (!(await store().prepare(`SELECT 1 FROM time_blocks WHERE id = ? AND owner_id = ?`).get(id, owner))) {
       ctx.status = 404; ctx.body = { error: 'not found' }; return;
     }
 
@@ -407,7 +406,7 @@ export function blocksRouter() {
     const owner = currentOwnerId();
     const date = ctx.params.date;
 
-    const result = clearDayAutoBlocks(owner, date);
+    const result = await clearDayAutoBlocks(owner, date);
 
     for (const taskId of result.revertedTaskIds) broadcast(owner, 'task:updated', { id: taskId });
     if (result.removedCount) broadcast(owner, 'block:deleted', { cleared: result.removedCount, date });
@@ -422,7 +421,7 @@ export function blocksRouter() {
     const id = ctx.params.id;
     const body = (ctx.request.body ?? {}) as { task_ids?: unknown };
     const taskIds = Array.isArray(body.task_ids) ? body.task_ids.filter((x): x is string => typeof x === 'string') : [];
-    const result = addTasksToBlock(currentOwnerId(), id, taskIds);
+    const result = await addTasksToBlock(currentOwnerId(), id, taskIds);
     ctx.body = { ok: true, ...result };
   });
 

@@ -6,29 +6,29 @@ export function patternBlocksRouter() {
   const router = new Router();
 
   // GET /api/pattern-blocks → { workday: DirectionWindows, weekend: DirectionWindows }
-  router.get('/api/pattern-blocks', (ctx) => {
+  router.get('/api/pattern-blocks', async (ctx) => {
     const owner = currentOwnerId();
     ctx.body = {
-      workday: getPatternBlocks(owner, 'workday'),
-      weekend: getPatternBlocks(owner, 'weekend'),
+      workday: await getPatternBlocks(owner, 'workday'),
+      weekend: await getPatternBlocks(owner, 'weekend'),
     };
   });
 
   // GET /api/pattern-blocks/:dayType → DirectionWindows for one day type (incl. custom).
-  router.get('/api/pattern-blocks/:dayType', (ctx) => {
-    ctx.body = { windows: getPatternBlocks(currentOwnerId(), ctx.params.dayType) };
+  router.get('/api/pattern-blocks/:dayType', async (ctx) => {
+    ctx.body = { windows: await getPatternBlocks(currentOwnerId(), ctx.params.dayType) };
   });
 
   // PUT /api/pattern-blocks/:dirTagId/:dayType  body: { ranges: [{start_time,end_time}] }
   // Replaces all ranges for that direction+dayType atomically.
-  router.put('/api/pattern-blocks/:dirTagId/:dayType', (ctx) => {
+  router.put('/api/pattern-blocks/:dirTagId/:dayType', async (ctx) => {
     const owner = currentOwnerId();
     const { dirTagId, dayType } = ctx.params;
     const body = ctx.request.body as { ranges?: unknown };
     // REST body hygiene: guard the untyped `ranges` before handing it to the service.
     if (!Array.isArray(body?.ranges)) { ctx.status = 422; ctx.body = { error: 'ranges must be an array' }; return; }
 
-    const res = replacePatternBlockRanges(owner, dirTagId, dayType, body.ranges as { start_time: string; end_time: string }[]);
+    const res = await replacePatternBlockRanges(owner, dirTagId, dayType, body.ranges as { start_time: string; end_time: string }[]);
     if (!res.ok) {
       if (res.error === 'tag_not_found') { ctx.status = 404; ctx.body = { error: 'Tag not found' }; return; }
       if (res.error === 'not_direction') { ctx.status = 422; ctx.body = { error: 'Tag is not a direction' }; return; }

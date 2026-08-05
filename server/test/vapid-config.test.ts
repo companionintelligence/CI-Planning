@@ -51,8 +51,8 @@ afterEach(() => {
 });
 
 describe('first boot — auto-generation', () => {
-  it('generates a keypair, hydrates the config, and seals the private key at rest (KEK present)', () => {
-    hydrateVapidConfig();
+  it('generates a keypair, hydrates the config, and seals the private key at rest (KEK present)', async () => {
+    await hydrateVapidConfig();
 
     // Config singleton is populated → push.ts pushEnabled() would return true.
     expect(config.vapidPublicKey).toBeTruthy();
@@ -66,21 +66,21 @@ describe('first boot — auto-generation', () => {
     // The plaintext private key never lands in the DB.
     expect(privRaw).not.toContain(config.vapidPrivateKey);
 
-    const state = vapidConfigState();
+    const state = await vapidConfigState();
     expect(state).toMatchObject({ source: 'generated', configured: true, sealed: true, hasStoredPair: true });
     // No key material leaks through the diagnostic state.
     expect(JSON.stringify(state)).not.toContain(config.vapidPrivateKey);
   });
 
-  it('reuses the stored pair across a simulated restart (stable — never rotates)', () => {
-    hydrateVapidConfig();
+  it('reuses the stored pair across a simulated restart (stable — never rotates)', async () => {
+    await hydrateVapidConfig();
     const pub1 = config.vapidPublicKey;
     const priv1 = config.vapidPrivateKey;
 
     // Simulate a fresh boot: singleton back at defaults, then hydrate again (app.ts does this).
     config.vapidPublicKey = '';
     config.vapidPrivateKey = '';
-    hydrateVapidConfig();
+    await hydrateVapidConfig();
 
     expect(config.vapidPublicKey).toBe(pub1);
     expect(config.vapidPrivateKey).toBe(priv1);
@@ -88,39 +88,39 @@ describe('first boot — auto-generation', () => {
 });
 
 describe('no KEK — plaintext fallback', () => {
-  it('generates and stores the private key UNSEALED (push still comes up)', () => {
+  it('generates and stores the private key UNSEALED (push still comes up)', async () => {
     delete process.env.CP_KEK_B64;
 
-    hydrateVapidConfig();
+    await hydrateVapidConfig();
     expect(config.vapidPrivateKey).toBeTruthy();
 
     const env = JSON.parse(readRow('vapid_private_key')!);
     expect(env.sealed).toBe(false);
     expect(env.key).toBe(config.vapidPrivateKey); // plaintext at rest
 
-    const state = vapidConfigState();
+    const state = await vapidConfigState();
     expect(state).toMatchObject({ source: 'generated', configured: true, sealed: false, kekAvailable: false });
   });
 });
 
 describe('env-pinned', () => {
-  it('is a no-op when both env keys are set — never touches the DB or singleton', () => {
+  it('is a no-op when both env keys are set — never touches the DB or singleton', async () => {
     config.vapidEnvPinned = true;
     config.vapidPublicKey = 'ENV_PUB';
     config.vapidPrivateKey = 'ENV_PRIV';
 
-    hydrateVapidConfig();
+    await hydrateVapidConfig();
 
     expect(config.vapidPublicKey).toBe('ENV_PUB');
     expect(config.vapidPrivateKey).toBe('ENV_PRIV');
     expect(readRow('vapid_public_key')).toBeNull();
     expect(readRow('vapid_private_key')).toBeNull();
-    expect(vapidConfigState().source).toBe('env');
+    expect((await vapidConfigState()).source).toBe('env');
   });
 });
 
 describe('malformed stored envelope', () => {
-  it('regenerates when the unsealed envelope has no usable key (corrupt row)', () => {
+  it('regenerates when the unsealed envelope has no usable key (corrupt row)', async () => {
     // A row that parses but is missing the key — must not be applied as an undefined key.
     sqlite
       .prepare(`INSERT INTO app_config (key, value) VALUES ('vapid_private_key', ?)`)
@@ -129,20 +129,20 @@ describe('malformed stored envelope', () => {
       .prepare(`INSERT INTO app_config (key, value) VALUES ('vapid_public_key', 'stale-pub')`)
       .run();
 
-    hydrateVapidConfig();
+    await hydrateVapidConfig();
 
     // Regenerated into a real string pair, and the corrupt row was overwritten.
     expect(typeof config.vapidPrivateKey).toBe('string');
     expect(config.vapidPrivateKey).toBeTruthy();
     const env = JSON.parse(readRow('vapid_private_key')!);
     expect(env.sealed).toBe(true); // KEK present in this block → freshly sealed
-    expect(vapidConfigState().configured).toBe(true);
+    expect((await vapidConfigState()).configured).toBe(true);
   });
 });
 
 describe('sealed key becomes unreadable (KEK removed/rotated)', () => {
-  it('stays dormant instead of regenerating — existing subscriptions survive', () => {
-    hydrateVapidConfig(); // seals under KEY
+  it('stays dormant instead of regenerating — existing subscriptions survive', async () => {
+    await hydrateVapidConfig(); // seals under KEY
     const storedBefore = readRow('vapid_private_key')!;
 
     // Simulate a restart where CP_KEK_B64 was lost: singleton reset, KEK gone.
@@ -150,12 +150,12 @@ describe('sealed key becomes unreadable (KEK removed/rotated)', () => {
     config.vapidPrivateKey = '';
     delete process.env.CP_KEK_B64;
 
-    hydrateVapidConfig();
+    await hydrateVapidConfig();
 
     // Dormant: no usable pair applied…
     expect(config.vapidPublicKey).toBe('');
     expect(config.vapidPrivateKey).toBe('');
-    expect(vapidConfigState()).toMatchObject({ source: 'dormant', configured: false });
+    expect(await vapidConfigState()).toMatchObject({ source: 'dormant', configured: false });
     // …and crucially the stored (undecryptable) pair was NOT overwritten.
     expect(readRow('vapid_private_key')).toBe(storedBefore);
   });

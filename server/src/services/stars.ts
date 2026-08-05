@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { computeStars, type DayStars } from '../engine/stars.js';
 
 /**
@@ -52,8 +52,8 @@ export function datesInRange(from: string, to: string): string[] {
  * daily_recap row if present (frozen_at set), else a live computeStars. One range query
  * backs a whole calendar month. Owner-scoped.
  */
-export function listDayStars(owner: string, from: string, to: string): DayStarsRow[] {
-  const frozenRows = sqlite
+export async function listDayStars(owner: string, from: string, to: string): Promise<DayStarsRow[]> {
+  const frozenRows = await store()
     .prepare(
       // Only rows with frozen_at set are frozen; un-frozen daily_recap rows
       // (created by the summary writer) fall through to a live computeStars.
@@ -61,16 +61,17 @@ export function listDayStars(owner: string, from: string, to: string): DayStarsR
          FROM daily_recap
         WHERE owner_id = ? AND frozen_at IS NOT NULL AND date >= ? AND date <= ?`,
     )
-    .all(owner, from, to) as {
+    .all<{
       date: string; star_objective: number; star_habits: number; star_tasks: number;
       star_bonus: number; star_note: number; total: number;
-    }[];
+    }>(owner, from, to);
   const frozen = new Map(frozenRows.map((r) => [r.date, r]));
 
-  return datesInRange(from, to).map((date) => {
+  const out: DayStarsRow[] = [];
+  for (const date of datesInRange(from, to)) {
     const f = frozen.get(date);
     if (f) {
-      return {
+      out.push({
         date,
         objective: !!f.star_objective,
         habits: !!f.star_habits,
@@ -79,11 +80,13 @@ export function listDayStars(owner: string, from: string, to: string): DayStarsR
         note: !!f.star_note,
         total: f.total,
         frozen: true,
-      };
+      });
+      continue;
     }
-    const s = computeStars(owner, date);
-    return { date, ...s, frozen: false };
-  });
+    const s = await computeStars(owner, date);
+    out.push({ date, ...s, frozen: false });
+  }
+  return out;
 }
 
 /**
@@ -92,23 +95,21 @@ export function listDayStars(owner: string, from: string, to: string): DayStarsR
  * (neither the freeze job nor the summarizer has touched it). Read-only: unlike GET
  * /api/stars this NEVER falls back to a live computeStars — it reflects what is on disk.
  */
-export function getDailyRecap(owner: string, date: string): DailyRecapRow | null {
-  const row = sqlite
+export async function getDailyRecap(owner: string, date: string): Promise<DailyRecapRow | null> {
+  const row = await store()
     .prepare(
       `SELECT date, prose, stats, focus, llm, inputs_hash,
               star_objective, star_habits, star_tasks, star_bonus, star_note, total, frozen_at
          FROM daily_recap
         WHERE owner_id = ? AND date = ?`,
     )
-    .get(owner, date) as
-    | {
+    .get<{
         date: string; prose: string | null; stats: string | null; focus: string | null;
         llm: number | null; inputs_hash: string | null;
         star_objective: number | null; star_habits: number | null; star_tasks: number | null;
         star_bonus: number | null; star_note: number | null; total: number | null;
         frozen_at: string | null;
-      }
-    | undefined;
+      }>(owner, date);
   if (!row) return null;
   const bool = (n: number | null): boolean | null => (n == null ? null : !!n);
   return {

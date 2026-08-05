@@ -54,10 +54,10 @@ describe('backoffDays', () => {
 });
 
 describe('reviewAndReschedule (unified auto-defer)', () => {
-  it('low-priority miss auto-defers (+backoff), drops the stale block, bumps defer_count', () => {
+  it('low-priority miss auto-defers (+backoff), drops the stale block, bumps defer_count', async () => {
     const t = insertTask('Low chore', 4, 'open', 0);
     insertBlock(t, -2); // ended 2h ago, un-started
-    const r = reviewAndReschedule();
+    const r = await reviewAndReschedule();
     expect(r).toMatchObject({ missed: 1, deferred: 1, revived: 0 });
     const after = task(t);
     expect(after.status).toBe('open');
@@ -66,10 +66,10 @@ describe('reviewAndReschedule (unified auto-defer)', () => {
     expect(blockCount(t)).toBe(0);            // stale block dropped
   });
 
-  it('high-priority miss ALSO auto-defers (unified — no more missed parking)', () => {
+  it('high-priority miss ALSO auto-defers (unified — no more missed parking)', async () => {
     const t = insertTask('Important', 1, 'open', 0);
     insertBlock(t, -2);
-    const r = reviewAndReschedule();
+    const r = await reviewAndReschedule();
     expect(r).toMatchObject({ missed: 1, deferred: 1, revived: 0 });
     const after = task(t);
     expect(after.status).toBe('open');        // back in circulation, never parked
@@ -78,14 +78,14 @@ describe('reviewAndReschedule (unified auto-defer)', () => {
     expect(blockCount(t)).toBe(0);
   });
 
-  it('revives a stuck status=missed one-off (backoff → open), not recurring instances', () => {
+  it('revives a stuck status=missed one-off (backoff → open), not recurring instances', async () => {
     const stuck = insertTask('Stuck P1', 1, 'missed', 0); insertBlock(stuck, -2, 'missed');
     // A recurring INSTANCE stays missed — its missed day is genuine history.
     const parent = insertTask('Routine', 3, 'recurring');
     const inst = (sqlite
       .prepare(`INSERT INTO tasks (id, title, owner_id, status, priority, recurrence_parent_id) VALUES (uuid7(), 'Routine day', ?, 'missed', 3, ?) RETURNING id`)
       .get(OWNER, parent) as { id: string }).id;
-    const r = reviewAndReschedule();
+    const r = await reviewAndReschedule();
     expect(r.revived).toBe(1);
     const after = task(stuck);
     expect(after.status).toBe('open');
@@ -95,50 +95,50 @@ describe('reviewAndReschedule (unified auto-defer)', () => {
     expect(task(inst).status).toBe('missed'); // instance untouched
   });
 
-  it('ignores future blocks and completed tasks', () => {
+  it('ignores future blocks and completed tasks', async () => {
     const future = insertTask('Future', 4); insertBlock(future, +3);    // not yet due
     const done = insertTask('Done', 4, 'done'); insertBlock(done, -2);  // already done
-    const r = reviewAndReschedule();
+    const r = await reviewAndReschedule();
     expect(r.missed).toBe(0);
     expect(task(future).status).toBe('open');
     expect(task(done).status).toBe('done');
   });
 
-  it('backoff escalates across successive misses (defer_count drives +1 → +3 → +7)', () => {
+  it('backoff escalates across successive misses (defer_count drives +1 → +3 → +7)', async () => {
     const t = insertTask('Repeat-misser', 5, 'open', 0);
     insertBlock(t, -2);
-    reviewAndReschedule();
+    await reviewAndReschedule();
     expect(task(t).defer_count).toBe(1);
     // simulate the next day's miss
     insertBlock(t, -2);
-    reviewAndReschedule();
+    await reviewAndReschedule();
     expect(task(t).defer_count).toBe(2);
   });
 
-  it('is idempotent — a second immediate run moves nothing further', () => {
+  it('is idempotent — a second immediate run moves nothing further', async () => {
     const t = insertTask('Once', 1, 'open', 0);
     insertBlock(t, -2);
-    reviewAndReschedule();
-    const r2 = reviewAndReschedule();
+    await reviewAndReschedule();
+    const r2 = await reviewAndReschedule();
     expect(r2).toMatchObject({ missed: 0, deferred: 0, revived: 0 });
     expect(task(t).defer_count).toBe(1); // not double-deferred
   });
 
-  it('hands_off owner: a deferred task is placed into its new day (block created)', () => {
+  it('hands_off owner: a deferred task is placed into its new day (block created)', async () => {
     sqlite.prepare(`UPDATE scheduling_prefs SET trust_mode = 'hands_off' WHERE owner_id = ?`).run(OWNER);
     const t = insertTask('Auto-place me', 1, 'open', 0);
     insertBlock(t, -2);
-    const r = reviewAndReschedule();
+    const r = await reviewAndReschedule();
     expect(r.deferred).toBe(1);
     expect(r.placed).toBe(1);
     expect(task(t).status).toBe('scheduled'); // R2 parity: placed = scheduled
     expect(blockCount(t)).toBe(1);            // the new-day block exists
   });
 
-  it('balanced (Suggest) owner: deferred task is reopened+dated but NOT placed', () => {
+  it('balanced (Suggest) owner: deferred task is reopened+dated but NOT placed', async () => {
     const t = insertTask('Wait for me', 1, 'open', 0);
     insertBlock(t, -2);
-    const r = reviewAndReschedule();
+    const r = await reviewAndReschedule();
     expect(r.placed).toBe(0);
     expect(task(t).status).toBe('open');
     expect(blockCount(t)).toBe(0);
@@ -148,37 +148,37 @@ describe('reviewAndReschedule (unified auto-defer)', () => {
 describe('daily_plan.outcome stamping (N4 lossy-slip fix)', () => {
   const DATE = '2026-06-29';
 
-  it("stamps 'deferred' on auto-deferred low-priority task", () => {
+  it("stamps 'deferred' on auto-deferred low-priority task", async () => {
     const t = insertTask('Low chore', 4, 'open', 0);
     insertBlock(t, -2);
     insertDailyPlan(t, DATE);
-    reviewAndReschedule();
+    await reviewAndReschedule();
     expect(planOutcome(t)).toBe('deferred');
   });
 
-  it("stamps 'missed' on a high-priority miss — the outcome keeps the priority split even though the task now auto-defers", () => {
+  it("stamps 'missed' on a high-priority miss — the outcome keeps the priority split even though the task now auto-defers", async () => {
     const t = insertTask('Important', 1, 'open', 0);
     insertBlock(t, -2);
     insertDailyPlan(t, DATE);
-    reviewAndReschedule();
+    await reviewAndReschedule();
     expect(planOutcome(t)).toBe('missed'); // the DAY's record: important work was missed
     expect(task(t).status).toBe('open');   // but the TASK auto-defers like everything else
   });
 
-  it('is write-once: does not overwrite an already-stamped outcome', () => {
+  it('is write-once: does not overwrite an already-stamped outcome', async () => {
     const t = insertTask('Low chore', 4, 'open', 0);
     insertBlock(t, -2);
     insertDailyPlan(t, DATE);
     sqlite.prepare(`UPDATE daily_plan SET outcome = 'completed' WHERE task_id = ?`).run(t);
-    reviewAndReschedule();
+    await reviewAndReschedule();
     expect(planOutcome(t)).toBe('completed');
   });
 
-  it('is a no-op when no daily_plan row exists (task never planned by AI)', () => {
+  it('is a no-op when no daily_plan row exists (task never planned by AI)', async () => {
     const t = insertTask('Unplanned', 4, 'open', 0);
     insertBlock(t, -2);
     // No insertDailyPlan — task was not in an AI plan
-    reviewAndReschedule();
+    await reviewAndReschedule();
     expect(planOutcome(t)).toBeNull();
     expect(task(t).defer_count).toBe(1); // still deferred normally
   });
@@ -253,43 +253,43 @@ describe('re-stage into flight plan at review (item 5)', () => {
     sqlite.exec(`DELETE FROM flight_plan`);
   });
 
-  it('re-stages open tasks with no future blocks into the flight plan', () => {
+  it('re-stages open tasks with no future blocks into the flight plan', async () => {
     const t = insertTask('Open no blocks', 3);
-    const r = reviewAndReschedule({ nowISO: new Date().toISOString() });
+    const r = await reviewAndReschedule({ nowISO: new Date().toISOString() });
     expect(r.restaged).toBe(1);
     const fp = sqlite.prepare(`SELECT selected FROM flight_plan WHERE task_id = ?`).get(t) as { selected: number } | undefined;
     expect(fp).toBeTruthy();
     expect(fp!.selected).toBe(1);
   });
 
-  it('habits (subtype=habit) are not re-staged', () => {
+  it('habits (subtype=habit) are not re-staged', async () => {
     sqlite.prepare(
       `INSERT INTO tasks (id, title, owner_id, status, priority, subtype) VALUES (uuid7(), 'Morning run', ?, 'open', 3, 'habit')`
     ).run(OWNER);
-    const r = reviewAndReschedule({ nowISO: new Date().toISOString() });
+    const r = await reviewAndReschedule({ nowISO: new Date().toISOString() });
     expect(r.restaged).toBe(0);
   });
 
-  it('tasks already in the flight plan are not re-staged again', () => {
+  it('tasks already in the flight plan are not re-staged again', async () => {
     const t = insertTask('Already staged', 3);
     sqlite.prepare(`INSERT INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, 0)`).run(OWNER, t);
-    const r = reviewAndReschedule({ nowISO: new Date().toISOString() });
+    const r = await reviewAndReschedule({ nowISO: new Date().toISOString() });
     expect(r.restaged).toBe(0);
     const n = (sqlite.prepare(`SELECT COUNT(*) AS n FROM flight_plan WHERE task_id = ?`).get(t) as { n: number }).n;
     expect(n).toBe(1); // no duplicate
   });
 
-  it('tasks with a future block are not re-staged', () => {
+  it('tasks with a future block are not re-staged', async () => {
     const t = insertTask('Has future block', 3);
     insertBlock(t, +3); // ends 3h from now
-    const r = reviewAndReschedule({ nowISO: new Date().toISOString() });
+    const r = await reviewAndReschedule({ nowISO: new Date().toISOString() });
     expect(r.restaged).toBe(0);
   });
 
-  it('re-staging is idempotent — two review runs do not double-stage', () => {
+  it('re-staging is idempotent — two review runs do not double-stage', async () => {
     const t = insertTask('Idempotent task', 3);
-    reviewAndReschedule({ nowISO: new Date().toISOString() });
-    reviewAndReschedule({ nowISO: new Date().toISOString() });
+    await reviewAndReschedule({ nowISO: new Date().toISOString() });
+    await reviewAndReschedule({ nowISO: new Date().toISOString() });
     const n = (sqlite.prepare(`SELECT COUNT(*) AS n FROM flight_plan WHERE task_id = ?`).get(t) as { n: number }).n;
     expect(n).toBe(1);
   });

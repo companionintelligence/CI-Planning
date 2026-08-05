@@ -16,7 +16,10 @@
 import { readFileSync } from 'node:fs';
 import { join, dirname, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { sqlite } from '../db/index.js';
+// Side-effect import: opening db/index.js runs migrations and installs the store
+// facade (setStore) — without it store() throws before the first statement.
+import '../db/index.js';
+import { store } from '../db/store.js';
 import { SYSTEM_OWNER_ID } from '../lib/ids.js';
 import { normalizeTagName } from '../services/tags.js';
 import { logger } from '../lib/logger.js';
@@ -38,19 +41,20 @@ const plan = JSON.parse(readFileSync(planPath, 'utf8')) as Plan;
 if (!plan.source_ref) throw new Error('plan is missing source_ref');
 
 // Resolve a tag name to its id, creating it if absent (matches routes/tasks.ts attachTags).
-const tagId = (raw: string): string => {
+const tagId = async (raw: string): Promise<string> => {
   const name = normalizeTagName(raw);
-  const existing = sqlite.prepare('SELECT id FROM tags WHERE owner_id = ? AND name = ?').get(SYSTEM_OWNER_ID, name) as { id: string } | undefined;
-  return existing
-    ? existing.id
-    : (sqlite.prepare('INSERT INTO tags (id, owner_id, name) VALUES (uuid7(), ?, ?) RETURNING id').get(SYSTEM_OWNER_ID, name) as { id: string }).id;
+  const existing = await store().prepare('SELECT id FROM tags WHERE owner_id = ? AND name = ?').get<{ id: string }>(SYSTEM_OWNER_ID, name);
+  if (existing) return existing.id;
+  const created = await store().prepare('INSERT INTO tags (id, owner_id, name) VALUES (uuid7(), ?, ?) RETURNING id').get<{ id: string }>(SYSTEM_OWNER_ID, name);
+  if (!created) throw new Error(`tag insert returned no row for '${name}'`);
+  return created.id;
 };
 
-const insTask = sqlite.prepare(
+const insTask = store().prepare(
   `INSERT INTO tasks (id, title, notes, due_at, estimated_minutes, priority, status, subtype, parent_id, owner_id, source_kind, source_ref)
    VALUES (uuid7(), ?, ?, ?, ?, ?, 'open', 'standard', ?, ?, 'agent', ?) RETURNING id`
 );
-const insTag = sqlite.prepare(
+const insTag = store().prepare(
   "INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, ?)"
 );
 
@@ -59,8 +63,8 @@ let secondaryLinks = 0;
 // Attach a task's tags: the direction (home/work/community) at level 1, plus the
 // secondary intention tags at level 2. A tag already at L1 is a no-op at L2 (PK is
 // entity_kind+entity_id+tag_id, so it keeps its first/highest level).
-function createTask(t: Subtask, parentId: string | null, directionTagId: string, secondary: string[]): string {
-  const id = (insTask.get(
+async function createTask(t: Subtask, parentId: string | null, directionTagId: string, secondary: string[]): Promise<string> {
+  const row = await insTask.get<{ id: string }>(
     t.title.trim(),
     t.notes ?? null,
     t.due_at ?? null,
@@ -69,27 +73,31 @@ function createTask(t: Subtask, parentId: string | null, directionTagId: string,
     parentId,
     SYSTEM_OWNER_ID,
     plan.source_ref
-  ) as { id: string }).id;
-  insTag.run(id, directionTagId, 1);
+  );
+  if (!row) throw new Error(`task insert returned no row for '${t.title}'`);
+  const id = row.id;
+  await insTag.run(id, directionTagId, 1);
   for (const name of secondary) {
-    if (insTag.run(id, tagId(name), 2).changes > 0) secondaryLinks++;
+    if ((await insTag.run(id, await tagId(name), 2)).changes > 0) secondaryLinks++;
   }
   return id;
 }
 
-const run = sqlite.transaction(() => {
+// store().transaction RUNS its callback (unlike better-sqlite3's, which returns a
+// callable) — keep it behind a thunk so the dry-run path below never opens one.
+const run = () => store().transaction(async () => {
   // Wipe the prior import (this source_ref only), tags first.
-  const prior = sqlite.prepare('SELECT id FROM tasks WHERE source_ref = ?').all(plan.source_ref) as { id: string }[];
-  for (const r of prior) sqlite.prepare("DELETE FROM entity_tags WHERE entity_kind='task' AND entity_id = ?").run(r.id);
+  const prior = await store().prepare('SELECT id FROM tasks WHERE source_ref = ?').all<{ id: string }>(plan.source_ref);
+  for (const r of prior) await store().prepare("DELETE FROM entity_tags WHERE entity_kind='task' AND entity_id = ?").run(r.id);
   // parent_id cascades on delete, so a single DELETE removes parents + their subtasks;
   // report the matched count (prior.length), not .changes (which omits cascaded rows).
-  sqlite.prepare('DELETE FROM tasks WHERE source_ref = ?').run(plan.source_ref);
+  await store().prepare('DELETE FROM tasks WHERE source_ref = ?').run(plan.source_ref);
   const del = { changes: prior.length };
 
   let parents = 0, subs = 0;
   const perGroup: Record<string, { parents: number; subs: number }> = {};
   for (const g of plan.groups) {
-    const dirTag = tagId(g.group);
+    const dirTag = await tagId(g.group);
     perGroup[g.group] ??= { parents: 0, subs: 0 };
     for (const effort of g.tasks) {
       // The parent's secondary tags are the UNION of its subtasks' secondary tags
@@ -98,10 +106,10 @@ const run = sqlite.transaction(() => {
         ...(effort.secondary ?? []),
         ...(effort.subtasks ?? []).flatMap((s) => s.secondary ?? []),
       ])];
-      const parentId = createTask(effort, null, dirTag, rolledUp);
+      const parentId = await createTask(effort, null, dirTag, rolledUp);
       parents++; perGroup[g.group].parents++;
       for (const st of effort.subtasks ?? []) {
-        createTask(st, parentId, dirTag, st.secondary ?? []);
+        await createTask(st, parentId, dirTag, st.secondary ?? []);
         subs++; perGroup[g.group].subs++;
       }
     }
@@ -109,20 +117,20 @@ const run = sqlite.transaction(() => {
   // File each secondary (intention) tag under the direction pattern(s) it co-occurs
   // with on these tasks — so the Tags view groups them under Home/Work/Community
   // instead of "Unsorted". Additive (INSERT OR IGNORE): never removes prior membership.
-  const cooccur = sqlite.prepare(
+  const cooccur = await store().prepare(
     `SELECT DISTINCT l2.tag_id AS intention, l1.tag_id AS direction
        FROM entity_tags l2
        JOIN entity_tags l1
          ON l1.entity_kind = 'task' AND l1.entity_id = l2.entity_id AND l1.level = 1
        JOIN tasks t ON t.id = l2.entity_id
       WHERE l2.entity_kind = 'task' AND l2.level > 1 AND t.source_ref = ?`,
-  ).all(plan.source_ref) as { intention: string; direction: string }[];
-  const fileTag = sqlite.prepare(
+  ).all<{ intention: string; direction: string }>(plan.source_ref);
+  const fileTag = store().prepare(
     'INSERT OR IGNORE INTO tag_directions (intention_tag_id, direction_tag_id) VALUES (?, ?)',
   );
   let filed = 0;
   for (const { intention, direction } of cooccur) {
-    if (fileTag.run(intention, direction).changes > 0) filed++;
+    if ((await fileTag.run(intention, direction)).changes > 0) filed++;
   }
 
   return { deleted: del.changes, parents, subs, secondaryLinks, filed, perGroup };
@@ -139,7 +147,7 @@ if (dryRun) {
   process.exit(0);
 }
 
-const res = run();
+const res = await run();
 logger.info('import-plan: done', { source_ref: plan.source_ref, ...res });
 console.log('\n=== Plan import ===');
 console.log('source_ref:      ', plan.source_ref);

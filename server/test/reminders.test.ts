@@ -250,41 +250,41 @@ describe('routes — reminders', () => {
 });
 
 describe('auto-derive — syncTaskReminders (Phase H b)', () => {
-  it('derives one reminder per configured offset at due − offset (source=auto)', () => {
+  it('derives one reminder per configured offset at due − offset (source=auto)', async () => {
     setReminderOffsets([0, 15]);
     const taskId = insertTaskDue(FAR_FUTURE_DUE);
-    expect(syncTaskReminders(SYSTEM_OWNER, taskId)).toBe(2);
+    expect(await syncTaskReminders(SYSTEM_OWNER, taskId)).toBe(2);
     const rows = sqlite.prepare(`SELECT fire_at, status, source FROM reminders WHERE task_id = ? ORDER BY fire_at`).all(taskId) as
       { fire_at: string; status: string; source: string }[];
     expect(rows.map((r) => r.fire_at)).toEqual(['2999-01-01T11:45:00.000Z', '2999-01-01T12:00:00.000Z']);
     expect(rows.every((r) => r.status === 'pending' && r.source === 'auto')).toBe(true);
   });
 
-  it('replaces only its own auto rows on re-sync; manual reminders survive', () => {
+  it('replaces only its own auto rows on re-sync; manual reminders survive', async () => {
     setReminderOffsets([0]);
     const taskId = insertTaskDue(FAR_FUTURE_DUE);
     insertReminder({ taskId, fireAt: FAR_FUTURE_DUE }); // manual (source defaults to 'manual')
-    expect(syncTaskReminders(SYSTEM_OWNER, taskId)).toBe(1);
+    expect(await syncTaskReminders(SYSTEM_OWNER, taskId)).toBe(1);
     expect(autoCount(taskId)).toBe(1);
-    expect(syncTaskReminders(SYSTEM_OWNER, taskId)).toBe(1); // re-derive replaces the auto row
+    expect(await syncTaskReminders(SYSTEM_OWNER, taskId)).toBe(1); // re-derive replaces the auto row
     expect(autoCount(taskId)).toBe(1);
     expect((sqlite.prepare(`SELECT COUNT(*) c FROM reminders WHERE task_id = ?`).get(taskId) as { c: number }).c).toBe(2); // manual + auto
   });
 
-  it('creates nothing without a due_at, and clears stale auto rows', () => {
+  it('creates nothing without a due_at, and clears stale auto rows', async () => {
     setReminderOffsets([0]);
     const taskId = insertTaskDue(null);
-    expect(syncTaskReminders(SYSTEM_OWNER, taskId)).toBe(0);
+    expect(await syncTaskReminders(SYSTEM_OWNER, taskId)).toBe(0);
     expect(autoCount(taskId)).toBe(0);
   });
 
-  it('creates nothing when no Reminder Defaults are configured', () => {
-    expect(syncTaskReminders(SYSTEM_OWNER, insertTaskDue(FAR_FUTURE_DUE))).toBe(0);
+  it('creates nothing when no Reminder Defaults are configured', async () => {
+    expect(await syncTaskReminders(SYSTEM_OWNER, insertTaskDue(FAR_FUTURE_DUE))).toBe(0);
   });
 
-  it('skips already-due fire times (no backfill)', () => {
+  it('skips already-due fire times (no backfill)', async () => {
     setReminderOffsets([0]);
-    expect(syncTaskReminders(SYSTEM_OWNER, insertTaskDue(PAST))).toBe(0);
+    expect(await syncTaskReminders(SYSTEM_OWNER, insertTaskDue(PAST))).toBe(0);
   });
 
   it('POST /api/tasks with a due date auto-creates reminders (route hook)', async () => {
@@ -309,13 +309,13 @@ describe('reminder lifecycle vs task status (Phase H b)', () => {
     expect(await fireDueReminders()).toBe(1);           // re-opened → fires
   });
 
-  it('syncTaskReminders clears and stops deriving once a task is completed', () => {
+  it('syncTaskReminders clears and stops deriving once a task is completed', async () => {
     setReminderOffsets([0]);
     const taskId = insertTaskDue(FAR_FUTURE_DUE);
-    expect(syncTaskReminders(SYSTEM_OWNER, taskId)).toBe(1);
+    expect(await syncTaskReminders(SYSTEM_OWNER, taskId)).toBe(1);
     expect(autoCount(taskId)).toBe(1);
     setTaskStatus(taskId, 'done');
-    expect(syncTaskReminders(SYSTEM_OWNER, taskId)).toBe(0); // terminal → cleared, nothing derived
+    expect(await syncTaskReminders(SYSTEM_OWNER, taskId)).toBe(0); // terminal → cleared, nothing derived
     expect(autoCount(taskId)).toBe(0);
   });
 
@@ -329,31 +329,31 @@ describe('reminder lifecycle vs task status (Phase H b)', () => {
 });
 
 describe('auto-derive — scheduled-start anchor (PR A)', () => {
-  it('anchors on scheduled_for + task_time when there is no due_at', () => {
+  it('anchors on scheduled_for + task_time when there is no due_at', async () => {
     setReminderOffsets([15]);
     const id = insertScheduledTask({ scheduledFor: '2999-01-01', taskTime: '09:00' });
-    expect(syncTaskReminders(SYSTEM_OWNER, id)).toBe(1);
+    expect(await syncTaskReminders(SYSTEM_OWNER, id)).toBe(1);
     expect(firstFireAt(id)).toBe('2999-01-01T08:45:00.000Z'); // 09:00 UTC − 15min
   });
 
-  it('prefers the scheduled start over due_at when both are present', () => {
+  it('prefers the scheduled start over due_at when both are present', async () => {
     setReminderOffsets([0]);
     const id = insertScheduledTask({ scheduledFor: '2999-01-01', taskTime: '09:00', dueAt: '2999-06-01T00:00:00.000Z' });
-    expect(syncTaskReminders(SYSTEM_OWNER, id)).toBe(1);
+    expect(await syncTaskReminders(SYSTEM_OWNER, id)).toBe(1);
     expect(firstFireAt(id)).toBe('2999-01-01T09:00:00.000Z'); // scheduled start, not the deadline
   });
 
-  it('creates nothing for an untimed task (no task_time, no due_at)', () => {
+  it('creates nothing for an untimed task (no task_time, no due_at)', async () => {
     setReminderOffsets([0]);
-    expect(syncTaskReminders(SYSTEM_OWNER, insertScheduledTask({ scheduledFor: '2999-01-01' }))).toBe(0);
+    expect(await syncTaskReminders(SYSTEM_OWNER, insertScheduledTask({ scheduledFor: '2999-01-01' }))).toBe(0);
   });
 });
 
 describe('auto-derive — recurring instances (PR A: generateRecurrences hook)', () => {
-  it('derives reminders for each materialized instance, idempotently', () => {
+  it('derives reminders for each materialized instance, idempotently', async () => {
     setReminderOffsets([10]);
     insertTemplate('FREQ=DAILY', '09:00', '2999-01-01T09:00:00.000Z');
-    const res = generateRecurrences({ today: '2999-01-01', horizonDays: 2 });
+    const res = await generateRecurrences({ today: '2999-01-01', horizonDays: 2 });
     expect(res.created).toBeGreaterThanOrEqual(1);
 
     const autos = sqlite.prepare(
@@ -364,7 +364,7 @@ describe('auto-derive — recurring instances (PR A: generateRecurrences hook)',
     expect(autos.map((a) => a.fire_at)).toContain('2999-01-01T08:50:00.000Z'); // 09:00 − 10min
 
     // Idempotent: re-running materializes no new instances → no new reminders.
-    generateRecurrences({ today: '2999-01-01', horizonDays: 2 });
+    await generateRecurrences({ today: '2999-01-01', horizonDays: 2 });
     expect((sqlite.prepare(`SELECT COUNT(*) c FROM reminders WHERE source = 'auto'`).get() as { c: number }).c).toBe(autos.length);
   });
 });

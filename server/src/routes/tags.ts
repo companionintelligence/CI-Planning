@@ -1,5 +1,5 @@
 import Router from '@koa/router';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import {
   directionsOf, categoriesOf, directionOptoutsOf,
   createTag, updateTag, deleteTag,
@@ -13,7 +13,7 @@ export function tagsRouter() {
   // canonical entity_tags store (covers tasks · time blocks · routines). The client
   // groups directions / intentions / Unsorted from this one list.
   router.get('/api/tags', async (ctx) => {
-    const rows = sqlite
+    const rows = await store()
       .prepare(
         `SELECT t.id, t.name, t.kind, t.is_base AS isBase, t.muted,
                 COUNT(et.tag_id) AS count
@@ -23,8 +23,8 @@ export function tagsRouter() {
           GROUP BY t.id
           ORDER BY t.kind DESC, count DESC, t.name`,
       )
-      .all(currentOwnerId()) as { id: string; name: string; kind: string; isBase: number; muted: number; count: number }[];
-    const tags = rows.map((r) => ({
+      .all<{ id: string; name: string; kind: string; isBase: number; muted: number; count: number }>(currentOwnerId());
+    const tags = await Promise.all(rows.map(async (r) => ({
       id: r.id,
       name: r.name,
       kind: r.kind,
@@ -32,32 +32,32 @@ export function tagsRouter() {
       muted: !!r.muted,
       count: r.count,
       used: r.count > 0,
-      directions: r.kind === 'intention' ? directionsOf(r.id) : [],
-      categories: r.kind === 'intention' ? categoriesOf(r.id) : [],
-      direction_optouts: r.kind === 'category' ? directionOptoutsOf(r.id) : [],
-    }));
+      directions: r.kind === 'intention' ? await directionsOf(r.id) : [],
+      categories: r.kind === 'intention' ? await categoriesOf(r.id) : [],
+      direction_optouts: r.kind === 'category' ? await directionOptoutsOf(r.id) : [],
+    })));
     ctx.body = { tags };
   });
 
   // POST /api/tags — { name, kind?='intention', directions?, categories? }. Business logic
   // lives in services/tags.createTag (shared with the GraphQL createTag mutation).
   router.post('/api/tags', async (ctx) => {
-    const res = createTag(currentOwnerId(), (ctx.request.body ?? {}) as Parameters<typeof createTag>[1]);
+    const res = await createTag(currentOwnerId(), (ctx.request.body ?? {}) as Parameters<typeof createTag>[1]);
     if (!res.ok) { ctx.status = 400; ctx.body = { error: 'name is required' }; return; }
     const tag = res.tag;
     ctx.status = 201;
     ctx.body = { tag: {
       ...tag,
-      directions: tag.kind === 'intention' ? directionsOf(tag.id) : [],
-      categories: tag.kind === 'intention' ? categoriesOf(tag.id) : [],
-      direction_optouts: tag.kind === 'category' ? directionOptoutsOf(tag.id) : [],
+      directions: tag.kind === 'intention' ? await directionsOf(tag.id) : [],
+      categories: tag.kind === 'intention' ? await categoriesOf(tag.id) : [],
+      direction_optouts: tag.kind === 'category' ? await directionOptoutsOf(tag.id) : [],
     } };
   });
 
   // PATCH /api/tags/:id — { name?, muted?, directions?, categories?, direction_toggle? }.
   // Shared with the GraphQL updateTag mutation (services/tags.updateTag).
   router.patch('/api/tags/:id', async (ctx) => {
-    const res = updateTag(currentOwnerId(), ctx.params.id, (ctx.request.body ?? {}) as Parameters<typeof updateTag>[2]);
+    const res = await updateTag(currentOwnerId(), ctx.params.id, (ctx.request.body ?? {}) as Parameters<typeof updateTag>[2]);
     if (!res.ok) {
       if (res.error === 'not_found') { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
       ctx.status = 409; ctx.body = { error: 'a tag with that name already exists' }; return;
@@ -66,9 +66,9 @@ export function tagsRouter() {
     ctx.body = {
       tag: {
         ...out, is_base: !!out.isBase, muted: !!out.muted,
-        directions: out.kind === 'intention' ? directionsOf(out.id) : [],
-        categories: out.kind === 'intention' ? categoriesOf(out.id) : [],
-        direction_optouts: out.kind === 'category' ? directionOptoutsOf(out.id) : [],
+        directions: out.kind === 'intention' ? await directionsOf(out.id) : [],
+        categories: out.kind === 'intention' ? await categoriesOf(out.id) : [],
+        direction_optouts: out.kind === 'category' ? await directionOptoutsOf(out.id) : [],
       },
     };
   });
@@ -76,7 +76,7 @@ export function tagsRouter() {
   // DELETE /api/tags/:id — a used tag or a base direction cannot be deleted.
   // Shared with the GraphQL deleteTag mutation (services/tags.deleteTag).
   router.delete('/api/tags/:id', async (ctx) => {
-    const res = deleteTag(currentOwnerId(), ctx.params.id);
+    const res = await deleteTag(currentOwnerId(), ctx.params.id);
     if (!res.ok) {
       if (res.error === 'not_found') { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
       if (res.error === 'base') { ctx.status = 409; ctx.body = { error: 'base tags cannot be deleted' }; return; }

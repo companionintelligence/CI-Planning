@@ -61,10 +61,10 @@ beforeEach(() => { resetDb(); setTz(); });
 describe('truncateSeriesFrom', () => {
   const DAYS = ['2026-08-07', '2026-08-14', '2026-08-21', '2026-08-28'];
 
-  it('removes the split occurrence and everything after, and NOTHING before', () => {
+  it('removes the split occurrence and everything after, and NOTHING before', async () => {
     const { templateId, instanceIds } = seedSeries(DAYS);
 
-    const r = truncateSeriesFrom(SYSTEM_OWNER, 'time_blocks', templateId, '2026-08-21');
+    const r = await truncateSeriesFrom(SYSTEM_OWNER, 'time_blocks', templateId, '2026-08-21');
 
     expect(r.ok).toBe(true);
     expect(r.removed).toBe(2); // 21st + 28th
@@ -74,38 +74,38 @@ describe('truncateSeriesFrom', () => {
     expect(exists(instanceIds['2026-08-28'])).toBe(false);
   });
 
-  it('bounds the template rule so a regenerate cannot resurrect the removed days', () => {
+  it('bounds the template rule so a regenerate cannot resurrect the removed days', async () => {
     const { templateId } = seedSeries(DAYS);
-    truncateSeriesFrom(SYSTEM_OWNER, 'time_blocks', templateId, '2026-08-21');
+    await truncateSeriesFrom(SYSTEM_OWNER, 'time_blocks', templateId, '2026-08-21');
     expect(ruleOf(templateId)).toMatch(/UNTIL=/i);
     expect(exists(templateId)).toBe(true); // earlier occurrences still need their template
   });
 
-  it('removes the template entirely when the split is the FIRST occurrence', () => {
+  it('removes the template entirely when the split is the FIRST occurrence', async () => {
     // Nothing survives before the split, so a template that can never materialize would
     // just be an invisible orphan.
     const { templateId, instanceIds } = seedSeries(DAYS);
-    const r = truncateSeriesFrom(SYSTEM_OWNER, 'time_blocks', templateId, '2026-08-07');
+    const r = await truncateSeriesFrom(SYSTEM_OWNER, 'time_blocks', templateId, '2026-08-07');
     expect(r.templateRemoved).toBe(true);
     expect(exists(templateId)).toBe(false);
     expect(exists(instanceIds['2026-08-07'])).toBe(false);
   });
 
-  it('fails closed on a rule it cannot bound, rather than reporting a no-op as success', () => {
+  it('fails closed on a rule it cannot bound, rather than reporting a no-op as success', async () => {
     const { templateId } = seedSeries(DAYS);
-    const r = truncateSeriesFrom(SYSTEM_OWNER, 'time_blocks', templateId, 'garbage');
+    const r = await truncateSeriesFrom(SYSTEM_OWNER, 'time_blocks', templateId, 'garbage');
     expect(r.ok).toBe(false);
     expect(r.reason).toBe('bad_rule');
     expect(ruleOf(templateId)).toBe('FREQ=WEEKLY;BYDAY=FR'); // untouched
   });
 
-  it('refuses a non-recurring row', () => {
+  it('refuses a non-recurring row', async () => {
     const id = randomUUID();
     sqlite
       .prepare(`INSERT INTO time_blocks (id, owner_id, title, block_kind, start_at, end_at, status)
                 VALUES (?, ?, 'One-off', 'timeblock', '2026-08-07T16:00:00.000Z', '2026-08-07T16:30:00.000Z', 'planned')`)
       .run(id, SYSTEM_OWNER);
-    expect(truncateSeriesFrom(SYSTEM_OWNER, 'time_blocks', id, '2026-08-07').reason).toBe('not_recurring');
+    expect((await truncateSeriesFrom(SYSTEM_OWNER, 'time_blocks', id, '2026-08-07')).reason).toBe('not_recurring');
   });
 });
 
@@ -136,11 +136,11 @@ describe('deleteBlock scope', () => {
 describe('forkSeriesAt', () => {
   const DAYS = ['2026-08-07', '2026-08-14', '2026-08-21', '2026-08-28'];
 
-  it('splits into two independent templates at the chosen day', () => {
+  it('splits into two independent templates at the chosen day', async () => {
     const { templateId, instanceIds } = seedSeries(DAYS);
     const newId = randomUUID();
 
-    const r = forkSeriesAt(SYSTEM_OWNER, 'time_blocks', templateId, '2026-08-21', newId);
+    const r = await forkSeriesAt(SYSTEM_OWNER, 'time_blocks', templateId, '2026-08-21', newId);
 
     expect(r.ok).toBe(true);
     expect(r.newTemplateId).toBe(newId);
@@ -158,10 +158,10 @@ describe('forkSeriesAt', () => {
     expect(fresh.occurrence_date).toBeNull();
   });
 
-  it('copies the template payload onto the new half', () => {
+  it('copies the template payload onto the new half', async () => {
     const { templateId } = seedSeries(DAYS);
     const newId = randomUUID();
-    forkSeriesAt(SYSTEM_OWNER, 'time_blocks', templateId, '2026-08-21', newId);
+    await forkSeriesAt(SYSTEM_OWNER, 'time_blocks', templateId, '2026-08-21', newId);
     const fresh = sqlite.prepare(`SELECT title, block_kind, owner_id FROM time_blocks WHERE id = ?`).get(newId) as
       { title: string; block_kind: string; owner_id: string };
     expect(fresh.title).toBe('Standup');
@@ -169,18 +169,18 @@ describe('forkSeriesAt', () => {
     expect(fresh.owner_id).toBe(SYSTEM_OWNER);
   });
 
-  it('does not carry the old half\'s EXDATEs into the new series', () => {
+  it('does not carry the old half\'s EXDATEs into the new series', async () => {
     const { templateId } = seedSeries(DAYS);
     sqlite.prepare(`UPDATE time_blocks SET recurrence_exdates = ? WHERE id = ?`).run(JSON.stringify(['2026-08-14']), templateId);
     const newId = randomUUID();
-    forkSeriesAt(SYSTEM_OWNER, 'time_blocks', templateId, '2026-08-21', newId);
+    await forkSeriesAt(SYSTEM_OWNER, 'time_blocks', templateId, '2026-08-21', newId);
     const ex = (sqlite.prepare(`SELECT recurrence_exdates FROM time_blocks WHERE id = ?`).get(newId) as { recurrence_exdates: string | null }).recurrence_exdates;
     expect(ex).toBeNull();
   });
 
-  it('leaves the original series intact when it cannot split', () => {
+  it('leaves the original series intact when it cannot split', async () => {
     const { templateId, instanceIds } = seedSeries(DAYS);
-    const r = forkSeriesAt(SYSTEM_OWNER, 'time_blocks', templateId, 'garbage', randomUUID());
+    const r = await forkSeriesAt(SYSTEM_OWNER, 'time_blocks', templateId, 'garbage', randomUUID());
     expect(r.ok).toBe(false);
     expect(ruleOf(templateId)).toBe('FREQ=WEEKLY;BYDAY=FR');
     expect(exists(instanceIds['2026-08-21'])).toBe(true);

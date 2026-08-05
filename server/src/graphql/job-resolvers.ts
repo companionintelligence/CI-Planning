@@ -4,7 +4,7 @@ import { hasAdminScope } from '../lib/auth/scopes.js';
 import { runJob } from '../jobs/index.js';
 import {
   listJobs, getJob, getLatestRun, listJobRuns, countJobRuns, triggerJob,
-  type ScheduledJobRow, type JobRunRow,
+  type ScheduledJobRow, type ScheduledJobWithLastRun, type JobRunRow,
 } from '../services/jobs.js';
 import { clampFirst, decodeStartedAtCursor, buildStartedAtConnection } from './pagination.js';
 
@@ -32,13 +32,13 @@ type ConnArgs = { first?: number | null; after?: string | null };
 
 export const jobResolvers = {
   Query: {
-    scheduledJobs: (): ScheduledJobRow[] => {
+    scheduledJobs: (): Promise<ScheduledJobWithLastRun[]> => {
       assertAdmin();
       return listJobs();
     },
-    scheduledJob: (_p: unknown, args: { id: string }): ScheduledJobRow | null => {
+    scheduledJob: async (_p: unknown, args: { id: string }): Promise<ScheduledJobRow | null> => {
       assertAdmin();
-      return getJob(args.id) ?? null;
+      return (await getJob(args.id)) ?? null;
     },
   },
 
@@ -52,7 +52,7 @@ export const jobResolvers = {
       if (!res.ok) throw new GraphQLError('job not found', { extensions: { code: 'NOT_FOUND' } });
       runJob(res.job.kind).catch(console.error);
       // Return the fresh job row so the caller can read back its (unchanged-yet) fields.
-      return { job: getJob(res.job.id) ?? null, success: true, message: `Job ${res.job.name} triggered` };
+      return { job: (await getJob(res.job.id)) ?? null, success: true, message: `Job ${res.job.name} triggered` };
     },
   },
 
@@ -61,12 +61,12 @@ export const jobResolvers = {
     enabled: (j: ScheduledJobRow) => !!j.enabled,
     lastRunAt: (j: ScheduledJobRow) => j.last_run_at,
     nextRunAt: (j: ScheduledJobRow) => j.next_run_at,
-    lastRun: (j: ScheduledJobRow): JobRunRow | null => getLatestRun(j.id) ?? null,
-    runs: (j: ScheduledJobRow, args: ConnArgs) => {
+    lastRun: async (j: ScheduledJobRow): Promise<JobRunRow | null> => (await getLatestRun(j.id)) ?? null,
+    runs: async (j: ScheduledJobRow, args: ConnArgs) => {
       const limit = clampFirst(args.first);
       const after = decodeStartedAtCursor(args.after);
-      const rows = listJobRuns(j.id, { after: after ?? undefined, limit: limit + 1 });
-      return buildStartedAtConnection(rows, limit, countJobRuns(j.id));
+      const rows = await listJobRuns(j.id, { after: after ?? undefined, limit: limit + 1 });
+      return buildStartedAtConnection(rows, limit, await countJobRuns(j.id));
     },
   },
 
@@ -77,8 +77,8 @@ export const jobResolvers = {
     itemsUpdated: (r: JobRunRow) => r.items_updated ?? 0,
     // Non-null back-reference: the parent job. Throw (never null) if the FK is dangling —
     // a run with no owning job is a data-integrity fault the non-null type must surface.
-    job: (r: JobRunRow): ScheduledJobRow => {
-      const job = getJob(r.job_id);
+    job: async (r: JobRunRow): Promise<ScheduledJobRow> => {
+      const job = await getJob(r.job_id);
       if (!job) throw new GraphQLError('owning job not found', { extensions: { code: 'NOT_FOUND' } });
       return job;
     },

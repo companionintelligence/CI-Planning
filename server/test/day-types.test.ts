@@ -57,26 +57,26 @@ beforeEach(() => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('resolveDayType — behavior preservation (no overrides)', () => {
-  it('matches the legacy isWeekendDate split with no map/assignment rows', () => {
-    expect(resolveDayType(OWNER, MON)).toBe('workday');
-    expect(resolveDayType(OWNER, SUN)).toBe('weekend');
-    expect(resolveDayType(OWNER, SAT)).toBe('weekend');
+  it('matches the legacy isWeekendDate split with no map/assignment rows', async () => {
+    expect(await resolveDayType(OWNER, MON)).toBe('workday');
+    expect(await resolveDayType(OWNER, SUN)).toBe('weekend');
+    expect(await resolveDayType(OWNER, SAT)).toBe('weekend');
   });
 });
 
 describe('resolveDayType — precedence', () => {
   it('per-date assignment beats the weekly map and the heuristic', async () => {
     await api(srv.url, `/api/day-types/assignments/${MON}`, { method: 'PUT', json: { day_type_key: 'weekend' } });
-    expect(resolveDayType(OWNER, MON)).toBe('weekend');
+    expect(await resolveDayType(OWNER, MON)).toBe('weekend');
     await api(srv.url, `/api/day-types/assignments/${MON}`, { method: 'DELETE' });
-    expect(resolveDayType(OWNER, MON)).toBe('workday'); // back to default
+    expect(await resolveDayType(OWNER, MON)).toBe('workday'); // back to default
   });
 
   it('the weekly map overrides the heuristic when no assignment', async () => {
     // Monday (dow 1) → weekend via the map.
     await api(srv.url, '/api/day-types/week-map', { method: 'PUT', json: { map: { 1: 'weekend' } } });
-    expect(resolveDayType(OWNER, MON)).toBe('weekend');
-    expect(resolveDayType(OWNER, '2026-06-23')).toBe('workday'); // Tuesday unaffected
+    expect(await resolveDayType(OWNER, MON)).toBe('weekend');
+    expect(await resolveDayType(OWNER, '2026-06-23')).toBe('workday'); // Tuesday unaffected
   });
 });
 

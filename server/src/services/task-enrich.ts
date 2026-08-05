@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { generateJson } from '../mcp/ollama.js';
 import { graphSearch, memoryMode, type MemoryNode } from '../connectors/memory.js';
 import { directionGuide, isMotivation, MOTIVATION_RUBRIC } from '../agents/rubric.js';
@@ -71,15 +71,14 @@ export function constrainCategories(raw: unknown, vocabulary: string[]): string[
   return out;
 }
 
-const selectTask = sqlite.prepare(
-  `SELECT id, title, notes, motivation FROM tasks WHERE id = ? AND owner_id = ?`,
-);
-const updateNotes = sqlite.prepare(
-  `UPDATE tasks SET notes = ? WHERE id = ? AND owner_id = ? AND (notes IS NULL OR notes = '')`,
-);
-const insertDirection = sqlite.prepare(
-  `INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, 1)`,
-);
+// SQL at module level, prepared inside the functions — a module-level store() call
+// would throw when this module loads before db/index installs the backend (§5.5).
+const SELECT_TASK =
+  `SELECT id, title, notes, motivation FROM tasks WHERE id = ? AND owner_id = ?`;
+const UPDATE_NOTES =
+  `UPDATE tasks SET notes = ? WHERE id = ? AND owner_id = ? AND (notes IS NULL OR notes = '')`;
+const INSERT_DIRECTION =
+  `INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, 1)`;
 // Directions/categories come from the shared `suggestibleVocabulary` (services/tags.ts) —
 // same muted rule as every other suggester, in one place rather than re-stated here.
 
@@ -142,9 +141,8 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
   if (memoryMode() === 'off') {
     return { enriched: false, reason: 'Memory is off (set MEMORY_MODE=live or fixture)' };
   }
-  const task = selectTask.get(taskId, owner) as
-    | { id: string; title: string; notes: string | null; motivation: string | null }
-    | undefined;
+  const task = await store().prepare(SELECT_TASK)
+    .get<{ id: string; title: string; notes: string | null; motivation: string | null }>(taskId, owner);
   if (!task) return { enriched: false, reason: 'Task not found' };
 
   // Nothing to do when every field this can fill is already set — skip the round-trips
@@ -152,11 +150,11 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
   // Categories count as "needed" only when the owner actually HAS a category vocabulary:
   // with none, an empty entity_categories set is not a blank to fill, and treating it as
   // one would make every task permanently enrichable.
-  const vocab = suggestibleVocabulary(owner);
+  const vocab = await suggestibleVocabulary(owner);
   const categories = vocab.categories;
   const needsDescription = !task.notes?.trim();
-  const needsDirection = !taskHasLevel1Direction(taskId, owner);
-  const needsCategories = categories.length > 0 && entityCategoryIds('task', taskId).length === 0;
+  const needsDirection = !await taskHasLevel1Direction(taskId, owner);
+  const needsCategories = categories.length > 0 && (await entityCategoryIds('task', taskId)).length === 0;
   // Motivation (0141, §3b): a blank to fill only while unlabeled — a user OR earlier
   // machine label stands (the never-re-tag contract; applyMachineMotivation re-guards
   // in SQL against a concurrent write).
@@ -210,7 +208,7 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
     const description = out.description.trim().slice(0, 500);
     // The guarded UPDATE (notes IS NULL OR '') is the real race protection: if the user
     // typed notes between the read above and this write, changes is 0 and theirs stand.
-    if (updateNotes.run(description, taskId, owner).changes > 0) {
+    if ((await store().prepare(UPDATE_NOTES).run(description, taskId, owner)).changes > 0) {
       result.description = description;
       result.enriched = true;
     }
@@ -221,8 +219,8 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
   if (needsDirection && typeof out.direction === 'string') {
     const canonical = directions.find((d) => d.toLowerCase() === out.direction!.toString().trim().toLowerCase());
     // Re-check the guard: a concurrent edit may have given the task a direction since.
-    if (canonical && !taskHasLevel1Direction(taskId, owner)) {
-      insertDirection.run(taskId, resolveTagId(canonical, owner));
+    if (canonical && !await taskHasLevel1Direction(taskId, owner)) {
+      await store().prepare(INSERT_DIRECTION).run(taskId, await resolveTagId(canonical, owner));
       result.direction = canonical;
       result.enriched = true;
     }
@@ -235,8 +233,8 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
     // Names → the owner's category-tag ids; then re-check the guard — a concurrent edit
     // may have given the task categories since the read above, and setEntityCategories
     // REPLACES the set, so writing over a user's picks would be destructive, not additive.
-    if (picked.length > 0 && entityCategoryIds('task', taskId).length === 0) {
-      setEntityCategories('task', taskId, categoryIdsForOwner(picked, owner));
+    if (picked.length > 0 && (await entityCategoryIds('task', taskId)).length === 0) {
+      await setEntityCategories('task', taskId, await categoryIdsForOwner(picked, owner));
       result.categories = picked;
       result.enriched = true;
     }
@@ -245,7 +243,7 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
   // Motivation (0141): the SQL guard in applyMachineMotivation IS the concurrency
   // re-check — a user label written since the read above wins and changes = 0.
   if (needsMotivation && isMotivation(out.motivation)) {
-    if (applyMachineMotivation(owner, taskId, out.motivation)) {
+    if (await applyMachineMotivation(owner, taskId, out.motivation)) {
       result.motivation = out.motivation;
       result.enriched = true;
     }
@@ -268,7 +266,7 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
 // category tags would have every task match "no entity_categories rows" forever — a pool
 // of permanent candidates that can never be satisfied, crowding real work out of the
 // LIMIT. (Mirrors the `needsCategories` guard in enrichTaskFromMemory.)
-const selectSweepCandidates = sqlite.prepare(`
+const SELECT_SWEEP_CANDIDATES = `
   SELECT t.id FROM tasks t
   WHERE t.owner_id = ?
     AND t.status NOT IN ('cancelled', 'done')
@@ -292,7 +290,7 @@ const selectSweepCandidates = sqlite.prepare(`
     )
   ORDER BY t.created_at DESC
   LIMIT ?
-`);
+`;
 
 export interface SweepResult {
   enriched: number;
@@ -308,7 +306,7 @@ export async function enrichRecentTasks(owner: string, limit = 20): Promise<Swee
   if (memoryMode() === 'off') {
     return { enriched: 0, considered: 0, log: 'Memory is off; skipped' };
   }
-  const ids = (selectSweepCandidates.all(owner, limit) as { id: string }[]).map((r) => r.id);
+  const ids = (await store().prepare(SELECT_SWEEP_CANDIDATES).all<{ id: string }>(owner, limit)).map((r) => r.id);
   if (ids.length === 0) return { enriched: 0, considered: 0, log: 'No tasks needed enrichment' };
 
   let enriched = 0;

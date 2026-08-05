@@ -11,19 +11,19 @@ export function prioritiesRouter() {
   const router = new Router();
 
   // GET /api/priorities — the current owner's life-priority audit.
-  router.get('/api/priorities', (ctx) => {
-    ctx.body = { priorities: listPriorities() };
+  router.get('/api/priorities', async (ctx) => {
+    ctx.body = { priorities: await listPriorities() };
   });
 
   // POST /api/priorities — upsert a batch (keyed by category). Body: { priorities: [...] }.
-  router.post('/api/priorities', (ctx) => {
+  router.post('/api/priorities', async (ctx) => {
     const body = ctx.request.body as { priorities?: unknown };
     if (!body || !Array.isArray(body.priorities)) {
       ctx.status = 400;
       ctx.body = { error: 'Invalid payload: priorities array is required' };
       return;
     }
-    ctx.body = { priorities: upsertPriorities(body.priorities) };
+    ctx.body = { priorities: await upsertPriorities(body.priorities) };
   });
 
   return router;

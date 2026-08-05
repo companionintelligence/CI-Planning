@@ -125,12 +125,12 @@ beforeEach(() => {
 describe('Auto Schedule — direction routing on a workday', () => {
   beforeEach(() => seedWindows('workday'));
 
-  it('routes Work, Home and Community tasks each into their OWN window in one run', () => {
+  it('routes Work, Home and Community tasks each into their OWN window in one run', async () => {
     stageDirectedTask('ship the release', 'work');
     stageDirectedTask('empty the dishwasher', 'home');
     stageDirectedTask('call the neighbour', 'community');
 
-    placeFlightPlan(OWNER, { date: WORKDAY });
+    await placeFlightPlan(OWNER, { date: WORKDAY });
 
     const work = placementOf('ship the release');
     const home = placementOf('empty the dishwasher');
@@ -148,12 +148,12 @@ describe('Auto Schedule — direction routing on a workday', () => {
     ).toBe(true);
   });
 
-  it('does not spill a Home task into the Work window', () => {
+  it('does not spill a Home task into the Work window', async () => {
     // The windows are disjoint, so this is the sharpest single assertion: 07:00–08:00 or
     // 18:00–23:00, never 09:00–18:00.
     stageDirectedTask('fold laundry', 'home');
 
-    placeFlightPlan(OWNER, { date: WORKDAY });
+    await placeFlightPlan(OWNER, { date: WORKDAY });
 
     const p = placementOf('fold laundry');
     expect(p).toBeDefined();
@@ -161,10 +161,10 @@ describe('Auto Schedule — direction routing on a workday', () => {
     expect(withinAnyRange(p!, DEFAULT_WINDOWS.workday.home)).toBe(true);
   });
 
-  it('places a Community task in its one-hour window, not the wide Work one', () => {
+  it('places a Community task in its one-hour window, not the wide Work one', async () => {
     stageDirectedTask('volunteer email', 'community');
 
-    placeFlightPlan(OWNER, { date: WORKDAY });
+    await placeFlightPlan(OWNER, { date: WORKDAY });
 
     const p = placementOf('volunteer email');
     expect(p).toBeDefined();
@@ -173,14 +173,14 @@ describe('Auto Schedule — direction routing on a workday', () => {
 });
 
 describe('Auto Schedule — direction routing follows the day type', () => {
-  it('uses the WEEKEND windows on a Saturday, not the workday ones', () => {
+  it('uses the WEEKEND windows on a Saturday, not the workday ones', async () => {
     seedWindows('workday');
     seedWindows('weekend');
     // Work is 09:00–18:00 on a workday but only 10:00–12:00 at the weekend, so the day
     // type is observable from where the task lands.
     stageDirectedTask('weekend work catch-up', 'work');
 
-    placeFlightPlan(OWNER, { date: WEEKEND });
+    await placeFlightPlan(OWNER, { date: WEEKEND });
 
     const p = placementOf('weekend work catch-up');
     expect(p, 'work task was not placed on the weekend').toBeDefined();

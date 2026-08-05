@@ -57,7 +57,7 @@ await ensureLocalAuthBootstrap();
 
 // Heal any auto blocks left `is_locked` by a reflow that was interrupted before its
 // unfreeze could run (pre-fix databases). No-op once clean; reflow no longer freezes.
-const recovered = recoverStaleFreezeLocks();
+const recovered = await recoverStaleFreezeLocks();
 if (recovered > 0) logger.info(`Recovered ${recovered} stale auto-block lock(s) from an interrupted reflow`);
 
 const app = await buildApp();
@@ -90,8 +90,8 @@ void ollamaStatus().then((s) => {
 // Any job_run still marked `running` belongs to a process that no longer exists —
 // settle those before the scheduler starts so the Jobs view isn't claiming work is
 // in flight that nothing is doing.
-failInterruptedJobRuns();
-startCronJobs();
+await failInterruptedJobRuns();
+await startCronJobs();
 
 // Phase H: VAPID keys are now auto-provisioned at boot (services/vapid-config.ts), so push
 // is normally live out of the box. It only stays dormant in two deliberate cases: a

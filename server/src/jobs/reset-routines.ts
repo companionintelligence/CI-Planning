@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 
 /**
@@ -11,9 +11,9 @@ import { currentOwnerId } from '../lib/context.js';
  * client's isRoutineTask uses: pattern_types.name = 'Routine'). Habit/Ritual patterns
  * are untouched — those have their own occurrence lifecycle.
  */
-export function resetRoutineTasks(): { reset: number } {
+export async function resetRoutineTasks(): Promise<{ reset: number }> {
   const owner = currentOwnerId();
-  const res = sqlite
+  const res = await store()
     .prepare(
       `UPDATE tasks
           SET status = 'open', completed_at = NULL

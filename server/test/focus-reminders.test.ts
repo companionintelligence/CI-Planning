@@ -59,33 +59,33 @@ beforeEach(() => {
 });
 
 describe('arming focus cues (syncBlockFocusReminders)', () => {
-  it('arms T1/T3/T4 at start, end−3min, and end for an eligible planned block', () => {
+  it('arms T1/T3/T4 at start, end−3min, and end for an eligible planned block', async () => {
     const b = makeBlock({ kind: 'task' });
-    const n = syncBlockFocusReminders(SYSTEM_OWNER, b);
+    const n = await syncBlockFocusReminders(SYSTEM_OWNER, b);
     expect(n).toBe(3);
     const rows = focusRows(b);
     expect(rows.map((r) => r.source)).toEqual(['focus_start', 'focus_warn', 'focus_end']);
     expect(rows.map((r) => r.fire_at)).toEqual([START, WARN, END]);
   });
 
-  it('is idempotent — re-arming replaces, never duplicates', () => {
+  it('is idempotent — re-arming replaces, never duplicates', async () => {
     const b = makeBlock({ kind: 'task' });
-    syncBlockFocusReminders(SYSTEM_OWNER, b);
-    syncBlockFocusReminders(SYSTEM_OWNER, b);
+    await syncBlockFocusReminders(SYSTEM_OWNER, b);
+    await syncBlockFocusReminders(SYSTEM_OWNER, b);
     expect(focusRows(b)).toHaveLength(3);
   });
 
-  it('arms nothing for an ineligible kind or a non-planned block', () => {
-    expect(syncBlockFocusReminders(SYSTEM_OWNER, makeBlock({ kind: 'meeting' }))).toBe(0);
-    expect(syncBlockFocusReminders(SYSTEM_OWNER, makeBlock({ kind: 'break' }))).toBe(0);
-    expect(syncBlockFocusReminders(SYSTEM_OWNER, makeBlock({ kind: 'task', status: 'skipped' }))).toBe(0);
+  it('arms nothing for an ineligible kind or a non-planned block', async () => {
+    expect(await syncBlockFocusReminders(SYSTEM_OWNER, makeBlock({ kind: 'meeting' }))).toBe(0);
+    expect(await syncBlockFocusReminders(SYSTEM_OWNER, makeBlock({ kind: 'break' }))).toBe(0);
+    expect(await syncBlockFocusReminders(SYSTEM_OWNER, makeBlock({ kind: 'task', status: 'skipped' }))).toBe(0);
   });
 
-  it('skips cues whose instant is already past (no backfill)', () => {
+  it('skips cues whose instant is already past (no backfill)', async () => {
     // A block that started in the past but ends in the future: only future cues arm.
     const b = makeBlock({ kind: 'task', start: '2000-01-01T10:00:00.000Z', end: END });
     const rows = focusRows(b);
-    syncBlockFocusReminders(SYSTEM_OWNER, b);
+    await syncBlockFocusReminders(SYSTEM_OWNER, b);
     const armed = focusRows(b);
     expect(armed.map((r) => r.source)).toEqual(['focus_warn', 'focus_end']); // focus_start (past) skipped
   });
@@ -115,7 +115,7 @@ describe('POST/DELETE /api/blocks/:id/focus-reminders', () => {
     setFlag(true);
     const t = makeTask('scheduled');
     const b = makeBlock({ kind: 'task', task: t });
-    syncBlockFocusReminders(SYSTEM_OWNER, b);
+    await syncBlockFocusReminders(SYSTEM_OWNER, b);
     expect(focusRows(b)).toHaveLength(3);
     await api(srv.url, `/api/blocks/${b}/reschedule`, { method: 'POST' });
     expect(focusRows(b)).toHaveLength(0);
@@ -126,7 +126,7 @@ describe('firing focus cues + vibrate payload', () => {
   it('delivers each cue with its title and haptic pattern', async () => {
     addSub();
     const b = makeBlock({ kind: 'task' });
-    syncBlockFocusReminders(SYSTEM_OWNER, b);
+    await syncBlockFocusReminders(SYSTEM_OWNER, b);
     const fired = await fireDueReminders(AFTER);
     expect(fired).toBe(3);
 
@@ -140,7 +140,7 @@ describe('firing focus cues + vibrate payload', () => {
   it('a skipped block\'s cues never fire', async () => {
     addSub();
     const b = makeBlock({ kind: 'task' });
-    syncBlockFocusReminders(SYSTEM_OWNER, b);
+    await syncBlockFocusReminders(SYSTEM_OWNER, b);
     sqlite.prepare(`UPDATE time_blocks SET status = 'skipped' WHERE id = ?`).run(b);
     expect(await fireDueReminders(AFTER)).toBe(0);
   });
@@ -149,7 +149,7 @@ describe('firing focus cues + vibrate payload', () => {
     addSub();
     const t = makeTask('scheduled');
     const b = makeBlock({ kind: 'task', task: t });
-    syncBlockFocusReminders(SYSTEM_OWNER, b);
+    await syncBlockFocusReminders(SYSTEM_OWNER, b);
     sqlite.prepare(`UPDATE tasks SET status = 'done' WHERE id = ?`).run(t);
     expect(await fireDueReminders(AFTER)).toBe(0); // block still 'planned', but its task is done
   });

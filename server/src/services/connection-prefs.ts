@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { newId } from '../lib/ids.js';
 import { writeAudit } from '../lib/audit.js';
 
@@ -40,25 +40,25 @@ function rowToPref(r: PrefCols): ConnectionPref {
  * disconnected accounts are included by design — reconnecting restores the look —
  * so callers key off the connection list, not this map, when rendering a picker.
  */
-export function getConnectionPrefs(ownerId: string): Record<string, ConnectionPref> {
-  const rows = sqlite
+export async function getConnectionPrefs(ownerId: string): Promise<Record<string, ConnectionPref>> {
+  const rows = await store()
     .prepare(`SELECT provider, account, color_token, texture FROM connection_prefs WHERE owner_id = ?`)
-    .all(ownerId) as (PrefCols & { provider: string; account: string })[];
+    .all<PrefCols & { provider: string; account: string }>(ownerId);
   const out: Record<string, ConnectionPref> = {};
   for (const r of rows) out[connectionKey(r.provider, r.account)] = rowToPref(r);
   return out;
 }
 
 /** Upsert one connection pref, merging `patch` over the existing (or default) row. */
-export function setConnectionPref(
+export async function setConnectionPref(
   ownerId: string,
   provider: string,
   account: string,
   patch: Partial<ConnectionPref>,
-): ConnectionPref {
-  const existing = sqlite
+): Promise<ConnectionPref> {
+  const existing = await store()
     .prepare(`SELECT color_token, texture FROM connection_prefs WHERE owner_id = ? AND provider = ? AND account = ?`)
-    .get(ownerId, provider, account) as PrefCols | undefined;
+    .get<PrefCols>(ownerId, provider, account);
 
   const current = existing ? rowToPref(existing) : { ...DEFAULT_PREF };
   const merged: ConnectionPref = {
@@ -66,7 +66,7 @@ export function setConnectionPref(
     texture: patch.texture !== undefined ? patch.texture : current.texture,
   };
 
-  sqlite
+  await store()
     .prepare(
       `INSERT INTO connection_prefs (id, owner_id, provider, account, color_token, texture)
        VALUES (?, ?, ?, ?, ?, ?)
@@ -87,15 +87,15 @@ export type SetConnectionPrefResult =
  * keeps the table from becoming an unbounded owner-writable key/value store, and it
  * scopes writes so one owner can never author a pref keyed to another's account.
  */
-export function setConnectionPrefChecked(
+export async function setConnectionPrefChecked(
   ownerId: string,
   provider: string,
   account: string,
   patch: { color_token?: unknown; texture?: unknown },
-): SetConnectionPrefResult {
-  const known = sqlite
+): Promise<SetConnectionPrefResult> {
+  const known = await store()
     .prepare(`SELECT 1 AS ok FROM connection_tokens WHERE owner_id = ? AND provider = ? AND account = ?`)
-    .get(ownerId, provider, account) as { ok: number } | undefined;
+    .get<{ ok: number }>(ownerId, provider, account);
   if (!known) return { ok: false, error: 'connection_not_found' };
 
   if (patch.color_token !== undefined && (typeof patch.color_token !== 'string' || !patch.color_token)) {
@@ -105,7 +105,7 @@ export function setConnectionPrefChecked(
     return { ok: false, error: 'texture_invalid' };
   }
 
-  const pref = setConnectionPref(ownerId, provider, account, {
+  const pref = await setConnectionPref(ownerId, provider, account, {
     color_token: patch.color_token as string | undefined,
     texture: patch.texture as ConnectionTexture | undefined,
   });

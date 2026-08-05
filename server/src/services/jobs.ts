@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
-import { db, sqlite } from '../db/index.js';
+import { db } from '../db/index.js';
+import { store } from '../db/store.js';
 import { scheduledJobs } from '../db/schema.js';
 import { currentOwnerId } from '../lib/context.js';
 import { writeAudit } from '../lib/audit.js';
@@ -35,8 +36,8 @@ export interface ScheduledJobWithLastRun extends ScheduledJobRow {
 }
 
 /** All jobs + their latest run (verbatim from the old GET /api/jobs query). System-global. */
-export function listJobs(): ScheduledJobWithLastRun[] {
-  return sqlite
+export async function listJobs(): Promise<ScheduledJobWithLastRun[]> {
+  return store()
     .prepare(
       `SELECT j.*, r.started_at as last_started, r.status as last_status, r.items_created, r.items_updated, r.log
          FROM scheduled_jobs j
@@ -45,14 +46,14 @@ export function listJobs(): ScheduledJobWithLastRun[] {
          )
          ORDER BY j.name`,
     )
-    .all() as ScheduledJobWithLastRun[];
+    .all<ScheduledJobWithLastRun>();
 }
 
 /** One job by id, or undefined (system-global — no owner predicate). */
-export function getJob(id: string): ScheduledJobRow | undefined {
-  return sqlite
+export async function getJob(id: string): Promise<ScheduledJobRow | undefined> {
+  return store()
     .prepare(`SELECT * FROM scheduled_jobs WHERE id = ?`)
-    .get(id) as ScheduledJobRow | undefined;
+    .get<ScheduledJobRow>(id);
 }
 
 export interface JobRunRow {
@@ -69,10 +70,10 @@ export interface JobRunRow {
 /** The latest run for a job (mirrors GET /api/jobs's join), or undefined if never run.
  *  Ordered started_at DESC (REST parity) with an id DESC tie-break so runs sharing a
  *  second-granularity timestamp still resolve deterministically to the newest (UUIDv7 id). */
-export function getLatestRun(jobId: string): JobRunRow | undefined {
-  return sqlite
+export async function getLatestRun(jobId: string): Promise<JobRunRow | undefined> {
+  return store()
     .prepare(`SELECT * FROM job_runs WHERE job_id = ? ORDER BY started_at DESC, id DESC LIMIT 1`)
-    .get(jobId) as JobRunRow | undefined;
+    .get<JobRunRow>(jobId);
 }
 
 /**
@@ -83,28 +84,28 @@ export function getLatestRun(jobId: string): JobRunRow | undefined {
  * last edge; pass `limit + 1` to detect a next page. job_runs accumulate unbounded, hence a
  * connection rather than a list.
  */
-export function listJobRuns(jobId: string, opts: { after?: JobRunCursor; limit: number }): JobRunRow[] {
+export async function listJobRuns(jobId: string, opts: { after?: JobRunCursor; limit: number }): Promise<JobRunRow[]> {
   if (opts.after) {
     // Strictly "older than" the cursor under (started_at DESC, id DESC): an earlier
     // started_at, or the same started_at with a smaller id.
-    return sqlite
+    return store()
       .prepare(
         `SELECT * FROM job_runs
            WHERE job_id = ?
              AND (started_at < ? OR (started_at = ? AND id < ?))
            ORDER BY started_at DESC, id DESC LIMIT ?`,
       )
-      .all(jobId, opts.after.startedAt, opts.after.startedAt, opts.after.id, opts.limit) as JobRunRow[];
+      .all<JobRunRow>(jobId, opts.after.startedAt, opts.after.startedAt, opts.after.id, opts.limit);
   }
-  return sqlite
+  return store()
     .prepare(`SELECT * FROM job_runs WHERE job_id = ? ORDER BY started_at DESC, id DESC LIMIT ?`)
-    .all(jobId, opts.limit) as JobRunRow[];
+    .all<JobRunRow>(jobId, opts.limit);
 }
 
 export interface JobRunCursor { startedAt: string; id: string }
 
-export function countJobRuns(jobId: string): number {
-  return (sqlite.prepare(`SELECT COUNT(*) AS n FROM job_runs WHERE job_id = ?`).get(jobId) as { n: number }).n;
+export async function countJobRuns(jobId: string): Promise<number> {
+  return ((await store().prepare(`SELECT COUNT(*) AS n FROM job_runs WHERE job_id = ?`).get<{ n: number }>(jobId)))!.n;
 }
 
 export type TriggerJobResult =

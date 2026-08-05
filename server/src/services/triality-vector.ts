@@ -1,5 +1,4 @@
-import type { Statement } from 'better-sqlite3';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { MOODS, type Mood } from './task-close.js';
 import { resolveDayType } from './day-types.js';
 import { localDateInTZ, serverTimezone, utcDayBounds, zonedWallTimeToUTC } from '../lib/tz.js';
@@ -18,7 +17,9 @@ import { localDateInTZ, serverTimezone, utcDayBounds, zonedWallTimeToUTC } from 
  * blocks today), which keeps a dim active with an honest 0. T3 consumes the active set
  * for F normalization.
  *
- * Reads are raw sqlite (task-metrics.ts style): the vector sits on the deterministic
+ * Reads go through the store facade. SQL lives at module scope, `prepare` is called
+ * inside the functions (§5.5 — a module-level store().prepare throws at import time for
+ * any module loaded before boot installs the backend). The vector sits on the deterministic
  * scoring hot path, and one synchronous pass over local rows keeps the whole builder
  * sync — no drizzle/getPrefs await for a handful of scalar columns.
  *
@@ -130,46 +131,46 @@ export interface DimEntry {
   active?: (ctx: DimContext) => boolean;
 }
 
-// ── owner-scoped reads (module-scope prepares, task-metrics.ts style) ────────────
+// ── owner-scoped reads (module-scope SQL; prepare happens in buildDimContext) ────
 
-const selectPrefs = sqlite.prepare(`
+const SQL_PREFS = `
   SELECT workday_start, workday_end, timezone, memory_pull_enabled
     FROM scheduling_prefs WHERE owner_id = ?
-`);
+`;
 
 // Latest reflected mood by reaction_at — NOT completed_at: reacting later is normal, and
 // the reaction is the reading's timestamp (0137). Window bounds are passed in, not now().
-const selectRecentMood = sqlite.prepare(`
+const SQL_RECENT_MOOD = `
   SELECT completion_mood AS mood
     FROM tasks
    WHERE owner_id = ? AND completion_mood IS NOT NULL
      AND reaction_at IS NOT NULL AND reaction_at >= ? AND reaction_at <= ?
    ORDER BY reaction_at DESC
    LIMIT 1
-`);
+`;
 
 // "Fixed" = locked or a meeting; soft/auto blocks reflow around the owner and don't
 // bound the gap. Today-scoped in the owner's timezone by the caller-supplied bounds.
-const selectNextFixedBlock = sqlite.prepare(`
+const SQL_NEXT_FIXED_BLOCK = `
   SELECT start_at FROM time_blocks
    WHERE owner_id = ? AND (is_locked = 1 OR block_kind = 'meeting')
      AND start_at > ? AND start_at < ?
    ORDER BY start_at ASC
    LIMIT 1
-`);
+`;
 
-const selectTimerRunning = sqlite.prepare(`
+const SQL_TIMER_RUNNING = `
   SELECT 1 AS running FROM time_entries WHERE owner_id = ? AND ended_at IS NULL LIMIT 1
-`);
+`;
 
-const selectLastCompletion = sqlite.prepare(`
+const SQL_LAST_COMPLETION = `
   SELECT MAX(completed_at) AS last FROM tasks
    WHERE owner_id = ? AND completed_at IS NOT NULL AND completed_at <= ?
-`);
+`;
 
 // Any tracked signal counts against idleness — a timer started/finished or a task
 // completed. ISO text compares lexicographically = chronologically (one format app-wide).
-const selectLastActivity = sqlite.prepare(`
+const SQL_LAST_ACTIVITY = `
   SELECT MAX(t) AS last FROM (
     SELECT MAX(completed_at) AS t FROM tasks
       WHERE owner_id = ? AND completed_at IS NOT NULL AND completed_at <= ?
@@ -179,24 +180,24 @@ const selectLastActivity = sqlite.prepare(`
     SELECT MAX(ended_at) FROM time_entries
       WHERE owner_id = ? AND ended_at IS NOT NULL AND ended_at <= ?
   )
-`);
+`;
 
-const selectPriorities = sqlite.prepare(`
+const SQL_PRIORITIES = `
   SELECT category, satisfaction, importance, target_hours_per_week AS target
     FROM life_priorities WHERE owner_id = ?
-`);
+`;
 
 // Finished entries only (a running entry has no duration yet), attributed through the
 // TASK's categories. g.owner_id is re-checked even though the entry scope implies it —
 // owner-scoped SQL always filters owner_id, no exceptions.
-const selectCategoryEntries = sqlite.prepare(`
+const SQL_CATEGORY_ENTRIES = `
   SELECT g.name AS cat, e.started_at, e.ended_at
     FROM time_entries e
     JOIN entity_categories ec ON ec.entity_kind = 'task' AND ec.entity_id = e.task_id
     JOIN tags g ON g.id = ec.category_tag_id AND g.kind = 'category' AND g.is_base = 1 AND g.owner_id = ?
    WHERE e.owner_id = ? AND e.ended_at IS NOT NULL
      AND e.started_at >= ? AND e.started_at <= ?
-`);
+`;
 
 // ── tasks.motivation guard (T2b lands its migration separately on this branch) ───
 
@@ -204,16 +205,24 @@ const selectCategoryEntries = sqlite.prepare(`
 // is never re-checked; while absent the (cheap) PRAGMA runs per call, so the dim starts
 // working the moment the sibling migration applies — no process restart, no stale cache.
 let motivationColumnSeen = false;
-function motivationColumnExists(): boolean {
+async function motivationColumnExists(): Promise<boolean> {
   if (!motivationColumnSeen) {
-    motivationColumnSeen = (sqlite.prepare(`PRAGMA table_info(tasks)`).all() as { name: string }[])
+    // DIALECT: PRAGMA table_info is SQLite-only (see the post-wave-8 list).
+    motivationColumnSeen = (await store().prepare(`PRAGMA table_info(tasks)`).all<{ name: string }>())
       .some((c) => c.name === 'motivation');
   }
   return motivationColumnSeen;
 }
 
-// Prepared lazily — preparing at module scope would throw while the column is absent.
-let selectMotivationEntries: Statement<unknown[]> | null = null;
+// SQL only — the statement is prepared at the use site, which also removes the old
+// "prepare lazily because the column may not exist yet" dance.
+const SQL_MOTIVATION_ENTRIES = `
+        SELECT e.started_at, e.ended_at, t.motivation AS motivation
+          FROM time_entries e
+          JOIN tasks t ON t.id = e.task_id AND t.owner_id = e.owner_id
+         WHERE e.owner_id = ? AND e.ended_at IS NOT NULL
+           AND e.started_at >= ? AND e.started_at <= ?
+      `;
 
 const MOTIVATIONS = new Set(['me', 'us', 'them']);
 
@@ -229,13 +238,13 @@ function clamp(x: number, lo: number, hi: number): number {
 
 // ── context assembly (one pass, all sync) ────────────────────────────────────────
 
-function buildDimContext(ownerId: string, now: Date): DimContext {
+async function buildDimContext(ownerId: string, now: Date): Promise<DimContext> {
   const nowMs = now.getTime();
   const nowIso = now.toISOString();
 
-  const prefs = selectPrefs.get(ownerId) as
-    | { workday_start: string | null; workday_end: string | null; timezone: string | null; memory_pull_enabled: number | null }
-    | undefined;
+  const prefs = await store().prepare(SQL_PREFS).get<
+    { workday_start: string | null; workday_end: string | null; timezone: string | null; memory_pull_enabled: number | null }
+  >(ownerId);
   const tz = prefs?.timezone || serverTimezone();
   const localDate = localDateInTZ(nowIso, tz);
 
@@ -249,36 +258,27 @@ function buildDimContext(ownerId: string, now: Date): DimContext {
     };
   }
 
-  const moodRow = selectRecentMood.get(ownerId, new Date(nowMs - MOOD_WINDOW_MS).toISOString(), nowIso) as
-    | { mood: string }
-    | undefined;
+  const moodRow = await store().prepare(SQL_RECENT_MOOD).get<{ mood: string }>(
+    ownerId, new Date(nowMs - MOOD_WINDOW_MS).toISOString(), nowIso,
+  );
   const recentMood = moodRow && (MOODS as readonly string[]).includes(moodRow.mood) ? (moodRow.mood as Mood) : null;
 
   const dayEnd = utcDayBounds(localDate, tz).end;
-  const nextFixed = selectNextFixedBlock.get(ownerId, nowIso, dayEnd) as { start_at: string } | undefined;
+  const nextFixed = await store().prepare(SQL_NEXT_FIXED_BLOCK).get<{ start_at: string }>(ownerId, nowIso, dayEnd);
   const freeGapMinutes = nextFixed ? (Date.parse(nextFixed.start_at) - nowMs) / 60_000 : null;
 
-  const timerRunning = !!selectTimerRunning.get(ownerId);
-  const lastCompletion = (selectLastCompletion.get(ownerId, nowIso) as { last: string | null }).last;
-  const lastActivity = (selectLastActivity.get(ownerId, nowIso, ownerId, nowIso, ownerId, nowIso) as { last: string | null }).last;
+  const timerRunning = !!(await store().prepare(SQL_TIMER_RUNNING).get(ownerId));
+  const lastCompletion = (await store().prepare(SQL_LAST_COMPLETION).get<{ last: string | null }>(ownerId, nowIso))!.last;
+  const lastActivity = (await store().prepare(SQL_LAST_ACTIVITY).get<{ last: string | null }>(ownerId, nowIso, ownerId, nowIso, ownerId, nowIso))!.last;
 
   // ── motivation drift (§3b) — only once T2b's column exists ──
   let motivation: DimContext['motivation'] = null;
-  if (motivationColumnExists()) {
-    if (!selectMotivationEntries) {
-      selectMotivationEntries = sqlite.prepare(`
-        SELECT e.started_at, e.ended_at, t.motivation AS motivation
-          FROM time_entries e
-          JOIN tasks t ON t.id = e.task_id AND t.owner_id = e.owner_id
-         WHERE e.owner_id = ? AND e.ended_at IS NOT NULL
-           AND e.started_at >= ? AND e.started_at <= ?
-      `);
-    }
-    const rows = selectMotivationEntries.all(
+  if (await motivationColumnExists()) {
+    const rows = await store().prepare(SQL_MOTIVATION_ENTRIES).all<{ started_at: string; ended_at: string; motivation: string | null }>(
       ownerId,
       new Date(nowMs - BASELINE_WINDOW_MS).toISOString(),
       nowIso,
-    ) as { started_at: string; ended_at: string; motivation: string | null }[];
+    );
     const recentCutMs = nowMs - RECENT_WINDOW_MS;
     let meRecent = 0, labeledRecent = 0, meBaseline = 0, labeledBaseline = 0;
     for (const r of rows) {
@@ -302,12 +302,13 @@ function buildDimContext(ownerId: string, now: Date): DimContext {
   }
 
   // ── Balance deficits (§6): stated from the self-audit, measured from timed minutes ──
-  const prioRows = selectPriorities.all(ownerId) as
-    { category: string; satisfaction: number; importance: number; target: number }[];
+  const prioRows = await store().prepare(SQL_PRIORITIES).all<
+    { category: string; satisfaction: number; importance: number; target: number }
+  >(ownerId);
   const prioByCat = new Map(prioRows.filter((r) => (CAT_KEYS as readonly string[]).includes(r.category)).map((r) => [r.category as CatKey, r]));
   const totalTarget = [...prioByCat.values()].reduce((s, r) => s + Math.max(0, r.target), 0);
 
-  const catRows = selectCategoryEntries.all(
+  const catRows = await store().prepare(SQL_CATEGORY_ENTRIES).all(
     ownerId,
     ownerId,
     new Date(nowMs - RECENT_WINDOW_MS).toISOString(),
@@ -340,7 +341,7 @@ function buildDimContext(ownerId: string, now: Date): DimContext {
     workHours,
     recentMood,
     freeGapMinutes,
-    dayTypeKey: resolveDayType(ownerId, localDate),
+    dayTypeKey: await resolveDayType(ownerId, localDate),
     timerRunning,
     lastCompletionMs: lastCompletion ? Date.parse(lastCompletion) : null,
     lastActivityMs: lastActivity ? Date.parse(lastActivity) : null,
@@ -458,8 +459,8 @@ export const DIM_REGISTRY: readonly DimEntry[] = [
  * Build the owner's situation vector at `now` (the only time input — callers inject it).
  * Deterministic: same DB state + same `now` ⇒ the same vector, bit for bit.
  */
-export function buildSituationVector(ownerId: string, now: Date): SituationVector {
-  const ctx = buildDimContext(ownerId, now);
+export async function buildSituationVector(ownerId: string, now: Date): Promise<SituationVector> {
+  const ctx = await buildDimContext(ownerId, now);
   const dims = {} as Record<DimName, Ternary>;
   const active: DimName[] = [];
   for (const dim of DIM_REGISTRY) {

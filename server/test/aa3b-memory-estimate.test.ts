@@ -36,31 +36,31 @@ function doneTask(actualMin: number, memory: boolean): void {
 describe('AA3b memoryFallbackEstimate ladder', () => {
   beforeEach(() => { resetDb(); });
 
-  it('no history ⇒ the 30m default', () => {
-    expect(memoryFallbackEstimate(OWNER)).toBe(30);
+  it('no history ⇒ the 30m default', async () => {
+    expect(await memoryFallbackEstimate(OWNER)).toBe(30);
   });
 
-  it('below the sample floor (memory AND global) ⇒ 30m', () => {
+  it('below the sample floor (memory AND global) ⇒ 30m', async () => {
     for (let i = 0; i < 4; i++) doneTask(90, false); // 4 < CONFIDENCE_FLOOR (5)
-    expect(memoryFallbackEstimate(OWNER)).toBe(30);
+    expect(await memoryFallbackEstimate(OWNER)).toBe(30);
   });
 
-  it('≥ floor global, < floor memory ⇒ the global median', () => {
+  it('≥ floor global, < floor memory ⇒ the global median', async () => {
     [50, 60, 70, 80, 200].forEach((m) => doneTask(m, false)); // median 70
     doneTask(15, true); // one memory sample — below floor, ignored
-    expect(memoryFallbackEstimate(OWNER)).toBe(70);
+    expect(await memoryFallbackEstimate(OWNER)).toBe(70);
   });
 
-  it('≥ floor memory ⇒ the memory-sourced median, even when the global median differs', () => {
+  it('≥ floor memory ⇒ the memory-sourced median, even when the global median differs', async () => {
     [45, 50, 55, 50, 50].forEach((m) => doneTask(m, true));  // memory median 50
     [120, 120, 120, 120, 120].forEach((m) => doneTask(m, false)); // global skewed high
-    expect(memoryFallbackEstimate(OWNER)).toBe(50);
+    expect(await memoryFallbackEstimate(OWNER)).toBe(50);
   });
 
-  it('ignores un-timed done tasks (actual_minutes = 0)', () => {
+  it('ignores un-timed done tasks (actual_minutes = 0)', async () => {
     [50, 60, 70, 80, 90].forEach((m) => doneTask(m, false)); // median 70
     for (let i = 0; i < 10; i++) doneTask(0, false); // 0-actual → excluded, don't drag the median
-    expect(memoryFallbackEstimate(OWNER)).toBe(70);
+    expect(await memoryFallbackEstimate(OWNER)).toBe(70);
   });
 });
 

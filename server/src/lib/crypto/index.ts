@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
-import { sqlite } from '../../db/index.js';
+import { store } from '../../db/store.js';
 import { config } from '../config.js';
 
 export interface SealedToken {
@@ -58,7 +58,7 @@ function decodeKek(b64: string | undefined, label: string): Buffer {
  *    need only be supplied once.
  * Throws if the resolved env var is absent or its decoded length is wrong.
  */
-export function loadKek(version?: number): Buffer {
+export async function loadKek(version?: number): Promise<Buffer> {
   if (version === undefined) {
     return decodeKek(process.env.CP_KEK_B64, 'CP_KEK_B64');
   }
@@ -85,12 +85,12 @@ export function loadKek(version?: number): Buffer {
  *
  * @param newKeyB64 optional base64 new key; defaults to CP_KEK_B64_V{newVersion}.
  */
-export function rotateKek(newVersion: number, newKeyB64?: string): { rotated: number } {
+export async function rotateKek(newVersion: number, newKeyB64?: string): Promise<{ rotated: number }> {
   const b64 = newKeyB64 ?? process.env[`CP_KEK_B64_V${newVersion}`];
   // Validate the new key length up front — refuse with no writes on a bad key.
   const newKey = decodeKek(b64, `CP_KEK_B64_V${newVersion}`);
 
-  const maxRow = sqlite
+  const maxRow = await store()
     .prepare('SELECT MAX(key_version) AS maxV FROM connection_tokens')
     .get() as { maxV: number | null };
   const maxVersion = maxRow.maxV ?? 0;
@@ -100,7 +100,7 @@ export function rotateKek(newVersion: number, newKeyB64?: string): { rotated: nu
     );
   }
 
-  const rows = sqlite
+  const rows = await store()
     .prepare(
       'SELECT id, iv, auth_tag, ciphertext, key_version FROM connection_tokens WHERE key_version <> ?',
     )
@@ -112,26 +112,29 @@ export function rotateKek(newVersion: number, newKeyB64?: string): { rotated: nu
       key_version: number;
     }>;
 
-  const update = sqlite.prepare(
+  const update = store().prepare(
     `UPDATE connection_tokens
      SET iv = ?, auth_tag = ?, ciphertext = ?, key_version = ?,
          updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
      WHERE id = ?`,
   );
 
-  const tx = sqlite.transaction(() => {
-    let rotated = 0;
+  // One transaction over the whole re-seal, as before: a partial rotation would leave
+  // rows under two KEK versions with no record of which. The facade RUNS the callback,
+  // so the old `tx()` trailing call is gone.
+  const rotated = await store().transaction(async () => {
+    let n = 0;
     for (const row of rows) {
       const plain = open(
         { iv: row.iv, authTag: row.auth_tag, ciphertext: row.ciphertext },
-        loadKek(row.key_version),
+        await loadKek(row.key_version),
       );
       const sealed = seal(plain, newKey);
-      update.run(sealed.iv, sealed.authTag, sealed.ciphertext, newVersion, row.id);
-      rotated++;
+      await update.run(sealed.iv, sealed.authTag, sealed.ciphertext, newVersion, row.id);
+      n++;
     }
-    return rotated;
+    return n;
   });
 
-  return { rotated: tx() };
+  return { rotated };
 }

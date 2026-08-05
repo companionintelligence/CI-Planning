@@ -23,14 +23,14 @@ export function flightPlanRouter() {
   // state — so a refresh hid the button while the run stayed fully undoable server-side.
   router.get('/api/flight-plan', async (ctx) => {
     const owner = currentOwnerId();
-    ctx.body = { flight_plan: listFlightPlan(owner), can_undo: canUndoLastAuto(owner) };
+    ctx.body = { flight_plan: await listFlightPlan(owner), can_undo: await canUndoLastAuto(owner) };
   });
 
   // Add a task, or a whole pattern's member tasks (tagged with their source pattern).
   router.post('/api/flight-plan', async (ctx) => {
     const owner = currentOwnerId();
     const body = (ctx.request.body ?? {}) as { task_id?: number; pattern_id?: number };
-    const res = stage(owner, { taskId: body.task_id, patternId: body.pattern_id });
+    const res = await stage(owner, { taskId: body.task_id, patternId: body.pattern_id });
     if (!res.ok) {
       if (res.error === 'pattern_not_found') { ctx.status = 404; ctx.body = { error: 'pattern not found' }; return; }
       if (res.error === 'task_not_found') { ctx.status = 404; ctx.body = { error: 'task not found' }; return; }
@@ -39,30 +39,30 @@ export function flightPlanRouter() {
     }
     broadcast(owner, 'flight_plan:updated', { added: res.added });
     ctx.status = 201;
-    ctx.body = { flight_plan: listFlightPlan(owner), added: res.added };
+    ctx.body = { flight_plan: await listFlightPlan(owner), added: res.added };
   });
 
   router.patch('/api/flight-plan/:taskId', async (ctx) => {
     const owner = currentOwnerId();
     const taskId = ctx.params.taskId;
     const body = (ctx.request.body ?? {}) as { selected?: boolean; position?: number };
-    const res = updateEntry(owner, taskId, { selected: body.selected, position: body.position });
+    const res = await updateEntry(owner, taskId, { selected: body.selected, position: body.position });
     if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not staged' }; return; }
     broadcast(owner, 'flight_plan:updated', { task_id: taskId });
-    ctx.body = { flight_plan: listFlightPlan(owner) };
+    ctx.body = { flight_plan: await listFlightPlan(owner) };
   });
 
   router.delete('/api/flight-plan/:taskId', async (ctx) => {
     const owner = currentOwnerId();
-    unstageEntry(owner, ctx.params.taskId);
+    await unstageEntry(owner, ctx.params.taskId);
     broadcast(owner, 'flight_plan:updated', { removed: ctx.params.taskId });
-    ctx.body = { flight_plan: listFlightPlan(owner) };
+    ctx.body = { flight_plan: await listFlightPlan(owner) };
   });
 
   // Clear the whole flight-plan (the Reset button).
   router.post('/api/flight-plan/reset', async (ctx) => {
     const owner = currentOwnerId();
-    const { cleared } = resetFlightPlan(owner);
+    const { cleared } = await resetFlightPlan(owner);
     broadcast(owner, 'flight_plan:reset', { cleared });
     ctx.body = { ok: true, cleared };
   });
@@ -74,10 +74,10 @@ export function flightPlanRouter() {
   router.post('/api/auto/fill', async (ctx) => {
     const owner = currentOwnerId();
     const body = (ctx.request.body ?? {}) as { date?: string };
-    const added = fillFlightPlanCandidates(owner, { date: body.date });
+    const added = await fillFlightPlanCandidates(owner, { date: body.date });
     broadcast(owner, 'flight_plan:filled', { added });
     writeAudit({ ownerId: owner, actor: 'owner', action: 'fill', entity: 'flight-plan:fill' });
-    ctx.body = { result: { step: 'fill', candidatesAdded: added }, flight_plan: listFlightPlan(owner) };
+    ctx.body = { result: { step: 'fill', candidatesAdded: added }, flight_plan: await listFlightPlan(owner) };
   });
 
   // Auto Schedule: place the selected staged items (tag-matched Plans → direction windows
@@ -103,24 +103,24 @@ export function flightPlanRouter() {
       broadcast(owner, 'auto:placed', { blocksCreated: result.blocksCreated, placed: result.placed, unplaced: result.unplaced, days: result.days });
       broadcast(owner, 'flight_plan:updated', { removed: result.placed });
     }
-    ctx.body = { result, flight_plan: listFlightPlan(owner) };
+    ctx.body = { result, flight_plan: await listFlightPlan(owner) };
   });
 
   // Explicit priority top-up (tap 3, D5): fill non-matching workday capacity with the
   // highest-priority still-unplaced tasks. Never silent — always an explicit tap.
   router.post('/api/auto/priority', async (ctx) => {
     const body = (ctx.request.body ?? {}) as { date?: string };
-    const result = fillByPriority(currentOwnerId(), { date: body.date });
+    const result = await fillByPriority(currentOwnerId(), { date: body.date });
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'run', entity: 'flight-plan:priority' });
-    ctx.body = { result, flight_plan: listFlightPlan(currentOwnerId()) };
+    ctx.body = { result, flight_plan: await listFlightPlan(currentOwnerId()) };
   });
 
   // Undo the last placement run (req 2, D2): delete that run's blocks, re-stage its
   // tasks. One click, no confirmation; a second undo is a no-op.
   router.post('/api/auto/undo', async (ctx) => {
-    const result = undoLastAuto(currentOwnerId());
+    const result = await undoLastAuto(currentOwnerId());
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'undo', entity: 'flight-plan:undo' });
-    ctx.body = { result, flight_plan: listFlightPlan(currentOwnerId()) };
+    ctx.body = { result, flight_plan: await listFlightPlan(currentOwnerId()) };
   });
 
   return router;

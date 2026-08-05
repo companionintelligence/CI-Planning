@@ -46,7 +46,7 @@ describe('suggestibleVocabulary', () => {
     seedTag('work', 'direction');
     seedTag('health', 'category');
     seedTag('email');
-    const v = suggestibleVocabulary(OWNER);
+    const v = await suggestibleVocabulary(OWNER);
     expect(v.directions).toContain('work');
     expect(v.categories).toContain('health');
     expect(v.others).toContain('email');
@@ -63,14 +63,14 @@ describe('suggestibleVocabulary', () => {
     seedTag('email');
     seedTag('errands', 'intention', 1);
 
-    const v = suggestibleVocabulary(OWNER);
+    const v = await suggestibleVocabulary(OWNER);
     expect(v.directions).toEqual(['work']);
     expect(v.categories).toEqual(['health']);
     expect(v.others).toEqual(['email']);
   });
 
   it('returns empty lists for an owner with no tags', async () => {
-    expect(suggestibleVocabulary(OWNER)).toEqual({ directions: [], categories: [], others: [] });
+    expect(await suggestibleVocabulary(OWNER)).toEqual({ directions: [], categories: [], others: [] });
   });
 });
 

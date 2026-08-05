@@ -137,14 +137,14 @@ describe('applyMonotonic', () => {
 describe('applyOp', () => {
   beforeEach(() => resetDb());
 
-  it('applies a title update and advances version', () => {
+  it('applies a title update and advances version', async () => {
     insertTask('t-1');
     const op: Op = {
       opId: 'op-a', entity: 'task', entityId: 't-1',
       fields: { title: 'Updated title' }, baseVersion: 1,
       clientTs: '2026-06-01T10:00:00.000Z',
     };
-    const result = applyOp(sqlite, op, SYSTEM_OWNER);
+    const result = await applyOp(op, SYSTEM_OWNER);
     expect(result.applied).toEqual({ title: 'Updated title' });
     expect(result.dropped).toEqual([]);
     expect(result.version).toBe(2);
@@ -154,18 +154,18 @@ describe('applyOp', () => {
     expect(row['version']).toBe(2);
   });
 
-  it('drops fields whose clientTs is older than stored field_ts (LWW)', () => {
+  it('drops fields whose clientTs is older than stored field_ts (LWW)', async () => {
     insertTask('t-2');
 
     // First op wins the field at T1
-    applyOp(sqlite, {
+    await applyOp({
       opId: 'op-b1', entity: 'task', entityId: 't-2',
       fields: { title: 'First write' }, baseVersion: 1,
       clientTs: '2026-06-01T12:00:00.000Z',
     }, SYSTEM_OWNER);
 
     // Second op arrives with an OLDER timestamp for the same field — should be dropped
-    const result2 = applyOp(sqlite, {
+    const result2 = await applyOp({
       opId: 'op-b2', entity: 'task', entityId: 't-2',
       fields: { title: 'Late write' }, baseVersion: 1,
       clientTs: '2026-06-01T11:00:00.000Z',
@@ -176,17 +176,17 @@ describe('applyOp', () => {
     expect(getTask('t-2')['title']).toBe('First write');
   });
 
-  it('same-ts: op that arrives later wins (>= comparison)', () => {
+  it('same-ts: op that arrives later wins (>= comparison)', async () => {
     insertTask('t-3');
 
-    applyOp(sqlite, {
+    await applyOp({
       opId: 'op-c1', entity: 'task', entityId: 't-3',
       fields: { title: 'Alpha' }, baseVersion: 1,
       clientTs: '2026-06-01T12:00:00.000Z',
     }, SYSTEM_OWNER);
 
     // Same ts — should also win (>=)
-    const result2 = applyOp(sqlite, {
+    const result2 = await applyOp({
       opId: 'op-c2', entity: 'task', entityId: 't-3',
       fields: { title: 'Beta' }, baseVersion: 1,
       clientTs: '2026-06-01T12:00:00.000Z',
@@ -196,18 +196,18 @@ describe('applyOp', () => {
     expect(result2.dropped).toEqual([]);
   });
 
-  it('enforces monotonic-completion: cannot un-complete via sync op', () => {
+  it('enforces monotonic-completion: cannot un-complete via sync op', async () => {
     insertTask('t-4');
 
     // Complete the task
-    applyOp(sqlite, {
+    await applyOp({
       opId: 'op-d1', entity: 'task', entityId: 't-4',
       fields: { status: 'done', completed_at: '2026-06-01T09:00:00.000Z' },
       baseVersion: 1, clientTs: '2026-06-01T10:00:00.000Z',
     }, SYSTEM_OWNER);
 
     // Concurrent op tries to revert — status must stay 'done'
-    const result = applyOp(sqlite, {
+    const result = await applyOp({
       opId: 'op-d2', entity: 'task', entityId: 't-4',
       fields: { status: 'open' }, baseVersion: 1,
       clientTs: '2026-06-01T11:00:00.000Z',
@@ -218,18 +218,16 @@ describe('applyOp', () => {
     expect(getTask('t-4')['status']).toBe('done');
   });
 
-  it('throws 404 for unknown entity', () => {
-    expect(() =>
-      applyOp(sqlite, {
+  it('throws 404 for unknown entity', async () => {
+    await expect(applyOp({
         opId: 'op-e', entity: 'task', entityId: 'no-such-id',
         fields: { title: 'x' }, baseVersion: 0, clientTs: '2026-06-01T00:00:00.000Z',
-      }, SYSTEM_OWNER),
-    ).toThrow('not found');
+      }, SYSTEM_OWNER)).rejects.toThrow('not found');
   });
 
-  it('silently ignores disallowed field names', () => {
+  it('silently ignores disallowed field names', async () => {
     insertTask('t-6');
-    const result = applyOp(sqlite, {
+    const result = await applyOp({
       opId: 'op-f', entity: 'task', entityId: 't-6',
       fields: { owner_id: 'injected', title: 'safe' },
       baseVersion: 1, clientTs: '2026-06-01T10:00:00.000Z',
@@ -238,18 +236,18 @@ describe('applyOp', () => {
     expect(getTask('t-6')['owner_id']).toBe(SYSTEM_OWNER);
   });
 
-  it('multiple fields in one op — partial LWW drop', () => {
+  it('multiple fields in one op — partial LWW drop', async () => {
     insertTask('t-7');
 
     // Lock in 'title' at T2
-    applyOp(sqlite, {
+    await applyOp({
       opId: 'op-g1', entity: 'task', entityId: 't-7',
       fields: { title: 'Locked title' }, baseVersion: 1,
       clientTs: '2026-06-02T10:00:00.000Z',
     }, SYSTEM_OWNER);
 
     // Later op carries both 'title' (stale T1) and 'priority' (fresh T3)
-    const result = applyOp(sqlite, {
+    const result = await applyOp({
       opId: 'op-g2', entity: 'task', entityId: 't-7',
       fields: { title: 'Lost title', priority: 5 }, baseVersion: 1,
       clientTs: '2026-06-01T10:00:00.000Z', // OLDER — title must drop
@@ -276,11 +274,11 @@ describe('applyOp — scheduled status guard', () => {
       .run(id, SYSTEM_OWNER, JSON.stringify({ status: '2026-06-01T12:00:00.000Z' }));
   }
 
-  it('does NOT revert scheduled→open for a stale queued op (older clientTs)', () => {
+  it('does NOT revert scheduled→open for a stale queued op (older clientTs)', async () => {
     insertScheduledTask('t-sched-1');
     // A queued offline op carrying {status:'open'} with a clientTs OLDER than the
     // server's scheduled stamp — must be dropped by LWW, leaving 'scheduled'.
-    const result = applyOp(sqlite, {
+    const result = await applyOp({
       opId: 'op-sched-1', entity: 'task', entityId: 't-sched-1',
       fields: { status: 'open' }, baseVersion: 1,
       clientTs: '2026-06-01T11:00:00.000Z', // older than the stored field_ts
@@ -290,9 +288,9 @@ describe('applyOp — scheduled status guard', () => {
     expect(getTask('t-sched-1')['status']).toBe('scheduled');
   });
 
-  it('still pins scheduled→open even when the op is NEWER (monotonic clamp)', () => {
+  it('still pins scheduled→open even when the op is NEWER (monotonic clamp)', async () => {
     insertScheduledTask('t-sched-2');
-    const result = applyOp(sqlite, {
+    const result = await applyOp({
       opId: 'op-sched-2', entity: 'task', entityId: 't-sched-2',
       fields: { status: 'open' }, baseVersion: 1,
       clientTs: '2026-06-01T13:00:00.000Z', // newer — wins LWW but is clamped
@@ -320,7 +318,7 @@ describe('applyOp — cancelled status guard', () => {
     expect(getTask('t-del-1')['status']).toBe('cancelled');
 
     // The op a client queued while offline, before the cancel reached the server.
-    const result = applyOp(sqlite, {
+    const result = await applyOp({
       opId: 'op-del-1', entity: 'task', entityId: 't-del-1',
       fields: { status: 'open' }, baseVersion: 1,
       clientTs: shift(fieldStamp('t-del-1', 'status', 'soft-delete'), -1),
@@ -334,7 +332,7 @@ describe('applyOp — cancelled status guard', () => {
     insertTask('t-del-2');
     await deleteTask(SYSTEM_OWNER, 't-del-2');
 
-    const result = applyOp(sqlite, {
+    const result = await applyOp({
       opId: 'op-del-2', entity: 'task', entityId: 't-del-2',
       fields: { status: 'open' }, baseVersion: 1,
       clientTs: shift(fieldStamp('t-del-2', 'status', 'soft-delete'), +1),
@@ -361,7 +359,7 @@ describe('applyOp — subtype guard', () => {
     expect(getTask('t-hab-1')['subtype']).toBe('habit');
 
     // The op a client queued while offline, before the promotion reached the server.
-    const result = applyOp(sqlite, {
+    const result = await applyOp({
       opId: 'op-hab-1', entity: 'task', entityId: 't-hab-1',
       fields: { subtype: 'standard' }, baseVersion: 1,
       clientTs: shift(fieldStamp('t-hab-1', 'subtype', 'promoteToHabit'), -1),
@@ -375,7 +373,7 @@ describe('applyOp — subtype guard', () => {
     insertTask('t-hab-2');
     await promoteToHabit(SYSTEM_OWNER, 't-hab-2');
 
-    const result = applyOp(sqlite, {
+    const result = await applyOp({
       opId: 'op-hab-2', entity: 'task', entityId: 't-hab-2',
       fields: { subtype: 'standard' }, baseVersion: 1,
       clientTs: shift(fieldStamp('t-hab-2', 'subtype', 'promoteToHabit'), +1),
@@ -398,11 +396,11 @@ describe('rescheduleTask — stamping', () => {
 
   it('does NOT let a stale queued op drag scheduled_for back', async () => {
     insertTask('t-resc-1');
-    rescheduleTask('t-resc-1', 3, SYSTEM_OWNER);
+    await rescheduleTask('t-resc-1', 3, SYSTEM_OWNER);
     const newDay = getTask('t-resc-1')['scheduled_for'] as string;
 
     // The op a client queued while offline, before the reschedule reached the server.
-    const result = applyOp(sqlite, {
+    const result = await applyOp({
       opId: 'op-resc-1', entity: 'task', entityId: 't-resc-1',
       fields: { scheduled_for: '2026-01-01', status: 'open' }, baseVersion: 1,
       clientTs: shift(fieldStamp('t-resc-1', 'scheduled_for', 'rescheduleTask'), -1),
@@ -412,14 +410,14 @@ describe('rescheduleTask — stamping', () => {
     expect(getTask('t-resc-1')['scheduled_for']).toBe(newDay);
   });
 
-  it('never stamps a foreign owner\'s row when the scoped UPDATE misses', () => {
+  it('never stamps a foreign owner\'s row when the scoped UPDATE misses', async () => {
     createOwner(SECOND_OWNER_ID);
     insertTask('t-resc-2'); // belongs to SYSTEM_OWNER
     const before = getTask('t-resc-2');
 
     // A caller that skipped the route's ownership pre-check: the UPDATE must miss, and
     // the stamp must not fire — stamping here would corrupt SYSTEM_OWNER's merge state.
-    rescheduleTask('t-resc-2', 3, SECOND_OWNER_ID);
+    await rescheduleTask('t-resc-2', 3, SECOND_OWNER_ID);
 
     const after = getTask('t-resc-2');
     expect(after['scheduled_for']).toBe(before['scheduled_for']);
@@ -447,7 +445,7 @@ describe('owner-path writes — stamping', () => {
     const moved = getBlock('b-mv-1')['start_at'] as string;
     expect(moved).not.toBe(before.start_at);
 
-    const result = applyOp(sqlite, {
+    const result = await applyOp({
       opId: 'op-mv-1', entity: 'block', entityId: 'b-mv-1',
       fields: before, baseVersion: 1,
       clientTs: shift(fieldStamp('b-mv-1', 'start_at', 'moveBlockGroup', 'time_blocks'), -1),
@@ -461,7 +459,7 @@ describe('owner-path writes — stamping', () => {
     insertBlock('b-mv-2');
     await moveBlockGroup(SYSTEM_OWNER, 'b-mv-2', 30);
 
-    const result = applyOp(sqlite, {
+    const result = await applyOp({
       opId: 'op-mv-2', entity: 'block', entityId: 'b-mv-2',
       fields: { start_at: '2026-06-01T14:00:00.000Z' }, baseVersion: 1,
       clientTs: shift(fieldStamp('b-mv-2', 'start_at', 'moveBlockGroup', 'time_blocks'), +1),
@@ -476,7 +474,7 @@ describe('owner-path writes — stamping', () => {
     await promoteBlockToScheduled(SYSTEM_OWNER, 'b-pr-1', { start_at: '2026-06-01T14:00:00.000Z' });
     expect(getBlock('b-pr-1')['block_type']).toBe('scheduled');
 
-    const result = applyOp(sqlite, {
+    const result = await applyOp({
       opId: 'op-pr-1', entity: 'block', entityId: 'b-pr-1',
       fields: { block_type: 'concept' }, baseVersion: 1,
       clientTs: shift(fieldStamp('b-pr-1', 'block_type', 'promoteBlockToScheduled', 'time_blocks'), -1),
@@ -486,13 +484,13 @@ describe('owner-path writes — stamping', () => {
     expect(getBlock('b-pr-1')['block_type']).toBe('scheduled');
   });
 
-  it('extendBlock: a stale queued op cannot un-extend the anchor', () => {
+  it('extendBlock: a stale queued op cannot un-extend the anchor', async () => {
     insertBlock('b-ex-1');
-    extendBlock('b-ex-1', 30, { commit: true }, SYSTEM_OWNER);
+    await extendBlock('b-ex-1', 30, { commit: true }, SYSTEM_OWNER);
     const extended = getBlock('b-ex-1')['end_at'] as string;
     expect(extended).toBe('2026-06-01T10:30:00.000Z');
 
-    const result = applyOp(sqlite, {
+    const result = await applyOp({
       opId: 'op-ex-1', entity: 'block', entityId: 'b-ex-1',
       fields: { end_at: '2026-06-01T10:00:00.000Z' }, baseVersion: 1,
       clientTs: shift(fieldStamp('b-ex-1', 'end_at', 'extendBlock', 'time_blocks'), -1),
@@ -512,7 +510,7 @@ describe('owner-path writes — stamping', () => {
     await skipRecurringInstance(SYSTEM_OWNER, 't-skip-1');
     expect(getTask('t-skip-1')['status']).toBe('skipped');
 
-    const result = applyOp(sqlite, {
+    const result = await applyOp({
       opId: 'op-skip-1', entity: 'task', entityId: 't-skip-1',
       fields: { status: 'open' }, baseVersion: 1,
       clientTs: shift(fieldStamp('t-skip-1', 'status', 'skipRecurringInstance'), -1),
@@ -543,7 +541,7 @@ describe('POST /api/blocks/:id/reschedule — stamping', () => {
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(getBlock('b-resched-1')['status']).toBe('skipped');
 
-    const result = applyOp(sqlite, {
+    const result = await applyOp({
       opId: 'op-resched-1', entity: 'block', entityId: 'b-resched-1',
       fields: { status: 'planned' }, baseVersion: 1,
       clientTs: shift(fieldStamp('b-resched-1', 'status', 'the reschedule route', 'time_blocks'), -1),
@@ -577,7 +575,7 @@ describe('task⇄block mirror — both sides stamped', () => {
     const moved = getBlock('b-mirror-1')['start_at'] as string;
     expect(moved).not.toBe('2026-06-01T09:00:00.000Z');
 
-    const result = applyOp(sqlite, {
+    const result = await applyOp({
       opId: 'op-mirror-1', entity: 'block', entityId: 'b-mirror-1',
       fields: { start_at: '2026-06-01T09:00:00.000Z', end_at: '2026-06-01T10:00:00.000Z' },
       baseVersion: 1,
@@ -597,7 +595,7 @@ describe('task⇄block mirror — both sides stamped', () => {
     const dated = getTask('t-mirror-2')['scheduled_for'] as string;
     expect(dated).toBeTruthy();
 
-    const result = applyOp(sqlite, {
+    const result = await applyOp({
       opId: 'op-mirror-2', entity: 'task', entityId: 't-mirror-2',
       fields: { scheduled_for: '2020-01-01' }, baseVersion: 1,
       clientTs: shift(fieldStamp('t-mirror-2', 'scheduled_for', 'syncTaskFromBlock'), -1),
@@ -613,9 +611,9 @@ describe('task⇄block mirror — both sides stamped', () => {
 describe('applyOp — objective entity', () => {
   beforeEach(() => resetDb());
 
-  it('round-trips a full objective op through apply', () => {
+  it('round-trips a full objective op through apply', async () => {
     insertObjective('o-1');
-    const result = applyOp(sqlite, {
+    const result = await applyOp({
       opId: 'op-o-1', entity: 'objective', entityId: 'o-1',
       fields: { title: 'Renamed', status: 'paused', priority: 1, target_date: '2026-12-31' },
       baseVersion: 1, clientTs: '2026-06-02T10:00:00.000Z',
@@ -630,9 +628,9 @@ describe('applyOp — objective entity', () => {
     expect(row['target_date']).toBe('2026-12-31');
   });
 
-  it('drops server-derived fields (level / progress_cache) not in the allowlist', () => {
+  it('drops server-derived fields (level / progress_cache) not in the allowlist', async () => {
     insertObjective('o-2');
-    const result = applyOp(sqlite, {
+    const result = await applyOp({
       opId: 'op-o-2', entity: 'objective', entityId: 'o-2',
       fields: { level: 'goal', progress_cache: 0.9, title: 'Kept' },
       baseVersion: 1, clientTs: '2026-06-02T10:00:00.000Z',
@@ -641,22 +639,20 @@ describe('applyOp — objective entity', () => {
     expect(getObjective('o-2')['level']).toBe('objective'); // unchanged
   });
 
-  it('isolates by owner (applying as a different owner is not found)', () => {
+  it('isolates by owner (applying as a different owner is not found)', async () => {
     insertObjective('o-3'); // owned by SYSTEM_OWNER
-    expect(() =>
-      applyOp(sqlite, {
+    await expect(applyOp({
         opId: 'op-o-3', entity: 'objective', entityId: 'o-3',
         fields: { title: 'x' }, baseVersion: 1, clientTs: '2026-06-02T10:00:00.000Z',
-      }, 'a-different-owner'),
-    ).toThrow('not found');
+      }, 'a-different-owner')).rejects.toThrow('not found');
   });
 
-  it('round-trips an objective_task link tombstone (linked 1→0) through apply', () => {
+  it('round-trips an objective_task link tombstone (linked 1→0) through apply', async () => {
     insertObjective('o-4');
     insertTask('t-link-1');
     insertLink('lk-1', 'o-4', 't-link-1');
 
-    const result = applyOp(sqlite, {
+    const result = await applyOp({
       opId: 'op-lk-1', entity: 'objective_task', entityId: 'lk-1',
       fields: { linked: 0 }, baseVersion: 1, clientTs: '2026-06-02T10:00:00.000Z',
     }, SYSTEM_OWNER);
@@ -666,17 +662,15 @@ describe('applyOp — objective entity', () => {
     expect(link.linked).toBe(0);
   });
 
-  it('scopes an objective_task op by its parent objective owner', () => {
+  it('scopes an objective_task op by its parent objective owner', async () => {
     insertObjective('o-5'); // owned by SYSTEM_OWNER
     insertTask('t-link-2');
     insertLink('lk-2', 'o-5', 't-link-2');
     // Applying as a different owner must not reach the link via its parent objective.
-    expect(() =>
-      applyOp(sqlite, {
+    await expect(applyOp({
         opId: 'op-lk-2', entity: 'objective_task', entityId: 'lk-2',
         fields: { linked: 0 }, baseVersion: 1, clientTs: '2026-06-02T10:00:00.000Z',
-      }, 'a-different-owner'),
-    ).toThrow('not found');
+      }, 'a-different-owner')).rejects.toThrow('not found');
   });
 });
 
@@ -685,9 +679,9 @@ describe('applyOp — objective entity', () => {
 describe('stampRow', () => {
   beforeEach(() => resetDb());
 
-  it('advances version and writes field_ts for stamped fields', () => {
+  it('advances version and writes field_ts for stamped fields', async () => {
     insertTask('t-stamp');
-    stampRow(sqlite, 'task', 't-stamp', ['title', 'priority']);
+    await stampRow('task', 't-stamp', ['title', 'priority']);
     const row = getTask('t-stamp') as { version: number; field_ts: string };
     expect(row.version).toBe(2);
     const ft = JSON.parse(row.field_ts) as Record<string, string>;
@@ -695,18 +689,18 @@ describe('stampRow', () => {
     expect(typeof ft['priority']).toBe('string');
   });
 
-  it('translates camelCase keys to snake_case', () => {
+  it('translates camelCase keys to snake_case', async () => {
     insertTask('t-stamp2');
-    stampRow(sqlite, 'task', 't-stamp2', ['scheduledFor', 'estimatedMinutes']);
+    await stampRow('task', 't-stamp2', ['scheduledFor', 'estimatedMinutes']);
     const row = getTask('t-stamp2') as { field_ts: string };
     const ft = JSON.parse(row.field_ts) as Record<string, string>;
     expect(ft['scheduled_for']).toBeDefined();
     expect(ft['estimated_minutes']).toBeDefined();
   });
 
-  it('is a no-op for unknown entity', () => {
+  it('is a no-op for unknown entity', async () => {
     // Should not throw — silently does nothing
-    expect(() => stampRow(sqlite, 'task', 'no-exist', ['title'])).not.toThrow();
+    await expect(stampRow('task', 'no-exist', ['title'])).resolves.toBeUndefined();
   });
 });
 
@@ -763,11 +757,11 @@ describe('sync cannot leave a live objective under an archived parent (0129)', (
     ).all(owner, owner) as { id: string }[]).map((r) => r.id);
 
   // ── (a) the incoming parent_id ──
-  it('clamps parent_id to NULL when the proposed parent is archived — an explicit re-root, not a silent one', () => {
+  it('clamps parent_id to NULL when the proposed parent is archived — an explicit re-root, not a silent one', async () => {
     mkObj('a-arch'); mkObj('a-child');
     archiveRaw('a-arch');
 
-    const res = applyOp(sqlite, op('a-child', { parent_id: 'a-arch' }), SYSTEM_OWNER);
+    const res = await applyOp(op('a-child', { parent_id: 'a-arch' }), SYSTEM_OWNER);
 
     // The op still WINS its LWW comparison — only the value is clamped (mirrors
     // applyMonotonic's status pins). The client is told what actually landed.
@@ -776,35 +770,35 @@ describe('sync cannot leave a live objective under an archived parent (0129)', (
     expect(liveChildrenOfArchivedParents()).toEqual([]);
   });
 
-  it('accepts parent_id when the parent is LIVE (the clamp must not over-reach)', () => {
+  it('accepts parent_id when the parent is LIVE (the clamp must not over-reach)', async () => {
     mkObj('a-live'); mkObj('a-kid');
-    const res = applyOp(sqlite, op('a-kid', { parent_id: 'a-live' }), SYSTEM_OWNER);
+    const res = await applyOp(op('a-kid', { parent_id: 'a-live' }), SYSTEM_OWNER);
     expect(res.applied).toEqual({ parent_id: 'a-live' });
     expect(getObjective('a-kid').parent_id).toBe('a-live');
   });
 
-  it('clamps a parent_id that does not exist at all — a bad ref must not crash the whole batch', () => {
+  it('clamps a parent_id that does not exist at all — a bad ref must not crash the whole batch', async () => {
     // parent_id REFERENCES objectives(id), so an unknown id used to throw a FOREIGN KEY
     // error out of applyOp, rolling back every other op in the transaction with it.
     mkObj('a-orphan');
-    expect(() => applyOp(sqlite, op('a-orphan', { parent_id: 'no-such-objective' }), SYSTEM_OWNER)).not.toThrow();
+    await expect(applyOp(op('a-orphan', { parent_id: 'no-such-objective' }), SYSTEM_OWNER)).resolves.toBeDefined();
     expect(getObjective('a-orphan').parent_id).toBeNull();
   });
 
-  it('clamps a parent_id pointing at ANOTHER owner\'s objective', () => {
+  it('clamps a parent_id pointing at ANOTHER owner\'s objective', async () => {
     createOwner();
     mkObj('a-mine'); mkObj('a-theirs', null, SECOND_OWNER_ID);
-    const res = applyOp(sqlite, op('a-mine', { parent_id: 'a-theirs' }), SYSTEM_OWNER);
+    const res = await applyOp(op('a-mine', { parent_id: 'a-theirs' }), SYSTEM_OWNER);
     expect(res.applied).toEqual({ parent_id: null }); // live, but not mine
     expect(getObjective('a-mine').parent_id).toBeNull();
   });
 
   // ── (b) the incoming archived_at ──
-  it('cascades a synced archive over the live subtree, exactly as archiveObjective does', () => {
+  it('cascades a synced archive over the live subtree, exactly as archiveObjective does', async () => {
     mkObj('b-goal'); mkObj('b-proj', 'b-goal'); mkObj('b-leaf', 'b-proj'); // 2 levels deep
 
-    applyOp(sqlite, op('b-goal', { archived_at: '2026-06-02T10:00:00.000Z' }), SYSTEM_OWNER);
-    applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'b-goal', { archived_at: '2026-06-02T10:00:00.000Z' });
+    await applyOp(op('b-goal', { archived_at: '2026-06-02T10:00:00.000Z' }), SYSTEM_OWNER);
+    await applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'b-goal', { archived_at: '2026-06-02T10:00:00.000Z' });
 
     expect(liveChildrenOfArchivedParents()).toEqual([]);
     for (const id of ['b-proj', 'b-leaf']) {
@@ -814,13 +808,16 @@ describe('sync cannot leave a live objective under an archived parent (0129)', (
     }
   });
 
-  it('a synced UN-archive does not cascade — restore stays root-only (0129 subtree rule)', () => {
+  it('a synced UN-archive does not cascade — restore stays root-only (0129 subtree rule)', async () => {
     mkObj('b2-goal'); mkObj('b2-kid', 'b2-goal');
-    applyOp(sqlite, op('b2-goal', { archived_at: '2026-06-02T10:00:00.000Z' }), SYSTEM_OWNER);
-    applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'b2-goal', { archived_at: '2026-06-02T10:00:00.000Z' });
+    await applyOp(op('b2-goal', { archived_at: '2026-06-02T10:00:00.000Z' }), SYSTEM_OWNER);
+    await applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'b2-goal', { archived_at: '2026-06-02T10:00:00.000Z' });
     // Clearing archived_at must not fan out — restoreObjective owns that path.
-    applyOp(sqlite, op('b2-goal', { archived_at: null }, '2026-06-03T10:00:00.000Z'), SYSTEM_OWNER);
-    expect(() => applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'b2-goal', { archived_at: null })).not.toThrow();
+    await applyOp(op('b2-goal', { archived_at: null }, '2026-06-03T10:00:00.000Z'), SYSTEM_OWNER);
+    // `expect(() => f()).not.toThrow()` fails OPEN once f is async — the call returns a
+    // rejected promise instead of throwing, so the matcher sees no throw and passes while
+    // testing nothing. Assert on the settled promise instead.
+    await expect(applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'b2-goal', { archived_at: null })).resolves.toBeUndefined();
     expect(getObjective('b2-goal').archived_at).toBeNull();
   });
 
@@ -840,14 +837,14 @@ describe('sync cannot leave a live objective under an archived parent (0129)', (
    * Same class as the recursive-walk scoping in #369 — liveDescendantIds is the walk that
    * pass missed.
    */
-  it('never touches another owner\'s objective — not archived, not even stamped', () => {
+  it('never touches another owner\'s objective — not archived, not even stamped', async () => {
     createOwner();
     mkObj('x-mine');
     mkObj('x-theirs', 'x-mine', SECOND_OWNER_ID); // corrupt cross-owner edge (pre-existing data)
     const before = getObjective('x-theirs');
 
-    applyOp(sqlite, op('x-mine', { archived_at: '2026-06-02T10:00:00.000Z' }), SYSTEM_OWNER);
-    applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'x-mine', { archived_at: '2026-06-02T10:00:00.000Z' });
+    await applyOp(op('x-mine', { archived_at: '2026-06-02T10:00:00.000Z' }), SYSTEM_OWNER);
+    await applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'x-mine', { archived_at: '2026-06-02T10:00:00.000Z' });
 
     const after = getObjective('x-theirs');
     expect(after.archived_at).toBeNull();        // owner-scoped UPDATE already got this right
@@ -858,20 +855,20 @@ describe('sync cannot leave a live objective under an archived parent (0129)', (
   });
 
   // ── order independence: LWW guarantees no arrival order ──
-  it('holds whichever order the two ops arrive in', () => {
+  it('holds whichever order the two ops arrive in', async () => {
     // Order 1: re-parent first, THEN archive the parent → the cascade must catch the child.
     mkObj('o1-p'); mkObj('o1-c');
-    applyOp(sqlite, op('o1-c', { parent_id: 'o1-p' }), SYSTEM_OWNER);
-    applyOp(sqlite, op('o1-p', { archived_at: '2026-06-02T11:00:00.000Z' }), SYSTEM_OWNER);
-    applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'o1-p', { archived_at: '2026-06-02T11:00:00.000Z' });
+    await applyOp(op('o1-c', { parent_id: 'o1-p' }), SYSTEM_OWNER);
+    await applyOp(op('o1-p', { archived_at: '2026-06-02T11:00:00.000Z' }), SYSTEM_OWNER);
+    await applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'o1-p', { archived_at: '2026-06-02T11:00:00.000Z' });
     expect(liveChildrenOfArchivedParents()).toEqual([]);
     expect(getObjective('o1-c').archived_at).toBeTruthy(); // archived WITH its parent
 
     // Order 2: archive first, THEN the re-parent op arrives → the clamp must catch it.
     mkObj('o2-p'); mkObj('o2-c');
-    applyOp(sqlite, op('o2-p', { archived_at: '2026-06-02T11:00:00.000Z' }), SYSTEM_OWNER);
-    applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'o2-p', { archived_at: '2026-06-02T11:00:00.000Z' });
-    applyOp(sqlite, op('o2-c', { parent_id: 'o2-p' }), SYSTEM_OWNER);
+    await applyOp(op('o2-p', { archived_at: '2026-06-02T11:00:00.000Z' }), SYSTEM_OWNER);
+    await applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'o2-p', { archived_at: '2026-06-02T11:00:00.000Z' });
+    await applyOp(op('o2-c', { parent_id: 'o2-p' }), SYSTEM_OWNER);
     expect(liveChildrenOfArchivedParents()).toEqual([]);
     expect(getObjective('o2-c').parent_id).toBeNull();     // re-rooted, explicitly
     expect(getObjective('o2-c').archived_at).toBeNull();   // …and still live
@@ -988,11 +985,11 @@ describe('POST /api/sync', () => {
 // ── 0129: archiving through sync ──────────────────────────────────────────────
 
 describe('objective archive via sync (0129)', () => {
-  it('archives a DONE objective — the regression the archived_at column exists to prevent', () => {
+  it('archives a DONE objective — the regression the archived_at column exists to prevent', async () => {
     insertObjective('o-arch-1');
     sqlite.prepare(`UPDATE objectives SET status = 'done' WHERE id = ?`).run('o-arch-1');
 
-    const result = applyOp(sqlite, {
+    const result = await applyOp({
       opId: 'op-arch-1', entity: 'objective', entityId: 'o-arch-1',
       fields: { archived_at: '2026-06-02T10:00:00.000Z' },
       baseVersion: 1, clientTs: '2026-06-02T10:00:00.000Z',
@@ -1008,11 +1005,11 @@ describe('objective archive via sync (0129)', () => {
     expect(row.status).toBe('done'); // status is preserved — restore is lossless
   });
 
-  it('un-archives through sync — archived_at is NOT monotonically pinned', () => {
+  it('un-archives through sync — archived_at is NOT monotonically pinned', async () => {
     insertObjective('o-arch-2');
     sqlite.prepare(`UPDATE objectives SET archived_at = '2026-06-01T00:00:00.000Z' WHERE id = ?`).run('o-arch-2');
 
-    const result = applyOp(sqlite, {
+    const result = await applyOp({
       opId: 'op-arch-2', entity: 'objective', entityId: 'o-arch-2',
       fields: { archived_at: null }, baseVersion: 1, clientTs: '2026-06-02T10:00:00.000Z',
     }, SYSTEM_OWNER);
@@ -1022,9 +1019,9 @@ describe('objective archive via sync (0129)', () => {
     expect(row.archived_at).toBeNull(); // a pin here would defeat the 48h reversal
   });
 
-  it('purge_after is server-owned — a client op cannot author it', () => {
+  it('purge_after is server-owned — a client op cannot author it', async () => {
     insertObjective('o-arch-3');
-    const result = applyOp(sqlite, {
+    const result = await applyOp({
       opId: 'op-arch-3', entity: 'objective', entityId: 'o-arch-3',
       fields: { purge_after: '2020-01-01T00:00:00.000Z' },
       baseVersion: 1, clientTs: '2026-06-02T10:00:00.000Z',

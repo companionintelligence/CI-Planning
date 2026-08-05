@@ -13,7 +13,7 @@ export function scheduleRouter() {
     const body = (ctx.request.body ?? {}) as { date?: string };
     const date = body.date ?? localISODate();
     const owner = currentOwnerId();
-    const diff = reflow(owner, date, 'manual');
+    const diff = await reflow(owner, date, 'manual');
     writeAudit({ ownerId: owner, actor: 'owner', action: 'run', entity: `schedule:${date}` });
     ctx.body = diff;
   });

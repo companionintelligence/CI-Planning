@@ -10,7 +10,7 @@ export function starsRouter() {
   // For each date in range: the frozen daily_recap row if present, else live
   // computeStars. One range query backs a whole calendar month. The owner-scoped
   // read lives in services/stars.ts (shared with the GraphQL surface).
-  router.get('/api/stars', (ctx) => {
+  router.get('/api/stars', async (ctx) => {
     const from = ctx.query.from as string | undefined;
     const to = ctx.query.to as string | undefined;
     if (!isValidISODate(from) || !isValidISODate(to)) {
@@ -18,7 +18,7 @@ export function starsRouter() {
       ctx.body = { error: 'from and to are required (YYYY-MM-DD)' };
       return;
     }
-    ctx.body = listDayStars(currentOwnerId(), from, to);
+    ctx.body = await listDayStars(currentOwnerId(), from, to);
   });
 
   return router;

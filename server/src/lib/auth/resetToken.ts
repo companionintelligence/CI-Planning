@@ -1,5 +1,5 @@
 import { randomBytes, createHash } from 'node:crypto';
-import { sqlite } from '../../db/index.js';
+import { store } from '../../db/store.js';
 import { newId } from '../ids.js';
 import { config } from '../config.js';
 
@@ -29,22 +29,21 @@ function hashToken(raw: string): string {
  * `ttlMs` defaults to the reset lifetime (60 min); Phase AG account invites pass a
  * longer one — an invite waits in an inbox, a reset is used within minutes.
  */
-export function issueResetToken(ownerId: string, ttlMs: number = config.auth.resetTokenTtlMs): string {
+export async function issueResetToken(ownerId: string, ttlMs: number = config.auth.resetTokenTtlMs): Promise<string> {
   const raw = randomBytes(32).toString('base64url');
   const now = Date.now();
   const expiresAt = new Date(now + ttlMs).toISOString();
 
-  const tx = sqlite.transaction(() => {
-    sqlite.prepare(`DELETE FROM password_reset_tokens WHERE expires_at <= ?`).run(new Date(now).toISOString());
+  await store().transaction(async () => {
+    await store().prepare(`DELETE FROM password_reset_tokens WHERE expires_at <= ?`).run(new Date(now).toISOString());
     // Supersede this owner's prior tokens so only the newest link works.
-    sqlite.prepare(`DELETE FROM password_reset_tokens WHERE owner_id = ?`).run(ownerId);
-    sqlite
+    await store().prepare(`DELETE FROM password_reset_tokens WHERE owner_id = ?`).run(ownerId);
+    await store()
       .prepare(
         `INSERT INTO password_reset_tokens (id, owner_id, token_hash, expires_at) VALUES (?, ?, ?, ?)`,
       )
       .run(newId(), ownerId, hashToken(raw), expiresAt);
   });
-  tx();
   return raw;
 }
 
@@ -54,24 +53,21 @@ export function issueResetToken(ownerId: string, ttlMs: number = config.auth.res
  * deletes every other outstanding token for the owner (so a reset can't be replayed and
  * no sibling link stays live). All in one transaction.
  */
-export function consumeResetToken(raw: string): string | null {
+export async function consumeResetToken(raw: string): Promise<string | null> {
   const tokenHash = hashToken(raw);
-  const tx = sqlite.transaction((): string | null => {
-    const row = sqlite
+  return store().transaction(async (): Promise<string | null> => {
+    const row = await store()
       .prepare(
         `SELECT id, owner_id, expires_at, used_at FROM password_reset_tokens WHERE token_hash = ?`,
       )
-      .get(tokenHash) as
-      | { id: string; owner_id: string; expires_at: string; used_at: string | null }
-      | undefined;
+      .get<{ id: string; owner_id: string; expires_at: string; used_at: string | null }>(tokenHash);
     if (!row) return null;
     if (row.used_at) return null;
     if (new Date(row.expires_at) <= new Date()) return null;
 
-    sqlite.prepare(`UPDATE password_reset_tokens SET used_at = ? WHERE id = ?`).run(new Date().toISOString(), row.id);
+    await store().prepare(`UPDATE password_reset_tokens SET used_at = ? WHERE id = ?`).run(new Date().toISOString(), row.id);
     // Invalidate any siblings so only this reset takes effect.
-    sqlite.prepare(`DELETE FROM password_reset_tokens WHERE owner_id = ? AND id <> ?`).run(row.owner_id, row.id);
+    await store().prepare(`DELETE FROM password_reset_tokens WHERE owner_id = ? AND id <> ?`).run(row.owner_id, row.id);
     return row.owner_id;
   });
-  return tx();
 }

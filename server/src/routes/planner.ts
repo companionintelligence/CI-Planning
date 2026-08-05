@@ -50,7 +50,7 @@ export function plannerRouter() {
       backup = filename;
     }
 
-    const result = clearPlannerRange({
+    const result = await clearPlannerRange({
       owner,
       start: start as string,
       end: end as string | null,

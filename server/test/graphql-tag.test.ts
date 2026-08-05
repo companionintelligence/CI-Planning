@@ -24,8 +24,8 @@ async function gql(query: string, headers: Record<string, string> = {}) {
 }
 
 /** Seed a tag for the system owner via the shared service; returns its id. */
-function seed(name: string, kind: 'direction' | 'intention' | 'category' = 'intention'): string {
-  const res = svcCreateTag(SYSTEM_OWNER, { name, kind });
+async function seed(name: string, kind: 'direction' | 'intention' | 'category' = 'intention'): Promise<string> {
+  const res = await svcCreateTag(SYSTEM_OWNER, { name, kind });
   if (!res.ok) throw new Error('seed failed');
   return res.tag.id;
 }
@@ -36,7 +36,7 @@ beforeEach(() => { resetDb(); });
 
 describe('W2 — TagType queries', () => {
   it('tags connection: kind mapped, ordered by name, cursor-paginated', async () => {
-    seed('alpha'); seed('beta'); seed('gamma');
+    await seed('alpha'); await seed('beta'); await seed('gamma');
     const page1 = await gql('{ tags(first: 2) { totalCount edges { cursor node { label kind } } pageInfo { hasNextPage endCursor } } }');
     expect(page1.body.errors).toBeUndefined();
     const c = page1.body.data.tags;
@@ -51,14 +51,14 @@ describe('W2 — TagType queries', () => {
   });
 
   it('tags(kind:) filters the axis', async () => {
-    seed('work', 'direction'); seed('coding', 'intention'); seed('family', 'category');
+    await seed('work', 'direction'); await seed('coding', 'intention'); await seed('family', 'category');
     const r = await gql('{ tags(kind: DIRECTION) { totalCount edges { node { label kind } } } }');
     expect(r.body.data.tags.totalCount).toBe(1);
     expect(r.body.data.tags.edges[0].node).toEqual({ label: 'work', kind: 'DIRECTION' });
   });
 
   it('tag(id): label←name, description null, muted/isBase booleans', async () => {
-    const id = seed('work', 'direction');
+    const id = await seed('work', 'direction');
     const r = await gql(`{ tag(id: "${id}") { id label kind description muted isBase } }`);
     expect(r.body.data.tag).toEqual({ id, label: 'work', kind: 'DIRECTION', description: null, muted: false, isBase: false });
   });
@@ -70,11 +70,11 @@ describe('W2 — TagType queries', () => {
   });
 
   it('hierarchy: pattern.childIntentions ↔ intention.parentDirections', async () => {
-    const work = seed('work', 'direction');
-    const coding = seed('coding', 'intention');
-    const email = seed('email', 'intention');
-    setTagDirections(coding, [work]);
-    setTagDirections(email, [work]);
+    const work = await seed('work', 'direction');
+    const coding = await seed('coding', 'intention');
+    const email = await seed('email', 'intention');
+    await setTagDirections(coding, [work]);
+    await setTagDirections(email, [work]);
 
     const children = await gql(`{ tag(id: "${work}") { childIntentions { totalCount edges { node { label kind } } } } }`);
     expect(children.body.data.tag.childIntentions.totalCount).toBe(2);
@@ -87,7 +87,7 @@ describe('W2 — TagType queries', () => {
   });
 
   it('hierarchy edges are empty for the wrong kind (no error)', async () => {
-    const coding = seed('coding', 'intention');
+    const coding = await seed('coding', 'intention');
     // An intention has no childIntentions.
     const r = await gql(`{ tag(id: "${coding}") { childIntentions { totalCount edges { node { id } } } } }`);
     expect(r.body.errors).toBeUndefined();
@@ -106,13 +106,13 @@ describe('W2 — TagType mutations reuse the REST services', () => {
   });
 
   it('updateTag renames + mutes', async () => {
-    const id = seed('old');
+    const id = await seed('old');
     const m = await gql(`mutation { updateTag(input: { id: "${id}", label: "renamed", muted: true }) { success tag { label muted } } }`);
     expect(m.body.data.updateTag).toEqual({ success: true, tag: { label: 'renamed', muted: true } });
   });
 
   it('deleteTag removes an unused tag', async () => {
-    const id = seed('temp');
+    const id = await seed('temp');
     const m = await gql(`mutation { deleteTag(input: { id: "${id}" }) { success deletedId } }`);
     expect(m.body.data.deleteTag).toEqual({ success: true, deletedId: id });
     const after = await gql(`{ tag(id: "${id}") { id } }`);
@@ -126,8 +126,8 @@ describe('W2 — TagType mutations reuse the REST services', () => {
     expect(baseDel.body.errors?.[0]?.message).toMatch(/base tags cannot be deleted/i);
 
     // In-use tag (applied to a task via entity_tags).
-    const usedId = seed('used');
-    setEntityTagIds('task', 'task-x', [usedId]);
+    const usedId = await seed('used');
+    await setEntityTagIds('task', 'task-x', [usedId]);
     const usedDel = await gql(`mutation { deleteTag(input: { id: "${usedId}" }) { success } }`);
     expect(usedDel.body.errors?.[0]?.message).toMatch(/in use/i);
   });
@@ -140,7 +140,7 @@ describe('W2 — TagType mutations reuse the REST services', () => {
 
 describe('W2 — owner scoping', () => {
   it('tags/tag only see the current owner', async () => {
-    const mine = seed('mine'); // system owner
+    const mine = await seed('mine'); // system owner
     // A different owner (test-mode x-test-owner) sees none of the system owner's tags.
     const other = await gql('{ tags { totalCount } }', { 'x-test-owner': '00000000-0000-7000-8000-0000000000b2' });
     expect(other.body.data.tags.totalCount).toBe(0);

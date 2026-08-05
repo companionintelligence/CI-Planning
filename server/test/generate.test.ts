@@ -56,8 +56,8 @@ function insertTemplate(o: TemplateOpts = {}): string {
   ).id;
 }
 
-const gen = (opts: { today?: string; horizonDays?: number }) =>
-  runWithOwner(OWNER, ALL_SCOPES, () => generateRecurrences(opts));
+const gen = async (opts: { today?: string; horizonDays?: number }) =>
+  await runWithOwner(OWNER, ALL_SCOPES, async () => await generateRecurrences(opts));
 
 interface InstanceRow {
   id: string;
@@ -92,9 +92,9 @@ beforeEach(() => {
 });
 
 describe('generateRecurrences — bounded horizon', () => {
-  it('materializes exactly the occurrences in [today, today+horizon], no further', () => {
+  it('materializes exactly the occurrences in [today, today+horizon], no further', async () => {
     const tpl = insertTemplate({ rule: 'FREQ=DAILY' });
-    const r = gen({ today: '2026-06-10', horizonDays: 3 });
+    const r = await gen({ today: '2026-06-10', horizonDays: 3 });
 
     expect(r.created).toBe(4); // 06-10, 11, 12, 13 (inclusive both ends)
     expect(instances(tpl).map((i) => i.occurrence_date)).toEqual([
@@ -107,18 +107,18 @@ describe('generateRecurrences — bounded horizon', () => {
     expect(instances(tpl).every((i) => i.occurrence_date <= '2026-06-13')).toBe(true);
   });
 
-  it('a daily template never produces more than horizon+1 rows in one run', () => {
+  it('a daily template never produces more than horizon+1 rows in one run', async () => {
     const tpl = insertTemplate({ rule: 'FREQ=DAILY' });
-    gen({ today: '2026-06-10', horizonDays: 14 });
+    await gen({ today: '2026-06-10', horizonDays: 14 });
     expect(instances(tpl).length).toBe(15); // 14 days ahead + today, not an unbounded sweep
   });
 });
 
 describe('generateRecurrences — idempotent re-run', () => {
-  it('a second run in the same window inserts zero rows', () => {
+  it('a second run in the same window inserts zero rows', async () => {
     const tpl = insertTemplate({ rule: 'FREQ=DAILY' });
-    gen({ today: '2026-06-10', horizonDays: 3 });
-    const second = gen({ today: '2026-06-10', horizonDays: 3 });
+    await gen({ today: '2026-06-10', horizonDays: 3 });
+    const second = await gen({ today: '2026-06-10', horizonDays: 3 });
 
     expect(second.created).toBe(0); // ux_task_occurrence holds
     expect(instances(tpl).length).toBe(4); // unchanged
@@ -126,10 +126,10 @@ describe('generateRecurrences — idempotent re-run', () => {
 });
 
 describe('generateRecurrences — rolling window', () => {
-  it('advancing today by one day adds only the newly-in-window occurrence, nothing retroactive', () => {
+  it('advancing today by one day adds only the newly-in-window occurrence, nothing retroactive', async () => {
     const tpl = insertTemplate({ rule: 'FREQ=DAILY' });
-    gen({ today: '2026-06-10', horizonDays: 3 }); // 06-10..13
-    const rolled = gen({ today: '2026-06-11', horizonDays: 3 }); // 06-11..14
+    await gen({ today: '2026-06-10', horizonDays: 3 }); // 06-10..13
+    const rolled = await gen({ today: '2026-06-11', horizonDays: 3 }); // 06-11..14
 
     expect(rolled.created).toBe(1); // only 06-14 is new
     expect(instances(tpl).map((i) => i.occurrence_date)).toEqual([
@@ -143,11 +143,11 @@ describe('generateRecurrences — rolling window', () => {
 });
 
 describe('generateRecurrences — templates skip the today-set', () => {
-  it("marks an 'open' template 'recurring' so the scheduler's open-only filter ignores it", () => {
+  it("marks an 'open' template 'recurring' so the scheduler's open-only filter ignores it", async () => {
     const tpl = insertTemplate({ rule: 'FREQ=DAILY', status: 'open' });
     expect(statusOf(tpl)).toBe('open');
 
-    gen({ today: '2026-06-10', horizonDays: 1 });
+    await gen({ today: '2026-06-10', horizonDays: 1 });
 
     expect(statusOf(tpl)).toBe('recurring'); // template excluded from scheduling
     // Instances themselves are plain open tasks.
@@ -156,11 +156,11 @@ describe('generateRecurrences — templates skip the today-set', () => {
 });
 
 describe('generateRecurrences — missed habits', () => {
-  it('flags past, still-open habit instances as missed; leaves today/future open', () => {
+  it('flags past, still-open habit instances as missed; leaves today/future open', async () => {
     const tpl = insertTemplate({ rule: 'FREQ=DAILY', subtype: 'habit' });
-    gen({ today: '2026-06-08', horizonDays: 1 }); // creates 06-08, 06-09 (both open)
+    await gen({ today: '2026-06-08', horizonDays: 1 }); // creates 06-08, 06-09 (both open)
 
-    const r = gen({ today: '2026-06-10', horizonDays: 1 }); // creates 06-10, 06-11; flags the past two
+    const r = await gen({ today: '2026-06-10', horizonDays: 1 }); // creates 06-10, 06-11; flags the past two
 
     expect(r.missed).toBe(2);
     expect(instanceOn(tpl, '2026-06-08')!.status).toBe('missed');
@@ -168,21 +168,21 @@ describe('generateRecurrences — missed habits', () => {
     expect(instanceOn(tpl, '2026-06-10')!.status).toBe('open'); // today is not missed
   });
 
-  it('does not flag missed for a non-habit recurring template', () => {
+  it('does not flag missed for a non-habit recurring template', async () => {
     const tpl = insertTemplate({ rule: 'FREQ=DAILY' });
-    gen({ today: '2026-06-08', horizonDays: 1 });
-    const r = gen({ today: '2026-06-10', horizonDays: 1 });
+    await gen({ today: '2026-06-08', horizonDays: 1 });
+    const r = await gen({ today: '2026-06-10', horizonDays: 1 });
 
     expect(r.missed).toBe(0);
     expect(instanceOn(tpl, '2026-06-08')!.status).toBe('open'); // overdue, not "missed"
   });
 
-  it('a completed past habit instance is not re-flagged missed', () => {
+  it('a completed past habit instance is not re-flagged missed', async () => {
     const tpl = insertTemplate({ rule: 'FREQ=DAILY', subtype: 'habit' });
-    gen({ today: '2026-06-08', horizonDays: 1 }); // 06-08, 06-09
+    await gen({ today: '2026-06-08', horizonDays: 1 }); // 06-08, 06-09
     sqlite.prepare(`UPDATE tasks SET status='done' WHERE id = ?`).run(instanceOn(tpl, '2026-06-08')!.id);
 
-    const r = gen({ today: '2026-06-10', horizonDays: 1 });
+    const r = await gen({ today: '2026-06-10', horizonDays: 1 });
 
     expect(r.missed).toBe(1); // only 06-09 (06-08 was done)
     expect(instanceOn(tpl, '2026-06-08')!.status).toBe('done');
@@ -190,9 +190,9 @@ describe('generateRecurrences — missed habits', () => {
 });
 
 describe('generateRecurrences — instance day-gating fields', () => {
-  it('a timed instance is gated by defer_until and pinned via task_time + same-day due_at', () => {
+  it('a timed instance is gated by defer_until and pinned via task_time + same-day due_at', async () => {
     const tpl = insertTemplate({ rule: 'FREQ=DAILY', taskTime: '09:00', estimatedMinutes: 45 });
-    gen({ today: '2026-06-10', horizonDays: 0 }); // just 06-10
+    await gen({ today: '2026-06-10', horizonDays: 0 }); // just 06-10
 
     const inst = instanceOn(tpl, '2026-06-10')!;
     expect(inst.status).toBe('open');
@@ -203,9 +203,9 @@ describe('generateRecurrences — instance day-gating fields', () => {
     expect(inst.due_at).toBe(instanceStartUTC('2026-06-10', '09:00', TZ)); // pins as an appointment
   });
 
-  it('a timeless instance carries no due_at but is still gated to its day', () => {
+  it('a timeless instance carries no due_at but is still gated to its day', async () => {
     const tpl = insertTemplate({ rule: 'FREQ=DAILY', taskTime: null });
-    gen({ today: '2026-06-10', horizonDays: 0 });
+    await gen({ today: '2026-06-10', horizonDays: 0 });
 
     const inst = instanceOn(tpl, '2026-06-10')!;
     expect(inst.due_at).toBeNull();
@@ -216,45 +216,45 @@ describe('generateRecurrences — instance day-gating fields', () => {
 });
 
 describe('generateRecurrences — subtype propagation', () => {
-  it("a habit template's instances inherit subtype='habit'", () => {
+  it("a habit template's instances inherit subtype='habit'", async () => {
     const tpl = insertTemplate({ rule: 'FREQ=DAILY', subtype: 'habit' });
-    gen({ today: '2026-06-10', horizonDays: 2 });
+    await gen({ today: '2026-06-10', horizonDays: 2 });
 
     const all = instances(tpl);
     expect(all.length).toBe(3);
     expect(all.every((i) => i.subtype === 'habit')).toBe(true);
   });
 
-  it("a standard template's instances are subtype='standard'", () => {
+  it("a standard template's instances are subtype='standard'", async () => {
     const tpl = insertTemplate({ rule: 'FREQ=DAILY' });
-    gen({ today: '2026-06-10', horizonDays: 1 });
+    await gen({ today: '2026-06-10', horizonDays: 1 });
 
     expect(instances(tpl).every((i) => i.subtype === 'standard')).toBe(true);
   });
 
-  it('propagates whatever subtype the template carries, verbatim', () => {
+  it('propagates whatever subtype the template carries, verbatim', async () => {
     const tpl = insertTemplate({ rule: 'FREQ=DAILY', subtype: 'quick' });
-    gen({ today: '2026-06-10', horizonDays: 0 });
+    await gen({ today: '2026-06-10', horizonDays: 0 });
 
     expect(instanceOn(tpl, '2026-06-10')!.subtype).toBe('quick');
   });
 });
 
 describe('generateRecurrences — robustness', () => {
-  it('skips a template with a malformed stored rule without failing the run', () => {
+  it('skips a template with a malformed stored rule without failing the run', async () => {
     const good = insertTemplate({ rule: 'FREQ=DAILY' });
     insertTemplate({ rule: 'TOTALLY NOT A RULE' });
 
-    const r = gen({ today: '2026-06-10', horizonDays: 2 });
+    const r = await gen({ today: '2026-06-10', horizonDays: 2 });
 
     expect(r.templates).toBe(2);
     expect(r.created).toBe(3); // only the good template produced rows (06-10,11,12)
     expect(instances(good).length).toBe(3);
   });
 
-  it('excludes cancelled templates', () => {
+  it('excludes cancelled templates', async () => {
     const tpl = insertTemplate({ rule: 'FREQ=DAILY', status: 'cancelled' });
-    const r = gen({ today: '2026-06-10', horizonDays: 3 });
+    const r = await gen({ today: '2026-06-10', horizonDays: 3 });
 
     expect(r.templates).toBe(0);
     expect(instances(tpl).length).toBe(0);

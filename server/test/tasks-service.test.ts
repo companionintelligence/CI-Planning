@@ -172,13 +172,13 @@ describe('stampTaskCompletionReflection', () => {
       )
       .run(OWNER, task.task.id, now, now);
 
-    stampTaskCompletionReflection(OWNER, task.task.id, '2026-07-03T12:00:00.000Z');
+    await stampTaskCompletionReflection(OWNER, task.task.id, '2026-07-03T12:00:00.000Z');
     const first = (sqlite
       .prepare(`SELECT done_at FROM reflections WHERE owner_id = ? AND kind = 'today_goal' AND period_key = '2026-07-03'`)
       .get(OWNER) as { done_at: string | null }).done_at;
     expect(first).toBeTruthy();
 
-    stampTaskCompletionReflection(OWNER, task.task.id, '2026-07-03T18:00:00.000Z');
+    await stampTaskCompletionReflection(OWNER, task.task.id, '2026-07-03T18:00:00.000Z');
     const second = (sqlite
       .prepare(`SELECT done_at FROM reflections WHERE owner_id = ? AND kind = 'today_goal' AND period_key = '2026-07-03'`)
       .get(OWNER) as { done_at: string | null }).done_at;

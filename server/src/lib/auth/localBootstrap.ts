@@ -20,7 +20,7 @@ import { provisionOwner } from '../owners.js';
 export async function ensureLocalAuthBootstrap(): Promise<void> {
   if (!(config.auth.mode === 'sso' && config.auth.disableOidc)) return;
 
-  if (localOwnerCount() > 0) return;
+  if ((await localOwnerCount()) > 0) return;
 
   if (!config.auth.defaultPassword) {
     throw new Error(
@@ -33,6 +33,6 @@ export async function ensureLocalAuthBootstrap(): Promise<void> {
   const passwordHash = await hashPassword(config.auth.defaultPassword);
   // The founding admin (Phase AG): the first seeded owner is the operator — every
   // later account is created BY an operator via /api/accounts and defaults to member.
-  provisionOwner({ name: username, username, passwordHash, role: 'operator' });
+  await provisionOwner({ name: username, username, passwordHash, role: 'operator' });
   logger.info(`Seeded default local owner '${username}' (AUTH_DEFAULT_USERNAME). Change its password after first login.`);
 }

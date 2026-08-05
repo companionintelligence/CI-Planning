@@ -89,27 +89,27 @@ beforeEach(() => {
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('reflow', () => {
-  it('returns empty diff when no auto blocks exist', () => {
-    const diff = reflow(OWNER, DATE);
+  it('returns empty diff when no auto blocks exist', async () => {
+    const diff = await reflow(OWNER, DATE);
     expect(diff.moved).toHaveLength(0);
     expect(diff.removed).toHaveLength(0);
     expect(diff.added).toHaveLength(0);
     expect(diff.unplaced).toHaveLength(0);
   });
 
-  it('identical placement ⇒ empty diff (deterministic re-placement)', () => {
+  it('identical placement ⇒ empty diff (deterministic re-placement)', async () => {
     const t1 = insertTask('T1');
     const t2 = insertTask('T2');
     insertDailyPlan(t1, 0);
     insertDailyPlan(t2, 1);
     stage(t1, 0);
     stage(t2, 1);
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
 
     const blocksBefore = autoBlocks();
     expect(blocksBefore).toHaveLength(2);
 
-    const diff = reflow(OWNER, DATE);
+    const diff = await reflow(OWNER, DATE);
 
     expect(diff.moved).toHaveLength(0);
     expect(diff.removed).toHaveLength(0);
@@ -117,11 +117,11 @@ describe('reflow', () => {
     // diff compares by task_id + time, not block_id. Same times → no moves.
   });
 
-  it('in_progress block is never moved', () => {
+  it('in_progress block is never moved', async () => {
     const t1 = insertTask('In-progress task');
     insertDailyPlan(t1, 0);
     stage(t1, 0);
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
 
     const [block] = autoBlocks();
     expect(block).toBeTruthy();
@@ -135,7 +135,7 @@ describe('reflow', () => {
     insertDailyPlan(t2, 1);
     // Don't re-stage t2 — only testing that t1's in_progress block stays put
 
-    const diff = reflow(OWNER, DATE);
+    const diff = await reflow(OWNER, DATE);
 
     const blocksAfter = autoBlocks();
     const inProgressBlock = blocksAfter.find((b) => b.task_id === t1);
@@ -144,19 +144,19 @@ describe('reflow', () => {
     expect(diff.moved.find((m) => m.task_id === t1)).toBeUndefined();
   });
 
-  it('stability window prevents re-churn on a second immediate reflow', () => {
+  it('stability window prevents re-churn on a second immediate reflow', async () => {
     const t1 = insertTask('T1');
     const t2 = insertTask('T2');
     insertDailyPlan(t1, 0);
     insertDailyPlan(t2, 1);
     stage(t1, 0);
     stage(t2, 1);
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
 
     // Insert a meeting that forces T1 and T2 to move on the first reflow.
     insertMeeting(`${DATE}T09:00:00.000Z`, `${DATE}T10:00:00.000Z`);
 
-    const diff1 = reflow(OWNER, DATE);
+    const diff1 = await reflow(OWNER, DATE);
     // T1 and T2 should have moved due to the new meeting obstacle.
     expect(diff1.moved.length).toBeGreaterThan(0);
 
@@ -167,15 +167,15 @@ describe('reflow', () => {
     }
 
     // Second reflow: stability window should protect the moved blocks.
-    const diff2 = reflow(OWNER, DATE);
+    const diff2 = await reflow(OWNER, DATE);
     expect(diff2.moved).toHaveLength(0);
   });
 
-  it('a manually-locked auto block survives reflow, stays locked, and is not duplicated', () => {
+  it('a manually-locked auto block survives reflow, stays locked, and is not duplicated', async () => {
     const t1 = insertTask('Locked auto');
     insertDailyPlan(t1, 0);
     stage(t1, 0);
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
 
     const [block] = autoBlocks();
     expect(block).toBeTruthy();
@@ -183,7 +183,7 @@ describe('reflow', () => {
     // Manually lock this auto block (e.g. user pinned it).
     sqlite.prepare(`UPDATE time_blocks SET is_locked = 1 WHERE id = ?`).run(block.id);
 
-    reflow(OWNER, DATE);
+    await reflow(OWNER, DATE);
 
     // The locked block survives clearPriorAuto and stays locked...
     const afterBlock = sqlite
@@ -195,7 +195,7 @@ describe('reflow', () => {
     expect(autoBlocks().filter((b) => b.task_id === t1)).toHaveLength(1);
   });
 
-  it('gap-close: deleting an earlier block compacts the rest and never pulls in backlog', () => {
+  it('gap-close: deleting an earlier block compacts the rest and never pulls in backlog', async () => {
     const t1 = insertTask('T1');
     const t2 = insertTask('T2');
     const backlog = insertTask('Backlog'); // in the day's plan, but never placed
@@ -204,7 +204,7 @@ describe('reflow', () => {
     insertDailyPlan(backlog, 2);
     stage(t1, 0);
     stage(t2, 1);
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
 
     const before = autoBlocks();
     expect(before).toHaveLength(2);
@@ -214,7 +214,7 @@ describe('reflow', () => {
     const t1Block = before.find((b) => b.task_id === t1)!;
     sqlite.prepare(`DELETE FROM time_blocks WHERE id = ?`).run(t1Block.id);
 
-    const diff = reflow(OWNER, DATE);
+    const diff = await reflow(OWNER, DATE);
 
     const after = autoBlocks();
     expect(after.map((b) => b.task_id)).toEqual([t2]); // only the survivor remains
@@ -223,31 +223,31 @@ describe('reflow', () => {
     expect(diff.added).toHaveLength(0); // gap-close adds no new work
   });
 
-  it('unplaced contains a placed task that no longer fits after a disruption', () => {
+  it('unplaced contains a placed task that no longer fits after a disruption', async () => {
     const t1 = insertTask('No room');
     insertDailyPlan(t1, 0);
     stage(t1, 0);
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
     expect(autoBlocks()).toHaveLength(1);
 
     // A full-day meeting lands, leaving no room to re-place t1 on reflow.
     insertMeeting(`${DATE}T09:00:00.000Z`, `${DATE}T18:00:00.000Z`);
 
-    const diff = reflow(OWNER, DATE);
+    const diff = await reflow(OWNER, DATE);
     expect(diff.unplaced).toContain(t1);
     expect(diff.removed.some((r) => r.task_id === t1)).toBe(true);
   });
 
-  it('recoverStaleFreezeLocks clears is_locked left on a planned auto block', () => {
+  it('recoverStaleFreezeLocks clears is_locked left on a planned auto block', async () => {
     const t1 = insertTask('Stuck');
     insertDailyPlan(t1, 0);
     stage(t1, 0);
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
     const [block] = autoBlocks();
     // Simulate residue from a reflow that died before unfreeze.
     sqlite.prepare(`UPDATE time_blocks SET is_locked = 1 WHERE id = ?`).run(block.id);
 
-    const cleared = recoverStaleFreezeLocks();
+    const cleared = await recoverStaleFreezeLocks();
     expect(cleared).toBeGreaterThanOrEqual(1);
     const after = sqlite.prepare(`SELECT is_locked FROM time_blocks WHERE id = ?`).get(block.id) as { is_locked: number };
     expect(after.is_locked).toBe(0);

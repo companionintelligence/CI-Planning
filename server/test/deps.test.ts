@@ -21,46 +21,49 @@ function addTask(title: string): string {
 describe('task dependencies', () => {
   beforeEach(() => resetDb());
 
-  it('rejects self-edges and cycles', () => {
+  // These now assert on a REJECTED promise, not a synchronous throw: addDependency and
+  // setDependencies are async, so `expect(() => …).toThrow()` would pass vacuously (the
+  // call returns a promise rather than throwing) and the cycle guard would go untested.
+  it('rejects self-edges and cycles', async () => {
     const a = addTask('A');
     const b = addTask('B');
     const c = addTask('C');
 
-    expect(() => addDependency(a, a)).toThrow(DependencyCycleError);
+    await expect(addDependency(a, a)).rejects.toThrow(DependencyCycleError);
 
-    addDependency(a, b); // A depends on B
-    addDependency(b, c); // B depends on C
-    expect(() => addDependency(c, a)).toThrow(DependencyCycleError); // would close A→B→C→A
-    expect(getDependencies(a)).toEqual([b]);
+    await addDependency(a, b); // A depends on B
+    await addDependency(b, c); // B depends on C
+    await expect(addDependency(c, a)).rejects.toThrow(DependencyCycleError); // would close A→B→C→A
+    expect(await getDependencies(a)).toEqual([b]);
   });
 
-  it('blockedTaskIds reflects only incomplete blockers', () => {
+  it('blockedTaskIds reflects only incomplete blockers', async () => {
     const a = addTask('A');
     const b = addTask('B');
-    addDependency(a, b);
+    await addDependency(a, b);
 
-    expect(blockedTaskIds().has(a)).toBe(true);
+    expect((await blockedTaskIds()).has(a)).toBe(true);
     sqlite.prepare("UPDATE tasks SET status = 'done' WHERE id = ?").run(b);
-    expect(blockedTaskIds().has(a)).toBe(false);
+    expect((await blockedTaskIds()).has(a)).toBe(false);
   });
 
-  it('cascade-deletes edges when a task is hard-deleted', () => {
+  it('cascade-deletes edges when a task is hard-deleted', async () => {
     const a = addTask('A');
     const b = addTask('B');
-    addDependency(a, b);
+    await addDependency(a, b);
 
     sqlite.prepare('DELETE FROM tasks WHERE id = ?').run(b);
-    expect(getDependencies(a)).toEqual([]);
+    expect(await getDependencies(a)).toEqual([]);
   });
 
-  it('setDependencies replaces the full blocker set', () => {
+  it('setDependencies replaces the full blocker set', async () => {
     const a = addTask('A');
     const b = addTask('B');
     const c = addTask('C');
-    setDependencies(a, [b, c]);
-    expect(getDependencies(a).sort()).toEqual([b, c].sort());
-    setDependencies(a, [b]);
-    expect(getDependencies(a)).toEqual([b]);
+    await setDependencies(a, [b, c]);
+    expect((await getDependencies(a)).sort()).toEqual([b, c].sort());
+    await setDependencies(a, [b]);
+    expect(await getDependencies(a)).toEqual([b]);
   });
 
   it('returns 409 when a PATCH would create a cycle', async () => {
@@ -80,12 +83,12 @@ describe('task dependencies', () => {
     }
   });
 
-  it('owner-scoping a huge depends_on list chunks the IN-query (no bound-param overflow)', () => {
+  it('owner-scoping a huge depends_on list chunks the IN-query (no bound-param overflow)', async () => {
     const a = addTask('A');
     // >SQLITE_MAX_VARIABLE_NUMBER worth of ids: a single IN(?, …) would throw.
     const many = Array.from({ length: 1500 }, (_, i) => `nonexistent-${i}`);
-    expect(() => setDependencies(a, many, SYSTEM_OWNER)).not.toThrow();
+    await expect(setDependencies(a, many, SYSTEM_OWNER)).resolves.toBeUndefined();
     // None are owner-owned tasks, so all are dropped — no edges created.
-    expect(getDependencies(a)).toEqual([]);
+    expect(await getDependencies(a)).toEqual([]);
   });
 });

@@ -1,5 +1,6 @@
 import { and, eq } from 'drizzle-orm';
-import { db, sqlite } from '../db/index.js';
+import { db } from '../db/index.js';
+import { store } from '../db/store.js';
 import { possibleTasks, tasks } from '../db/schema.js';
 import { writeAudit } from '../lib/audit.js';
 import { broadcast } from '../routes/sse.js';
@@ -42,7 +43,7 @@ import { requiresReview } from './review-gate.js';
  * `possible:promoted`-before-placement seq ordering.
  *
  * The insert/update statements keep their drizzle form (identical SQL + camelCase row
- * shape for `taskToApi`), so the writers are async; better-sqlite3 executes them
+ * shape for `taskToApi`), so the writers are async; the store facade executes them
  * synchronously underneath.
  */
 
@@ -57,17 +58,16 @@ export type PossibleTaskRow = typeof possibleTasks.$inferSelect;
  * at level 2 (secondary). Idempotent inserts onto a fresh task. Moved in from
  * routes/possibles.ts so REST + GraphQL carry tags identically.
  */
-const selectPossibleTags = sqlite.prepare(
-  `SELECT pt.tag_id AS id, tg.kind AS kind FROM possible_task_tags pt
+// SQL at module scope, prepare at the use site (§5.5).
+const SQL_POSSIBLE_TAGS = `SELECT pt.tag_id AS id, tg.kind AS kind FROM possible_task_tags pt
      JOIN tags tg ON tg.id = pt.tag_id
-    WHERE pt.possible_task_id = ?`,
-);
-const insertTaskTag = sqlite.prepare(
-  `INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, ?)`,
-);
-function carryPossibleTags(possibleId: string, taskId: string): void {
-  for (const r of selectPossibleTags.all(possibleId) as { id: string; kind: string }[]) {
-    insertTaskTag.run(taskId, r.id, r.kind === 'direction' ? 1 : 2);
+    WHERE pt.possible_task_id = ?`;
+const SQL_INSERT_TASK_TAG =
+  `INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, ?)`;
+async function carryPossibleTags(possibleId: string, taskId: string): Promise<void> {
+  const insertTaskTag = store().prepare(SQL_INSERT_TASK_TAG);
+  for (const r of await store().prepare(SQL_POSSIBLE_TAGS).all<{ id: string; kind: string }>(possibleId)) {
+    await insertTaskTag.run(taskId, r.id, r.kind === 'direction' ? 1 : 2);
   }
 }
 
@@ -139,7 +139,7 @@ export async function promotePossible(
     })
     .returning();
 
-  carryPossibleTags(id, task.id);
+  await carryPossibleTags(id, task.id);
 
   await db
     .update(possibleTasks)
@@ -219,7 +219,7 @@ export async function promoteAllPending(
     if (res.task.scheduledFor) {
       // AB1: a stated START is honored in ANY trust mode (user/suggestion intent).
       try {
-        placeStartAnchoredTask(owner, res.taskId);
+        await placeStartAnchoredTask(owner, res.taskId);
       } catch (err) {
         logger.warn('promoteAllPending: start-anchored placement failed', { owner, taskId: res.taskId, err: (err as Error).message });
       }
@@ -231,7 +231,7 @@ export async function promoteAllPending(
     // TM-5: one hands-off-only, estimate-bearing sweep for the whole batch (a no-op in
     // Cautious/Balanced) — after every possible:promoted broadcast above.
     try {
-      autoScheduleOnIngest(owner, { requireEstimate: true });
+      await autoScheduleOnIngest(owner, { requireEstimate: true });
     } catch (err) {
       logger.warn('promoteAllPending: post-promote auto-schedule failed', { owner, err: (err as Error).message });
     }

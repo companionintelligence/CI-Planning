@@ -50,12 +50,12 @@ beforeEach(() => {
 });
 
 describe('placeTasksInBlock', () => {
-  it('scatters tasks into the container as non-overlapping child blocks', () => {
+  it('scatters tasks into the container as non-overlapping child blocks', async () => {
     const c = insertContainer(at('09:00'), at('12:00'));
     const t1 = insertTask('Write A', 30);
     const t2 = insertTask('Write B', 30);
 
-    const r = placeTasksInBlock(OWNER, c, [t1, t2]);
+    const r = await placeTasksInBlock(OWNER, c, [t1, t2]);
     expect(r.placed).toBe(2);
     expect(r.blocksCreated).toBe(2);
 
@@ -73,10 +73,10 @@ describe('placeTasksInBlock', () => {
     expect(kids[0].end_at <= kids[1].start_at).toBe(true);
   });
 
-  it('flips a placed task to scheduled AND mirrors scheduled_for/task_time onto it', () => {
+  it('flips a placed task to scheduled AND mirrors scheduled_for/task_time onto it', async () => {
     const c = insertContainer(at('09:00'), at('12:00'));
     const t = insertTask('Write A', 30);
-    placeTasksInBlock(OWNER, c, [t]);
+    await placeTasksInBlock(OWNER, c, [t]);
     const row = sqlite.prepare(`SELECT status, scheduled_for, task_time FROM tasks WHERE id = ?`).get(t) as
       { status: string; scheduled_for: string | null; task_time: string | null };
     expect(row.status).toBe('scheduled');
@@ -84,13 +84,13 @@ describe('placeTasksInBlock', () => {
     expect(row.task_time).toBe('09:00');   // mirrored from the earliest placement
   });
 
-  it('treats an existing child as an obstacle (new task lands after it, with a break)', () => {
+  it('treats an existing child as an obstacle (new task lands after it, with a break)', async () => {
     const c = insertContainer(at('09:00'), at('12:00'));
     const pre = insertTask('Existing', 60);
     insertChild(c, pre, at('09:00'), at('10:00')); // occupies 09:00–10:00
     const t = insertTask('New', 30);
 
-    placeTasksInBlock(OWNER, c, [t]);
+    await placeTasksInBlock(OWNER, c, [t]);
 
     const placed = childrenOf(c).find((k) => k.task_id === t)!;
     // min_break_minutes = 10 → first free slot starts at 10:10.
@@ -98,33 +98,33 @@ describe('placeTasksInBlock', () => {
     expect(placed.end_at).toBe(at('10:40'));
   });
 
-  it('skips ids already attached, duplicates, and an empty list (idempotent re-add)', () => {
+  it('skips ids already attached, duplicates, and an empty list (idempotent re-add)', async () => {
     const c = insertContainer(at('09:00'), at('12:00'));
     const t = insertTask('Once', 30);
 
-    const first = placeTasksInBlock(OWNER, c, [t, t]); // duplicate in one call
+    const first = await placeTasksInBlock(OWNER, c, [t, t]); // duplicate in one call
     expect(first.placed).toBe(1);
     expect(first.skipped).toBe(1);
     expect(childrenOf(c)).toHaveLength(1);
 
-    const again = placeTasksInBlock(OWNER, c, [t]); // already a child
+    const again = await placeTasksInBlock(OWNER, c, [t]); // already a child
     expect(again.blocksCreated).toBe(0);
     expect(again.skipped).toBe(1);
     expect(childrenOf(c)).toHaveLength(1);
 
-    expect(placeTasksInBlock(OWNER, c, []).blocksCreated).toBe(0); // empty list → no-op
+    expect((await placeTasksInBlock(OWNER, c, [])).blocksCreated).toBe(0); // empty list → no-op
   });
 
-  it('is a no-op for a non-container or a zero-length / someday block', () => {
+  it('is a no-op for a non-container or a zero-length / someday block', async () => {
     const someday = insertContainer(at('09:00'), at('09:00')); // zero-length window
     const t = insertTask('X', 30);
-    expect(placeTasksInBlock(OWNER, someday, [t]).blocksCreated).toBe(0);
+    expect((await placeTasksInBlock(OWNER, someday, [t])).blocksCreated).toBe(0);
     expect(childrenOf(someday)).toHaveLength(0);
 
     // A plain task block (not a container) accepts nothing.
     const taskBlockId = (sqlite
       .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, source_kind, status, owner_id) VALUES (uuid7(), 'loose', 'task', ?, ?, 'manual', 'planned', ?) RETURNING id`)
       .get(at('09:00'), at('09:30'), OWNER) as { id: string }).id;
-    expect(placeTasksInBlock(OWNER, taskBlockId, [t]).blocksCreated).toBe(0);
+    expect((await placeTasksInBlock(OWNER, taskBlockId, [t])).blocksCreated).toBe(0);
   });
 });

@@ -44,35 +44,35 @@ beforeEach(() => {
 });
 
 describe('model resolution', () => {
-  it('falls back to env defaults when no override is set', () => {
-    expect(resolveModel('small', OWNER)).toBe(config.ollamaSmallModel);
-    expect(resolveModel('medium', OWNER)).toBe(config.ollamaMediumModel);
-    expect(resolveEmbedModel(OWNER)).toBe(config.ollamaEmbedModel);
+  it('falls back to env defaults when no override is set', async () => {
+    expect(await resolveModel('small', OWNER)).toBe(config.ollamaSmallModel);
+    expect(await resolveModel('medium', OWNER)).toBe(config.ollamaMediumModel);
+    expect(await resolveEmbedModel(OWNER)).toBe(config.ollamaEmbedModel);
   });
 
-  it('uses the per-owner override when set', () => {
+  it('uses the per-owner override when set', async () => {
     setPrefs({ fast_model: 'fast-x', quality_model: 'quality-y', embed_model: 'embed-z' });
-    expect(resolveModel('small', OWNER)).toBe('fast-x');
-    expect(resolveModel('medium', OWNER)).toBe('quality-y');
-    expect(resolveEmbedModel(OWNER)).toBe('embed-z');
+    expect(await resolveModel('small', OWNER)).toBe('fast-x');
+    expect(await resolveModel('medium', OWNER)).toBe('quality-y');
+    expect(await resolveEmbedModel(OWNER)).toBe('embed-z');
   });
 
-  it('treats a blank override as "use the default"', () => {
+  it('treats a blank override as "use the default"', async () => {
     setPrefs({ fast_model: '   ' });
-    expect(resolveModel('small', OWNER)).toBe(config.ollamaSmallModel);
+    expect(await resolveModel('small', OWNER)).toBe(config.ollamaSmallModel);
   });
 });
 
 describe('memory service', () => {
-  it('defaults: off, not connected, connector unavailable, scopes on', () => {
-    const s = memoryStatus(OWNER);
+  it('defaults: off, not connected, connector unavailable, scopes on', async () => {
+    const s = await memoryStatus(OWNER);
     expect(s).toMatchObject({ enabled: false, connected: false, available: false });
     expect(s.scopes).toEqual({ completed: true, habits: true, reflections: true });
   });
 
-  it('reflects enabled + account + a narrowed scope', () => {
+  it('reflects enabled + account + a narrowed scope', async () => {
     setPrefs({ memory_sync_enabled: 1, memory_account: 'liam@x.io', memory_sync_reflections: 0 });
-    const s = memoryStatus(OWNER);
+    const s = await memoryStatus(OWNER);
     expect(s).toMatchObject({ enabled: true, connected: true, account: 'liam@x.io' });
     expect(s.scopes.reflections).toBe(false);
   });

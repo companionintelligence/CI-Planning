@@ -60,7 +60,8 @@ export function prefsRouter() {
     // experiment arm and seed the haptic/color channels to match it. Re-read so the
     // response reflects the arm-derived channels (the update above didn't touch them).
     if (res.timeSenseNewlyEnabledUnassigned) {
-      assignExperimentArmIfNeeded(owner);
+      // MUST be awaited: the re-read below races the arm write otherwise.
+      await assignExperimentArmIfNeeded(owner);
       [prefs] = await db.select().from(schedulingPrefs).where(eq(schedulingPrefs.ownerId, owner));
     }
 
@@ -79,7 +80,7 @@ export function prefsRouter() {
       // Prune only engine-generated instances beyond the new window. clearDailyPlan:false
       // — the recurrence ceiling must NOT discard authored Phase-M day plans (rationales/
       // outcomes), which raising the horizon could not restore.
-      const r = clearPlannerRange({
+      const r = await clearPlannerRange({
         owner,
         start: addDays(today, res.newHorizon),
         suppress: 'none',

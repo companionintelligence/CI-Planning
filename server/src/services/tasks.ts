@@ -1,5 +1,6 @@
 import { and, eq, gt, asc } from 'drizzle-orm';
-import { db, sqlite } from '../db/index.js';
+import { db } from '../db/index.js';
+import { store } from '../db/store.js';
 import { tasks, taskDependencies } from '../db/schema.js';
 import { setDependencies, DependencyCycleError } from '../engine/deps.js';
 import { parseRule } from '../engine/recurrence.js';
@@ -39,8 +40,9 @@ import { truncateSeriesFrom } from '../engine/series-scope.js';
  * engine-side.
  *
  * The insert/update statements keep their drizzle form (identical SQL + camelCase
- * row shape for `taskToApi`), so the writers are async; better-sqlite3 executes
- * them synchronously underneath.
+ * row shape for `taskToApi`), so the writers are async. Everything else goes through
+ * the store facade. The raw `sqlite` handle that used to be threaded into `stampRow`
+ * is gone — sync/apply.ts ported.
  */
 
 /** A full drizzle `tasks` row (camelCase) — the shape `taskToApi` serializes. */
@@ -52,9 +54,9 @@ export type TaskRow = typeof tasks.$inferSelect;
  * id is dropped to `null` (no dangling cross-tenant parent ref, no existence leak).
  * `undefined`/`null` in → `null` out (top-level task).
  */
-function ownedTaskId(ownerId: string, id: string | null | undefined): string | null {
+async function ownedTaskId(ownerId: string, id: string | null | undefined): Promise<string | null> {
   if (!id) return null;
-  const row = sqlite.prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, ownerId);
+  const row = await store().prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, ownerId);
   return row ? id : null;
 }
 
@@ -79,19 +81,19 @@ function subtypeWrite(body: { subtype?: Subtype; is_habit?: boolean }): { subtyp
  * are resolve-or-created + normalized by syncLeveledEntityTags. Mirrors
  * applyBlockTagLevels in routes/blocks.ts so tasks + blocks behave identically.
  */
-export function applyTaskTagLevels(ownerId: string, taskId: string, opts: { tags?: string[]; secondary?: string[] }): void {
-  const existing = entityTagLevels('task', taskId);
+export async function applyTaskTagLevels(ownerId: string, taskId: string, opts: { tags?: string[]; secondary?: string[] }): Promise<void> {
+  const existing = await entityTagLevels('task', taskId);
   const top = opts.tags !== undefined ? opts.tags : existing.filter((t) => t.level === 1).map((t) => t.name);
   const secondary = opts.secondary !== undefined ? opts.secondary : existing.filter((t) => t.level > 1).map((t) => t.name);
-  syncLeveledEntityTags('task', taskId, [
+  await syncLeveledEntityTags('task', taskId, [
     { level: 1, names: top },
     { level: 2, names: secondary },
   ], ownerId);
 }
 
 /** A task's secondary (level>1) tag names — the read surface (mirrors blocks). */
-export function taskSecondaryTags(taskId: string): string[] {
-  return entityTagLevels('task', taskId).filter((t) => t.level > 1).map((t) => t.name);
+export async function taskSecondaryTags(taskId: string): Promise<string[]> {
+  return (await entityTagLevels('task', taskId)).filter((t) => t.level > 1).map((t) => t.name);
 }
 
 /**
@@ -102,10 +104,10 @@ export function taskSecondaryTags(taskId: string): string[] {
  * — derived in the OWNER'S timezone to match how period_key is written (local
  * YYYY-MM-DD), not a UTC slice. COALESCE preserves an already-set done_at.
  */
-export function stampTaskCompletionReflection(ownerId: string, taskId: string, completedAt: string): void {
+export async function stampTaskCompletionReflection(ownerId: string, taskId: string, completedAt: string): Promise<void> {
   const now = new Date().toISOString();
-  const periodKey = localDateInTZ(completedAt, ownerTimezone(ownerId));
-  sqlite
+  const periodKey = localDateInTZ(completedAt, await ownerTimezone(ownerId));
+  await store()
     .prepare(
       `UPDATE reflections SET done_at = COALESCE(done_at, ?), updated_at = ?
          WHERE owner_id = ? AND kind = 'today_goal' AND period_key = ? AND position = 0
@@ -174,7 +176,7 @@ export async function createTask(ownerId: string, input: CreateTaskInput): Promi
 
   // W3.1b: a parent_id must be one of the caller's own tasks — a foreign parent_id
   // is dropped (would otherwise be a dangling cross-tenant ref). null = top-level.
-  const parentId = ownedTaskId(ownerId, input.parent_id);
+  const parentId = await ownedTaskId(ownerId, input.parent_id);
 
   // Motivation (0141, §3b) — LLM-first at the surfaces that can afford the model
   // (quick-add's overlay passes it in); here only the CHEAP deterministic keyword
@@ -209,23 +211,23 @@ export async function createTask(ownerId: string, input: CreateTaskInput): Promi
     .returning();
 
   if (input.tags !== undefined || input.secondary_tags !== undefined)
-    applyTaskTagLevels(ownerId, task.id, { tags: input.tags, secondary: input.secondary_tags });
+    await applyTaskTagLevels(ownerId, task.id, { tags: input.tags, secondary: input.secondary_tags });
   // Phase B: category axis (kept OUT of entity_tags). Names resolve owner-scoped;
   // unknown names drop silently (mirrors tag behavior).
   if (input.categories !== undefined)
-    setEntityCategories('task', task.id, categoryIdsForOwner(input.categories, ownerId));
+    await setEntityCategories('task', task.id, await categoryIdsForOwner(input.categories, ownerId));
   if (Array.isArray(input.depends_on)) {
     try {
       // W3.1b: scope blockers to the caller's own tasks — a cross-owner id is dropped.
-      setDependencies(task.id, input.depends_on, ownerId);
+      await setDependencies(task.id, input.depends_on, ownerId);
     } catch (err) {
       if (err instanceof DependencyCycleError) return { ok: false, error: 'dependency_cycle', detail: err.message };
       throw err;
     }
   }
-  syncTaskReminders(ownerId, task.id); // Phase H (b): derive reminders from due_at + Reminder Defaults
+  await syncTaskReminders(ownerId, task.id); // Phase H (b): derive reminders from due_at + Reminder Defaults
   // §H: creating a subtask promotes its parent to an objective (task list star).
-  if (parentId) ensureTaskPromoted(parentId, ownerId);
+  if (parentId) await ensureTaskPromoted(parentId, ownerId);
 
   writeAudit({ ownerId, actor: 'owner', action: 'create', entity: `task:${task.id}` });
   return { ok: true, task };
@@ -250,7 +252,7 @@ export async function createRecurringTask(ownerId: string, input: CreateTaskInpu
 
   const sw = subtypeWrite(input);
   const owner = ownerId; // W3.1b: always the authenticated caller — never a client body owner_id.
-  const tz = ownerTimezone(owner);
+  const tz = await ownerTimezone(owner);
   const [template] = await db
     .insert(tasks)
     .values({
@@ -267,15 +269,15 @@ export async function createRecurringTask(ownerId: string, input: CreateTaskInpu
     })
     .returning();
   if (input.tags !== undefined || input.secondary_tags !== undefined)
-    applyTaskTagLevels(ownerId, template.id, { tags: input.tags, secondary: input.secondary_tags });
+    await applyTaskTagLevels(ownerId, template.id, { tags: input.tags, secondary: input.secondary_tags });
   // Phase B: category axis on the template. Instances carry NO category rows —
   // exactly like entity_tags (generateRecurrences copies neither); the series'
   // categories live on the template only.
   if (input.categories !== undefined)
-    setEntityCategories('task', template.id, categoryIdsForOwner(input.categories, ownerId));
+    await setEntityCategories('task', template.id, await categoryIdsForOwner(input.categories, ownerId));
   // Bridge: a habit task is also represented as a Habit-type Pattern (G2/E′).
-  if (sw?.subtype === 'habit') ensureHabitPattern(template.id, owner, template.title);
-  const generated = generateRecurrences();
+  if (sw?.subtype === 'habit') await ensureHabitPattern(template.id, owner, template.title);
+  const generated = await generateRecurrences();
 
   writeAudit({ ownerId, actor: 'owner', action: 'create', entity: `task:${template.id}` });
   return { ok: true, template, generated };
@@ -376,12 +378,12 @@ export async function updateTask(
   input: UpdateTaskInput,
   scope: UpdateTaskScope = 'instance',
 ): Promise<UpdateTaskResult> {
-  const targetId = scope === 'series' ? (resolveTemplateId(id) ?? id) : id;
+  const targetId = scope === 'series' ? ((await resolveTemplateId(id)) ?? id) : id;
 
   // Capture the pre-edit parent so a re-parent can GC the OLD parent's auto-objective
   // if this was its last subtask.
   const prevParentId = input.parent_id !== undefined
-    ? (sqlite.prepare(`SELECT parent_id FROM tasks WHERE id = ? AND owner_id = ?`).get(targetId, ownerId) as { parent_id: string | null } | undefined)?.parent_id ?? null
+    ? (await store().prepare(`SELECT parent_id FROM tasks WHERE id = ? AND owner_id = ?`).get<{ parent_id: string | null }>(targetId, ownerId))?.parent_id ?? null
     : null;
 
   const update: Partial<typeof tasks.$inferInsert> = {};
@@ -409,7 +411,7 @@ export async function updateTask(
   // dropped to null (an explicit null un-parents). `parentIdSet` remembers a
   // parent_id was in the PATCH; `newParentId` is the validated value written.
   const parentIdSet = input.parent_id !== undefined;
-  const newParentId = parentIdSet ? ownedTaskId(ownerId, input.parent_id) : null;
+  const newParentId = parentIdSet ? await ownedTaskId(ownerId, input.parent_id) : null;
   if (parentIdSet)                           update.parentId = newParentId;
   const sw = subtypeWrite(input);
   if (sw) update.subtype = sw.subtype;
@@ -435,7 +437,7 @@ export async function updateTask(
   // `undefined` means "not queried — no status change, so no transition to react to",
   // while `null` means "queried, no such row" (the UPDATE then 404s before we use it).
   const priorStatus: string | null | undefined = update.status !== undefined
-    ? ((sqlite.prepare(`SELECT status FROM tasks WHERE id = ? AND owner_id = ?`).get(targetId, ownerId) as { status: string } | undefined)?.status ?? null)
+    ? ((await store().prepare(`SELECT status FROM tasks WHERE id = ? AND owner_id = ?`).get<{ status: string }>(targetId, ownerId))?.status ?? null)
     : undefined;
   const wasDone = priorStatus !== undefined ? priorStatus === 'done' : undefined;
 
@@ -461,36 +463,36 @@ export async function updateTask(
 
   if (Array.isArray(input.tags) || Array.isArray(input.secondary_tags)) {
     // Partial: an omitted level is preserved (mirrors the block PATCH semantics).
-    applyTaskTagLevels(ownerId, targetId, { tags: input.tags, secondary: input.secondary_tags });
+    await applyTaskTagLevels(ownerId, targetId, { tags: input.tags, secondary: input.secondary_tags });
   }
 
   // Phase B: category axis — `undefined` preserves, `[]` clears (mirrors tags).
   if (Array.isArray(input.categories)) {
-    setEntityCategories('task', targetId, categoryIdsForOwner(input.categories, ownerId));
+    await setEntityCategories('task', targetId, await categoryIdsForOwner(input.categories, ownerId));
   }
 
   if (Array.isArray(input.depends_on)) {
     try {
       // W3.1b: scope blockers to the caller's own tasks — a cross-owner id is dropped.
-      setDependencies(targetId, input.depends_on, ownerId);
+      await setDependencies(targetId, input.depends_on, ownerId);
     } catch (err) {
       if (err instanceof DependencyCycleError) {
         // Phase L: the column UPDATE already applied before the dependency change was
         // rejected, so stamp version/field_ts here (moved in from routes/tasks.ts at
         // W3.3b) exactly as the route did on this 409 path — same target, same fields,
         // same guard — so REST stays byte-equivalent and a GraphQL update stamps too.
-        if (updatedFields.length > 0) stampRow(sqlite, 'task', targetId, updatedFields);
+        if (updatedFields.length > 0) await stampRow('task', targetId, updatedFields);
         return { ok: false, error: 'dependency_cycle', detail: err.message, targetId, updatedFields };
       }
       throw err;
     }
   }
-  syncTaskReminders(ownerId, targetId); // Phase H (b): re-derive if due_at changed
+  await syncTaskReminders(ownerId, targetId); // Phase H (b): re-derive if due_at changed
   // §H: re-parenting a task UNDER another promotes that parent to an objective; moving
   // it AWAY may leave the old parent empty → GC that parent's pristine auto-objective.
-  if (newParentId) ensureTaskPromoted(newParentId, ownerId);
+  if (newParentId) await ensureTaskPromoted(newParentId, ownerId);
   if (parentIdSet && prevParentId && prevParentId !== newParentId) {
-    unpromoteIfEmpty(prevParentId, ownerId);
+    await unpromoteIfEmpty(prevParentId, ownerId);
   }
 
   // REQ2 (reverse sync): editing a task's time/day/estimate moves its placed block in
@@ -502,15 +504,15 @@ export async function updateTask(
   let syncedBlockId: string | null = null;
   let unscheduled = false;
   if (scope === 'instance' && clearingStart) {
-    unscheduled = clearTaskPlacement(targetId, ownerId) > 0;
+    unscheduled = await clearTaskPlacement(targetId, ownerId) > 0;
     // Removing the last active placement must not strand the task at status='scheduled'
     // with no block — return it to the open backlog (no-op if a locked block remains).
-    if (revertTaskPlacementStatus(targetId, ownerId)) task.status = 'open';
+    if (await revertTaskPlacementStatus(targetId, ownerId)) task.status = 'open';
   } else if (
     scope === 'instance' &&
     (input.scheduled_for !== undefined || input.task_time !== undefined || estimateChanged)
   ) {
-    syncedBlockId = syncBlockFromTask(targetId, ownerId, { resizeToEstimate: estimateChanged });
+    syncedBlockId = await syncBlockFromTask(targetId, ownerId, { resizeToEstimate: estimateChanged });
   }
 
   // A series edit that changes the recurrence pattern or per-instance time drops
@@ -519,17 +521,17 @@ export async function updateTask(
   let generated: GenerateResult | undefined;
   if (
     scope === 'series' &&
-    resolveTemplateId(targetId) != null &&
+    (await resolveTemplateId(targetId)) != null &&
     (input.recurrence_rule !== undefined || input.recurrence_dtstart !== undefined || input.task_time !== undefined)
   ) {
-    deleteFutureOpenInstances(targetId);
-    generated = generateRecurrences();
+    await deleteFutureOpenInstances(targetId);
+    generated = await generateRecurrences();
   }
 
   // Phase O · O0 — completing a task lights up the today-intention linked to it.
   if (task.status === 'done') {
     const completedAt = typeof input.completed_at === 'string' && input.completed_at ? input.completed_at : new Date().toISOString();
-    stampTaskCompletionReflection(ownerId, targetId, completedAt);
+    await stampTaskCompletionReflection(ownerId, targetId, completedAt);
   }
 
   // AF-5: a status change that alters how a linked objective's rollup sees this task
@@ -544,7 +546,7 @@ export async function updateTask(
   // had when the task was thrown away. (Its mirror image — open→cancelled via PATCH
   // rather than deleteTask — was skipped for the same reason.)
   if (priorStatus !== undefined && rollupStatusFacet(priorStatus) !== rollupStatusFacet(task.status)) {
-    recomputeObjectivesForTask(targetId);
+    await recomputeObjectivesForTask(targetId);
   }
 
   // Task→block done-state mirror (the inverse of mirrorBlockStatusToTask): checking
@@ -559,10 +561,10 @@ export async function updateTask(
   let mirroredBlockIds: string[] = [];
   if (wasDone !== undefined && wasDone !== (task.status === 'done')) {
     if (scope === 'instance' && (task.status === 'done' || ['open', 'scheduled', 'in_progress'].includes(task.status ?? ''))) {
-      mirroredBlockIds = mirrorTaskStatusToBlocks(targetId, ownerId);
+      mirroredBlockIds = await mirrorTaskStatusToBlocks(targetId, ownerId);
       // Reviving a placement re-schedules an open task (same parity rule every other
       // placement path follows).
-      if (task.status === 'open' && mirroredBlockIds.length > 0 && applyTaskPlacementStatus(targetId, ownerId)) {
+      if (task.status === 'open' && mirroredBlockIds.length > 0 && await applyTaskPlacementStatus(targetId, ownerId)) {
         task.status = 'scheduled';
       }
     }
@@ -575,7 +577,7 @@ export async function updateTask(
   // updateTask mutation both version their column writes — same target, same fields,
   // same guard (`updatedFields.length > 0`) the route used, so REST stays byte-equivalent
   // (the route stamped after the service returned; audit already fired inside the service).
-  if (updatedFields.length > 0) stampRow(sqlite, 'task', targetId, updatedFields);
+  if (updatedFields.length > 0) await stampRow('task', targetId, updatedFields);
 
   return { ok: true, task, targetId, updatedFields, syncedBlockId, unscheduled, mirroredBlockIds, generated };
 }
@@ -606,20 +608,20 @@ export async function deleteTask(ownerId: string, id: string, scope: DeleteTaskS
   // would make cancelling irreversible through sync. So the server clock is the only
   // thing stopping a queued op with an older clientTs from setting status back to
   // 'open' and resurrecting this task — same guard the archive fields rely on.
-  stampRow(sqlite, 'task', id, ['status']);
-  syncTaskReminders(ownerId, id); // Phase H (b): a cancelled task drops its auto reminders
+  await stampRow('task', id, ['status']);
+  await syncTaskReminders(ownerId, id); // Phase H (b): a cancelled task drops its auto reminders
   // A cancelled task's placements settle with it — a manual block is invisible to
   // reflow's agent-only GC and would otherwise stay on the board looking live.
-  const cancelledBlockIds = cancelBlocksForTask(id, ownerId);
-  dropSourceObjective(id, ownerId);
-  if (task.parentId) unpromoteIfEmpty(task.parentId, ownerId);
-  recomputeObjectivesForTask(id);
+  const cancelledBlockIds = await cancelBlocksForTask(id, ownerId);
+  await dropSourceObjective(id, ownerId);
+  if (task.parentId) await unpromoteIfEmpty(task.parentId, ownerId);
+  await recomputeObjectivesForTask(id);
   // 'following': truncate the series at this occurrence so it stops recurring from here.
   // Done AFTER the row is cancelled so the clicked occurrence settles the same way it
   // would under 'instance' — the truncation only governs what comes after it.
   let seriesTruncated = false;
   if (scope === 'following' && task.recurrenceParentId && task.occurrenceDate) {
-    const r = truncateSeriesFrom(ownerId, 'tasks', task.recurrenceParentId, task.occurrenceDate);
+    const r = await truncateSeriesFrom(ownerId, 'tasks', task.recurrenceParentId, task.occurrenceDate);
     seriesTruncated = r.ok;
   }
   writeAudit({ ownerId, actor: 'owner', action: 'delete', entity: `task:${id}` });
@@ -642,8 +644,8 @@ export async function promoteToHabit(ownerId: string, id: string): Promise<Promo
   // `subtype` is mergeable and unpinned, so without the server clock a queued op
   // carrying the old subtype would win LWW and silently demote the habit — same
   // hole as the soft-delete's status write above.
-  stampRow(sqlite, 'task', id, ['subtype']);
-  ensureHabitPattern(id, task.ownerId ?? ownerId, task.title);
+  await stampRow('task', id, ['subtype']);
+  await ensureHabitPattern(id, task.ownerId ?? ownerId, task.title);
   writeAudit({ ownerId, actor: 'owner', action: 'promote', entity: `task:${id}` });
   return { ok: true, task };
 }
@@ -657,42 +659,44 @@ export type RecallTaskResult = { ok: true; task: TaskRow } | { ok: false; error:
  * no recurrence or history. cockpit-v2 Phase 6.
  */
 export async function recallTask(ownerId: string, taskId: string): Promise<RecallTaskResult> {
-  if (!sqlite.prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(taskId, ownerId)) {
+  if (!(await store().prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(taskId, ownerId))) {
     return { ok: false, error: 'not_found' };
   }
-  const keepPattern = !!(sqlite.prepare('SELECT recall_keeps_pattern AS v FROM scheduling_prefs WHERE owner_id = ?').get(ownerId) as { v: number } | undefined)?.v;
+  const keepPattern = !!(await store().prepare('SELECT recall_keeps_pattern AS v FROM scheduling_prefs WHERE owner_id = ?').get<{ v: number }>(ownerId))?.v;
 
-  // Recursively clone a task + its subtree (better-sqlite3 is synchronous). The top
-  // clone is a fresh independent task (parent_id null); uuid7() mints each new id.
-  const cloneTree = (srcId: string, parentId: string | null): string => {
-    const s = sqlite.prepare(
+  // Recursively clone a task + its subtree. The top clone is a fresh independent task
+  // (parent_id null); uuid7() mints each new id. Depth-first and sequential — the
+  // recursion awaits each child before the next, so the whole subtree lands inside the
+  // single transaction below.
+  const cloneTree = async (srcId: string, parentId: string | null): Promise<string> => {
+    const s = (await store().prepare(
       'SELECT title, description, notes, estimated_minutes, priority, task_time, subtype, source_kind, texture_enabled, texture_color_token FROM tasks WHERE id = ?'
-    ).get(srcId) as {
+    ).get<{
       title: string; description: string | null; notes: string | null;
       estimated_minutes: number | null; priority: number | null; task_time: string | null;
       subtype: string | null; source_kind: string | null;
       texture_enabled: number; texture_color_token: string | null;
-    };
+    }>(srcId))!;
     const st = s.subtype ?? 'standard';
-    const newId = (sqlite.prepare(
+    const newId = (await store().prepare(
       `INSERT INTO tasks (id, title, description, notes, estimated_minutes, priority, task_time, subtype, parent_id, owner_id, status, source_kind, texture_enabled, texture_color_token)
        VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?) RETURNING id`
-    ).get(s.title, s.description, s.notes, s.estimated_minutes, s.priority ?? 3, s.task_time, st, parentId, ownerId, s.source_kind ?? 'manual', s.texture_enabled, s.texture_color_token) as { id: string }).id;
+    ).get<{ id: string }>(s.title, s.description, s.notes, s.estimated_minutes, s.priority ?? 3, s.task_time, st, parentId, ownerId, s.source_kind ?? 'manual', s.texture_enabled, s.texture_color_token))!.id;
     // Carry tags (entity_tags, all levels); Routine membership only when the pref is on.
-    sqlite.prepare("INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) SELECT 'task', ?, tag_id, level FROM entity_tags WHERE entity_kind = 'task' AND entity_id = ?").run(newId, srcId);
+    await store().prepare("INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) SELECT 'task', ?, tag_id, level FROM entity_tags WHERE entity_kind = 'task' AND entity_id = ?").run(newId, srcId);
     // Phase B: carry the category axis too (position preserved — the stripe order).
-    sqlite.prepare("INSERT OR IGNORE INTO entity_categories (entity_kind, entity_id, category_tag_id, position) SELECT 'task', ?, category_tag_id, position FROM entity_categories WHERE entity_kind = 'task' AND entity_id = ?").run(newId, srcId);
+    await store().prepare("INSERT OR IGNORE INTO entity_categories (entity_kind, entity_id, category_tag_id, position) SELECT 'task', ?, category_tag_id, position FROM entity_categories WHERE entity_kind = 'task' AND entity_id = ?").run(newId, srcId);
     if (keepPattern) {
-      sqlite.prepare('INSERT OR IGNORE INTO pattern_tasks (pattern_id, task_id, position) SELECT pattern_id, ?, position FROM pattern_tasks WHERE task_id = ?').run(newId, srcId);
+      await store().prepare('INSERT OR IGNORE INTO pattern_tasks (pattern_id, task_id, position) SELECT pattern_id, ?, position FROM pattern_tasks WHERE task_id = ?').run(newId, srcId);
     }
-    for (const k of sqlite.prepare('SELECT id FROM tasks WHERE parent_id = ?').all(srcId) as { id: string }[]) {
-      cloneTree(k.id, newId);
+    for (const k of await store().prepare('SELECT id FROM tasks WHERE parent_id = ?').all<{ id: string }>(srcId)) {
+      await cloneTree(k.id, newId);
     }
     return newId;
   };
 
   // Atomic: a partway failure must not leave a half-built clone subtree.
-  const newId = sqlite.transaction(() => cloneTree(taskId, null))();
+  const newId = await store().transaction(() => cloneTree(taskId, null));
   const [task] = await db.select().from(tasks).where(eq(tasks.id, newId));
   writeAudit({ ownerId, actor: 'owner', action: 'recall', entity: `task:${newId}` });
   return { ok: true, task };
@@ -711,17 +715,17 @@ export async function skipRecurringInstance(ownerId: string, id: string): Promis
   // ownership here (mirrors recallTask) before it can mark another owner's instance
   // skipped / write an EXDATE onto their template. A cross-owner id → not_found (404),
   // exactly what a non-existent id already returned — the legit-owner path is unchanged.
-  if (!sqlite.prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, ownerId)) {
+  if (!(await store().prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, ownerId))) {
     return { ok: false, error: 'not_found' };
   }
-  const res = skipInstance(id);
+  const res = await skipInstance(id);
   if (!res.ok) return { ok: false, error: res.reason };
   // Phase L: `skipped` is mergeable and unpinned, so the stamp is what stops a queued op
   // from reviving this instance. It belongs here, not in the engine: skipInstance resolves
   // by id alone with no owner to gate on, while the check above has already proven the row
   // is ours. (The template's EXDATE write needs no stamp — recurrence_exdates isn't in the
   // sync allowlist, so no op can race it.)
-  stampRow(sqlite, 'task', id, ['status']);
+  await stampRow('task', id, ['status']);
   const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
   writeAudit({ ownerId, actor: 'owner', action: 'skip', entity: `task:${id}` });
   return { ok: true, task, skipped: res.date };
@@ -760,11 +764,11 @@ export async function listTasks(
 }
 
 /** Total count for the `tasks` connection (same owner/status filter, no keyset). */
-export function countTasks(ownerId: string, status?: string): number {
+export async function countTasks(ownerId: string, status?: string): Promise<number> {
   const row = status
-    ? sqlite.prepare('SELECT COUNT(*) AS n FROM tasks WHERE owner_id = ? AND status = ?').get(ownerId, status)
-    : sqlite.prepare('SELECT COUNT(*) AS n FROM tasks WHERE owner_id = ?').get(ownerId);
-  return (row as { n: number }).n;
+    ? await store().prepare('SELECT COUNT(*) AS n FROM tasks WHERE owner_id = ? AND status = ?').get<{ n: number }>(ownerId, status)
+    : await store().prepare('SELECT COUNT(*) AS n FROM tasks WHERE owner_id = ?').get<{ n: number }>(ownerId);
+  return row!.n;
 }
 
 /** One keyset page of a task's subtasks (owner-scoped: subtasks share the parent's
@@ -781,11 +785,11 @@ export async function listSubtasks(
 }
 
 /** Subtask count for the `subtasks` connection totalCount. */
-export function countSubtasks(ownerId: string, parentId: string): number {
-  const row = sqlite
+export async function countSubtasks(ownerId: string, parentId: string): Promise<number> {
+  const row = await store()
     .prepare('SELECT COUNT(*) AS n FROM tasks WHERE parent_id = ? AND owner_id = ?')
-    .get(parentId, ownerId);
-  return (row as { n: number }).n;
+    .get<{ n: number }>(parentId, ownerId);
+  return row!.n;
 }
 
 /** A task's blocker rows (task_dependencies.depends_on_id → task), owner-scoped: the

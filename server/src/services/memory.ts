@@ -12,7 +12,7 @@
  * memory_last_synced_at. `pushConnectorAvailable(owner)` is creds-driven, the same rule
  * as the pull side. A daily `push_memory` job (0117) drives it in the background.
  */
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { logger } from '../lib/logger.js';
 import {
   memoryCreds,
@@ -66,23 +66,23 @@ interface PrefsRow {
   memory_pull_enabled: number;
 }
 
-function prefs(owner: string): PrefsRow | undefined {
-  return sqlite
+async function prefs(owner: string): Promise<PrefsRow | undefined> {
+  return await store()
     .prepare(
       `SELECT memory_sync_enabled, memory_account, memory_last_synced_at,
               memory_sync_completed, memory_sync_habits, memory_sync_reflections,
               memory_pull_enabled
          FROM scheduling_prefs WHERE owner_id = ?`
     )
-    .get(owner) as PrefsRow | undefined;
+    .get<PrefsRow>(owner);
 }
 
 /**
  * Whether the Companion Memory connector is available for this owner: true iff
  * creds resolve (Settings connection → env fallback). Real as of AA0.
  */
-export function memoryConnectorAvailable(owner: string): boolean {
-  return memoryCreds(owner) !== null;
+export async function memoryConnectorAvailable(owner: string): Promise<boolean> {
+  return (await memoryCreds(owner)) !== null;
 }
 
 /** Column default (0147) — also the 48h the pull agents used to hardcode. */
@@ -98,10 +98,10 @@ const DEFAULT_MEMORY_WINDOW_DAYS = 2;
  * non-positive stored value as "unset" so a bad row can never collapse the window to zero
  * and silently stop all suggestions.
  */
-export function memoryWindowMs(owner: string): number {
-  const row = sqlite
+export async function memoryWindowMs(owner: string): Promise<number> {
+  const row = await store()
     .prepare(`SELECT memory_window_days FROM scheduling_prefs WHERE owner_id = ?`)
-    .get(owner) as { memory_window_days?: number | null } | undefined;
+    .get<{ memory_window_days?: number | null }>(owner);
   const days = Number(row?.memory_window_days);
   return (Number.isFinite(days) && days > 0 ? days : DEFAULT_MEMORY_WINDOW_DAYS) * 86_400_000;
 }
@@ -111,13 +111,13 @@ export function memoryWindowMs(owner: string): number {
  * the SAME creds-driven rule as the pull side (memoryConnectorAvailable). Real as
  * of AA4.
  */
-function pushConnectorAvailable(owner: string): boolean {
-  return memoryCreds(owner) !== null;
+async function pushConnectorAvailable(owner: string): Promise<boolean> {
+  return (await memoryCreds(owner)) !== null;
 }
 
-export function memoryStatus(owner: string): MemoryStatus {
-  const p = prefs(owner);
-  const creds = memoryCreds(owner);
+export async function memoryStatus(owner: string): Promise<MemoryStatus> {
+  const p = await prefs(owner);
+  const creds = await memoryCreds(owner);
   let host: string | null = null;
   if (creds) {
     try {
@@ -193,8 +193,8 @@ interface ReflectionEventRow {
  * are members of a Habit pattern so a completed habit isn't double-pushed as a plain
  * task_completed AND a habit_done — the habits scope owns those.
  */
-function completedTaskEvents(owner: string, since: string, notHabit: boolean): MemoryEvent[] {
-  const rows = sqlite
+async function completedTaskEvents(owner: string, since: string, notHabit: boolean): Promise<MemoryEvent[]> {
+  const rows = await store()
     .prepare(
       `SELECT t.id, t.title, t.completed_at, t.estimated_minutes, t.actual_minutes
          FROM tasks t
@@ -206,7 +206,7 @@ function completedTaskEvents(owner: string, since: string, notHabit: boolean): M
              WHERE p.owner_id = ? AND pty.name = 'Habit')` : ``}
         ORDER BY t.completed_at`,
     )
-    .all(...(notHabit ? [owner, since, owner] : [owner, since])) as TaskEventRow[];
+    .all<TaskEventRow>(...(notHabit ? [owner, since, owner] : [owner, since]));
   return rows.map((r) => ({
     source_id: `task:${r.id}`,
     type: 'task_completed',
@@ -226,8 +226,8 @@ function completedTaskEvents(owner: string, since: string, notHabit: boolean): M
  * patterns is one event. source_id = task:<id> (the completion is the task's), typed
  * 'habit_done'.
  */
-function habitEvents(owner: string, since: string): MemoryEvent[] {
-  const rows = sqlite
+async function habitEvents(owner: string, since: string): Promise<MemoryEvent[]> {
+  const rows = await store()
     .prepare(
       `SELECT DISTINCT t.id, t.title, t.completed_at, t.estimated_minutes, t.actual_minutes
          FROM tasks t
@@ -238,7 +238,7 @@ function habitEvents(owner: string, since: string): MemoryEvent[] {
           AND t.status = 'done' AND t.completed_at IS NOT NULL AND t.completed_at > ?
         ORDER BY t.completed_at`,
     )
-    .all(owner, owner, since) as TaskEventRow[];
+    .all<TaskEventRow>(owner, owner, since);
   return rows.map((r) => ({
     source_id: `task:${r.id}`,
     type: 'habit_done',
@@ -253,15 +253,15 @@ function habitEvents(owner: string, since: string): MemoryEvent[] {
 }
 
 /** Day-note / evening reflections updated past the watermark. */
-function reflectionEvents(owner: string, since: string): MemoryEvent[] {
-  const rows = sqlite
+async function reflectionEvents(owner: string, since: string): Promise<MemoryEvent[]> {
+  const rows = await store()
     .prepare(
       `SELECT kind, period_key, body, updated_at
          FROM reflections
         WHERE owner_id = ? AND kind IN ('day_note', 'evening') AND updated_at > ?
         ORDER BY updated_at`,
     )
-    .all(owner, since) as ReflectionEventRow[];
+    .all<ReflectionEventRow>(owner, since);
   return rows.map((r) => ({
     // A reflection has no surrogate id; (owner, kind, period_key, position) addresses it —
     // and there is exactly one day_note/evening per day (position 0), so kind+period_key
@@ -286,10 +286,12 @@ function reflectionEvents(owner: string, since: string): MemoryEvent[] {
  * retries the same window.
  */
 export async function syncToMemory(owner: string): Promise<SyncResult> {
-  const p = prefs(owner);
+  const p = await prefs(owner);
   if (!p?.memory_sync_enabled) return { ok: false, reason: 'disabled' };
   if (!p.memory_account) return { ok: false, reason: 'not_connected' };
-  if (!pushConnectorAvailable(owner)) return { ok: false, reason: 'unavailable' };
+  // Awaited: `!somePromise` is ALWAYS false, so an unawaited gate here would stop
+  // reporting 'unavailable' and push against creds that do not resolve.
+  if (!(await pushConnectorAvailable(owner))) return { ok: false, reason: 'unavailable' };
 
   // Capture the next watermark BEFORE selecting events. Stamping a timestamp taken
   // AFTER the SELECT+push would skip any row whose completed_at/updated_at fell between
@@ -303,9 +305,9 @@ export async function syncToMemory(owner: string): Promise<SyncResult> {
   // When habits are pushed, drop them from the completed-task set so a done habit isn't
   // sent twice (task_completed + habit_done). With habits OFF, completed habit tasks
   // still flow through the completed scope like any other task.
-  const completed = p.memory_sync_completed ? completedTaskEvents(owner, since, wantHabits) : [];
-  const habits = wantHabits ? habitEvents(owner, since) : [];
-  const reflections = p.memory_sync_reflections ? reflectionEvents(owner, since) : [];
+  const completed = p.memory_sync_completed ? await completedTaskEvents(owner, since, wantHabits) : [];
+  const habits = wantHabits ? await habitEvents(owner, since) : [];
+  const reflections = p.memory_sync_reflections ? await reflectionEvents(owner, since) : [];
   const events = [...completed, ...habits, ...reflections];
 
   let ingest;
@@ -321,7 +323,7 @@ export async function syncToMemory(owner: string): Promise<SyncResult> {
 
   // Stamp the pre-SELECT instant (see above) — never a fresh "now" that could leapfrog
   // events that occurred during the push.
-  sqlite.prepare(`UPDATE scheduling_prefs SET memory_last_synced_at = ? WHERE owner_id = ?`).run(syncedAt, owner);
+  await store().prepare(`UPDATE scheduling_prefs SET memory_last_synced_at = ? WHERE owner_id = ?`).run(syncedAt, owner);
   const counts: SyncCounts = {
     completed: completed.length,
     habits: habits.length,

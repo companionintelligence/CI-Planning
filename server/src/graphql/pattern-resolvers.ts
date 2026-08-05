@@ -53,15 +53,15 @@ function toPatternInput(input: Record<string, unknown>): CreatePatternInput & Up
 export const patternResolvers = {
   Query: {
     patternKinds: () => listPatternTypeRows(currentOwnerId()),
-    patternKind: (_p: unknown, args: { id: string }) => getPatternTypeRow(currentOwnerId(), args.id) ?? null,
+    patternKind: async (_p: unknown, args: { id: string }) => (await getPatternTypeRow(currentOwnerId(), args.id)) ?? null,
     patterns: () => listPatternRows(currentOwnerId()),
-    pattern: (_p: unknown, args: { id: string }) => getPatternRow(currentOwnerId(), args.id) ?? null,
+    pattern: async (_p: unknown, args: { id: string }) => (await getPatternRow(currentOwnerId(), args.id)) ?? null,
   },
 
   Mutation: {
-    createPatternKind: (_p: unknown, args: { input: Record<string, unknown> }) => {
+    createPatternKind: async (_p: unknown, args: { input: Record<string, unknown> }) => {
       const owner = currentOwnerId();
-      const res = createPatternType(owner, toTypeInput(args.input));
+      const res = await createPatternType(owner, toTypeInput(args.input));
       if (!res.ok) {
         throw new GraphQLError(res.error === 'missing_fields' ? 'name and iconShape are required' : `could not create type: ${res.message}`, {
           extensions: { code: 'BAD_USER_INPUT' },
@@ -71,17 +71,17 @@ export const patternResolvers = {
       return { patternKind: res.row, success: true };
     },
 
-    updatePatternKind: (_p: unknown, args: { input: Record<string, unknown> & { id: string } }) => {
+    updatePatternKind: async (_p: unknown, args: { input: Record<string, unknown> & { id: string } }) => {
       const owner = currentOwnerId();
-      const res = updatePatternType(owner, args.input.id, toTypeInput(args.input));
+      const res = await updatePatternType(owner, args.input.id, toTypeInput(args.input));
       if (!res.ok) throw new GraphQLError('pattern kind not found', { extensions: { code: 'NOT_FOUND' } });
       broadcast(owner, 'pattern_type:updated', serializeType(res.row));
       return { patternKind: res.row, success: true };
     },
 
-    deletePatternKind: (_p: unknown, args: { input: { id: string } }) => {
+    deletePatternKind: async (_p: unknown, args: { input: { id: string } }) => {
       const owner = currentOwnerId();
-      const res = deletePatternType(owner, args.input.id);
+      const res = await deletePatternType(owner, args.input.id);
       if (!res.ok) {
         if (res.error === 'not_found') throw new GraphQLError('pattern kind not found', { extensions: { code: 'NOT_FOUND' } });
         if (res.error === 'builtin') throw new GraphQLError('built-in types cannot be deleted', { extensions: { code: 'BAD_USER_INPUT' } });
@@ -91,9 +91,9 @@ export const patternResolvers = {
       return { deletedId: args.input.id, success: true };
     },
 
-    createPattern: (_p: unknown, args: { input: Record<string, unknown> }) => {
+    createPattern: async (_p: unknown, args: { input: Record<string, unknown> }) => {
       const owner = currentOwnerId();
-      const res = createPattern(owner, toPatternInput(args.input));
+      const res = await createPattern(owner, toPatternInput(args.input));
       if (!res.ok) {
         const msg =
           res.error === 'name_required' ? 'name is required'
@@ -102,13 +102,13 @@ export const patternResolvers = {
                 : `bad task membership: ${res.message}`;
         throw new GraphQLError(msg, { extensions: { code: 'BAD_USER_INPUT' } });
       }
-      broadcast(owner, 'pattern:created', serializePattern(res.row));
+      broadcast(owner, 'pattern:created', await serializePattern(res.row));
       return { pattern: res.row, success: true };
     },
 
-    updatePattern: (_p: unknown, args: { input: Record<string, unknown> & { id: string } }) => {
+    updatePattern: async (_p: unknown, args: { input: Record<string, unknown> & { id: string } }) => {
       const owner = currentOwnerId();
-      const res = updatePattern(owner, args.input.id, toPatternInput(args.input));
+      const res = await updatePattern(owner, args.input.id, toPatternInput(args.input));
       if (!res.ok) {
         if (res.error === 'not_found') throw new GraphQLError('pattern not found', { extensions: { code: 'NOT_FOUND' } });
         const msg =
@@ -117,35 +117,35 @@ export const patternResolvers = {
               : `bad task membership: ${res.message}`;
         throw new GraphQLError(msg, { extensions: { code: 'BAD_USER_INPUT' } });
       }
-      broadcast(owner, 'pattern:updated', serializePattern(res.row));
+      broadcast(owner, 'pattern:updated', await serializePattern(res.row));
       return { pattern: res.row, success: true };
     },
 
-    deletePattern: (_p: unknown, args: { input: { id: string } }) => {
+    deletePattern: async (_p: unknown, args: { input: { id: string } }) => {
       const owner = currentOwnerId();
-      const res = deletePattern(owner, args.input.id);
+      const res = await deletePattern(owner, args.input.id);
       if (!res.ok) throw new GraphQLError('pattern not found', { extensions: { code: 'NOT_FOUND' } });
       broadcast(owner, 'pattern:deleted', { id: args.input.id });
       return { deletedId: args.input.id, success: true };
     },
 
-    addPatternTask: (_p: unknown, args: { input: { patternId: string; taskId: string; position?: number | null } }) => {
+    addPatternTask: async (_p: unknown, args: { input: { patternId: string; taskId: string; position?: number | null } }) => {
       const owner = currentOwnerId();
-      const res = addPatternTask(owner, args.input.patternId, args.input.taskId, args.input.position ?? 0);
+      const res = await addPatternTask(owner, args.input.patternId, args.input.taskId, args.input.position ?? 0);
       if (!res.ok) {
         if (res.error === 'not_found') throw new GraphQLError('pattern not found', { extensions: { code: 'NOT_FOUND' } });
         throw new GraphQLError(`could not add task: ${res.message}`, { extensions: { code: 'BAD_USER_INPUT' } });
       }
-      broadcast(owner, 'pattern:updated', { id: args.input.patternId, task_ids: taskIdsOf(args.input.patternId) });
-      return { pattern: getPatternRow(owner, args.input.patternId) ?? null, success: true };
+      broadcast(owner, 'pattern:updated', { id: args.input.patternId, task_ids: await taskIdsOf(args.input.patternId) });
+      return { pattern: (await getPatternRow(owner, args.input.patternId)) ?? null, success: true };
     },
 
-    removePatternTask: (_p: unknown, args: { input: { patternId: string; taskId: string } }) => {
+    removePatternTask: async (_p: unknown, args: { input: { patternId: string; taskId: string } }) => {
       const owner = currentOwnerId();
-      const res = removePatternTask(owner, args.input.patternId, args.input.taskId);
+      const res = await removePatternTask(owner, args.input.patternId, args.input.taskId);
       if (!res.ok) throw new GraphQLError('pattern not found', { extensions: { code: 'NOT_FOUND' } });
-      broadcast(owner, 'pattern:updated', { id: args.input.patternId, task_ids: taskIdsOf(args.input.patternId) });
-      return { pattern: getPatternRow(owner, args.input.patternId) ?? null, success: true };
+      broadcast(owner, 'pattern:updated', { id: args.input.patternId, task_ids: await taskIdsOf(args.input.patternId) });
+      return { pattern: (await getPatternRow(owner, args.input.patternId)) ?? null, success: true };
     },
   },
 
@@ -163,17 +163,19 @@ export const patternResolvers = {
     // AF-11 (D2): derived member-tag union. Patterns are a small hand-curated list
     // (see the Query comment in pattern.graphql), so per-node derivation here matches
     // the existing `tasks` resolver's bounded-N+1 stance; the REST list read batches.
-    directions: (p: PatternRow) => ((p as any).__derivedTags ??= routineDerivedTags(p.id)).directions,
-    intentions: (p: PatternRow) => ((p as any).__derivedTags ??= routineDerivedTags(p.id)).intentions,
+    // The `??=` memo now caches a PROMISE, which is the point — both fields share one
+    // read — but each resolver has to await it before reading a property off it.
+    directions: async (p: PatternRow) => (await ((p as any).__derivedTags ??= routineDerivedTags(p.id))).directions,
+    intentions: async (p: PatternRow) => (await ((p as any).__derivedTags ??= routineDerivedTags(p.id))).intentions,
     recurrenceRule: (p: PatternRow) => p.recurrence_rule,
     recurrenceDtstart: (p: PatternRow) => p.recurrence_dtstart,
     createdAt: (p: PatternRow) => p.created_at,
-    kind: (p: PatternRow) => (p.type_id ? getPatternTypeRow(currentOwnerId(), p.type_id) ?? null : null),
+    kind: async (p: PatternRow) => (p.type_id ? (await getPatternTypeRow(currentOwnerId(), p.type_id)) ?? null : null),
     // Ordered member tasks; each re-fetched owner-scoped (a shared task that vanished is
     // skipped, keeping the non-null [TaskType!]! list honest). Bounded membership → N+1 fine.
     tasks: async (p: PatternRow) => {
       const owner = currentOwnerId();
-      const rows = await Promise.all(taskIdsOf(p.id).map((id) => getTask(owner, id)));
+      const rows = await Promise.all((await taskIdsOf(p.id)).map((id) => getTask(owner, id)));
       return rows.filter((t): t is NonNullable<typeof t> => !!t);
     },
     // name, tag, notes map by name via the default resolver.

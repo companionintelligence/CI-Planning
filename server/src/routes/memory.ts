@@ -1,7 +1,7 @@
 import Router from '@koa/router';
 import { randomBytes } from 'node:crypto';
 import { currentOwnerId, runWithOwner } from '../lib/context.js';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { config } from '../lib/config.js';
 import { logger } from '../lib/logger.js';
 import { newId, SYSTEM_OWNER_ID } from '../lib/ids.js';
@@ -60,7 +60,7 @@ export function memoryRouter() {
   // GET /api/memory/status — connection + sync state for the Settings panel.
   // AA0: `pull` reports the CI-Server pull connector (flag / availability / source).
   router.get('/api/memory/status', async (ctx) => {
-    ctx.body = memoryStatus(currentOwnerId());
+    ctx.body = await memoryStatus(currentOwnerId());
   });
 
   // POST /api/memory/connect — store the owner's CI-Server connection (AA0).
@@ -91,17 +91,17 @@ export function memoryRouter() {
 
     let account: string;
     try {
-      account = storeMemoryConnection(owner, { url, apiKey, bearer });
+      account = await storeMemoryConnection(owner, { url, apiKey, bearer });
     } catch (err) {
       // Almost always a missing/short CP_KEK_B64 — surface the real message, never the key.
       ctx.status = 500;
       ctx.body = { error: `Could not store the connection: ${(err as Error).message}` };
       return;
     }
-    sqlite.prepare(`UPDATE scheduling_prefs SET memory_account = ? WHERE owner_id = ?`).run(account, owner);
+    await store().prepare(`UPDATE scheduling_prefs SET memory_account = ? WHERE owner_id = ?`).run(account, owner);
     writeAudit({ ownerId: owner, actor: 'owner', action: 'connect', entity: 'memory:ci_server' });
     ctx.status = 201;
-    ctx.body = memoryStatus(owner);
+    ctx.body = await memoryStatus(owner);
   });
 
   // POST /api/memory/disconnect — drop the stored connection + clear the account
@@ -109,10 +109,10 @@ export function memoryRouter() {
   // state, so `pull.available` may remain true afterwards — `source` says why.
   router.post('/api/memory/disconnect', async (ctx) => {
     const owner = currentOwnerId();
-    deleteMemoryConnection(owner);
-    sqlite.prepare(`UPDATE scheduling_prefs SET memory_account = NULL WHERE owner_id = ?`).run(owner);
+    await deleteMemoryConnection(owner);
+    await store().prepare(`UPDATE scheduling_prefs SET memory_account = NULL WHERE owner_id = ?`).run(owner);
     writeAudit({ ownerId: owner, actor: 'owner', action: 'disconnect', entity: 'memory:ci_server' });
-    ctx.body = memoryStatus(owner);
+    ctx.body = await memoryStatus(owner);
   });
 
   // ── AA0b: connect via CI-Portal SSO (OAuth 2.1 + PKCE + offline_access) ───────
@@ -147,7 +147,7 @@ export function memoryRouter() {
 
     const owner = currentOwnerId();
     // Opportunistic hygiene: prune this owner's abandoned/expired connector states.
-    sqlite
+    await store()
       .prepare(`DELETE FROM oauth_states WHERE provider = ? AND (expires_at <= ? OR owner_id = ?)`)
       .run(MEMORY_PROVIDER, new Date().toISOString(), owner);
 
@@ -158,7 +158,7 @@ export function memoryRouter() {
     const redirectUri = config.ciportal.memoryRedirectUri;
 
     const now = Date.now();
-    sqlite
+    await store()
       .prepare(
         `INSERT INTO oauth_states (id, owner_id, provider, state, code_verifier, nonce, redirect_uri, created_at, expires_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -214,12 +214,12 @@ export function memoryRouter() {
     }
 
     // Atomically consume the state row (single-use): a replayed callback finds nothing.
-    const row = sqlite
+    const row = await store()
       .prepare(
         `DELETE FROM oauth_states WHERE state = ? AND provider = ?
          RETURNING owner_id, code_verifier, nonce, redirect_uri, expires_at`,
       )
-      .get(state, MEMORY_PROVIDER) as MemoryStateRow | undefined;
+      .get<MemoryStateRow>(state, MEMORY_PROVIDER);
     if (!row) {
       ctx.status = 400;
       ctx.body = { error: 'unknown_or_consumed_state' };
@@ -302,9 +302,9 @@ export function memoryRouter() {
     // Bind the connection to the OWNER'S OWN SSO identity: if the logged-in owner was
     // provisioned from CI-Portal (external_subject set), the token's subject MUST match
     // — you can only connect your own memory, never another account's.
-    const ownerRow = sqlite
+    const ownerRow = await store()
       .prepare(`SELECT external_subject FROM owners WHERE id = ? AND id <> ?`)
-      .get(row.owner_id, SYSTEM_OWNER_ID) as { external_subject: string | null } | undefined;
+      .get<{ external_subject: string | null }>(row.owner_id, SYSTEM_OWNER_ID);
     if (ownerRow?.external_subject && ownerRow.external_subject !== claims.sub) {
       logger.warn('memory CI-Portal connect rejected: subject mismatch', { owner: row.owner_id });
       ctx.redirect(settingsRedirect('memory=error&reason=subject_mismatch'));
@@ -319,7 +319,7 @@ export function memoryRouter() {
     // identity with no signal. Trust-on-first-use closes that: once bound, a callback
     // carrying a different `sub` is refused until the owner explicitly disconnects.
     // A distinct reason so the UI can say what to do, rather than reusing the SSO one.
-    const boundSubject = memoryOidcSubject(row.owner_id);
+    const boundSubject = await memoryOidcSubject(row.owner_id);
     if (boundSubject && boundSubject !== claims.sub) {
       logger.warn('memory CI-Portal connect rejected: connection already bound to another subject', {
         owner: row.owner_id,
@@ -338,7 +338,12 @@ export function memoryRouter() {
     // Store under the state's owner (NOT the request's — the callback is credential-less).
     let account: string;
     try {
-      account = runWithOwner(row.owner_id, [SCOPE_READ, SCOPE_WRITE], () =>
+      // Awaited INSIDE the try: runWithOwner is a generic passthrough over
+      // AsyncLocalStorage.run, so it now returns the promise rather than the account.
+      // Unawaited, the KEK failure this catch exists for would surface as an unhandled
+      // rejection instead — the redirect below would never run. ALS context survives the
+      // await, so the owner scope still covers the write.
+      account = await runWithOwner(row.owner_id, [SCOPE_READ, SCOPE_WRITE], () =>
         storeMemoryOidcConnection(row.owner_id, {
           url,
           accessToken: tok.access_token!,
@@ -356,7 +361,7 @@ export function memoryRouter() {
       ctx.redirect(settingsRedirect('memory=error&reason=store_failed'));
       return;
     }
-    sqlite.prepare(`UPDATE scheduling_prefs SET memory_account = ? WHERE owner_id = ?`).run(account, row.owner_id);
+    await store().prepare(`UPDATE scheduling_prefs SET memory_account = ? WHERE owner_id = ?`).run(account, row.owner_id);
     writeAudit({ ownerId: row.owner_id, actor: 'owner', action: 'connect', entity: 'memory:ci_portal' });
 
     logger.info('memory CI-Portal connection established', { owner: row.owner_id });

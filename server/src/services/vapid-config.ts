@@ -1,5 +1,5 @@
 import webpush from 'web-push';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { config } from '../lib/config.js';
 import { seal, open, loadKek } from '../lib/crypto/index.js';
 import { logger } from '../lib/logger.js';
@@ -45,15 +45,13 @@ type StoredPrivate =
   | { sealed: true; iv: string; authTag: string; ciphertext: string; key_version: number }
   | { sealed: false; key: string };
 
-function readValue(key: string): string | null {
-  const row = sqlite.prepare(`SELECT value FROM app_config WHERE key = ?`).get(key) as
-    | { value: string }
-    | undefined;
+async function readValue(key: string): Promise<string | null> {
+  const row = await store().prepare(`SELECT value FROM app_config WHERE key = ?`).get<{ value: string }>(key);
   return row?.value ?? null;
 }
 
-function writeValue(key: string, value: string): void {
-  sqlite
+async function writeValue(key: string, value: string): Promise<void> {
+  await store()
     .prepare(
       `INSERT INTO app_config (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`,
@@ -62,9 +60,9 @@ function writeValue(key: string, value: string): void {
 }
 
 /** Whether a KEK is configured (and decodes) — decides seal-vs-plaintext at rest. */
-export function kekAvailable(): boolean {
+export async function kekAvailable(): Promise<boolean> {
   try {
-    loadKek();
+    await loadKek();
     return true;
   } catch {
     return false;
@@ -88,8 +86,8 @@ function malformedPrivate(why: string): ReadPrivateResult {
 }
 
 /** Decode + validate the stored private key envelope. */
-function readStoredPrivate(): ReadPrivateResult {
-  const raw = readValue(KEY_PRIVATE);
+async function readStoredPrivate(): Promise<ReadPrivateResult> {
+  const raw = await readValue(KEY_PRIVATE);
   if (!raw) return { status: 'absent' };
 
   let env: Record<string, unknown>;
@@ -122,7 +120,7 @@ function readStoredPrivate(): ReadPrivateResult {
     try {
       const key = open(
         { iv: env.iv, authTag: env.authTag, ciphertext: env.ciphertext },
-        loadKek(env.key_version),
+        await loadKek(env.key_version),
       );
       return { status: 'ok', key, sealed: true };
     } catch (err) {
@@ -140,16 +138,16 @@ function readStoredPrivate(): ReadPrivateResult {
 }
 
 /** Generate a fresh keypair and persist it (private sealed when a KEK is available). */
-function generateAndStore(): { publicKey: string; privateKey: string; sealed: boolean } {
+async function generateAndStore(): Promise<{ publicKey: string; privateKey: string; sealed: boolean }> {
   const { publicKey, privateKey } = webpush.generateVAPIDKeys();
-  const sealed = kekAvailable();
+  const sealed = await kekAvailable();
   const envelope: StoredPrivate = sealed
-    ? { sealed: true, ...seal(privateKey, loadKek()), key_version: config.kek.currentVersion }
+    ? { sealed: true, ...seal(privateKey, await loadKek()), key_version: config.kek.currentVersion }
     : { sealed: false, key: privateKey };
-  sqlite.transaction(() => {
-    writeValue(KEY_PUBLIC, publicKey);
-    writeValue(KEY_PRIVATE, JSON.stringify(envelope));
-  })();
+  await store().transaction(async () => {
+    await writeValue(KEY_PUBLIC, publicKey);
+    await writeValue(KEY_PRIVATE, JSON.stringify(envelope));
+  });
   return { publicKey, privateKey, sealed };
 }
 
@@ -158,16 +156,16 @@ function generateAndStore(): { publicKey: string; privateKey: string; sealed: bo
  * synthetic `mailto:admin@companion.local` default — push services email this address on
  * delivery problems. Best-effort: any owners-table quirk falls back to the config default.
  */
-function applyDerivedSubject(): void {
+async function applyDerivedSubject(): Promise<void> {
   if (process.env.VAPID_SUBJECT) return; // env pins the subject
   try {
-    const row = sqlite
+    const row = await store()
       .prepare(
         `SELECT email FROM owners
          WHERE role = 'operator' AND email IS NOT NULL AND email <> ''
          ORDER BY rowid LIMIT 1`,
       )
-      .get() as { email: string } | undefined;
+      .get<{ email: string }>();
     if (row?.email) config.vapidSubject = `mailto:${row.email}`;
   } catch {
     /* owners table shape/absence — keep the config default */
@@ -179,7 +177,7 @@ function applyDerivedSubject(): void {
  * boot after migrations (app.ts), before the push-status check in index.ts. No-op when an
  * env keypair pins the config. Idempotent — generates only when no usable pair exists.
  */
-export function hydrateVapidConfig(): void {
+export async function hydrateVapidConfig(): Promise<void> {
   if (config.vapidEnvPinned) return; // env keypair already loaded into config.ts; authoritative.
 
   if (ENV_PUBLIC || ENV_PRIVATE) {
@@ -192,7 +190,7 @@ export function hydrateVapidConfig(): void {
     return;
   }
 
-  const priv = readStoredPrivate();
+  const priv = await readStoredPrivate();
   if (priv.status === 'unreadable') {
     logger.error(
       'vapid-config: the stored VAPID private key cannot be decrypted (CP_KEK_B64 missing or rotated) — ' +
@@ -202,14 +200,14 @@ export function hydrateVapidConfig(): void {
     return;
   }
 
-  const pub = readValue(KEY_PUBLIC);
+  const pub = await readValue(KEY_PUBLIC);
   let publicKey: string;
   let privateKey: string;
   if (priv.status === 'ok' && pub) {
     publicKey = pub;
     privateKey = priv.key;
   } else {
-    const gen = generateAndStore();
+    const gen = await generateAndStore();
     publicKey = gen.publicKey;
     privateKey = gen.privateKey;
     logger.info('vapid-config: generated a Web Push VAPID keypair', { sealed: gen.sealed });
@@ -223,7 +221,7 @@ export function hydrateVapidConfig(): void {
 
   config.vapidPublicKey = publicKey;
   config.vapidPrivateKey = privateKey;
-  applyDerivedSubject();
+  await applyDerivedSubject();
 }
 
 export interface VapidConfigState {
@@ -242,16 +240,16 @@ export interface VapidConfigState {
 // Dead surface (see #392): mirrors googleConfigState but NO route exposes it (google's
 // has GET /api/google-config); only its test calls this. An operator diagnosing dormant
 // push (unsealed key, rotated KEK) sees only push.configured=false without server logs.
-export function vapidConfigState(): VapidConfigState {
-  const priv = readStoredPrivate();
+export async function vapidConfigState(): Promise<VapidConfigState> {
+  const priv = await readStoredPrivate();
   const configured = Boolean(config.vapidPublicKey && config.vapidPrivateKey);
   return {
     source: config.vapidEnvPinned ? 'env' : configured ? 'generated' : 'dormant',
     configured,
     subject: config.vapidSubject,
-    hasStoredPair: readValue(KEY_PUBLIC) !== null && priv.status !== 'absent',
+    hasStoredPair: (await readValue(KEY_PUBLIC)) !== null && priv.status !== 'absent',
     sealed: priv.status === 'ok' ? priv.sealed : false,
-    kekAvailable: kekAvailable(),
+    kekAvailable: await kekAvailable(),
     envPinned: config.vapidEnvPinned,
   };
 }

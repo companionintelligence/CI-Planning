@@ -113,7 +113,7 @@ export const taskResolvers = {
     task: async (_p: unknown, args: { id: string }) => {
       return (await getTask(currentOwnerId(), args.id)) ?? null;
     },
-    tasks: (_p: unknown, args: ConnArgs & { status?: string | null }) => {
+    tasks: async (_p: unknown, args: ConnArgs & { status?: string | null }) => {
       const owner = currentOwnerId();
       const limit = clampFirst(args.first);
       const after = decodeIdCursor(args.after);
@@ -121,7 +121,7 @@ export const taskResolvers = {
       return taskConnection(
         listTasks(owner, { status, after: after || undefined, limit: limit + 1 }),
         limit,
-        countTasks(owner, status),
+        await countTasks(owner, status),
       );
     },
   },
@@ -181,14 +181,14 @@ export const taskResolvers = {
     motivation: (t: TaskRow) => (t.motivation ? t.motivation.toUpperCase() : null),
     motivationSource: (t: TaskRow) => (t.motivationSource ? t.motivationSource.toUpperCase() : null),
     parent: async (t: TaskRow) => (t.parentId ? (await getTask(currentOwnerId(), t.parentId)) ?? null : null),
-    subtasks: (t: TaskRow, args: ConnArgs) => {
+    subtasks: async (t: TaskRow, args: ConnArgs) => {
       const owner = currentOwnerId();
       const limit = clampFirst(args.first);
       const after = decodeIdCursor(args.after);
       return taskConnection(
         listSubtasks(owner, t.id, { after: after || undefined, limit: limit + 1 }),
         limit,
-        countSubtasks(owner, t.id),
+        await countSubtasks(owner, t.id),
       );
     },
     dependsOn: (t: TaskRow) => dependsOnService(currentOwnerId(), t.id),
@@ -196,12 +196,12 @@ export const taskResolvers = {
     // already-owner-scoped task (task/tasks/parent/subtasks all go through getTask/
     // listTasks), so its entity_tags are the owner's. id/label/taggedAt map to
     // EntityTagType's fields via default resolvers — no EntityTagType resolver needed.
-    tags: (t: TaskRow) => entityTagsFull('task', t.id).map((e) => ({ id: e.tagId, label: e.name, taggedAt: e.createdAt })),
+    tags: async (t: TaskRow) => (await entityTagsFull('task', t.id)).map((e) => ({ id: e.tagId, label: e.name, taggedAt: e.createdAt })),
     // Phase B: 1–3 category names, position order; texture default coerced like subtype.
-    categories: (t: TaskRow) => entityCategoryNames('task', t.id),
+    categories: async (t: TaskRow) => await entityCategoryNames('task', t.id),
     textureEnabled: (t: TaskRow) => t.textureEnabled ?? true,
     // W8a follow-up: the first objective this task is linked to (owner-scoped in the
     // service). The returned raw ObjectiveRow is shaped by ObjectiveType's field resolvers.
-    objective: (t: TaskRow) => objectiveForTask(currentOwnerId(), t.id) ?? null,
+    objective: async (t: TaskRow) => (await objectiveForTask(currentOwnerId(), t.id)) ?? null,
   },
 };

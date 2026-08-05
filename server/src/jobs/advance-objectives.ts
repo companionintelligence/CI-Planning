@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { logger } from '../lib/logger.js';
 
@@ -25,13 +25,13 @@ import { logger } from '../lib/logger.js';
  * Bumps last_advanced_at on every successful nomination so the task is not
  * re-nominated until the next period.
  */
-export function advanceObjectives(
+export async function advanceObjectives(
   owner: string = currentOwnerId(),
   { now = new Date().toISOString() }: { now?: string } = {},
-): {
+): Promise<{
   nominated: number;
   skipped: number;
-} {
+}> {
   let nominated = 0;
   let skipped = 0;
 
@@ -43,7 +43,7 @@ export function advanceObjectives(
   };
 
   // Fetch LIVE active objectives that have a cadence and are due for advancement.
-  const objectives = sqlite
+  const objectives = await store()
     .prepare(
       `SELECT id, cadence, last_advanced_at
          FROM objectives
@@ -52,7 +52,7 @@ export function advanceObjectives(
           AND archived_at IS NULL
           AND cadence != 'none'`
     )
-    .all(owner) as { id: string; cadence: string; last_advanced_at: string | null }[];
+    .all<{ id: string; cadence: string; last_advanced_at: string | null }>(owner);
 
   for (const obj of objectives) {
     const periodDays = PERIOD_DAYS[obj.cadence];
@@ -71,7 +71,7 @@ export function advanceObjectives(
     // and the descent stays inside the owner. Owner-scoping matters most HERE: this is a
     // WRITER, so an unconstrained walk over corrupt sync/import data would not just
     // display another owner's task, it would stage it in this owner's flight plan.
-    const nextAction = sqlite
+    const nextAction = await store()
       .prepare(
         `WITH RECURSIVE sub(id) AS (
            SELECT ? AS id
@@ -87,7 +87,7 @@ export function advanceObjectives(
           ORDER BY t.priority ASC, t.id ASC
           LIMIT 1`
       )
-      .get(obj.id, owner, owner) as { id: string; status: string } | undefined;
+      .get<{ id: string; status: string }>(obj.id, owner, owner);
 
     if (!nextAction) {
       // No next action (all done, or no tasks linked) — flag but don't nominate.
@@ -101,15 +101,13 @@ export function advanceObjectives(
     // but was from a different source kind — that's the explicit N1 requirement).
     // Exception: if task is 'in_progress' (caught above) don't repoint.
 
-    const nextPos = (
-      sqlite
+    const nextPos = (await store()
         .prepare(`SELECT COALESCE(MAX(position), -1) AS m FROM flight_plan WHERE owner_id = ?`)
-        .get(owner) as { m: number }
-    ).m + 1;
+        .get<{ m: number }>(owner))!.m + 1;
 
     // UPSERT: if already staged, repoint source to this objective.
     // If not staged, add it fresh.
-    sqlite
+    await store()
       .prepare(
         `INSERT INTO flight_plan (owner_id, task_id, source_kind, source_ref, selected, position, added_at)
          VALUES (?, ?, 'objective', ?, 1, ?, ?)
@@ -120,7 +118,7 @@ export function advanceObjectives(
       .run(owner, nextAction.id, obj.id, nextPos, now);
 
     // Bump last_advanced_at so this objective isn't re-run until the next period.
-    sqlite
+    await store()
       .prepare(`UPDATE objectives SET last_advanced_at = ? WHERE id = ?`)
       .run(now, obj.id);
 
