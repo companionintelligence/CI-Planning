@@ -9,7 +9,8 @@
   },
   "meta": {
     "fps": 30,
-    "transitionSeconds": 0.5
+    "transitionSeconds": 0.5,
+    "pacing": "fit"
   },
   "chapters": {
     "setup": "First run",
@@ -47,8 +48,12 @@
             "waitUntil": "domcontentloaded",
             "waitFor": "h2:text-is(\"Welcome\")",
             "before": [
-              { "click": "button:text-is(\"Next\")" },
-              { "waitFor": "h2:text-is(\"Time and place\")" }
+              {
+                "click": "button:text-is(\"Next\")"
+              },
+              {
+                "waitFor": "h2:text-is(\"Time and place\")"
+              }
             ],
             "settle": 600
           }
@@ -73,10 +78,18 @@
             "waitUntil": "domcontentloaded",
             "waitFor": "h2:text-is(\"Welcome\")",
             "before": [
-              { "click": "button:text-is(\"Next\")" },
-              { "waitFor": "h2:text-is(\"Time and place\")" },
-              { "click": "button:text-is(\"Next\")" },
-              { "waitFor": "h2:text-is(\"Connect a source\")" }
+              {
+                "click": "button:text-is(\"Next\")"
+              },
+              {
+                "waitFor": "h2:text-is(\"Time and place\")"
+              },
+              {
+                "click": "button:text-is(\"Next\")"
+              },
+              {
+                "waitFor": "h2:text-is(\"Connect a source\")"
+              }
             ],
             "settle": 600
           }
@@ -101,12 +114,24 @@
             "waitUntil": "domcontentloaded",
             "waitFor": "h2:text-is(\"Welcome\")",
             "before": [
-              { "click": "button:text-is(\"Next\")" },
-              { "waitFor": "h2:text-is(\"Time and place\")" },
-              { "click": "button:text-is(\"Next\")" },
-              { "waitFor": "h2:text-is(\"Connect a source\")" },
-              { "click": "button:text-is(\"Next\")" },
-              { "waitFor": "h2:text-is(\"Trust dial\")" }
+              {
+                "click": "button:text-is(\"Next\")"
+              },
+              {
+                "waitFor": "h2:text-is(\"Time and place\")"
+              },
+              {
+                "click": "button:text-is(\"Next\")"
+              },
+              {
+                "waitFor": "h2:text-is(\"Connect a source\")"
+              },
+              {
+                "click": "button:text-is(\"Next\")"
+              },
+              {
+                "waitFor": "h2:text-is(\"Trust dial\")"
+              }
             ],
             "settle": 600
           }
@@ -157,9 +182,18 @@
             "waitUntil": "domcontentloaded",
             "waitFor": "button.fab",
             "before": [
-              { "click": "button.fab" },
-              { "waitFor": ".modal input[placeholder^=\"Describe it\"]" },
-              { "fill": [".modal input[placeholder^=\"Describe it\"]", "pay invoice 3pm #work #invoices ~20m"] }
+              {
+                "click": "button.fab"
+              },
+              {
+                "waitFor": ".modal input[placeholder^=\"Describe it\"]"
+              },
+              {
+                "fill": [
+                  ".modal input[placeholder^=\"Describe it\"]",
+                  "pay invoice 3pm #work #invoices ~20m"
+                ]
+              }
             ],
             "settle": 600
           }
@@ -174,11 +208,27 @@
             "waitUntil": "domcontentloaded",
             "waitFor": "button.fab",
             "before": [
-              { "click": "button.fab" },
-              { "waitFor": ".modal input[placeholder^=\"Describe it\"]" },
-              { "fill": [".modal input[placeholder^=\"Describe it\"]", "pay invoice 3pm #work #invoices ~20m"] },
-              { "press": [".modal input[placeholder^=\"Describe it\"]", "Enter"] },
-              { "waitFor": ".modal span.rounded-full:has-text(\"invoices\")" }
+              {
+                "click": "button.fab"
+              },
+              {
+                "waitFor": ".modal input[placeholder^=\"Describe it\"]"
+              },
+              {
+                "fill": [
+                  ".modal input[placeholder^=\"Describe it\"]",
+                  "pay invoice 3pm #work #invoices ~20m"
+                ]
+              },
+              {
+                "press": [
+                  ".modal input[placeholder^=\"Describe it\"]",
+                  "Enter"
+                ]
+              },
+              {
+                "waitFor": ".modal span.rounded-full:has-text(\"invoices\")"
+              }
             ],
             "settle": 800
           }
@@ -203,7 +253,9 @@
             "waitUntil": "domcontentloaded",
             "waitFor": "h1:has-text(\"Focus\")",
             "settle": 1000,
-            "mask": ["div.h-1.rounded-full"]
+            "mask": [
+              "div.h-1.rounded-full"
+            ]
           }
         }
       ]
@@ -226,10 +278,18 @@
             "waitUntil": "domcontentloaded",
             "waitFor": "h1:text-is(\"Calendar\")",
             "before": [
-              { "click": "button:text-is(\"week\")" },
-              { "wait": 500 },
-              { "eval": "() => { for (const el of document.querySelectorAll('div')) { if (el.scrollHeight > el.clientHeight + 20 && el.clientHeight > 100) { el.scrollTop = el.scrollHeight; return; } } }" },
-              { "wait": 400 }
+              {
+                "click": "button:text-is(\"week\")"
+              },
+              {
+                "wait": 500
+              },
+              {
+                "eval": "() => { for (const el of document.querySelectorAll('div')) { if (el.scrollHeight > el.clientHeight + 20 && el.clientHeight > 100) { el.scrollTop = el.scrollHeight; return; } } }"
+              },
+              {
+                "wait": 400
+              }
             ],
             "settle": 1000
           }
@@ -254,9 +314,15 @@
             "waitUntil": "domcontentloaded",
             "waitFor": "h1:text-is(\"Calendar\")",
             "before": [
-              { "click": "button:text-is(\"month\")" },
-              { "waitFor": "div.grid-cols-7" },
-              { "wait": 500 }
+              {
+                "click": "button:text-is(\"month\")"
+              },
+              {
+                "waitFor": "div.grid-cols-7"
+              },
+              {
+                "wait": 500
+              }
             ],
             "settle": 1000
           }
@@ -281,8 +347,12 @@
             "waitUntil": "domcontentloaded",
             "waitFor": "h1:text-is(\"Calendar\")",
             "before": [
-              { "click": "button:has-text(\"Plan my week\")" },
-              { "waitFor": ".modal p:text-is(\"What would you like to do?\")" }
+              {
+                "click": "button:has-text(\"Plan my week\")"
+              },
+              {
+                "waitFor": ".modal p:text-is(\"What would you like to do?\")"
+              }
             ],
             "settle": 800
           }
@@ -351,12 +421,24 @@
             "waitUntil": "domcontentloaded",
             "waitFor": "h2:text-is(\"Step 1: Current Satisfaction\")",
             "before": [
-              { "click": "button:has-text(\"Next: Desired Focus\")" },
-              { "waitFor": "h2:text-is(\"Step 2: Desired Focus\")" },
-              { "click": "button:has-text(\"Next: Weekly Hours\")" },
-              { "waitFor": "h2:text-is(\"Step 3: Weekly Hours Target\")" },
-              { "eval": "() => { for (const el of document.querySelectorAll('div')) { if (el.scrollHeight > el.clientHeight + 20 && el.clientHeight > 100) { el.scrollTop = 0; return; } } }" },
-              { "wait": 300 }
+              {
+                "click": "button:has-text(\"Next: Desired Focus\")"
+              },
+              {
+                "waitFor": "h2:text-is(\"Step 2: Desired Focus\")"
+              },
+              {
+                "click": "button:has-text(\"Next: Weekly Hours\")"
+              },
+              {
+                "waitFor": "h2:text-is(\"Step 3: Weekly Hours Target\")"
+              },
+              {
+                "eval": "() => { for (const el of document.querySelectorAll('div')) { if (el.scrollHeight > el.clientHeight + 20 && el.clientHeight > 100) { el.scrollTop = 0; return; } } }"
+              },
+              {
+                "wait": 300
+              }
             ],
             "settle": 900
           }
@@ -425,8 +507,12 @@
             "waitUntil": "domcontentloaded",
             "waitFor": "h1:text-is(\"Settings\")",
             "before": [
-              { "click": "button:text-is(\"Preferences\")" },
-              { "waitFor": "div.section-label:text-is(\"Schedule Patterns\")" }
+              {
+                "click": "button:text-is(\"Preferences\")"
+              },
+              {
+                "waitFor": "div.section-label:text-is(\"Schedule Patterns\")"
+              }
             ],
             "settle": 900
           }
@@ -441,10 +527,22 @@
       "caption": "One SQLite file on hardware you own. The model runs there too.",
       "narration": "All of it in one SQLite file on your disk, behind a local sign-in.",
       "items": [
-        { "label": "Store", "value": "SQLite on your disk" },
-        { "label": "Sign-in", "value": "Local account, no cloud sign-up" },
-        { "label": "AI", "value": "Your Hub's Ollama, or none" },
-        { "label": "Runs on", "value": "Companion Hub, or your laptop" }
+        {
+          "label": "Store",
+          "value": "SQLite on your disk"
+        },
+        {
+          "label": "Sign-in",
+          "value": "Local account, no cloud sign-up"
+        },
+        {
+          "label": "AI",
+          "value": "Your Hub's Ollama, or none"
+        },
+        {
+          "label": "Runs on",
+          "value": "Companion Hub, or your laptop"
+        }
       ]
     },
     {
