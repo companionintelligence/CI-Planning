@@ -299,9 +299,9 @@ function visibleHours(state: AxisState): number[] {
 }
 
 // ── Time gutter (hour labels) ─────────────────────────────────────────────────
-function TimeGutter(props: { state: () => AxisState }) {
+function TimeGutter(props: { state: () => AxisState; class?: string }) {
   return (
-    <div class="relative" style={{ height: `${axisHeightPx(props.state(), PX_PER_MIN)}px` }}>
+    <div class={`relative ${props.class ?? ''}`} style={{ height: `${axisHeightPx(props.state(), PX_PER_MIN)}px` }}>
       <For each={visibleHours(props.state())}>
         {(h) => (
           <div
@@ -395,6 +395,37 @@ interface Props {
 export function CalendarGrid(props: Props) {
   const today = () => localISODate();
 
+  // Every day column has a floor, so a narrow viewport SCROLLS the week instead of
+  // squeezing it. Seven `1fr` columns in a 360px viewport resolve to ~35px each, which
+  // is narrower than one word: every chip degraded to a single letter ("W…", "D", "1.")
+  // and the week was unreadable on a phone. 7rem is the width at which a chip shows a
+  // readable fragment plus its start time.
+  //
+  // Desktop is untouched: `1fr` beats the 7rem floor at any width above ~840px, which is
+  // every desktop layout this grid ships in, so `minmax()` resolves to exactly what
+  // `1fr` did. Day view keeps a plain `1fr` — one column can always have the full width.
+  const DAY_COL_MIN = '7rem';
+  const gridCols = () =>
+    props.days.length > 1
+      ? `3.5rem repeat(${props.days.length}, minmax(${DAY_COL_MIN}, 1fr))`
+      : `3.5rem repeat(${props.days.length}, 1fr)`;
+
+  // The tracks alone overflowing is not enough: a block-level grid inside the
+  // overflow-auto port is still only as WIDE as the port, and `position: sticky` cannot
+  // hold outside its own containing block — the gutter scrolled away with the content
+  // until this was added. An explicit min-width the same size as the track floor makes
+  // the grid box match its tracks. Stated in `calc` rather than `min-content`/`max-content`
+  // so a long all-day chip title can never widen a column beyond the floor.
+  const gridMinW = () =>
+    props.days.length > 1 ? `calc(3.5rem + ${props.days.length} * ${DAY_COL_MIN})` : undefined;
+
+  // The hour axis and the header's empty corner stick to the left edge of the scroll
+  // port, so scrolling across the week never leaves you looking at unlabelled columns —
+  // the failure mode that made the committed week frame unreadable in the first place.
+  // z-[5] keeps the gutter above the day columns (which are `relative`, z auto) and
+  // below the full-width ExpanderBar at z-10, whose chevron sits over the gutter.
+  const STICKY_GUTTER = 'sticky left-0 z-[5] bg-surface-800';
+
   // Wave-3 item 6 — collapse the quiet night hours. The piecewise day axis is driven
   // by a shared store signal (0111) so the collapse state PERSISTS cross-device and
   // stays in lockstep across all week columns; default = BOTH collapsed. Calendar
@@ -431,9 +462,9 @@ export function CalendarGrid(props: Props) {
       {/* Day-of-week header */}
       <div
         class="grid sticky top-0 z-30 bg-surface-800/95 backdrop-blur border-b border-surface-700"
-        style={{ 'grid-template-columns': `3.5rem repeat(${props.days.length}, 1fr)` }}
+        style={{ 'grid-template-columns': gridCols(), 'min-width': gridMinW() }}
       >
-        <div />
+        <div class={STICKY_GUTTER} />
         <For each={props.days}>
           {(day) => (
             <div
@@ -481,9 +512,9 @@ export function CalendarGrid(props: Props) {
       <Show when={props.days.some((d) => (props.blocksByDay()[d] ?? []).some(isAllDay))}>
         <div
           class="grid sticky top-[3.25rem] z-20 bg-surface-800/95 backdrop-blur border-b border-surface-700"
-          style={{ 'grid-template-columns': `3.5rem repeat(${props.days.length}, 1fr)` }}
+          style={{ 'grid-template-columns': gridCols(), 'min-width': gridMinW() }}
         >
-          <div class="flex items-start justify-end pr-1.5 pt-1 text-[9px] uppercase tracking-wide text-slate-500">
+          <div class={`${STICKY_GUTTER} flex items-start justify-end pr-1.5 pt-1 text-[9px] uppercase tracking-wide text-slate-500`}>
             all-day
           </div>
           <For each={props.days}>
@@ -502,9 +533,9 @@ export function CalendarGrid(props: Props) {
           expander bars can overlay across the gutter + every day column. */}
       <div
         class="grid relative"
-        style={{ 'grid-template-columns': `3.5rem repeat(${props.days.length}, 1fr)` }}
+        style={{ 'grid-template-columns': gridCols(), 'min-width': gridMinW() }}
       >
-        <TimeGutter state={axisState} />
+        <TimeGutter state={axisState} class={STICKY_GUTTER} />
         <For each={props.days}>
           {(day) => {
             const placed = createMemo(() => layoutBlocks(props.blocksByDay()[day] ?? [], day));
