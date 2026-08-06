@@ -135,12 +135,67 @@ obj() { curl -fsS -XPOST "$API/objectives" -H "$JSON" -d "$1" | jq -r .objective
 
 G1=$(obj '{"title":"Ship Companion Planning 1.0","horizon":"year","priority":1}')
 P1=$(obj "{\"title\":\"Beta on the Hub market\",\"parent_id\":\"$G1\",\"horizon\":\"quarter\",\"priority\":1}")
-obj "{\"title\":\"Close the first-run punch list\",\"parent_id\":\"$P1\",\"horizon\":\"month\",\"priority\":2}" >/dev/null
-obj "{\"title\":\"Publish the app-store listing\",\"parent_id\":\"$P1\",\"horizon\":\"month\",\"priority\":3}" >/dev/null
+O1=$(obj "{\"title\":\"Close the first-run punch list\",\"parent_id\":\"$P1\",\"horizon\":\"month\",\"priority\":2}")
+O2=$(obj "{\"title\":\"Publish the app-store listing\",\"parent_id\":\"$P1\",\"horizon\":\"month\",\"priority\":3}")
 
 G2=$(obj '{"title":"Ten hours a week outdoors","horizon":"year","priority":2}')
 P2=$(obj "{\"title\":\"Ride Tuesdays and Thursdays\",\"parent_id\":\"$G2\",\"horizon\":\"quarter\",\"priority\":2}")
-obj "{\"title\":\"Book the spring route\",\"parent_id\":\"$P2\",\"horizon\":\"month\",\"priority\":3}" >/dev/null
+O3=$(obj "{\"title\":\"Book the spring route\",\"parent_id\":\"$P2\",\"horizon\":\"month\",\"priority\":3}")
+
+# Task lookup by exact seeded title. Under --no-llm every title comes straight from
+# server/test/fixtures/tasks.md, so these strings are stable across seeds; the ids are
+# uuid7 and are not.
+TASKS=$(curl -fsS "$API/tasks")
+tsk() { echo "$TASKS" | jq -r --arg t "$1" '.tasks[] | select(.title==$t) | .id' | head -1; }
+
+# Balance categories. NOTHING assigns these without a model: services/task-enrich.ts is
+# the only writer, it needs Ollama + memory, and it degrades to a silent no-op by design
+# rather than guessing — so with OLLAMA_URL pinned at a closed port every one of the six
+# Core Dimensions on /balance reads "0 open" and the `balance-index` shot films the
+# screen's own argument (connect your backlog to what matters) with the connection empty.
+# Assign them here rather than teaching the app to guess.
+setcat() { curl -fsS -XPATCH "$API/tasks/$(tsk "$1")" -H "$JSON" -d "{\"categories\":$2}" >/dev/null; }
+setcat "Schedule the annual physical and fill out the intake form" '["health"]'
+setcat "Fix the leaking kitchen faucet or call a plumber"          '["health"]'
+setcat "Ship the auto-scheduler reactive reflow behind a flag"     '["career"]'
+setcat "Write integration tests for the block engine"              '["career"]'
+setcat "Triage the GitHub issue backlog and label everything"      '["career"]'
+setcat "Draft the API rate-limit policy for partners"              '["career"]'
+setcat "Call Dad for his birthday and order the cake"              '["relationships"]'
+setcat "Book the family dinner reservation"                        '["relationships","leisure"]'
+setcat "Confirm the conference talk title and abstract"              '["growth","career"]'
+setcat "Spike sqlite-vec for the dedupe pipeline"                  '["growth"]'
+setcat "Renew passport before it expires in August"                '["leisure"]'
+setcat "Reconcile the May capital account statements"              '["finance"]'
+setcat "Categorize May credit-card transactions"                   '["finance"]'
+setcat "Update the cap table with the new SAFE"                    '["finance"]'
+
+# Objective ↔ task links. An objective with no linked task has progress_cache = NULL
+# (services/objectives.ts recomputeProgress), which the panel renders as "No plan yet"
+# with a dashed empty track and an amber rot dot — on all seven nodes at once. Tasks link
+# to LEAF objectives only (heightBelow > 0 is rejected 422); parents roll up on their own.
+# A link alone gives 0%, so a few of the linked tasks are also closed — the rollup is
+# estimate-weighted, and completed work is what makes the bars read as progress.
+link() { curl -fsS -XPOST "$API/objectives/$1/tasks" -H "$JSON" -d "{\"task_id\":\"$(tsk "$2")\"}" >/dev/null; }
+close() { curl -fsS -XPATCH "$API/tasks/$(tsk "$1")" -H "$JSON" -d '{"status":"done"}' >/dev/null; }
+
+link "$O1" "Ship the auto-scheduler reactive reflow behind a flag"
+link "$O1" "Write integration tests for the block engine"
+link "$O1" "Triage the GitHub issue backlog and label everything"
+close "Write integration tests for the block engine"
+
+link "$O2" "Send the vendor partner the SVG logo and 50-word blurb"
+link "$O2" "Upload the accelerator pitch deck and founder video"
+close "Send the vendor partner the SVG logo and 50-word blurb"
+
+# The outdoors goal has no backlog behind it — tasks.md is a work brain-dump — so its leaf
+# gets two tasks of its own. Two extra rows, not a rewritten fixture.
+newt() { curl -fsS -XPOST "$API/tasks" -H "$JSON" -d "$1" | jq -r '.task.id // .id'; }
+T1=$(newt '{"title":"Map the Skyline loop and book the campsite","estimated_minutes":45,"priority":2,"categories":["leisure","health"]}')
+T2=$(newt '{"title":"Service the bike before the first long ride","estimated_minutes":60,"priority":3,"categories":["health"]}')
+curl -fsS -XPOST "$API/objectives/$O3/tasks" -H "$JSON" -d "{\"task_id\":\"$T1\"}" >/dev/null
+curl -fsS -XPOST "$API/objectives/$O3/tasks" -H "$JSON" -d "{\"task_id\":\"$T2\"}" >/dev/null
+curl -fsS -XPATCH "$API/tasks/$T2" -H "$JSON" -d '{"status":"done"}' >/dev/null
 
 # Tags. The seeder files every intention tag under nothing, so /tags — the `tags-taxonomy`
 # shot, whose caption is "two axes of tags: direction, and intention" — renders HOME, WORK and
@@ -149,12 +204,58 @@ obj "{\"title\":\"Book the spring route\",\"parent_id\":\"$P2\",\"horizon\":\"mo
 # (services/tags.ts → directionIds), and ids are uuid7 so they change every seed — resolve by
 # name, never paste an id.
 TAGS=$(curl -fsS "$API/tags")
-tid() { echo "$TAGS" | jq -r --arg n "$1" '.tags[] | select(.name==$n) | .id'; }
+tid() { echo "$TAGS" | jq -r --arg n "$1" '.tags[] | select(.name==$n and .kind=="intention") | .id'; }
 file_tag() { curl -fsS -XPATCH "$API/tags/$(tid "$1")" -H "$JSON" -d "{\"directions\":[\"$2\"]}" >/dev/null; }
 file_tag product work; file_tag bizdev work; file_tag investment work; file_tag partnerships work
 file_tag personal home
 file_tag submissions community
+
+# …and each tag's Balance category. The per-chip category <select> defaults to an em dash,
+# so without this every tag on the Tags screen reads "#product —" and the frame is a column
+# of placeholders.
+file_cat() { curl -fsS -XPATCH "$API/tags/$(tid "$1")" -H "$JSON" -d "{\"categories\":[\"$2\"]}" >/dev/null; }
+file_cat product career;      file_cat bizdev career
+file_cat partnerships career; file_cat investment finance
+file_cat personal relationships
+file_cat submissions growth
+
+# Rest-of-month commitments, LAST (auto/fill above must not see them). The calendar fixture
+# is one week wide (2026-05-30 .. 2026-06-06), so Month view renders June 8-30 as an empty
+# grid — two thirds of the `calendar-month` frame. These are time blocks rather than fixture
+# events ON PURPOSE: the seeder mines every fixture event into a "Prep for …" task, so
+# widening calendar.json would push the backlog past --target=50 and move every other shot.
+# All of them fall outside the frozen day and outside the visible week, so nothing else moves.
+mtg() { # mtg <YYYY-MM-DD> <HH:MM> <minutes> <title>
+  local s e
+  s=$(python3 -c "import datetime;print(datetime.datetime.fromisoformat('$1T$2:00+00:00').isoformat().replace('+00:00','Z'))")
+  e=$(python3 -c "import datetime;print((datetime.datetime.fromisoformat('$1T$2:00+00:00')+datetime.timedelta(minutes=$3)).isoformat().replace('+00:00','Z'))")
+  curl -fsS -XPOST "$API/blocks" -H "$JSON" \
+    -d "{\"title\":\"$4\",\"block_kind\":\"meeting\",\"is_locked\":true,\"start_at\":\"$s\",\"end_at\":\"$e\"}" >/dev/null
+}
+mtg 2026-06-09 09:00 30 "Cedar Systems onboarding standup"
+mtg 2026-06-09 15:00 60 "Bluepeak data-schema review"
+mtg 2026-06-10 11:00 45 "Platform team MCP connector scope"
+mtg 2026-06-11 09:30 60 "Northwind Capital IC follow-on"
+mtg 2026-06-12 14:00 45 "Orchard Labs co-marketing sync"
+mtg 2026-06-15 09:00 30 "Cedar Systems onboarding standup"
+mtg 2026-06-16 13:00 90 "SBIR narrative working session"
+mtg 2026-06-17 10:00 60 "Lumen API contract review"
+mtg 2026-06-18 16:00 45 "Vendor partner check-in"
+mtg 2026-06-19 11:00 60 "Q2 board prep"
+mtg 2026-06-22 09:00 30 "Cedar Systems onboarding standup"
+mtg 2026-06-23 14:30 60 "Hardware partner BOM and pricing"
+mtg 2026-06-24 10:00 45 "Accelerator mentor session"
+mtg 2026-06-25 15:00 60 "LP annual meeting planning"
+mtg 2026-06-26 12:30 60 "Lunch with mentor"
+mtg 2026-06-29 09:00 30 "Cedar Systems onboarding standup"
+mtg 2026-06-30 10:00 90 "Conference rehearsal"
 ```
+
+Verified against a live stage on 2026-08-06 (`DB_PATH=/tmp/ci-planning-ux2.db`, server on
+:3861, seeded exactly as above). After the block runs, `GET /api/objectives` returns
+progress on **all seven** nodes — 42% / 42% / 33% / 50% / 57% / 57% / 57%, no `null` and
+no "No plan yet" — every Balance dimension has 2–4 open tasks, every intention tag carries
+a direction and a category, and June 9–30 has 17 blocks spread over 17 weekdays.
 
 Notes on why it is shaped that way:
 
@@ -173,6 +274,12 @@ Notes on why it is shaped that way:
 4. **Leave the first-run wizard alone.** Whether it appears is decided per-shot by the
    `/api/prefs` interceptor in `capture.config.mjs`, not by the database — so it does not
    matter whether you finished onboarding while staging.
+5. **Order matters in two places.** `auto/fill` must run before the rest-of-month blocks
+   exist, or the fill sees them; and the two extra outdoors tasks are created after
+   `TASKS=$(curl …)` is captured, so they are referenced by the id the POST returns rather
+   than through `tsk`.
+6. **The block is re-runnable only against a fresh seed.** `POST /api/objectives` has no
+   upsert, so running it twice gives you two of every goal. Re-seed with `--reset` first.
 
 Every determinism hazard found in the app source is written up at the top of
 [`capture.config.mjs`](capture.config.mjs). Read it before changing a `waitFor` or a `mask`.
