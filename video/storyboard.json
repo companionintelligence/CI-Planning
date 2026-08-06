@@ -271,7 +271,7 @@
         {
           "id": "calendar-week",
           "url": "planning.local/calendar",
-          "alt": "The calendar week grid, scrolled to the afternoon: meeting mirrors and auto-placed task blocks across Monday to Friday.",
+          "alt": "The calendar week grid from the top of the working day: the day-name header row, meeting mirrors and auto-placed task blocks across Monday to Friday.",
           "motion": "drift-down",
           "capture": {
             "path": "/calendar",
@@ -283,12 +283,6 @@
               },
               {
                 "wait": 500
-              },
-              {
-                "eval": "() => { for (const el of document.querySelectorAll('div')) { if (el.scrollHeight > el.clientHeight + 20 && el.clientHeight > 100) { el.scrollTop = el.scrollHeight; return; } } }"
-              },
-              {
-                "wait": 400
               }
             ],
             "settle": 1000

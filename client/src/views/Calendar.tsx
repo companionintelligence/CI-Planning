@@ -284,7 +284,9 @@ export function Calendar() {
     <div class="flex-1 overflow-hidden flex flex-col p-3 md:p-6 page-enter w-full">
       <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
         <h1 class="text-2xl font-bold text-slate-100">Calendar</h1>
-        <div class="flex items-center gap-2">
+        {/* flex-wrap: five controls totalling ~430px in a 336px content box ran Review,
+            Plan my week and Schedule Day clean off the right edge at 360px. */}
+        <div class="flex items-center gap-2 flex-wrap">
           {/* View switcher */}
           <div class="flex bg-surface-800 rounded-lg p-0.5 border border-surface-700/60">
             <For each={views}>
@@ -302,22 +304,27 @@ export function Calendar() {
               )}
             </For>
           </div>
+          {/* Below sm these four shed their WORDS, not themselves: each already carries a
+              `title`, and the icon set is distinct. Keeping the labels here is what pushed
+              the toolbar to three stacked rows on a phone and left the grid ~250px tall. */}
           <a
             href={exportHref()}
             download=""
             class="btn-ghost text-xs gap-1"
+            aria-label="Export this range as an .ics calendar file"
             title="Download this range as an .ics calendar file"
           >
-            <Download size={13} /> Export
+            <Download size={13} /> <span class="hidden sm:inline">Export</span>
           </a>
           <Show when={view() === 'week'}>
             <button
               onClick={() => setShowReview((s) => !s)}
               class="btn-ghost text-xs gap-1"
               classList={{ 'text-primary': showReview() }}
+              aria-label="Toggle weekly review panel"
               title="Toggle weekly review panel"
             >
-              <ClipboardList size={13} /> Review
+              <ClipboardList size={13} /> <span class="hidden sm:inline">Review</span>
             </button>
           </Show>
           {/* Weekly-planning entry point — moved here from the Focus view header so
@@ -326,23 +333,32 @@ export function Calendar() {
           <button
             onClick={() => setPlanWeekModal({ open: true })}
             class="btn-ghost text-xs gap-1"
+            aria-label="Plan your week with the assistant"
             title="Plan your week with the assistant"
           >
-            <CalendarRange size={13} /> Plan my week
+            <CalendarRange size={13} /> <span class="hidden sm:inline">Plan my week</span>
           </button>
-          <button onClick={runSchedule} disabled={runningSchedule()} class="btn-primary">
+          <button
+            onClick={runSchedule}
+            disabled={runningSchedule()}
+            class="btn-primary"
+            aria-label="Schedule the day"
+            title="Schedule the day"
+          >
             <Zap size={14} />
-            {runningSchedule() ? 'Scheduling…' : 'Schedule Day'}
+            <span class="hidden sm:inline">{runningSchedule() ? 'Scheduling…' : 'Schedule Day'}</span>
           </button>
         </div>
       </div>
 
       {/* Range navigation */}
-      <div class="flex items-center gap-3 mb-4">
+      {/* flex-wrap + a non-breaking range label: at 360px this row wanted ~430px, so
+          "Jun 1 – 7, 2026" broke over three lines and pushed the grid off the screen. */}
+      <div class="flex items-center gap-x-3 gap-y-2 mb-4 flex-wrap">
         <button onClick={() => shift(-1)} class="btn-icon"><ChevronLeft size={15} /></button>
         <button onClick={() => shift(1)} class="btn-icon"><ChevronRight size={15} /></button>
         <button onClick={goToday} class="btn-ghost text-xs">Today</button>
-        <span class="text-sm font-medium text-slate-300">{rangeLabel()}</span>
+        <span class="text-sm font-medium text-slate-300 whitespace-nowrap">{rangeLabel()}</span>
         {/* Events-only ("free time") mode. Hides movable task blocks so what's left is
             only what genuinely constrains the day — the gaps between them are the
             answer the owner is after. Persisted with the other calendar view prefs. */}
@@ -361,15 +377,17 @@ export function Calendar() {
           <Show when={calendarEventsOnly()} fallback={<CalendarCheck size={13} />}>
             <CalendarClock size={13} />
           </Show>
-          {calendarEventsOnly() ? 'Events only' : 'All blocks'}
+          <span class="hidden sm:inline">{calendarEventsOnly() ? 'Events only' : 'All blocks'}</span>
         </button>
         <button
           onClick={() => setShowFilters((s) => !s)}
           class="btn-ghost text-xs gap-1"
           classList={{ 'text-accent-light': activeFilters() > 0 }}
+          aria-label="Toggle the overlay filters"
+          title="Toggle the overlay filters"
         >
           <Filter size={13} />
-          Overlays
+          <span class="hidden sm:inline">Overlays</span>
           <Show when={activeFilters() > 0}>
             <span class="badge-accent">{activeFilters()}</span>
           </Show>
@@ -459,8 +477,15 @@ export function Calendar() {
           <DayTypeControl date={anchor()} />
         </div>
       </Show>
+      {/* The unselected state is a HINT, not a control, and on a 640px-tall phone it cost
+          ~90px of the grid it is pointing at. It stays on md+; the affordance it describes
+          (clicking a day header) is unchanged, and the panel returns the moment a date is
+          selected — at any width. */}
       <Show when={view() !== 'day'}>
-        <div class="mb-3 p-3 rounded-lg border border-surface-700/60 bg-surface-800">
+        <div
+          class="mb-3 p-3 rounded-lg border border-surface-700/60 bg-surface-800"
+          classList={{ 'hidden md:block': !dayTypeDate() }}
+        >
           <Show
             when={dayTypeDate()}
             fallback={
