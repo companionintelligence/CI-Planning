@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import '../db/index.js';
 import { store } from '../db/store.js';
 import { extractTasks, type ExtractedTask } from '../agents/extract.js';
+import { guessEstimateMinutes, guessPriority } from '../agents/fallback-shape.js';
 import { upsertPossible } from '../agents/ingest.js';
 import { promotePossibles } from '../agents/groom.js';
 import { createFixtureGoogleClient, type EmailMessage, type CalendarEvent } from '../mcp/google.js';
@@ -98,7 +99,65 @@ async function pool<T>(items: T[], concurrency: number, worker: (item: T, i: num
 
 /** Deterministic fallback: turn an email/event into a single task from its subject/title. */
 function fallbackTask(title: string, summary: string): ExtractedTask {
-  return { title: title.slice(0, 200), summary, priority: 3, dueAt: null, estimatedMinutes: 30, tags: [], confidence: 0.55 };
+  // Both fields feed the heuristics: the subject carries the verb, the body carries
+  // the deadline ("two things before Friday", "target go-live is June 5").
+  const corpus = `${title}\n${summary}`;
+  return {
+    title: title.slice(0, 200),
+    summary,
+    priority: guessPriority(corpus),
+    dueAt: null,
+    estimatedMinutes: guessEstimateMinutes(corpus),
+    tags: [],
+    confidence: 0.55,
+  };
+}
+
+/**
+ * Titles for the count top-up in step 5.
+ *
+ * These used to be `Follow-up task 1..N`. The top-up exists so `--target=N` is
+ * honoured whatever the fixtures happen to yield, and it is tagged `seed-filler` so
+ * it is trivially deletable — but the rows are real rows in the real backlog and they
+ * show up in the Tasks list, in search, and in whatever the auto-scheduler places.
+ * "Follow-up task 12" on screen reads as an unfinished app. These read as a Tuesday.
+ *
+ * Ordinary, low-stakes admin on purpose: nothing here claims a capability, a customer
+ * or a number. The list is cycled deterministically, so the same `--target` always
+ * produces the same titles in the same order.
+ */
+const FILLER_TITLES = [
+  'Reconcile the AWS invoice against the usage report',
+  'Archive last quarter’s design files',
+  'Update the team handbook onboarding section',
+  'Renew the domain registration',
+  'Clear the shared inbox down to zero',
+  'Back up the demo laptop before the trip',
+  'Order replacement USB-C cables for the demo kit',
+  'Refresh the headshot on the website team page',
+  'Rotate the staging database credentials',
+  'File the mileage receipts from last month',
+  'Trim the unused GitHub Actions runners',
+  'Update the calendar link in the email signature',
+  'Sort the hardware shelf and label the bins',
+  'Cancel the duplicate analytics subscription',
+  'Write the changelog entry for the last release',
+  'Book the flights for the September conference',
+  'Check the office smoke-alarm batteries',
+  'Export the contact list for the newsletter',
+  'Review the open Dependabot alerts',
+  'Set up the out-of-office for the holiday week',
+  'Consolidate the three note-taking apps into one',
+  'Photograph the prototype for the press kit',
+  'Recycle the packaging from the dev-kit shipment',
+  'Move the old SD-card backups onto the NAS',
+];
+
+/** Deterministic, wraps with a pass suffix so titles stay unique past 24. */
+function fillerTitle(i: number): string {
+  const title = FILLER_TITLES[(i - 1) % FILLER_TITLES.length];
+  const pass = Math.floor((i - 1) / FILLER_TITLES.length);
+  return pass === 0 ? title : `${title} (${pass + 1})`;
 }
 
 /** Parse "- bullet" lines from the notes file, grouping under their ## heading as a tag. */
@@ -137,7 +196,12 @@ async function main() {
   // would surface as an unhandled rejection instead of failing the seed.
   for (const [i, b] of bullets.entries()) {
     const task: ExtractedTask = {
-      title: b.title, priority: 3, dueAt: null, estimatedMinutes: 30, tags: [b.tag], confidence: 0.8,
+      title: b.title,
+      priority: guessPriority(b.title),
+      dueAt: null,
+      estimatedMinutes: guessEstimateMinutes(b.title),
+      tags: [b.tag],
+      confidence: 0.8,
     };
     if ((await upsertPossible(task, 'text', `notes#${i}`, { source: 'tasks.md' })) === 'created') possiblesCreated++;
   }
@@ -209,7 +273,7 @@ async function main() {
     );
     await store().transaction(async () => {
       for (let i = 1; i <= fillerNeeded; i++) {
-        const r = await insert.get<{ id: string }>(`Follow-up task ${i}`, 3 + (i % 3), SYSTEM_OWNER, 15 + (i % 4) * 15);
+        const r = await insert.get<{ id: string }>(fillerTitle(i), 3 + (i % 3), SYSTEM_OWNER, 15 + (i % 4) * 15);
         if (!r) throw new Error('filler task insert returned no row');
         // entity_tags is the sole task-tag store (CON-3 / migration 0041).
         await store().prepare("INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, 1)").run(r.id, fillerTagId);

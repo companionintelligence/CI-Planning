@@ -182,13 +182,16 @@ export function AllTasks() {
   return (
     <div class="flex-1 overflow-auto p-6 page-enter max-w-3xl mx-auto w-full">
       {/* Header */}
-      <div class="flex items-center justify-between mb-5">
+      {/* Wraps at narrow widths. The three action buttons are all whitespace-nowrap and
+          total ~380px, so on a 360px viewport they used to run straight off the right
+          edge — "Archive" was half off-frame and the row collided with the H1. */}
+      <div class="flex items-center justify-between gap-x-3 gap-y-2 mb-5 flex-wrap">
         <div>
           <h1 class="text-2xl font-bold text-slate-100">Tasks</h1>
           <p class="text-slate-500 text-sm mt-0.5">{activeTaskCount()} open</p>
         </div>
         <Show when={isTaskTab()}>
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 flex-wrap">
             {/* Planning entry point. Lives here rather than in FOCUS (which is
                 today-only) — the Tasks view is where the week's backlog actually is. */}
             <button

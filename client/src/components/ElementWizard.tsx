@@ -1823,10 +1823,18 @@ export function ElementWizard() {
                           style={{ top: `${h.frac * 100}%` }}>{h.label}</div>
                       )}
                     </For>
-                    {/* ghost existing events */}
+                    {/* Ghost existing events.
+
+                        `min-height` below matters more than it looks. The geometric
+                        floor is 3% of a 220-300px rail, i.e. 7-9px, while one line of
+                        10px type inside py-0.5 and a border needs ~15px — so every
+                        short ghost used to render as its own title sliced in half
+                        horizontally by `overflow-hidden`. Outside the zoomed work band
+                        that is most of them, which is why the preview's evening read as
+                        a stack of grey static. Pin a legible floor instead. */}
                     <For each={ghostBlocks()}>
                       {(g) => (
-                        <div class="absolute left-8 right-2 rounded-md text-[10px] px-1.5 py-0.5 overflow-hidden whitespace-nowrap text-ellipsis border pointer-events-none"
+                        <div class="absolute left-8 right-2 rounded-md text-[10px] leading-[1.15] px-1.5 py-0.5 overflow-hidden whitespace-nowrap text-ellipsis border pointer-events-none"
                           classList={{
                             'bg-destructive/15 border-dashed border-destructive/60 text-destructive': dragging() && barConflicts(g),
                             'bg-muted-foreground/10 border-muted-foreground/25 text-muted-foreground': !(dragging() && barConflicts(g)),
@@ -1834,6 +1842,7 @@ export function ElementWizard() {
                           style={{
                             top: `${minutesToFrac(g.startMin) * 100}%`,
                             height: `${Math.max((minutesToFrac(g.endMin) - minutesToFrac(g.startMin)) * 100, 3)}%`,
+                            'min-height': '16px',
                           }}>
                           {g.title}
                         </div>
@@ -1851,6 +1860,10 @@ export function ElementWizard() {
                         style={{
                           top: `${minutesToFrac(barStartMin()!) * 100}%`,
                           height: `${Math.max((minutesToFrac(barStartMin()! + barDurMin()) - minutesToFrac(barStartMin()!)) * 100, 5)}%`,
+                          // Two lines of type (title + time range) need ~30px; the 5%
+                          // geometric floor is 11-15px, so a short block clipped its own
+                          // time range away. Same failure as the ghosts above.
+                          'min-height': '32px',
                           background: barGradient, color: '#041620',
                           'box-shadow': dragging() ? '0 6px 20px rgba(171,212,216,.35)' : undefined,
                         }}>
