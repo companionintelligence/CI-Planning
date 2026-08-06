@@ -10,10 +10,9 @@ uploaded artifact, no committed `.mp4`. A cut is a build output: make one when y
 delete it. The screenshots under `assets/shots/` are meant to stay in git — they are the *input*
 that lets anyone render without booting the app.
 
-> ⚠ **No screenshot has been captured yet.** `assets/shots/` holds nothing but `.gitkeep`, so
-> every one of the 16 shots renders as a placeholder slate and the cut is not shippable. The
-> narration, timing and copy in `storyboard.json` are real; the pictures are not. Booting the
-> stage below and running `npm run capture` is the one remaining blocker.
+> **All 32 shots (16 × two viewports) are captured and committed** as of 2026-08-05, against the
+> stage below. `ci-video status` reports `missing none`. Re-shoot with `npm run capture` whenever
+> the UI moves, and commit the new PNGs in the PR that moved it.
 
 ## Quick start
 
@@ -44,6 +43,29 @@ npm run check         # HyperFrames gate: lint, runtime, layout, motion, contras
 npm run render        # -> out/ci-planning-landscape.mp4 and out/ci-planning-portrait.mp4
 ```
 
+`npm install` here needs a GitHub Packages token, because `package.json` lists the private
+`@companionintelligence/video-kit`. **Capture does not use that package** — it only needs
+Playwright, which the kit resolves from this directory. To capture without a token, install
+Playwright alone against a throwaway manifest and put the real one back:
+
+```bash
+cp package.json package.json.real
+printf '{"name":"cap","private":true,"type":"module","devDependencies":{"playwright":"^1.58.0"}}' > package.json
+npm install --no-package-lock
+mv package.json.real package.json && rm -f package-lock.json
+```
+
+Then run the kit straight off disk, skipping the `npm run …` wrappers entirely:
+
+```bash
+APP_URL=http://localhost:5183 node ../../CI-Common/packages/video-kit/bin/ci-video.mjs capture
+node ../../CI-Common/packages/video-kit/bin/ci-video.mjs status    # expect "missing none"
+```
+
+Chromium comes from `~/Library/Caches/ms-playwright`, so no browser download is needed if any
+other product's capture has run on this machine. `video/node_modules/` is gitignored; never commit
+`package.json.capture` or a lockfile.
+
 ## The stage
 
 Capture runs against **source**, not the published container: `Dockerfile` sets
@@ -61,12 +83,23 @@ export OLLAMA_URL=http://127.0.0.1:1       # closed port -> every LLM path takes
 export CP_FIXED_NOW=2026-06-03T18:20:00Z   # same instant capture.config.mjs freezes the browser to
 corepack enable && pnpm install
 pnpm --filter server migrate
-pnpm --filter server seed -- --no-llm --reset
+pnpm --filter server seed -- --no-llm --reset --target=50
 pnpm dev                                   # client vite :5173, server tsx :3848
 ```
 
-`--no-llm` matters: without it the seeder mines the fixtures with Ollama and two runs produce
-different task titles, which shows up later as a phantom "UI drift" PR.
+Both flags on that seed line are load-bearing:
+
+- `--no-llm` — without it the seeder mines the fixtures with Ollama and two runs produce
+  different task titles, which shows up later as a phantom "UI drift" PR.
+- `--target=50` — the fixtures promote exactly 50 real tasks. The default target of 100 makes the
+  seeder top up the difference with 50 rows literally titled `Follow-up task 1 … 50`
+  (`seed-test-data.ts` step 5). Those are placeholder filler, and they land in the Tasks backlog
+  and the auto-fill candidate pool — i.e. straight into the frame. Ask for 50 and the filler
+  branch never runs.
+
+To run the stage on other ports (six agents share this machine): `VITE_PORT=5183`,
+`PORT=3849`, `VITE_API_TARGET=http://localhost:3849`, then capture with
+`APP_URL=http://localhost:5183`.
 
 ### Staging — run this before `npm run capture`
 
@@ -107,6 +140,19 @@ obj "{\"title\":\"Publish the app-store listing\",\"parent_id\":\"$P1\",\"horizo
 G2=$(obj '{"title":"Ten hours a week outdoors","horizon":"year","priority":2}')
 P2=$(obj "{\"title\":\"Ride Tuesdays and Thursdays\",\"parent_id\":\"$G2\",\"horizon\":\"quarter\",\"priority\":2}")
 obj "{\"title\":\"Book the spring route\",\"parent_id\":\"$P2\",\"horizon\":\"month\",\"priority\":3}" >/dev/null
+
+# Tags. The seeder files every intention tag under nothing, so /tags — the `tags-taxonomy`
+# shot, whose caption is "two axes of tags: direction, and intention" — renders HOME, WORK and
+# COMMUNITY all reading "No tags yet." with a single UNSORTED card carrying all six. Filing them
+# is what puts the second axis on screen. `directions` takes direction NAMES, not ids
+# (services/tags.ts → directionIds), and ids are uuid7 so they change every seed — resolve by
+# name, never paste an id.
+TAGS=$(curl -fsS "$API/tags")
+tid() { echo "$TAGS" | jq -r --arg n "$1" '.tags[] | select(.name==$n) | .id'; }
+file_tag() { curl -fsS -XPATCH "$API/tags/$(tid "$1")" -H "$JSON" -d "{\"directions\":[\"$2\"]}" >/dev/null; }
+file_tag product work; file_tag bizdev work; file_tag investment work; file_tag partnerships work
+file_tag personal home
+file_tag submissions community
 ```
 
 Notes on why it is shaped that way:
@@ -150,12 +196,14 @@ picked up automatically from `assets/audio/<sceneId>.mp3`; regenerate it from th
 `assets/audio/*.mp3` **is** committed: 18 narration tracks, one per scene, regenerated from
 `storyboard.json` with `npm run narrate` whenever a `narration` line changes.
 
-`assets/shots/*.png` is **meant** to be committed on the same terms — the record of what the
-product looked like, byte-stable, so a diff in them means the UI genuinely changed — but **none
-exists yet**. Nothing gitignores them; they have simply never been captured, and `ci-video build`
-substitutes a placeholder slate for a missing shot rather than failing, so the absence is quiet.
-Until the first `npm run capture` lands, treat any rendered cut as a timing rehearsal, not a
-product video.
+`assets/shots/*.png` **is** committed on the same terms — 32 files, the record of what the product
+looked like, byte-stable, so a diff in them means the UI genuinely changed. That is the fleet-wide
+policy as of 2026-08-05: only a few products have a working stage, so a gitignored shot set means
+nobody but the stage's author can render the cut. Nothing gitignores them here.
+
+`ci-video build` substitutes a placeholder slate for a missing shot rather than failing, so a shot
+that silently stops being captured is quiet — check `ci-video status` (expect `missing none`)
+before trusting a cut.
 
 The videos themselves are not kept anywhere. `out/` is gitignored, nothing uploads it, and no
 scheduled job re-shoots the screens or opens a refresh PR — when the UI moves, run `npm run
