@@ -30,34 +30,11 @@
       "narration": "Companion Planning. A planner that runs on your machine, not the cloud."
     },
     {
-      "id": "ftue-welcome",
-      "kind": "screen",
-      "chapter": "setup",
-      "seconds": 4.5,
-      "caption": "First run: five questions, all skippable.",
-      "narration": "First run: five short questions, all skippable.",
-      "shots": [
-        {
-          "id": "ftue-welcome",
-          "url": "planning.local",
-          "alt": "The first-run wizard, step one: name and email.",
-          "motion": "push-in",
-          "capture": {
-            "path": "/?ftue=1",
-            "waitUntil": "domcontentloaded",
-            "waitFor": "h2:text-is(\"Welcome\")",
-            "settle": 600,
-            "mask": ["div.h-11 span.font-mono"]
-          }
-        }
-      ]
-    },
-    {
       "id": "ftue-time-place",
       "kind": "screen",
       "chapter": "setup",
       "seconds": 5,
-      "caption": "Wake and bed times fold the night off the grid.",
+      "caption": "First run: five skippable questions. Wake and bed first.",
       "narration": "Wake and bed times. The planner folds the hours outside them away.",
       "shots": [
         {
@@ -73,8 +50,7 @@
               { "click": "button:text-is(\"Next\")" },
               { "waitFor": "h2:text-is(\"Time and place\")" }
             ],
-            "settle": 600,
-            "mask": ["div.h-11 span.font-mono"]
+            "settle": 600
           }
         }
       ]
@@ -83,9 +59,9 @@
       "id": "ftue-connect-source",
       "kind": "screen",
       "chapter": "setup",
-      "seconds": 5,
-      "caption": "Step three: point it at mail and calendar.",
-      "narration": "Point it at your mail and calendar; the pull happens on your own machine.",
+      "seconds": 6,
+      "caption": "Point it at Gmail and Google Calendar. It syncs on your box.",
+      "narration": "Gmail and Google Calendar, pulled on your own machine — not on someone else's.",
       "shots": [
         {
           "id": "ftue-connect-source",
@@ -102,8 +78,7 @@
               { "click": "button:text-is(\"Next\")" },
               { "waitFor": "h2:text-is(\"Connect a source\")" }
             ],
-            "settle": 600,
-            "mask": ["div.h-11 span.font-mono"]
+            "settle": 600
           }
         }
       ]
@@ -133,41 +108,7 @@
               { "click": "button:text-is(\"Next\")" },
               { "waitFor": "h2:text-is(\"Trust dial\")" }
             ],
-            "settle": 600,
-            "mask": ["div.h-11 span.font-mono"]
-          }
-        }
-      ]
-    },
-    {
-      "id": "ftue-first-sync",
-      "kind": "screen",
-      "chapter": "setup",
-      "seconds": 6,
-      "caption": "Step five: pull today in now, or wait for tonight.",
-      "narration": "Pull today's mail and meetings in now, rather than waiting for tonight's scheduled run.",
-      "shots": [
-        {
-          "id": "ftue-first-sync",
-          "url": "planning.local",
-          "alt": "Step five: run the first sync, or let the nightly job do it.",
-          "motion": "drift-down",
-          "capture": {
-            "path": "/?ftue=1",
-            "waitUntil": "domcontentloaded",
-            "waitFor": "h2:text-is(\"Welcome\")",
-            "before": [
-              { "click": "button:text-is(\"Next\")" },
-              { "waitFor": "h2:text-is(\"Time and place\")" },
-              { "click": "button:text-is(\"Next\")" },
-              { "waitFor": "h2:text-is(\"Connect a source\")" },
-              { "click": "button:text-is(\"Next\")" },
-              { "waitFor": "h2:text-is(\"Trust dial\")" },
-              { "click": "button:text-is(\"Next\")" },
-              { "waitFor": "h2:text-is(\"Run your first sync\")" }
-            ],
-            "settle": 600,
-            "mask": ["div.h-11 span.font-mono"]
+            "settle": 600
           }
         }
       ]
@@ -176,7 +117,7 @@
       "id": "today-cockpit",
       "kind": "screen",
       "chapter": "day",
-      "seconds": 6.5,
+      "seconds": 7.5,
       "caption": "Today: staged work on top, the placed day below.",
       "narration": "Today is the cockpit. Staged work up top, the placed day underneath.",
       "shots": [
@@ -191,8 +132,6 @@
             "waitFor": "span:text-is(\"Planner\")",
             "settle": 1200,
             "mask": [
-              "div.h-11 span.font-mono",
-              "div.items-baseline:has(> h1)",
               "div[title*=\"stars today\"]",
               "span.bg-destructive",
               ".bg-ring"
@@ -205,9 +144,9 @@
       "id": "add-anything",
       "kind": "screen",
       "chapter": "day",
-      "seconds": 5,
-      "caption": "Describe it in one line. Approve before it saves.",
-      "narration": "Add anything in one line. It parses into fields you approve.",
+      "seconds": 8,
+      "caption": "One line in. Title, time and tag out — approve before it saves.",
+      "narration": "Type one line. It becomes a title, a time and a tag, waiting for your approval.",
       "shots": [
         {
           "id": "add-element",
@@ -223,20 +162,9 @@
               { "waitFor": ".modal input[placeholder^=\"Describe it\"]" },
               { "fill": [".modal input[placeholder^=\"Describe it\"]", "pay invoice 3pm #work #invoices ~20m"] }
             ],
-            "settle": 600,
-            "mask": ["div.h-11 span.font-mono"]
+            "settle": 600
           }
-        }
-      ]
-    },
-    {
-      "id": "add-anything-parsed",
-      "kind": "screen",
-      "chapter": "day",
-      "seconds": 6,
-      "caption": "Parsed into title, time and tag — nothing saved yet.",
-      "narration": "One typed line becomes a title, a time and a tag, waiting for your approval.",
-      "shots": [
+        },
         {
           "id": "add-element-parsed",
           "url": "planning.local",
@@ -253,8 +181,7 @@
               { "press": [".modal input[placeholder^=\"Describe it\"]", "Enter"] },
               { "waitFor": ".modal span.rounded-full:has-text(\"invoices\")" }
             ],
-            "settle": 800,
-            "mask": ["div.h-11 span.font-mono"]
+            "settle": 800
           }
         }
       ]
@@ -277,11 +204,7 @@
             "waitUntil": "domcontentloaded",
             "waitFor": "h1:has-text(\"Focus\")",
             "settle": 1000,
-            "mask": [
-              "div.h-11 span.font-mono",
-              "div.items-baseline > span.text-muted-foreground",
-              "div.h-1.rounded-full"
-            ]
+            "mask": ["div.h-1.rounded-full"]
           }
         }
       ]
@@ -308,10 +231,7 @@
               { "wait": 500 }
             ],
             "settle": 1000,
-            "mask": [
-              "div.h-11 span.font-mono",
-              "span.text-slate-300"
-            ]
+            "mask": ["span.text-slate-300"]
           }
         }
       ]
@@ -339,10 +259,7 @@
               { "wait": 500 }
             ],
             "settle": 1000,
-            "mask": [
-              "div.h-11 span.font-mono",
-              "span.text-sm.font-medium.text-slate-300"
-            ]
+            "mask": ["span.text-sm.font-medium.text-slate-300"]
           }
         }
       ]
@@ -351,9 +268,9 @@
       "id": "plan-my-week",
       "kind": "screen",
       "chapter": "plan",
-      "seconds": 5,
-      "caption": "Three ways to plan the week. None of them call a model.",
-      "narration": "Plan the week ahead in three moves; none of them call a model.",
+      "seconds": 5.5,
+      "caption": "Three ways to plan the week. None of them need a model.",
+      "narration": "Plan the week ahead in three moves; none of them need a model installed.",
       "shots": [
         {
           "id": "plan-my-week",
@@ -368,8 +285,7 @@
               { "click": "button:has-text(\"Plan my week\")" },
               { "waitFor": ".modal p:text-is(\"What would you like to do?\")" }
             ],
-            "settle": 800,
-            "mask": ["div.h-11 span.font-mono"]
+            "settle": 800
           }
         }
       ]
@@ -393,10 +309,31 @@
             "waitFor": "h1:text-is(\"Tasks\")",
             "settle": 1000,
             "mask": [
-              "div.h-11 span.font-mono",
               "p.text-slate-500",
               "span.tabular-nums"
             ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "objectives-tree",
+      "kind": "screen",
+      "chapter": "plan",
+      "seconds": 5,
+      "caption": "Goals, projects, objectives — the tree tasks hang from.",
+      "narration": "Goals, projects and objectives sit above the backlog.",
+      "shots": [
+        {
+          "id": "objectives-tree",
+          "url": "planning.local/tasks",
+          "alt": "The Objectives tab: a goal, project and objective tree with progress rollups.",
+          "motion": "drift-down",
+          "capture": {
+            "path": "/tasks?tab=objectives",
+            "waitUntil": "domcontentloaded",
+            "waitFor": "h2:text-is(\"Goals · Projects · Objectives\")",
+            "settle": 900
           }
         }
       ]
@@ -413,7 +350,7 @@
           "id": "priorities-hours",
           "url": "planning.local/priorities",
           "alt": "The priorities wizard, step three: sleep reserved, then weekly hours per category.",
-          "motion": "drift-down",
+          "motion": "push-in",
           "capture": {
             "path": "/priorities",
             "waitUntil": "domcontentloaded",
@@ -424,8 +361,7 @@
               { "click": "button:has-text(\"Next: Weekly Hours\")" },
               { "waitFor": "h2:text-is(\"Step 3: Weekly Hours Target\")" }
             ],
-            "settle": 900,
-            "mask": ["div.h-11 span.font-mono"]
+            "settle": 900
           }
         }
       ]
@@ -434,9 +370,9 @@
       "id": "balance-index",
       "kind": "screen",
       "chapter": "plan",
-      "seconds": 4.5,
-      "caption": "Balance Index — hours you wanted, against hours you gave.",
-      "narration": "Balance scores the hours you wanted against the hours you gave.",
+      "seconds": 5.5,
+      "caption": "Balance Index — satisfaction against the importance you set.",
+      "narration": "Balance scores how closely satisfaction tracks stated importance.",
       "shots": [
         {
           "id": "balance-index",
@@ -447,8 +383,7 @@
             "path": "/balance",
             "waitUntil": "domcontentloaded",
             "waitFor": "h1:text-is(\"Life Balance\")",
-            "settle": 900,
-            "mask": ["div.h-11 span.font-mono"]
+            "settle": 900
           }
         }
       ]
@@ -470,8 +405,7 @@
             "path": "/tags",
             "waitUntil": "domcontentloaded",
             "waitFor": "h1:text-is(\"Tags\")",
-            "settle": 900,
-            "mask": ["div.h-11 span.font-mono"]
+            "settle": 900
           }
         }
       ]
@@ -480,9 +414,9 @@
       "id": "settings-schedule-patterns",
       "kind": "screen",
       "chapter": "plan",
-      "seconds": 7.5,
+      "seconds": 6,
       "caption": "Work, home and community each get their own hours.",
-      "narration": "Tell it which hours belong to work, home and community; placement obeys those windows.",
+      "narration": "Placement obeys the windows you set for work, home and community.",
       "shots": [
         {
           "id": "settings-schedule-patterns",
@@ -497,8 +431,7 @@
               { "click": "button:text-is(\"Preferences\")" },
               { "waitFor": "div.section-label:text-is(\"Schedule Patterns\")" }
             ],
-            "settle": 900,
-            "mask": ["div.h-11 span.font-mono"]
+            "settle": 900
           }
         }
       ]
@@ -508,12 +441,12 @@
       "kind": "feature",
       "seconds": 5.5,
       "title": "Local by default",
-      "caption": "One SQLite file. No account. Nothing leaves the box.",
-      "narration": "All of it in one SQLite file on your disk. No account required.",
+      "caption": "One SQLite file on hardware you own. The model runs there too.",
+      "narration": "All of it in one SQLite file on your disk, behind a local sign-in.",
       "items": [
         { "label": "Store", "value": "SQLite on your disk" },
-        { "label": "Account", "value": "None required" },
-        { "label": "Agents", "value": "MCP-native" },
+        { "label": "Sign-in", "value": "Local account, no cloud sign-up" },
+        { "label": "AI", "value": "Your Hub's Ollama, or none" },
         { "label": "Runs on", "value": "Companion Hub, or your laptop" }
       ]
     },
