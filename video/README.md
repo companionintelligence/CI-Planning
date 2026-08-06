@@ -80,7 +80,7 @@ From the repo root:
 export DB_PATH=/tmp/ci-planning-video.db   # throwaway — the seed below is destructive
 export GOOGLE_MODE=fixture                 # sample data; refused in production, fine in dev
 export OLLAMA_URL=http://127.0.0.1:1       # closed port -> every LLM path takes its fallback
-export CP_FIXED_NOW=2026-06-03T18:20:00Z   # same instant capture.config.mjs freezes the browser to
+export CP_FIXED_NOW=2026-06-03T11:20:00Z   # same instant capture.config.mjs freezes the browser to
 corepack enable && pnpm install
 pnpm --filter server migrate
 pnpm --filter server seed -- --no-llm --reset --target=50
@@ -92,10 +92,11 @@ Both flags on that seed line are load-bearing:
 - `--no-llm` — without it the seeder mines the fixtures with Ollama and two runs produce
   different task titles, which shows up later as a phantom "UI drift" PR.
 - `--target=50` — the fixtures promote exactly 50 real tasks. The default target of 100 makes the
-  seeder top up the difference with 50 rows literally titled `Follow-up task 1 … 50`
-  (`seed-test-data.ts` step 5). Those are placeholder filler, and they land in the Tasks backlog
-  and the auto-fill candidate pool — i.e. straight into the frame. Ask for 50 and the filler
-  branch never runs.
+  seeder top up the difference with 50 filler rows (`seed-test-data.ts` step 5). Those land in
+  the Tasks backlog and the auto-fill candidate pool — i.e. straight into the frame. They used to
+  be titled `Follow-up task 1 … 50`, which read as an unfinished app; they now carry ordinary
+  admin titles, but they are still filler and still not what the cut is about. Ask for 50 and the
+  filler branch never runs.
 
 To run the stage on other ports (six agents share this machine): `VITE_PORT=5183`,
 `PORT=3849`, `VITE_API_TARGET=http://localhost:3849`, then capture with

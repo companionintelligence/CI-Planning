@@ -160,9 +160,9 @@ export function ObjectivesPanel() {
   return (
     <div class="flex flex-col gap-4">
       {/* Panel header — the page-level header belongs to the Tasks view. */}
-      <div class="flex items-center justify-between">
+      <div class="flex items-center justify-between gap-x-3 gap-y-2 flex-wrap">
         <h2 class="text-sm font-semibold text-foreground">Goals · Projects · Objectives</h2>
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-2 flex-shrink-0">
           <button
             class="btn-ghost text-xs px-2 py-1"
             classList={{ 'text-primary': showArchive() }}
@@ -427,10 +427,15 @@ function ObjectiveNode(props: {
     }
   }
 
+  // Indent is reduced below `sm`. A goal › project › objective chain at depth 2-3 was
+  // spending ~160px of a 360px viewport on margin alone; with the fixed-width icon,
+  // progress track and level label after it, the title's flex-1 resolved to ZERO and
+  // the row rendered as a naked progress pill with no text at all. The nested card
+  // borders already carry the hierarchy at that width.
   return (
-    <div ref={rowRef} class="rounded-xl border bg-card overflow-hidden transition-shadow"
+    <div ref={rowRef} class="rounded-xl border bg-card overflow-hidden transition-shadow ml-[var(--obj-indent-sm)] sm:ml-[var(--obj-indent)]"
          classList={{ 'border-primary ring-1 ring-primary': isFocus(), 'border-border': !isFocus() }}
-         style={{ 'margin-left': `${props.depth * 20}px` }}>
+         style={{ '--obj-indent': `${props.depth * 20}px`, '--obj-indent-sm': `${props.depth * 8}px` }}>
       {/* Row header */}
       <div class="flex items-center gap-2 px-3 py-2.5 group">
         {/* Expand/collapse chevron */}
@@ -462,7 +467,7 @@ function ObjectiveNode(props: {
 
         {/* Progress track — completion reads as color filling in (Phase O · O3). A
             done objective fills the ring gold; NULL progress stays the rot dashes. */}
-        <div class="relative flex-shrink-0 w-16 h-1.5 rounded-full bg-background border border-border overflow-hidden"
+        <div class="relative flex-shrink-0 w-8 sm:w-16 h-1.5 rounded-full bg-background border border-border overflow-hidden"
              title={obj().status === 'done' ? 'Complete' : (progressPct() ?? 'No plan yet')}>
           <Show when={obj().status === 'done'}>
             <div class="absolute inset-0 rounded-full" style={{ 'background-color': STAR_GOLD }} />
@@ -491,8 +496,10 @@ function ObjectiveNode(props: {
             <Show when={obj().status === 'done'}>
               <Star size={12} color={STAR_GOLD} fill={STAR_GOLD} class="flex-shrink-0" />
             </Show>
+            {/* Hidden below `sm`: the level icon to the left already says this, and at
+                360px the word was outbidding the title for the last of the row. */}
             <Show when={obj().level !== 'goal'}>
-              <span class="text-[10px] text-muted-foreground capitalize">{obj().level}</span>
+              <span class="hidden sm:inline text-[10px] text-muted-foreground capitalize">{obj().level}</span>
             </Show>
             <Show when={isBehind()}>
               <span class="text-[10px] text-amber-400 flex items-center gap-0.5">

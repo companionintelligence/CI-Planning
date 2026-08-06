@@ -82,9 +82,18 @@ function useTaskReminders() {
   });
 }
 
+/**
+ * Routes that render the floating Create button. Shared by the FAB itself and by the
+ * scroll container's bottom padding — they have to agree or the FAB sits on top of the
+ * last row of content (it did: the button is 56px tall at `bottom-20`, i.e. its top
+ * edge is 136px off the viewport floor, while the scroller reserved only `pb-16`/64px).
+ */
+const FAB_ROUTES = ['/', '/tasks', '/calendar', '/tags', '/focus', '/jobs'];
+
 function Shell(props: { children?: any }) {
   const location = useLocation();
   useTaskReminders();
+  const hasFab = () => FAB_ROUTES.includes(location.pathname);
 
   // The toggle drives the trust dial (scheduling_prefs.trust_mode, 0070): Schedule ⇔
   // 'hands_off' (new tasks auto-schedule on ingest, N-day planning horizon), Suggest ⇔
@@ -123,19 +132,27 @@ function Shell(props: { children?: any }) {
       <Nav />
       <main class="flex-1 flex flex-col overflow-hidden relative min-w-0">
         {/* Top bar */}
-        <div class="flex-shrink-0 h-11 border-b border-surface-700/40 flex items-center px-4 md:px-6 gap-3 bg-surface-900/50">
+        {/* At 360px this row is over-subscribed: brand + Suggest/Schedule + sweep +
+            date want ~376px of an available 328px. It used to resolve that by
+            squeezing the flex items that could shrink, which are exactly the
+            controls — the toggle clipped to "Sche" and the date wrapped to two
+            lines, on every mobile frame. Now the BRAND absorbs the slack (it is the
+            only thing here that can be shortened without losing meaning) and every
+            control is pinned with flex-shrink-0. */}
+        <div class="flex-shrink-0 h-11 border-b border-surface-700/40 flex items-center px-4 md:px-6 gap-2 md:gap-3 bg-surface-900/50">
           {/* Brand mark — hidden on desktop where the left rail shows it */}
-          <div class="flex items-center gap-2 md:hidden">
+          <div class="flex items-center gap-2 md:hidden min-w-0 flex-1">
             <div class="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 text-surface-950"
               style={{ background: 'linear-gradient(135deg, #58ebbf, #409b9b)' }}>
               <Cpu size={12} />
             </div>
-            <span class="font-heading text-sm text-slate-100 tracking-wide">Planning</span>
+            <span class="font-heading text-sm text-slate-100 tracking-wide truncate">Planning</span>
           </div>
-          <div class="flex-1" />
+          {/* Desktop-only spacer; on mobile the brand block above already takes the slack. */}
+          <div class="hidden md:block flex-1" />
           {/* Suggest / Schedule toggle — global auto-mode; lives in the top bar */}
           <div
-            class="inline-flex rounded-full border border-surface-700/60 overflow-hidden text-[11px]"
+            class="inline-flex flex-shrink-0 rounded-full border border-surface-700/60 overflow-hidden text-[11px]"
             role="group"
             title="Suggest: nothing schedules until you press a button. Schedule: new tasks auto-schedule as they arrive; buttons still work for manual runs."
           >
@@ -158,11 +175,11 @@ function Shell(props: { children?: any }) {
             onClick={sweepNow}
             disabled={sweeping()}
             title="Sweep missed & stale tasks now — reopen them (and in Schedule mode, re-place them)"
-            class="btn-icon disabled:opacity-40"
+            class="btn-icon flex-shrink-0 disabled:opacity-40"
           >
             <RefreshCw size={13} classList={{ 'animate-spin': sweeping() }} />
           </button>
-          <span class="text-xs font-mono text-foreground">
+          <span class="text-xs font-mono text-foreground flex-shrink-0 whitespace-nowrap">
             {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
           </span>
         </div>
@@ -170,8 +187,15 @@ function Shell(props: { children?: any }) {
         {/* Phase L: persistent conflict banner — shown when sync ops lost a LWW race */}
         <ConflictBanner />
 
-        {/* Bottom padding clears the mobile tab bar */}
-        <div class="flex-1 overflow-auto pb-16 md:pb-0">
+        {/* Bottom padding clears the mobile tab bar — and, where one is rendered, the
+            floating Create button that sits above it. */}
+        <div
+          class="flex-1 overflow-auto"
+          classList={{
+            'pb-16 md:pb-0': !hasFab(),
+            'pb-36 md:pb-20': hasFab(),
+          }}
+        >
           {/* Root ErrorBoundary — the app's only one. A routed view whose render throws
               (commonly a resource read hitting a 403/500) degrades to a recoverable
               fallback here instead of white-screening the whole SPA; the shell chrome
@@ -196,7 +220,7 @@ function Shell(props: { children?: any }) {
       {/* Floating Create button — lifted above the bottom nav on mobile. On Today,
           Tasks, Calendar, Tags, Focus, and Jobs; other views own their own create
           affordance (e.g. the Planner grid's click-to-create). */}
-      <Show when={['/', '/tasks', '/calendar', '/tags', '/focus', '/jobs'].includes(location.pathname)}>
+      <Show when={hasFab()}>
         <button
           class="fab bottom-20 md:bottom-6"
           onClick={() => setElementModal({ open: true, mode: 'add', kind: null })}
