@@ -133,18 +133,24 @@
  *         advertises, greyed out. "#work" fixes both: it lands on the primary axis
  *         and "#invoices" lands in the chips.
  *
- *  6b. The week grid opens ABOVE the day's content.
+ *  6b. The week grid opens ABOVE the day's content — RE-CHECK THIS, IT HAS MOVED.
  *     /calendar week view renders the 07:00-21:00 band (day-axis.ts:29-33) into a
- *     scroll container roughly 8.5 hours tall, scrolled to the top. Every staged
- *     block — the 18 fixture meetings and the 20 auto-placed tasks — sits from 14:00
- *     onward, so the default frame is an empty 07:00-12:00 grid with one Saturday
- *     event in the corner: green capture, empty product, exactly hazard 7's failure
- *     mode. The shot's `before` therefore scrolls the container to its end before the
- *     shutter. Note the day-name header row does NOT survive that scroll: it is
- *     `sticky top-0` inside `div.overflow-auto.rounded-xl`, and an overflow ancestor
- *     is its sticky scrollport even when that ancestor is not the element actually
- *     scrolling (the page's main column is), so it scrolls away with the grid.
- *     Content beat labels; the month shot immediately after carries the dated grid.
+ *     scroll container roughly 8.5 hours tall, scrolled to the top. This used to be a
+ *     real problem: server/test/fixtures/calendar.json was authored in Pacific
+ *     wall-clock and stored with a Z suffix, so against `timezoneId: "UTC"` every
+ *     fixture meeting landed seven hours late — a "Lunch with mentor" at 19:30, a
+ *     "Gym - leg day" at 01:00, and the whole staged week packed into 14:00-22:00.
+ *     The fixture has since been re-timed to sensible UTC working hours (08:00-17:00,
+ *     same calendar dates), which is what a real week looks like and is also what the
+ *     week grid's default 07:00-onward viewport shows WITHOUT scrolling.
+ *     -> the calendar-week shot's `before` still scrolls the container to its end.
+ *        That is now probably wrong — verify the frame before trusting it, and drop
+ *        the scroll if the unscrolled grid already reads.
+ *     Note the day-name header row does NOT survive a scroll: it is `sticky top-0`
+ *     inside `div.overflow-auto.rounded-xl`, and an overflow ancestor is its sticky
+ *     scrollport even when that ancestor is not the element actually scrolling (the
+ *     page's main column is), so it scrolls away with the grid. Not scrolling keeps
+ *     the day names, which is a second reason to re-check.
  *
  *  7. Empty screens are a staging problem, not a capture bug.
  *     The seeder creates tasks with no `scheduled_for`, so Today's Planner and
@@ -184,32 +190,38 @@ export default {
   // The clock MUST sit inside the seeded fixture window or Today, Focus and the
   // week grid all film empty. The only time_blocks the stage ever creates are the
   // 18 Google-fixture meeting mirrors (seed-test-data.ts:143-152), and
-  // server/test/fixtures/calendar.json spans 2026-05-30 .. 2026-06-06. The old
+  // server/test/fixtures/calendar.json spans 2026-05-29 .. 2026-06-06. The old
   // 2026-06-15T15:04Z default was NINE DAYS past the end of that window, so
   // stores/index.ts fetched an empty day range and Today rendered its "Nothing
   // scheduled yet." branch under narration about a cockpit.
   //
-  // 2026-06-03T18:20Z is a Wednesday chosen deliberately:
-  //   - that day holds Legal review 16:30-17:00, Platform team working session
-  //     18:00-19:00 and Lunch with mentor 19:30-20:30, all inside the visible
+  // The fixture was re-timed: it had been authored in Pacific wall-clock and stored
+  // with a Z suffix, which against `timezoneId: "UTC"` rendered every meeting seven
+  // hours late (lunch at 19:30, gym at 01:00, the whole week piled into the evening).
+  // It now carries plausible UTC working hours on the same calendar dates, so the
+  // clock below moved with it — 11:20Z, not 18:20Z.
+  //
+  // 2026-06-03T11:20Z is a Wednesday chosen deliberately:
+  //   - that day holds Legal review 09:30-10:00, Platform team working session
+  //     11:00-12:00 and Lunch with mentor 12:30-13:30, all inside the visible
   //     07:00-21:00 band (day-axis.ts:29-33) rather than the collapsed bars;
-  //   - 18:20 falls INSIDE the Platform team session, so Focus's "the block you're in"
+  //   - 11:20 falls INSIDE the Platform team session, so Focus's "the block you're in"
   //     is literally true at the shutter;
   //   - weekDaysOf is Monday-start (client/src/lib/dates.ts:94-98), so the week
   //     grid anchors Mon 1 - Sun 7 June and contains 17 of the 18 fixture events,
   //     with "today" mid-week so the grid reads with days on both sides. The
-  //     eighteenth ("Dad's birthday dinner", 2026-05-30T02:00:00Z — Saturday
-  //     May 30) sits in the week BEFORE the anchor and is out of frame. Do not
+  //     eighteenth ("Dad's birthday dinner", 2026-05-29T19:00:00Z — Friday
+  //     May 29) sits in the week BEFORE the anchor and is out of frame. Do not
   //     round that up to "all 18": monthGridOf is Monday-start too and Jun 1 2026
   //     IS a Monday (dates.ts:128-134), so the month grid runs Jun 1 .. Jul 12
-  //     with no leading May cells — May 30 is outside that grid as well.
+  //     with no leading May cells — May 29 is outside that grid as well.
   // Override when the staged database is keyed to a different day — the client
   // derives "today" from this clock, so it must agree with whatever the server
   // was seeded and staged with or Today renders an empty grid (hazard 7).
   colorScheme: "dark",
   locale: "en-US",
   timezoneId: "UTC",
-  fixedTime: process.env.CI_VIDEO_FIXED_TIME ?? "2026-06-03T18:20:00Z",
+  fixedTime: process.env.CI_VIDEO_FIXED_TIME ?? "2026-06-03T11:20:00Z",
 
   // Not needed in AUTH_MODE=test (the default) — kept as the hook an sso-mode
   // stage would use.

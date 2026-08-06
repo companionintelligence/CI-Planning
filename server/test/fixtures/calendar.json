@@ -3,144 +3,144 @@
     "id": "evt-001",
     "title": "Northwind Capital follow-on review",
     "description": "Review follow-on term sheet. Prep: bring the updated financial model and draft the IC memo beforehand.",
-    "start": "2026-06-02T17:00:00.000Z",
-    "end": "2026-06-02T17:30:00.000Z",
+    "start": "2026-06-02T10:00:00.000Z",
+    "end": "2026-06-02T10:30:00.000Z",
     "attendees": ["chris@example.com"]
   },
   {
     "id": "evt-002",
     "title": "Cedar Systems onboarding standup",
     "description": "Daily sync on Cedar Systems go-live. Action: provision staging env and confirm API credentials before this meeting.",
-    "start": "2026-06-01T16:00:00.000Z",
-    "end": "2026-06-01T16:15:00.000Z",
+    "start": "2026-06-01T09:00:00.000Z",
+    "end": "2026-06-01T09:15:00.000Z",
     "attendees": ["ops@cedarsystems.example.com"]
   },
   {
     "id": "evt-003",
     "title": "Platform team engineering working session",
     "description": "Joint session on the shared MCP connector. Need to circulate the scope doc and a draft agenda ahead of time.",
-    "start": "2026-06-03T18:00:00.000Z",
-    "end": "2026-06-03T19:00:00.000Z",
+    "start": "2026-06-03T11:00:00.000Z",
+    "end": "2026-06-03T12:00:00.000Z",
     "attendees": ["nils@example.com"]
   },
   {
     "id": "evt-004",
     "title": "Dentist appointment",
     "description": "Routine cleaning. Remember to bring insurance card.",
-    "start": "2026-06-04T15:00:00.000Z",
-    "end": "2026-06-04T16:00:00.000Z",
+    "start": "2026-06-04T08:00:00.000Z",
+    "end": "2026-06-04T09:00:00.000Z",
     "attendees": []
   },
   {
     "id": "evt-005",
     "title": "Orchard Labs co-marketing call",
     "description": "Lock the co-marketing timeline. Prep: finish the joint one-pager draft and prepare the hardware lead intro.",
-    "start": "2026-06-02T20:00:00.000Z",
-    "end": "2026-06-02T20:30:00.000Z",
+    "start": "2026-06-02T13:00:00.000Z",
+    "end": "2026-06-02T13:30:00.000Z",
     "attendees": ["devrel@orchardlabs.example.com"]
   },
   {
     "id": "evt-006",
     "title": "Board prep",
     "description": "Prepare for the board meeting: build the pipeline report, finalize quarterly forecast, and draft the strategy slides.",
-    "start": "2026-06-05T18:00:00.000Z",
-    "end": "2026-06-05T19:30:00.000Z",
+    "start": "2026-06-05T11:00:00.000Z",
+    "end": "2026-06-05T12:30:00.000Z",
     "attendees": ["board@riverstone.example.com"]
   },
   {
     "id": "evt-007",
     "title": "Gym - leg day",
     "description": "Personal workout block.",
-    "start": "2026-06-01T01:00:00.000Z",
-    "end": "2026-06-01T02:00:00.000Z",
+    "start": "2026-06-01T06:30:00.000Z",
+    "end": "2026-06-01T07:30:00.000Z",
     "attendees": []
   },
   {
     "id": "evt-008",
     "title": "Bluepeak pilot kickoff",
     "description": "Kick off the Bluepeak pilot. Need the data schema sent and the shared Slack channel created beforehand.",
-    "start": "2026-06-01T19:00:00.000Z",
-    "end": "2026-06-01T19:45:00.000Z",
+    "start": "2026-06-01T12:00:00.000Z",
+    "end": "2026-06-01T12:45:00.000Z",
     "attendees": ["hello@bluepeak.example.com"]
   },
   {
     "id": "evt-009",
     "title": "Dad's birthday dinner",
     "description": "Family dinner for Dad's birthday. Book the reservation and pick up the cake and card.",
-    "start": "2026-05-30T02:00:00.000Z",
-    "end": "2026-05-30T04:00:00.000Z",
+    "start": "2026-05-29T19:00:00.000Z",
+    "end": "2026-05-29T21:00:00.000Z",
     "attendees": []
   },
   {
     "id": "evt-010",
     "title": "Conference speaker rehearsal",
     "description": "Rehearse the conference talk. Prep: finalize slides and confirm A/V requirements with organizers.",
-    "start": "2026-06-04T22:00:00.000Z",
-    "end": "2026-06-04T23:00:00.000Z",
+    "start": "2026-06-04T15:00:00.000Z",
+    "end": "2026-06-04T16:00:00.000Z",
     "attendees": ["speakers@devconference.example.org"]
   },
   {
     "id": "evt-011",
     "title": "Legal review call - vendor NDA",
     "description": "Walk through the redlined NDA with counsel. Review comments and prepare questions in advance.",
-    "start": "2026-06-03T16:30:00.000Z",
-    "end": "2026-06-03T17:00:00.000Z",
+    "start": "2026-06-03T09:30:00.000Z",
+    "end": "2026-06-03T10:00:00.000Z",
     "attendees": ["chris@lawpartners.example.com"]
   },
   {
     "id": "evt-012",
     "title": "Deep work - SBIR narrative",
     "description": "Focused writing block for the SBIR Phase I technical narrative. Also outline the budget justification.",
-    "start": "2026-06-05T16:00:00.000Z",
-    "end": "2026-06-05T18:00:00.000Z",
+    "start": "2026-06-05T09:00:00.000Z",
+    "end": "2026-06-05T11:00:00.000Z",
     "attendees": []
   },
   {
     "id": "evt-013",
     "title": "Lumen API integration sync",
     "description": "Resolve webhooks-vs-polling question and review the API contract draft. Prepare the integration spec first.",
-    "start": "2026-06-02T22:00:00.000Z",
-    "end": "2026-06-02T22:30:00.000Z",
+    "start": "2026-06-02T15:00:00.000Z",
+    "end": "2026-06-02T15:30:00.000Z",
     "attendees": ["team@lumenapi.example.com"]
   },
   {
     "id": "evt-014",
     "title": "1:1 with hardware lead",
     "description": "Discuss the the hardware partner production run. Bring the approved BOM and pricing sign-off.",
-    "start": "2026-06-04T18:00:00.000Z",
-    "end": "2026-06-04T18:30:00.000Z",
+    "start": "2026-06-04T11:00:00.000Z",
+    "end": "2026-06-04T11:30:00.000Z",
     "attendees": []
   },
   {
     "id": "evt-015",
     "title": "Lunch with mentor",
     "description": "Casual catch-up lunch. No prep needed.",
-    "start": "2026-06-03T19:30:00.000Z",
-    "end": "2026-06-03T20:30:00.000Z",
+    "start": "2026-06-03T12:30:00.000Z",
+    "end": "2026-06-03T13:30:00.000Z",
     "attendees": []
   },
   {
     "id": "evt-016",
     "title": "LP annual meeting planning",
     "description": "Finalize the agenda, confirm the venue, and assign slide owners for the portfolio performance deck.",
-    "start": "2026-06-05T20:00:00.000Z",
-    "end": "2026-06-05T21:00:00.000Z",
+    "start": "2026-06-05T13:00:00.000Z",
+    "end": "2026-06-05T14:00:00.000Z",
     "attendees": ["ops@riverstone.example.com"]
   },
   {
     "id": "evt-017",
     "title": "Holiday - Office closed",
     "description": "Public holiday. Office is closed; no meetings.",
-    "start": "2026-06-06T07:00:00.000Z",
-    "end": "2026-06-06T08:00:00.000Z",
+    "start": "2026-06-06T09:00:00.000Z",
+    "end": "2026-06-06T17:00:00.000Z",
     "attendees": []
   },
   {
     "id": "evt-018",
     "title": "Quarterly tax check-in",
     "description": "Meet the accountant. Prep: categorize May transactions and gather the AWS and travel receipts.",
-    "start": "2026-06-04T20:00:00.000Z",
-    "end": "2026-06-04T20:30:00.000Z",
+    "start": "2026-06-04T13:00:00.000Z",
+    "end": "2026-06-04T13:30:00.000Z",
     "attendees": ["accounting@bookkeeping.example.com"]
   }
 ]

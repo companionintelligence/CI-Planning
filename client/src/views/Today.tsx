@@ -165,16 +165,20 @@ export function Today() {
 
       {/* Day Overview — date · tag set · counts, with + New Task top-right */}
       <div class="rounded-xl border border-border bg-card p-4">
-        <div class="flex items-start justify-between gap-3">
-          <div>
-            <div class="flex items-center gap-1.5">
-              <button onClick={() => stepDay(-1)} class="btn-icon" title="Previous day"><ChevronLeft size={16} /></button>
-              <div class="flex items-baseline gap-2">
+        {/* Wraps, deliberately. The right-hand icon column is four 32px buttons and was
+            flex-shrink-0, so at 360px it overflowed the card (two icons hung off the
+            right edge) and shoved the date group into a three-line "Wednesday / · June
+            / 3". Letting the two columns wrap keeps both intact. */}
+        <div class="flex items-start justify-between gap-3 flex-wrap">
+          <div class="min-w-0">
+            <div class="flex items-center gap-1.5 flex-wrap">
+              <button onClick={() => stepDay(-1)} class="btn-icon flex-shrink-0" title="Previous day"><ChevronLeft size={16} /></button>
+              <div class="flex items-baseline gap-2 whitespace-nowrap">
                 <h1 class="text-xl font-semibold text-foreground">{weekday()}</h1>
                 <span class="text-sm text-muted-foreground">· {monthDay()}</span>
               </div>
-              <button onClick={() => stepDay(1)} class="btn-icon" title="Next day"><ChevronRight size={16} /></button>
-              <label class="btn-icon relative cursor-pointer" title="Pick a day">
+              <button onClick={() => stepDay(1)} class="btn-icon flex-shrink-0" title="Next day"><ChevronRight size={16} /></button>
+              <label class="btn-icon relative cursor-pointer flex-shrink-0" title="Pick a day">
                 <CalendarDays size={15} />
                 <input
                   type="date"
