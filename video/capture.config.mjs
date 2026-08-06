@@ -65,9 +65,20 @@
  *     Focus time-sense bar depletes continuously.
  *     -> `fixedTime` below freezes Date AND the timers (Playwright's clock is
  *        installed before first navigation), so none of these advance mid-shot.
- *        Belt and braces: the date text and the now-line dot are also masked in
- *        storyboard.json, because they still differ between two differently
- *        staged databases.
+ *        That is the WHOLE fix for the date text: App.tsx's top-bar date is
+ *        `new Date()`, and Today's/Focus's headings read `selectedDay()`, which
+ *        is seeded from `localISODate()` (stores/index.ts:37) — all three come
+ *        off the browser clock, not the database, so they are already
+ *        byte-stable and are NOT masked. They used to be, and since Playwright
+ *        paints a mask as a filled #0A222E box (video-kit capture.mjs:247-248)
+ *        that put a dark rectangle over the top bar of every frame in the cut
+ *        and over the Day Overview heading of the money shot. Mask only what
+ *        the DATABASE decides — counts, badges, star totals — never a value the
+ *        frozen clock already pins.
+ *        The now-line dot (`.bg-ring`) and the Focus time-sense bar
+ *        (`div.h-1.rounded-full`) stay masked: they are sub-pixel positioned
+ *        from the clock against staged block boundaries, and they are decoration,
+ *        not information the caption depends on.
  *
  *  5. Live counts.
  *     Today's due badge, the Tasks "N open" line and the per-tab counts all
@@ -77,8 +88,9 @@
  *     server/src/routes/tasks.ts:179-187 is explicit: `parseQuick` is
  *     "deterministic, always succeeds", and the `enrichQuick` overlay is wrapped
  *     in a try/catch that falls back to the deterministic parse. So the parse is
- *     reproducible IF the model is reliably absent — which is why video.yml pins
- *     OLLAMA_URL to http://127.0.0.1:1 (config.ts:263) for the whole capture run.
+ *     reproducible IF the model is reliably absent — which is why the stage in
+ *     README.md ("The stage") exports OLLAMA_URL=http://127.0.0.1:1
+ *     (config.ts:263) alongside `pnpm dev`, for the whole capture run.
  *     That also suppresses the nondeterministic subtask-suggestion chips
  *     (ElementWizard.tsx:549-555) and the "Parsed with AI enrichment" sparkle.
  *     With that pin the add-element-parsed shot CAN press Enter and film the
@@ -110,13 +122,18 @@
  *
  *  7. Empty screens are a staging problem, not a capture bug.
  *     The seeder creates tasks with no `scheduled_for`, so Today's Planner and
- *     Flight-plan are EMPTY until something places them, and /balance renders a
- *     "No priorities set yet" card until priorities exist. Both `waitFor`s match
- *     in the empty state too, so the shot goes green and films a lie.
- *     -> the "Stage the filmed day" step in .github/workflows/video.yml now does
- *        it over the API (auto/fill -> auto/run -> auto/fill, plus a priorities
- *        POST) instead of leaving it to a human checklist. Nothing in THIS file
- *        can paper over it — but see `fixedTime` below, which is the other half.
+ *     Flight-plan are EMPTY until something places them; /balance renders a
+ *     "No priorities set yet" card until priorities exist; and the Objectives
+ *     tab renders an empty tree, because `seed-test-data.ts` creates no
+ *     objectives at all. Every one of those `waitFor`s matches in the empty
+ *     state too, so the shot goes green and films a lie.
+ *     -> staging is now a human step again: .github/workflows/video.yml was
+ *        deleted in #483 when the cut moved to local builds, so the API calls it
+ *        used to run (auto/fill -> auto/run -> auto/fill, a priorities POST, and
+ *        the objectives POSTs the objectives-tree shot needs) live in README.md
+ *        under "Staging — run this before `npm run capture`". Run them, or the
+ *        capture is green and empty. Nothing in THIS file can paper over it —
+ *        but see `fixedTime` below, which is the other half.
  *
  *  8. The published container cannot be the stage.
  *     Dockerfile:47 sets NODE_ENV=production, and server/src/lib/config.ts:403

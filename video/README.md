@@ -7,8 +7,13 @@ screens, from this repo's own UI. Both are produced from [`storyboard.json`](sto
 
 **Videos are built locally, on demand, and are not stored.** There is no GitHub Actions job, no
 uploaded artifact, no committed `.mp4`. A cut is a build output: make one when you need it, then
-delete it. The screenshots under `assets/shots/` stay in git — they are the *input* that lets
-anyone render without booting the app.
+delete it. The screenshots under `assets/shots/` are meant to stay in git — they are the *input*
+that lets anyone render without booting the app.
+
+> ⚠ **No screenshot has been captured yet.** `assets/shots/` holds nothing but `.gitkeep`, so
+> every one of the 16 shots renders as a placeholder slate and the cut is not shippable. The
+> narration, timing and copy in `storyboard.json` are real; the pictures are not. Booting the
+> stage below and running `npm run capture` is the one remaining blocker.
 
 ## Quick start
 
@@ -66,10 +71,10 @@ different task titles, which shows up later as a phantom "UI drift" PR.
 ### Staging — run this before `npm run capture`
 
 The seeder fills the **backlog** and nothing else, so Today's Planner, Today's Flight-plan,
-Focus and `/balance` all render their empty-state branches. Every one of those shots waits on a
-selector that matches in the empty state too, so they capture **green** and film an empty
-product — which is exactly how thin coverage went unnoticed. Nothing runs these for you: paste
-them into a shell once the dev server is up, before `npm run capture`.
+Focus, `/balance` and the Objectives tab all render their empty-state branches. Every one of
+those shots waits on a selector that matches in the empty state too, so they capture **green**
+and film an empty product — which is exactly how thin coverage went unnoticed. Nothing runs these
+for you: paste them into a shell once the dev server is up, before `npm run capture`.
 
 ```bash
 API=http://localhost:3848/api; JSON='content-type: application/json'; DAY='{"date":"2026-06-03"}'
@@ -85,6 +90,23 @@ curl -fsS -XPOST "$API/priorities" -H "$JSON" -d '{"priorities":[
 curl -fsS -XPOST "$API/auto/fill" -H "$JSON" -d "$DAY"
 curl -fsS -XPOST "$API/auto/run"  -H "$JSON" -d "$DAY"
 curl -fsS -XPOST "$API/auto/fill" -H "$JSON" -d "$DAY"   # re-stage: auto/run drains the flight plan
+
+# Objectives (needs jq). server/src/scripts/seed-test-data.ts creates none, so
+# /tasks?tab=objectives — the `objectives-tree` shot, and the screen the "The long game"
+# chapter is named after — films an empty panel without this. `level` is not settable:
+# services/objectives.ts restamps goal/project/objective from tree height, so the three
+# levels come from the parent chain. `category_id` is a tags(id) FK (migration 0081), not
+# a Balance category key — leave it out.
+obj() { curl -fsS -XPOST "$API/objectives" -H "$JSON" -d "$1" | jq -r .objective.id; }
+
+G1=$(obj '{"title":"Ship Companion Planning 1.0","horizon":"year","priority":1}')
+P1=$(obj "{\"title\":\"Beta on the Hub market\",\"parent_id\":\"$G1\",\"horizon\":\"quarter\",\"priority\":1}")
+obj "{\"title\":\"Close the first-run punch list\",\"parent_id\":\"$P1\",\"horizon\":\"month\",\"priority\":2}" >/dev/null
+obj "{\"title\":\"Publish the app-store listing\",\"parent_id\":\"$P1\",\"horizon\":\"month\",\"priority\":3}" >/dev/null
+
+G2=$(obj '{"title":"Ten hours a week outdoors","horizon":"year","priority":2}')
+P2=$(obj "{\"title\":\"Ride Tuesdays and Thursdays\",\"parent_id\":\"$G2\",\"horizon\":\"quarter\",\"priority\":2}")
+obj "{\"title\":\"Book the spring route\",\"parent_id\":\"$P2\",\"horizon\":\"month\",\"priority\":3}" >/dev/null
 ```
 
 Notes on why it is shaped that way:
@@ -125,10 +147,15 @@ picked up automatically from `assets/audio/<sceneId>.mp3`; regenerate it from th
 
 ## What is committed
 
-`assets/shots/*.png` and `assets/audio/*.mp3` **are** committed — they are the record of what the
-product looked like, and captures are byte-stable, so a diff in them means the UI genuinely
-changed. Keeping them in git is what lets anyone render a cut without booting the app first, and
-what turns a moved screen into a reviewable diff.
+`assets/audio/*.mp3` **is** committed: 18 narration tracks, one per scene, regenerated from
+`storyboard.json` with `npm run narrate` whenever a `narration` line changes.
+
+`assets/shots/*.png` is **meant** to be committed on the same terms — the record of what the
+product looked like, byte-stable, so a diff in them means the UI genuinely changed — but **none
+exists yet**. Nothing gitignores them; they have simply never been captured, and `ci-video build`
+substitutes a placeholder slate for a missing shot rather than failing, so the absence is quiet.
+Until the first `npm run capture` lands, treat any rendered cut as a timing rehearsal, not a
+product video.
 
 The videos themselves are not kept anywhere. `out/` is gitignored, nothing uploads it, and no
 scheduled job re-shoots the screens or opens a refresh PR — when the UI moves, run `npm run
