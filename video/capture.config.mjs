@@ -80,9 +80,22 @@
  *        from the clock against staged block boundaries, and they are decoration,
  *        not information the caption depends on.
  *
- *  5. Live counts.
- *     Today's due badge, the Tasks "N open" line and the per-tab counts all
- *     render whatever the database happens to hold. Masked per-shot.
+ *  5. Live counts — NOT masked any more, deliberately.
+ *     Today's due badge, the Tasks "N open" line, the per-tab counts, the day-stars
+ *     total and the calendar's range label all render whatever the database holds.
+ *     They used to be masked, and a Playwright mask is a filled #0A222E box
+ *     (video-kit capture.mjs:247-248), so the tasks-backlog frame carried three
+ *     black rectangles — one of them inside the "Tasks" tab pill, which reads as a
+ *     redaction bar rather than a product. The same numbers were already on screen
+ *     UNMASKED in objectives-tree, which has no mask list at all, so the masking was
+ *     not even self-consistent.
+ *     They are stable because the STAGE is stable: README's seed line pins
+ *     `--no-llm --reset --target=50`, and the staging block that follows pins the
+ *     priorities, the auto-fill and the objectives. Re-stage the same way and the
+ *     counts come back identical; change the stage and they SHOULD diff, which is
+ *     the whole point of committing the shots.
+ *     What stays masked is decoration the clock positions sub-pixel: the now-line
+ *     dot (`.bg-ring`) and the Focus time-sense bar (`div.h-1.rounded-full`).
  *
  *  6. The NL "Describe it" line calls the model — but only as an overlay.
  *     server/src/routes/tasks.ts:179-187 is explicit: `parseQuick` is
@@ -119,6 +132,19 @@
  *         (ElementWizard.tsx:1647-1649) — i.e. the exact fields the caption
  *         advertises, greyed out. "#work" fixes both: it lands on the primary axis
  *         and "#invoices" lands in the chips.
+ *
+ *  6b. The week grid opens ABOVE the day's content.
+ *     /calendar week view renders the 07:00-21:00 band (day-axis.ts:29-33) into a
+ *     scroll container roughly 8.5 hours tall, scrolled to the top. Every staged
+ *     block — the 18 fixture meetings and the 20 auto-placed tasks — sits from 14:00
+ *     onward, so the default frame is an empty 07:00-12:00 grid with one Saturday
+ *     event in the corner: green capture, empty product, exactly hazard 7's failure
+ *     mode. The shot's `before` therefore scrolls the container to its end before the
+ *     shutter. Note the day-name header row does NOT survive that scroll: it is
+ *     `sticky top-0` inside `div.overflow-auto.rounded-xl`, and an overflow ancestor
+ *     is its sticky scrollport even when that ancestor is not the element actually
+ *     scrolling (the page's main column is), so it scrolls away with the grid.
+ *     Content beat labels; the month shot immediately after carries the dated grid.
  *
  *  7. Empty screens are a staging problem, not a capture bug.
  *     The seeder creates tasks with no `scheduled_for`, so Today's Planner and

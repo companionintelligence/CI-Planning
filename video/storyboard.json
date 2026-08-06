@@ -132,7 +132,6 @@
             "waitFor": "span:text-is(\"Planner\")",
             "settle": 1200,
             "mask": [
-              "div[title*=\"stars today\"]",
               "span.bg-destructive",
               ".bg-ring"
             ]
@@ -220,7 +219,7 @@
         {
           "id": "calendar-week",
           "url": "planning.local/calendar",
-          "alt": "The calendar week grid with the star heatmap.",
+          "alt": "The calendar week grid, scrolled to the afternoon: meeting mirrors and auto-placed task blocks across Monday to Friday.",
           "motion": "drift-down",
           "capture": {
             "path": "/calendar",
@@ -228,10 +227,11 @@
             "waitFor": "h1:text-is(\"Calendar\")",
             "before": [
               { "click": "button:text-is(\"week\")" },
-              { "wait": 500 }
+              { "wait": 500 },
+              { "eval": "() => { for (const el of document.querySelectorAll('div')) { if (el.scrollHeight > el.clientHeight + 20 && el.clientHeight > 100) { el.scrollTop = el.scrollHeight; return; } } }" },
+              { "wait": 400 }
             ],
-            "settle": 1000,
-            "mask": ["span.text-slate-300"]
+            "settle": 1000
           }
         }
       ]
@@ -258,8 +258,7 @@
               { "waitFor": "div.grid-cols-7" },
               { "wait": 500 }
             ],
-            "settle": 1000,
-            "mask": ["span.text-sm.font-medium.text-slate-300"]
+            "settle": 1000
           }
         }
       ]
@@ -307,11 +306,7 @@
             "path": "/tasks",
             "waitUntil": "domcontentloaded",
             "waitFor": "h1:text-is(\"Tasks\")",
-            "settle": 1000,
-            "mask": [
-              "p.text-slate-500",
-              "span.tabular-nums"
-            ]
+            "settle": 1000
           }
         }
       ]
@@ -359,7 +354,9 @@
               { "click": "button:has-text(\"Next: Desired Focus\")" },
               { "waitFor": "h2:text-is(\"Step 2: Desired Focus\")" },
               { "click": "button:has-text(\"Next: Weekly Hours\")" },
-              { "waitFor": "h2:text-is(\"Step 3: Weekly Hours Target\")" }
+              { "waitFor": "h2:text-is(\"Step 3: Weekly Hours Target\")" },
+              { "eval": "() => { for (const el of document.querySelectorAll('div')) { if (el.scrollHeight > el.clientHeight + 20 && el.clientHeight > 100) { el.scrollTop = 0; return; } } }" },
+              { "wait": 300 }
             ],
             "settle": 900
           }
