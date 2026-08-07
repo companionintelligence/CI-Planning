@@ -10,7 +10,9 @@
   "meta": {
     "fps": 30,
     "transitionSeconds": 0.5,
-    "pacing": "fit"
+    "pacing": "fit",
+    "pacingLead": 0.25,
+    "pacingTail": 0.45
   },
   "chapters": {
     "setup": "First run",
@@ -57,6 +59,14 @@
               }
             ],
             "settle": 600
+          },
+          "focus": {
+            "landscape": {
+              "x": 0.22,
+              "y": 0.22,
+              "w": 0.56,
+              "h": 0.56
+            }
           }
         }
       ]
@@ -93,9 +103,18 @@
               }
             ],
             "settle": 600
+          },
+          "focus": {
+            "landscape": {
+              "x": 0.22,
+              "y": 0.22,
+              "w": 0.56,
+              "h": 0.56
+            }
           }
         }
-      ]
+      ],
+      "transition": "cut"
     },
     {
       "id": "ftue-trust-dial",
@@ -135,16 +154,25 @@
               }
             ],
             "settle": 600
+          },
+          "focus": {
+            "landscape": {
+              "x": 0.22,
+              "y": 0.22,
+              "w": 0.56,
+              "h": 0.56
+            }
           }
         }
-      ]
+      ],
+      "transition": "cut"
     },
     {
       "id": "today-cockpit",
       "kind": "screen",
       "chapter": "day",
       "seconds": 7.5,
-      "caption": "Today: staged work on top, the placed day below.",
+      "caption": "Today: everything staged for the day, in priority order.",
       "narration": "Today is the cockpit. Staged work up top, the placed day underneath.",
       "shots": [
         {
@@ -163,7 +191,8 @@
             ]
           }
         }
-      ]
+      ],
+      "transition": "hold"
     },
     {
       "id": "add-anything",
@@ -322,7 +351,8 @@
             "settle": 1000
           }
         }
-      ]
+      ],
+      "transition": "cut"
     },
     {
       "id": "plan-my-week",
@@ -352,7 +382,8 @@
             "settle": 800
           }
         }
-      ]
+      ],
+      "transition": "hold"
     },
     {
       "id": "tasks-backlog",
@@ -396,7 +427,8 @@
             "settle": 900
           }
         }
-      ]
+      ],
+      "transition": "cut"
     },
     {
       "id": "priorities-hours",
@@ -467,7 +499,7 @@
       "kind": "screen",
       "chapter": "plan",
       "seconds": 4,
-      "caption": "Two axes of tags: direction, and intention.",
+      "caption": "Tags file under a direction — home, work, community.",
       "narration": "Two axes of tags: direction and intention.",
       "shots": [
         {
@@ -480,6 +512,14 @@
             "waitUntil": "domcontentloaded",
             "waitFor": "h1:text-is(\"Tags\")",
             "settle": 900
+          },
+          "focus": {
+            "landscape": {
+              "x": 0.16,
+              "y": 0.16,
+              "w": 0.84,
+              "h": 0.42
+            }
           }
         }
       ]
