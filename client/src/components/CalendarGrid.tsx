@@ -457,8 +457,16 @@ export function CalendarGrid(props: Props) {
   }
 
   // Time-axis views (day + week) share the same renderer.
+  //
+  // The port needs an explicit MAX-HEIGHT, not just `overflow-auto`. Without one the
+  // grid is as tall as its content, so nothing ever scrolls inside the port — the
+  // whole card scrolls up the *page* instead, and `sticky top-0` on the day-of-week
+  // header pins it to the top of a box that is itself leaving the screen. Scrolling
+  // to the afternoon in week view therefore left seven unlabelled columns: the exact
+  // vertical twin of the horizontal failure STICKY_GUTTER above was added to fix.
+  // Capping the port makes it the scrollport, so the header actually stays put.
   const TimeAxis = () => (
-    <div class="overflow-auto rounded-xl border border-surface-700 bg-surface-800">
+    <div class="overflow-auto rounded-xl border border-surface-700 bg-surface-800 max-h-[calc(100vh-13rem)]">
       {/* Day-of-week header */}
       <div
         class="grid sticky top-0 z-30 bg-surface-800/95 backdrop-blur border-b border-surface-700"

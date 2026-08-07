@@ -1,6 +1,6 @@
 import { For, Show, createSignal } from 'solid-js';
 import { A } from '@solidjs/router';
-import { Heart, Briefcase, Users, Brain, Smile, DollarSign, Edit, Sparkles, AlertCircle, Target, ListTodo, X } from 'lucide-solid';
+import { Heart, Briefcase, Users, Brain, Smile, DollarSign, Edit, Sparkles, AlertCircle, Target, ListTodo, X, BarChart3, Lightbulb } from 'lucide-solid';
 import { priorities, prefs, tasks, setElementModal } from '../stores/index.js';
 import type { Priority, Task } from '../lib/api.js';
 import { BalanceMetrics } from '../components/BalanceMetrics.js';
@@ -145,7 +145,7 @@ export function Balance() {
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Per-category */}
           <div class="lg:col-span-2 flex flex-col gap-4">
-            <h2 class="text-lg font-bold text-foreground flex items-center gap-2">📊 Core Dimensions</h2>
+            <h2 class="text-lg font-bold text-foreground flex items-center gap-2"><BarChart3 class="w-4 h-4 text-primary" /> Core Dimensions</h2>
             <div class="flex flex-col gap-4">
               <For each={CATEGORIES}>
                 {(cat) => {
@@ -216,7 +216,7 @@ export function Balance() {
 
           {/* Focus areas / tips */}
           <div class="flex flex-col gap-5">
-            <h2 class="text-lg font-bold text-foreground flex items-center gap-2">💡 Focus Areas</h2>
+            <h2 class="text-lg font-bold text-foreground flex items-center gap-2"><Lightbulb class="w-4 h-4 text-primary" /> Focus Areas</h2>
             <div class="flex flex-col gap-4">
               <Show
                 when={focusAreas().length > 0}
@@ -239,7 +239,12 @@ export function Balance() {
                       <div class="card p-4 flex gap-3.5 items-start">
                         <div class={`p-2 rounded-xl bg-muted ${cat.colorClass} flex-shrink-0 mt-0.5`}><Icon class="w-4 h-4" /></div>
                         <div class="space-y-1">
-                          <h4 class="text-xs font-bold text-foreground">{cat.name} needs attention</h4>
+                          {/* Separator, not a verb: category names are a mix of singular
+                              and plural ("Health", "Relationships"), so "{name} needs
+                              attention" rendered "Relationships needs attention". The
+                              middle dot is the same idiom used in "Goals · Projects ·
+                              Objectives" and reads correctly for every category. */}
+                          <h4 class="text-xs font-bold text-foreground">{cat.name} · needs attention</h4>
                           <p class="text-[11px] text-muted-foreground leading-snug">
                             You rate it {p.importance}/10 important but only {p.satisfaction}/10 satisfying — the biggest gaps are worth a plan.
                           </p>
