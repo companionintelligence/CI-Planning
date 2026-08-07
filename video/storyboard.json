@@ -28,7 +28,8 @@
       "seconds": 5,
       "title": "Companion Planning",
       "caption": "A planner that runs on your own machine.",
-      "narration": "Companion Planning. A planner that runs on your machine, not the cloud."
+      "narration": "Companion Planning. A planner that runs on your machine, not the cloud.",
+      "mark": "./assets/app-icon.png"
     },
     {
       "id": "ftue-time-place",
@@ -537,7 +538,8 @@
           "label": "Runs on",
           "value": "Companion Hub, or your laptop"
         }
-      ]
+      ],
+      "reveal": "paced"
     },
     {
       "id": "close",
@@ -545,7 +547,8 @@
       "seconds": 5,
       "cta": "UnCloud your life.",
       "url": "ci.computer",
-      "narration": "Companion Planning from Companion Intelligence. UnCloud your life."
+      "narration": "Companion Planning from Companion Intelligence. UnCloud your life.",
+      "mark": "brand:logo.full"
     }
   ]
 }
