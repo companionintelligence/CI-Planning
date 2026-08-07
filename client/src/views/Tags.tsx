@@ -70,8 +70,13 @@ export function Tags() {
       </div>
 
       {/* ── Patterns tab ── */}
+      {/* `items-start` so each card is as tall as its own contents. Grid items
+          default to `stretch`, which sized every direction card to the tallest
+          one — a Work card with four tags left Home and Community as tall boxes
+          of empty space, which reads as a broken or unfinished screen rather
+          than as two directions that happen to have one tag each. */}
       <Show when={view() === 'patterns'}>
-        <div class="grid gap-4 md:grid-cols-3">
+        <div class="grid gap-4 md:grid-cols-3 items-start">
           <For each={groupedDir().groups}>
             {(g) => (
               <DirectionCard
@@ -107,7 +112,7 @@ export function Tags() {
 
       {/* ── Time Block Categories tab ── */}
       <Show when={view() === 'categories'}>
-        <div class="grid gap-4 md:grid-cols-3">
+        <div class="grid gap-4 md:grid-cols-3 items-start">
           <For each={groupedCat().groups}>
             {(g) => (
               <DirectionCard

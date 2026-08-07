@@ -202,13 +202,13 @@ export function PrioritiesWizard() {
           <div class="bg-muted/50 p-4 rounded-2xl border border-border mb-6 flex flex-col gap-2">
             <div class="flex justify-between items-center text-xs font-mono">
               <span class="text-muted-foreground">Allocated: <b class="text-accent">{totalAllocatedHours()}h</b> / {schedulablePool()}h</span>
-              <span classList={{ 'text-red-500': remainingHours() < 0, 'text-muted-foreground': remainingHours() >= 0 }}>
+              <span classList={{ 'text-destructive': remainingHours() < 0, 'text-muted-foreground': remainingHours() >= 0 }}>
                 {remainingHours() >= 0 ? `${remainingHours()}h remaining` : `${Math.abs(remainingHours())}h over!`}
               </span>
             </div>
             <div class="h-2 w-full bg-muted rounded-full overflow-hidden">
               <div class="h-full rounded-full transition-all duration-300"
-                classList={{ 'bg-red-500': remainingHours() < 0, 'bg-accent': remainingHours() >= 0 }}
+                classList={{ 'bg-destructive': remainingHours() < 0, 'bg-accent': remainingHours() >= 0 }}
                 style={{ width: `${Math.min(100, schedulablePool() > 0 ? (totalAllocatedHours() / schedulablePool()) * 100 : 0)}%` }} />
             </div>
           </div>

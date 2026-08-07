@@ -40,6 +40,20 @@ export function clockLabel(hhmm: string | null | undefined): string {
 }
 
 /**
+ * Human-readable span for a count of minutes: `7h 10m`, `9h`, `45m`, `0m`.
+ * Raw minute counts ("430m / 540m") are how the capacity bar used to read, which
+ * is a unit nobody plans a day in — anything an hour or over gets an hour part.
+ * Negative input clamps to 0; fractional minutes round to the nearest minute.
+ */
+export function durationLabel(minutes: number | null | undefined): string {
+  const total = Math.max(0, Math.round(minutes ?? 0));
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  if (h === 0) return `${m}m`;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
+
+/**
  * UTC instants bounding the *local* calendar day `dateStr` (YYYY-MM-DD).
  * Building the bounds from local Date parts (not a hardcoded `T00:00:00Z`)
  * means a Pacific user's "today" fetches their day, not the UTC day.

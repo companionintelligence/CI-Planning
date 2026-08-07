@@ -8,7 +8,7 @@ import { EmptyStateConnectCTA } from '../components/EmptyStateConnectCTA.js';
 import { selection, clearSelection, selectedTaskIds, selectedTitles, routineModal, setRoutineModal } from '../stores/selection.js';
 import { api, type Task } from '../lib/api.js';
 import { splitTagNames } from '../lib/multi-tag.js';
-import { localISODate, addDays } from '../lib/dates.js';
+import { localISODate, addDays, durationLabel } from '../lib/dates.js';
 import { dueItems } from '../lib/task-buckets.js';
 import { Planner } from '../components/Planner.js';
 import { FlightPlan } from '../components/FlightPlan.js';
@@ -236,7 +236,7 @@ export function Today() {
         <Show when={capacity() && capacity()!.workday_minutes > 0}>
           <div class="mt-2 flex items-center gap-2">
             <span class={`text-[10px] tabular-nums ${capacityPct() >= 90 ? 'text-destructive' : capacityPct() >= 70 ? 'text-amber-400' : 'text-primary'}`}>
-              {capacity()!.scheduled_minutes}m / {capacity()!.workday_minutes}m
+              {durationLabel(capacity()!.scheduled_minutes)} / {durationLabel(capacity()!.workday_minutes)}
             </span>
             <div class="relative h-1.5 w-32 rounded-full bg-background border border-border overflow-hidden">
               <div
