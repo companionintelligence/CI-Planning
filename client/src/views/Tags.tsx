@@ -272,11 +272,14 @@ function Chip(props: { tag: Tag; onMute: (t: Tag) => void; onDelete: (t: Tag) =>
   return (
     <span class="badge-neutral text-[11px] flex items-center gap-1 pr-1">
       <span {...drag} class="cursor-grab select-none">#{props.tag.name}</span>
+      {/* max-w is sized for the longest balance category ("Relationships"). At 72px a
+          native select clips mid-word with no ellipsis, so the chip rendered
+          "#personal Relationsl", which reads as a typo rather than a truncation. */}
       <select
         value={current()}
         onChange={(e) => void setCategory(e.currentTarget.value)}
         onPointerDown={(e) => e.stopPropagation()}
-        class="bg-transparent border-0 text-[10px] text-muted-foreground max-w-[72px] cursor-pointer capitalize focus:outline-none"
+        class="bg-transparent border-0 text-[10px] text-muted-foreground max-w-[104px] cursor-pointer capitalize focus:outline-none"
         title="Category"
       >
         <option value="">—</option>
