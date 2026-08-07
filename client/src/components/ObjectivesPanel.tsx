@@ -569,7 +569,14 @@ function ObjectiveNode(props: {
           {progressPct()} complete
         </div>
       </Show>
-      <Show when={obj().progress_cache === null && obj().status === 'active'}>
+      {/* Leaf-only. `progress_cache` is null for a parent precisely when it is null for
+          every descendant, so rendering this at each level repeated the same sentence
+          once per row — a goal > project > 2 objectives tree printed "No plan yet" five
+          times and read as an empty app rather than an unplanned branch. The dashed
+          progress track above still marks the state at every level, and the track's
+          title attribute keeps the wording for assistive tech. On a leaf the label is
+          also the only actionable one: the fix is to link tasks *here*. */}
+      <Show when={obj().progress_cache === null && obj().status === 'active' && !hasChildren()}>
         <div class="px-3 pb-1.5 text-[10px] text-muted-foreground italic">No plan yet</div>
       </Show>
 

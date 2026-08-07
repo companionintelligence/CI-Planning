@@ -1,5 +1,27 @@
 import { describe, it, expect } from 'vitest';
-import { isoWeekKey, weekDaysOf, addDays } from './dates.js';
+import { isoWeekKey, weekDaysOf, addDays, durationLabel } from './dates.js';
+
+describe('durationLabel', () => {
+  it('splits into hours and minutes past the hour', () => {
+    expect(durationLabel(430)).toBe('7h 10m');
+    expect(durationLabel(540)).toBe('9h');
+  });
+
+  it('stays in minutes below an hour', () => {
+    expect(durationLabel(45)).toBe('45m');
+    expect(durationLabel(0)).toBe('0m');
+  });
+
+  it('clamps negatives and rounds fractions rather than printing them', () => {
+    expect(durationLabel(-30)).toBe('0m');
+    expect(durationLabel(90.4)).toBe('1h 30m');
+  });
+
+  it('treats null/undefined capacity as zero', () => {
+    expect(durationLabel(null)).toBe('0m');
+    expect(durationLabel(undefined)).toBe('0m');
+  });
+});
 
 describe('isoWeekKey', () => {
   it('ordinary mid-year date', () => {
