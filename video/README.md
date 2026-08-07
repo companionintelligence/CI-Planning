@@ -10,9 +10,10 @@ uploaded artifact, no committed `.mp4`. A cut is a build output: make one when y
 delete it. The screenshots under `assets/shots/` are meant to stay in git — they are the *input*
 that lets anyone render without booting the app.
 
-> **All 32 shots (16 × two viewports) are captured and committed** as of 2026-08-05, against the
-> stage below. `ci-video status` reports `missing none`. Re-shoot with `npm run capture` whenever
-> the UI moves, and commit the new PNGs in the PR that moved it.
+> **All 32 shots (16 × two viewports) are captured and committed** as of 2026-08-06, re-shot
+> against `main` after #486–#491, on Playwright **1.62.1** and video-kit **0.6.0**.
+> `ci-video status` reports `missing none`. Re-shoot with [`stage.sh`](stage.sh) + `capture`
+> whenever the UI moves, and commit the new PNGs in the PR that moved it.
 
 ## Quick start
 
@@ -27,9 +28,24 @@ It runs `ci-video` straight out of the CI-Common checkout on disk, so there is n
 token and no authentication step. Output lands in `~/Movies/CI-Product-Videos/companion-planning/`,
 outside every repo. It needs `ffmpeg`/`ffprobe` on `PATH` and Node 22+.
 
-`--capture` (re-shoot the screens before rendering) is **not yet wired for this product** — the
-runner has no stage entry for Companion Planning, so it falls back to render-only. To refresh the
-shots, boot the stage and run the capture by hand from this directory:
+`--capture` (re-shoot the screens before rendering) is **not wired into the cross-product runner**
+for this product — `tools/stages.json` has no capture entry, so it falls back to render-only. The
+capture recipe lives here instead, in [`stage.sh`](stage.sh):
+
+```bash
+./stage.sh                 # migrate + seed + boot + stage the data, then assert all of it
+APP_URL=http://localhost:5191 \
+  node ../../CI-Common/packages/video-kit/bin/ci-video.mjs capture
+./stage.sh --stop
+```
+
+`stage.sh` ends by *checking* the stage (seven objectives carrying progress, six Balance
+dimensions with an open task, six filed tags, a populated flight plan, 17 rest-of-month blocks)
+and exits non-zero if any of it is missing. That matters more than it looks: every one of those
+shots waits on a selector that also matches the **empty** state, so an unstaged capture goes green
+and films an empty product.
+
+To refresh the shots by hand instead, boot the stage and run the capture from this directory:
 
 ```bash
 npm install
@@ -50,9 +66,24 @@ Playwright alone against a throwaway manifest and put the real one back:
 
 ```bash
 cp package.json package.json.real
-printf '{"name":"cap","private":true,"type":"module","devDependencies":{"playwright":"^1.58.0"}}' > package.json
+printf '{"name":"cap","private":true,"type":"module","devDependencies":{"playwright":"1.62.1"}}' > package.json
 npm install --no-package-lock
 mv package.json.real package.json && rm -f package-lock.json
+```
+
+The version in that throwaway manifest **must be the exact pin from `package.json`**, not a range.
+It said `^1.58.0` until 2026-08-06, which quietly reintroduced the very drift #487 was merged to
+remove — a range resolves to whatever is newest today, and a different Chromium rewrites every
+committed shot.
+
+Then confirm what actually answered, because a resolvable Playwright proves nothing — resolution
+walks **up**, so a copy in the repo root satisfies it and the pin here is never consulted:
+
+```bash
+node -e "const{createRequire}=require('module'),p=require('path'),f=require('fs');
+const m=createRequire(p.join(process.cwd(),'package.json')).resolve('playwright/package.json');
+console.log(JSON.parse(f.readFileSync(m,'utf8')).version, p.dirname(m))"
+# expect: 1.62.1 <...>/video/node_modules/playwright
 ```
 
 Then run the kit straight off disk, skipping the `npm run …` wrappers entirely:
@@ -251,11 +282,32 @@ mtg 2026-06-29 09:00 30 "LITA onboarding standup"
 mtg 2026-06-30 10:00 90 "AIDevCon rehearsal"
 ```
 
-Verified against a live stage on 2026-08-06 (`DB_PATH=/tmp/ci-planning-ux2.db`, server on
-:3861, seeded exactly as above). After the block runs, `GET /api/objectives` returns
-progress on **all seven** nodes — 42% / 42% / 33% / 50% / 57% / 57% / 57%, no `null` and
-no "No plan yet" — every Balance dimension has 2–4 open tasks, every intention tag carries
-a direction and a category, and June 9–30 has 17 blocks spread over 17 weekdays.
+Verified against a live stage on 2026-08-06. After the block runs, `GET /api/objectives`
+returns progress on **all seven** nodes — no `null` and no "No plan yet" — every Balance
+dimension has an open task, every intention tag carries a direction and a category, and
+June 9–30 has 17 blocks spread over 17 weekdays. `stage.sh` asserts all of it.
+
+Two numbers here are worth stating precisely, because both were reported differently before:
+
+- **Objective progress is 29 / 29 / 44 / 14 / 57 / 57 / 57 %**, not the 42/42/33/50/57/57/57
+  written when this block was first verified. Nothing regressed. Those figures were measured on
+  a branch that did **not** carry #490's `server/src/agents/fallback-shape.ts`; under the old
+  `--no-llm` fallback every task was a flat `30m`, so the estimate-weighted rollup came out
+  even. With keyword-derived estimates the same links weigh differently — e.g. "Publish the
+  app-store listing" is a done 15m task against an open 90m one, so 14% is arithmetic, not a
+  staging failure.
+
+- **The shots are NOT byte-reproducible across two runs of this recipe.** Re-seeding and
+  re-staging identically, then re-capturing, rewrites **19 of the 32** frames. Capturing twice
+  against one *already-staged* server rewrites only 3, and those by 2–551 pixels — noise. The
+  cause is the auto-fill: `flight_plan` is read `ORDER BY fp.position, fp.task_id` and task ids
+  are uuid7, so tasks created inside the same millisecond tie on position and are broken apart
+  by an id that changes every seed. Two runs genuinely produce a different plan, not just a
+  different order — see the tracking issue. Practical consequence: **re-shoot the whole set in
+  one capture pass, and expect an image diff on the data-bearing frames even when the UI has
+  not moved.** The frames that carry no list ordering (`calendar-week`, `calendar-month.mobile`,
+  `balance-index`, `tags-taxonomy`, `priorities-hours`, `settings-schedule-patterns`,
+  `plan-my-week`) are stable across seeds.
 
 Notes on why it is shaped that way:
 
