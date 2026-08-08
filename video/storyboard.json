@@ -74,7 +74,21 @@
       "transition": "hold",
       "title": "You could move it",
       "caption": "All of it. At once.",
-      "narration": "Moving means moving all of it at once, into another company's database. Most people quit right about here."
+      "narration": "Moving means moving all of it at once, into another company's database. Most people quit right about here.",
+      "items": [
+        {
+          "label": "Every task",
+          "value": "and its priority"
+        },
+        {
+          "label": "Every event",
+          "value": "and what it's for"
+        },
+        {
+          "label": "Every hour",
+          "value": "you already spent deciding"
+        }
+      ]
     },
     {
       "id": "title-card",
