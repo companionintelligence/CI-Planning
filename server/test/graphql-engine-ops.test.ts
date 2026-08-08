@@ -186,9 +186,12 @@ describe('W13 — auto ops', () => {
   });
 
   /**
-   * T9 — REST/GraphQL parity for the `smart` flag. No Ollama mock in this file (see the
-   * file header), so `smart: true` still lands on the deterministic path here — the point
-   * of this test is that the GraphQL resolver actually forwards `input.smart` through to
+   * T9 — REST/GraphQL parity for the `smart` flag. `smart: true` still lands on the
+   * deterministic path here for TWO independent reasons: the file-level mock pins
+   * isAvailable() false, and the gate is `!opts.deterministic && planning_mode === 'smart'`
+   * (agents/plan.ts) while these owners default to 'basic', which short-circuits the
+   * isAvailable() half anyway. The point of this test is that the GraphQL resolver
+   * actually forwards `input.smart` through to
    * `autoRun` (a typo in `input.smart ?? undefined` wouldn't be caught by the REST test
    * alone) and that both transports surface the same `llm` field, truthfully false when
    * Ollama is unreachable.
