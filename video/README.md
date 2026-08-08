@@ -2,17 +2,22 @@
 
 > **Private & Confidential — Property of Lifescope Inc. Do not distribute.**
 
-Generates a **16:9 desktop cut** and a **9:16 mobile cut** of Companion Planning's FTUE and major
-screens, from this repo's own UI. Both are produced from [`storyboard.json`](storyboard.json).
+Generates a **16:9 desktop cut** and a **9:16 mobile cut** of Companion Planning, from this repo's
+own UI. Both are produced from [`storyboard.json`](storyboard.json).
+
+The cut is a **narrative**, not a screen tour: a specific pain told concretely, the moment most
+people give up on moving, the title, the short way through as product beats, what stays yours, and
+the sign-off. Adding a screen because the app has one is how it got to eighteen scenes and 5.3 of
+them per chapter; a beat earns its place by moving that argument along.
 
 **Videos are built locally, on demand, and are not stored.** There is no GitHub Actions job, no
 uploaded artifact, no committed `.mp4`. A cut is a build output: make one when you need it, then
 delete it. The screenshots under `assets/shots/` are meant to stay in git — they are the *input*
 that lets anyone render without booting the app.
 
-> **All 32 shots (16 × two viewports) are captured and committed** as of 2026-08-05, against the
-> stage below. `ci-video status` reports `missing none`. Re-shoot with `npm run capture` whenever
-> the UI moves, and commit the new PNGs in the PR that moved it.
+> **All 18 shots (9 × two viewports) are captured and committed** as of 2026-08-08, in one capture
+> pass against the stage below. `ci-video status` reports `missing none`. Re-shoot with
+> `npm run capture` whenever the UI moves, and commit the new PNGs in the PR that moved it.
 
 ## Quick start
 
@@ -78,12 +83,12 @@ From the repo root:
 
 ```bash
 export DB_PATH=/tmp/ci-planning-video.db   # throwaway — the seed below is destructive
-export GOOGLE_MODE=fixture                 # sample data; refused in production, fine in dev
+export GOOGLE_MODE=off                     # see "the ingest cron re-mines the fixture" below
 export OLLAMA_URL=http://127.0.0.1:1       # closed port -> every LLM path takes its fallback
 export CP_FIXED_NOW=2026-06-03T11:20:00Z   # same instant capture.config.mjs freezes the browser to
 corepack enable && pnpm install
 pnpm --filter server migrate
-pnpm --filter server seed -- --no-llm --reset --target=50
+pnpm --filter server seed -- --no-llm --reset --target=47
 pnpm dev                                   # client vite :5173, server tsx :3848
 ```
 
@@ -91,12 +96,39 @@ Both flags on that seed line are load-bearing:
 
 - `--no-llm` — without it the seeder mines the fixtures with Ollama and two runs produce
   different task titles, which shows up later as a phantom "UI drift" PR.
-- `--target=50` — the fixtures promote exactly 50 real tasks. The default target of 100 makes the
-  seeder top up the difference with 50 filler rows (`seed-test-data.ts` step 5). Those land in
-  the Tasks backlog and the auto-fill candidate pool — i.e. straight into the frame. They used to
-  be titled `Follow-up task 1 … 50`, which read as an unfinished app; they now carry ordinary
-  admin titles, but they are still filler and still not what the cut is about. Ask for 50 and the
-  filler branch never runs.
+- `--target=47` — the fixtures promote exactly 47 real tasks: 32 notes bullets and 15 calendar
+  prep tasks. The default target of 100 makes the seeder top up the difference with 53 filler rows
+  (`seed-test-data.ts` step 5). Those land in the Tasks backlog and the auto-fill candidate pool —
+  i.e. straight into the frame. They used to be titled `Follow-up task 1 … 50`, which read as an
+  unfinished app; they now carry ordinary admin titles, but they are still filler and still not
+  what the cut is about. Ask for 47 and the filler branch never runs.
+
+  **47, not 50** — as of 2026-08-08 the calendar half of the seed yields 15 tasks, not 18. The
+  LLM-off fallback used to title every event `Prep for ${event.title}`, which put
+  `Prep for Board prep`, `Prep for Gym - leg day` and `Prep for Holiday - Office closed` in the
+  backlog. It now reads each event's own description for the sentence a person would have written
+  (`src/scripts/prep-task-title.ts`) and creates nothing for the three events that imply no work.
+  `server/test/seed-prep-tasks.test.ts` pins all eighteen results and the count — edit
+  `test/fixtures/calendar.json` and that test tells you to move this number.
+
+**`GOOGLE_MODE=off`, not `fixture` — the ingest cron re-mines the fixture underneath you.**
+`scheduled_jobs` runs `ingest_gcal` every 30 minutes and `ingest_gmail` every 15
+(`server/src/jobs/index.ts`), and in `fixture` mode they read the same `calendar.json` the seed
+just read, through the PRODUCTION extraction path. Dedupe on `source_ref` catches the 15 events the
+seeder already promoted, so what actually lands is the three the seeder deliberately skips — and
+because that path has no `prepTaskTitle`, they arrive titled `Gym - leg day`, `Lunch with mentor`
+and `Holiday - Office closed`. Measured 2026-08-08: a stage seeded at 20:42 had 47 tasks; at
+21:00:01 it had 50, and nothing in the capture log said so. **Whether your shots contain those rows
+therefore depends on how long you took between staging and capturing**, which is not a property a
+committed screenshot may have. `ingest_gcal` short-circuits on `config.google.mode === 'off'`
+(`jobs/index.ts:123`), and the seeder builds `createFixtureGoogleClient()` directly rather than
+through config, so turning Google off costs the stage nothing: the meeting mirrors, the fixtures
+and every shot are identical, and the count stops moving.
+
+> The production ingest path titling a task `Holiday - Office closed` is the same defect this PR
+> fixed in the seeder, in `agents/memory-suggest.ts`, where it affects real calendars rather than a
+> fixture. It is deliberately **not** fixed here — it is a user-facing behaviour change that wants
+> its own PR and its own tests.
 
 To run the stage on other ports (six agents share this machine): `VITE_PORT=5183`,
 `PORT=3849`, `VITE_API_TARGET=http://localhost:3849`, then capture with
@@ -251,11 +283,19 @@ mtg 2026-06-29 09:00 30 "Cedar Systems onboarding standup"
 mtg 2026-06-30 10:00 90 "Conference rehearsal"
 ```
 
-Verified against a live stage on 2026-08-06 (`DB_PATH=/tmp/ci-planning-ux2.db`, server on
-:3861, seeded exactly as above). After the block runs, `GET /api/objectives` returns
-progress on **all seven** nodes — 42% / 42% / 33% / 50% / 57% / 57% / 57%, no `null` and
-no "No plan yet" — every Balance dimension has 2–4 open tasks, every intention tag carries
-a direction and a category, and June 9–30 has 17 blocks spread over 17 weekdays.
+Verified against a live stage on 2026-08-08 (`DB_PATH=/tmp/ci-planning-narrative-5afb.db`, server
+on :3891, seeded exactly as above). After the block runs, `GET /api/objectives` returns progress on
+**all seven** nodes — 29% / 29% / 44% / 14% / 57% / 57% / 57%, no `null` and no "No plan yet" —
+every intention tag carries a direction and a category, and June 9–30 has 17 blocks spread over 17
+weekdays. The percentages moved from the 2026-08-06 run because the calendar half of the seed now
+yields 15 tasks rather than 18 (see `--target=47` above); the shape — every node scored, nothing
+empty — is what the block is for.
+
+The day it stages is deliberately **over-committed**: 24 tasks against a nine-hour workday, which
+Today's header reports as `10h 15m / 9h` in red and the auto-scheduler resolves by spilling the
+overflow into the evening. That is real behaviour, and two scenes are built on it — `today-cockpit`
+says so in its caption, and `the-arithmetic` is the answer to it. Do not "fix" it by staging fewer
+tasks without re-cutting those two scenes.
 
 Notes on why it is shaped that way:
 
@@ -301,13 +341,19 @@ picked up automatically from `assets/audio/<sceneId>.mp3`; regenerate it from th
 
 ## What is committed
 
-`assets/audio/*.mp3` **is** committed: 18 narration tracks, one per scene, regenerated from
-`storyboard.json` with `npm run narrate` whenever a `narration` line changes.
+`assets/audio/*.mp3` **is** committed: 14 narration tracks, one per scene, regenerated from
+`storyboard.json` with `npm run narrate` whenever a `narration` line changes. `narrate` leaves an
+existing mp3 alone, so a rewritten line ships the OLD read unless you ask for it: use
+`npm run narrate -- --stale`, and **verify the result by transcription** — edge-tts exits 0 having
+written silence. `assets/audio/narration.json` is the ledger that makes `--stale` work; commit it.
 
-`assets/shots/*.png` **is** committed on the same terms — 32 files, the record of what the product
+`assets/shots/*.png` **is** committed on the same terms — 18 files, the record of what the product
 looked like, byte-stable, so a diff in them means the UI genuinely changed. That is the fleet-wide
 policy as of 2026-08-05: only a few products have a working stage, so a gitignored shot set means
 nobody but the stage's author can render the cut. Nothing gitignores them here.
+
+Renaming or dropping a scene leaves an orphan mp3 and an orphan PNG behind. `ci-video status` lists
+both; delete them in the same commit, or the next reader cannot tell which files the cut uses.
 
 `ci-video build` substitutes a placeholder slate for a missing shot rather than failing, so a shot
 that silently stops being captured is quiet — check `ci-video status` (expect `missing none`)

@@ -143,14 +143,20 @@
  *     The fixture has since been re-timed to sensible UTC working hours (08:00-17:00,
  *     same calendar dates), which is what a real week looks like and is also what the
  *     week grid's default 07:00-onward viewport shows WITHOUT scrolling.
- *     -> the calendar-week shot's `before` still scrolls the container to its end.
- *        That is now probably wrong — verify the frame before trusting it, and drop
- *        the scroll if the unscrolled grid already reads.
- *     Note the day-name header row does NOT survive a scroll: it is `sticky top-0`
- *     inside `div.overflow-auto.rounded-xl`, and an overflow ancestor is its sticky
- *     scrollport even when that ancestor is not the element actually scrolling (the
- *     page's main column is), so it scrolls away with the grid. Not scrolling keeps
- *     the day names, which is a second reason to re-check.
+ *     -> RESOLVED 2026-08-08, and the answer is neither "scroll to the end" nor "do
+ *        not scroll". Unscrolled, the grid shows 07:00-12:30, which against this
+ *        stage is meeting mirrors ONLY: `auto/run` places the day's task blocks from
+ *        14:00 onward, so the frame cannot support a caption about work being placed
+ *        around meetings. The shot now scrolls the grid to 30% of its own scroll
+ *        height, which lands 11:00-17:00 — Wednesday's 12:30 lunch with two placed
+ *        task blocks at 14:00 and 16:00 sitting in the gaps around it.
+ *     The day-name header row DOES survive that scroll, contrary to what this note
+ *     said before it was tested. `sticky top-0` resolves against the nearest
+ *     SCROLLING ancestor, so it scrolls away only when the page's main column is what
+ *     moves. Scroll `div.overflow-auto` itself — the element whose scrollHeight
+ *     actually exceeds its clientHeight — and MON..SUN stay pinned. The `before`
+ *     block picks that element by measurement rather than by selector order, so it
+ *     does not silently start scrolling the page again if the markup moves.
  *
  *  7. Empty screens are a staging problem, not a capture bug.
  *     The seeder creates tasks with no `scheduled_for`, so Today's Planner and
@@ -166,6 +172,22 @@
  *        under "Staging — run this before `npm run capture`". Run them, or the
  *        capture is green and empty. Nothing in THIS file can paper over it —
  *        but see `fixedTime` below, which is the other half.
+ *
+ *  7b. The stage keeps seeding itself after you have finished seeding it.
+ *     scheduled_jobs runs ingest_gcal every 30 minutes and ingest_gmail every 15
+ *     (jobs/index.ts). Under GOOGLE_MODE=fixture they re-read the same
+ *     test/fixtures/calendar.json the seeder read, through the PRODUCTION extraction
+ *     path — which has no prepTaskTitle, so the three events the seeder skips arrive
+ *     as tasks literally named "Gym - leg day", "Lunch with mentor" and
+ *     "Holiday - Office closed". Measured 2026-08-08: 47 tasks at 20:42, 50 at
+ *     21:00:01, with nothing in any capture log to say the ground had moved. Two
+ *     captures of the same stage minutes apart are then different captures, which
+ *     defeats the whole point of committing the PNGs.
+ *     -> README's stage exports GOOGLE_MODE=off. ingest_gcal short-circuits on
+ *        `config.google.mode === 'off'` before it touches anything, and the seeder
+ *        builds createFixtureGoogleClient() directly rather than through config, so
+ *        the fixtures, the meeting mirrors and every shot are unchanged. Do not
+ *        "restore" GOOGLE_MODE=fixture here without re-reading this.
  *
  *  8. The published container cannot be the stage.
  *     Dockerfile:47 sets NODE_ENV=production, and server/src/lib/config.ts:403
