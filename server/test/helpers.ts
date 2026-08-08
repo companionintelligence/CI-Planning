@@ -122,6 +122,20 @@ export function resetDb(): void {
       -- an extra event; a narrowed email lookback filters every message away).
       memory_window_days = 2,
       email_lookback_days = 7,
+      -- 0012: the Settings group (per-owner model overrides + Companion Memory PUSH).
+      -- settings-models-memory.test.ts pins these in its own beforeEach but not on the
+      -- way out, so its last test's successful push (sync on, account 'liam@x.io', a
+      -- freshly stamped watermark) survived the file and flaked graphql-prefs' grouped
+      -- shape assertion. The baseline owns them now, not the courtesy of whoever writes them.
+      fast_model = NULL,
+      quality_model = NULL,
+      embed_model = NULL,
+      memory_sync_enabled = 0,
+      memory_sync_completed = 1,
+      memory_sync_habits = 1,
+      memory_sync_reflections = 1,
+      memory_account = NULL,
+      memory_last_synced_at = NULL,
       triality_enabled = 0,
       sleep_hours_per_week = 63;
   `);
