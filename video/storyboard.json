@@ -75,7 +75,7 @@
       "chapter": "setup",
       "seconds": 6,
       "caption": "Connect Google, or start on sample data.",
-      "narration": "Connect Google and the calendar arrives on your own machine, not on someone else's. Gmail is a separate opt-in.",
+      "narration": "Connect Google, or explore sample data first, as this build does. Your calendar lives on your machine, not someone else's.",
       "shots": [
         {
           "id": "ftue-connect-source",

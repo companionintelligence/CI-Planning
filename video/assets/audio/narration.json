@@ -3,8 +3,8 @@
   "voice": "en-GB-SoniaNeural",
   "scenes": {
     "ftue-connect-source": {
-      "text": "Connect Google and the calendar arrives on your own machine, not on someone else's. Gmail is a separate opt-in.",
-      "seconds": 7.656
+      "text": "Connect Google, or explore sample data first, as this build does. Your calendar lives on your machine, not someone else's.",
+      "seconds": 8.616
     },
     "tags-taxonomy": {
       "text": "The same intention tags file two ways: under a direction, or under a time block category.",
