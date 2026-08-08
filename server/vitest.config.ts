@@ -1,10 +1,9 @@
 import { defineConfig } from 'vitest/config';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
 // Each test run gets an isolated SQLite file so we never touch the real DB.
-// Keyed by pid so concurrent runs (e.g. parallel worktrees) never share one DB.
-const testDbPath = join(tmpdir(), `companion-planning-test-${process.pid}.db`);
+// Keyed by pid so concurrent runs (e.g. parallel worktrees) never share one DB —
+// and deleted before the run opens it, so a recycled pid can't inherit the last
+// one. See test/global-setup.ts for why the key stays the pid.
+import { testDbPath } from './test/global-setup.js';
 
 export default defineConfig({
   // graphql-js throws "Duplicate graphql modules" if two instances load at once (its
@@ -15,6 +14,7 @@ export default defineConfig({
   resolve: { dedupe: ['graphql'] },
   test: {
     environment: 'node',
+    globalSetup: ['./test/global-setup.ts'],
     // Tests share one DB file and reset tables themselves; keep files sequential to avoid write races.
     fileParallelism: false,
     testTimeout: 120_000, // LLM-backed tests can be slow
