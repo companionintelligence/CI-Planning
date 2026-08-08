@@ -1,0 +1,94 @@
+{
+  "_": "Written by `ci-video narrate`. Records which line each mp3 is a read of, so a later edit to scene.narration can be detected instead of silently keeping the old recording. Commit this with the mp3s.",
+  "voice": "en-GB-SoniaNeural",
+  "scenes": {
+    "ftue-connect-source": {
+      "text": "Connect Google and the calendar arrives on your own machine, not on someone else's. Gmail is a separate opt-in.",
+      "seconds": 7.656
+    },
+    "tags-taxonomy": {
+      "text": "The same intention tags file two ways: under a direction, or under a time block category.",
+      "seconds": 5.976
+    },
+    "open": {
+      "text": "Companion Planning. A planner that runs on your machine, not the cloud.",
+      "seconds": 5.208,
+      "adopted": true
+    },
+    "ftue-time-place": {
+      "text": "Wake and bed times. The planner folds the hours outside them away.",
+      "seconds": 4.92,
+      "adopted": true
+    },
+    "ftue-trust-dial": {
+      "text": "Then the trust dial — how much it may do unasked.",
+      "seconds": 3.528,
+      "adopted": true
+    },
+    "today-cockpit": {
+      "text": "Today is the cockpit. Staged work up top, the placed day underneath.",
+      "seconds": 5.544,
+      "adopted": true
+    },
+    "add-anything": {
+      "text": "Type one line. It becomes a title, a time and a tag, waiting for your approval.",
+      "seconds": 6.192,
+      "adopted": true
+    },
+    "focus-now": {
+      "text": "Focus strips it to one list and the block you're in.",
+      "seconds": 3.384,
+      "adopted": true
+    },
+    "calendar-week": {
+      "text": "The calendar carries that day out to a week and a month.",
+      "seconds": 3.624,
+      "adopted": true
+    },
+    "calendar-month": {
+      "text": "Zoom out to the month: this week placed, and the rest of it still open.",
+      "seconds": 4.704,
+      "adopted": true
+    },
+    "plan-my-week": {
+      "text": "Plan the week ahead in three moves; none of them need a model installed.",
+      "seconds": 4.512,
+      "adopted": true
+    },
+    "tasks-backlog": {
+      "text": "Everything unplaced lives here, ranked by priority.",
+      "seconds": 3.888,
+      "adopted": true
+    },
+    "objectives-tree": {
+      "text": "Goals, projects and objectives sit above the backlog.",
+      "seconds": 4.104,
+      "adopted": true
+    },
+    "priorities-hours": {
+      "text": "Name the hours each part of your life deserves, before the week claims them.",
+      "seconds": 4.752,
+      "adopted": true
+    },
+    "balance-index": {
+      "text": "Balance scores how closely satisfaction tracks stated importance.",
+      "seconds": 4.608,
+      "adopted": true
+    },
+    "settings-schedule-patterns": {
+      "text": "Placement obeys the windows you set for work, home and community.",
+      "seconds": 4.584,
+      "adopted": true
+    },
+    "recap": {
+      "text": "All of it in one SQLite file on your disk, behind a local sign-in.",
+      "seconds": 4.896,
+      "adopted": true
+    },
+    "close": {
+      "text": "Companion Planning, from Companion Intelligence. UnCloud your life.",
+      "seconds": 5.64,
+      "adopted": true
+    }
+  }
+}
