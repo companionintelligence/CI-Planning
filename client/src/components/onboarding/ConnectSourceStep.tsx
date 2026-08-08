@@ -19,6 +19,10 @@ export function ConnectSourceStep(props: { onNext: () => void; onBack: () => voi
   const [gcfg] = createResource(() => api.googleConfig.get().catch(() => null));
 
   const liveEnabled = () => integrations()?.google.liveEnabled ?? false;
+  // 'live' | 'fixture' | 'off' — see server/src/lib/config.ts:251. Needed
+  // separately from liveEnabled() because 'fixture' and 'off' are both
+  // not-live but mean opposite things to the person reading this step.
+  const mode = () => integrations()?.google.mode ?? 'off';
   const connections = () => integrations()?.google.connections ?? [];
   // Adversarial review caught this: without gating Skip/Back/Next too, a click on
   // Next right after "Connect Google" (before api.oauth.googleStart() resolves) would
@@ -93,8 +97,20 @@ export function ConnectSourceStep(props: { onNext: () => void; onBack: () => voi
         >
           {connecting() ? 'Connecting…' : 'Connect Google'}
         </button>
+        {/* `!liveEnabled()` covers two states that need different sentences, and
+            collapsing them into one is how "Waiting on an operator to configure
+            the Google connection." ended up as the hero line of a first-run
+            step. It is wrong for `fixture` (nothing is pending — sample data IS
+            the intended path, and the button for it is directly below), and it
+            is unhelpful for `off` (it names an absent person instead of the
+            thing to do). Settings.tsx:1836-1841 already tells these two apart;
+            this mirrors it, pointed at the reader rather than at an operator. */}
         <Show when={!liveEnabled()}>
-          <p class="text-[11px] text-muted-foreground">Waiting on an operator to configure the Google connection.</p>
+          <p class="text-[11px] text-muted-foreground">
+            {mode() === 'fixture'
+              ? 'Sample data only in this build — no Google account can be connected.'
+              : 'Connecting Google needs an OAuth client, set up once under Settings → Integrations.'}
+          </p>
         </Show>
 
         <Show when={gcfg()}>
