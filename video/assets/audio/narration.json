@@ -11,9 +11,8 @@
       "seconds": 5.976
     },
     "open": {
-      "text": "Companion Planning. A planner that runs on your machine, not the cloud.",
-      "seconds": 5.208,
-      "adopted": true
+      "text": "Your whole plan is one SQLite file you can copy and keep.",
+      "seconds": 4.152
     },
     "ftue-time-place": {
       "text": "Wake and bed times. The planner folds the hours outside them away.",

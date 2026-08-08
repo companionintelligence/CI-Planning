@@ -28,7 +28,7 @@
       "seconds": 5,
       "title": "Companion Planning",
       "caption": "A planner that runs on your own machine.",
-      "narration": "Companion Planning. A planner that runs on your machine, not the cloud.",
+      "narration": "Your whole plan is one SQLite file you can copy and keep.",
       "mark": "./assets/app-icon.png"
     },
     {
