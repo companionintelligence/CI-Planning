@@ -291,7 +291,7 @@
         {
           "id": "calendar-week",
           "url": "planning.local/calendar",
-          "alt": "The calendar week grid, Monday to Sunday with the day names still on top: locked meeting mirrors, and Wednesday's own task blocks placed into the gaps between them.",
+          "alt": "The calendar grid scrolled to the middle of the working day: locked meeting mirrors with Wednesday's own task blocks placed into the gaps between them — the week Monday to Sunday on desktop, the single day on a phone.",
           "motion": "drift-down",
           "capture": {
             "path": "/calendar",
@@ -299,13 +299,13 @@
             "waitFor": "h1:text-is(\"Calendar\")",
             "before": [
               {
-                "click": "button:text-is(\"week\")"
+                "eval": "async () => { const wide = window.innerWidth >= 700; const want = wide ? 'week' : 'day'; const b = [...document.querySelectorAll('button')].find((e) => e.textContent.trim().toLowerCase() === want); if (b) b.click(); }"
               },
               {
-                "wait": 500
+                "wait": 700
               },
               {
-                "eval": "() => { const c=[...document.querySelectorAll('div.overflow-auto')].filter(e=>e.scrollHeight>e.clientHeight+20).sort((a,b)=>(b.scrollHeight-b.clientHeight)-(a.scrollHeight-a.clientHeight))[0]; if(c) c.scrollTop = Math.round(c.scrollHeight*0.30); }"
+                "eval": "() => { const c = [...document.querySelectorAll('div.overflow-auto')].filter((e) => e.scrollHeight > e.clientHeight + 20).sort((a, b) => (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight))[0]; if (c) c.scrollTop = Math.round(c.scrollHeight * 0.30); }"
               },
               {
                 "wait": 400
