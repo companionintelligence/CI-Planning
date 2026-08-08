@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "at": "2026-08-08T22:07:55.985Z",
+  "kit": "0.13.1",
+  "shots": {
+    "add-element-parsed.mobile.png": {
+      "ok": true,
+      "at": "2026-08-08T22:07:55.985Z",
+      "sha256": "08e43b175168ebc3060690b2ad65e8b8147e47d2b60c9af4dd34c5933cb68ed9"
+    },
+    "add-element-parsed.png": {
+      "ok": true,
+      "at": "2026-08-08T22:07:55.985Z",
+      "sha256": "c728d28214484f8df812be45d9c26aa71265bea4d15802126196d1ca2c973613"
+    },
+    "add-element.mobile.png": {
+      "ok": true,
+      "at": "2026-08-08T22:07:55.985Z",
+      "sha256": "37aa11f132b74175132c98bb7170be349398e0f1d3f452ee82c5f6a06d33713b"
+    },
+    "add-element.png": {
+      "ok": true,
+      "at": "2026-08-08T22:07:55.985Z",
+      "sha256": "3c66d11a5902da3c433e50de38ed148f547379a404554e3cd9d61994c77d0355"
+    },
+    "calendar-week.mobile.png": {
+      "ok": true,
+      "at": "2026-08-08T22:07:55.985Z",
+      "sha256": "b8608841d2d19a6cebccea86e77b92f1091c9cf860cd2ca682d59c0bec8f35ef"
+    },
+    "calendar-week.png": {
+      "ok": true,
+      "at": "2026-08-08T22:07:55.985Z",
+      "sha256": "0d030167bc4a01b4351dbf5368a6fab7ea16746071ead35ca00bfc087673b7d6"
+    },
+    "focus-now.mobile.png": {
+      "ok": true,
+      "at": "2026-08-08T22:07:55.985Z",
+      "sha256": "ce952fffc2fd622503e6610bb1c699d6105793d1816cd79bc37a4ec00472d5b4"
+    },
+    "focus-now.png": {
+      "ok": true,
+      "at": "2026-08-08T22:07:55.985Z",
+      "sha256": "71bc79a6e221f2e1ca9339acd9fdf678103df73f3730afa570eb647b47ca37fa"
+    },
+    "ftue-trust-dial.mobile.png": {
+      "ok": true,
+      "at": "2026-08-08T22:07:55.985Z",
+      "sha256": "8ca6d8b77cf1391452b3783c91d82339dd9cb83328d594f7c0f1f1ce2506cff4"
+    },
+    "ftue-trust-dial.png": {
+      "ok": true,
+      "at": "2026-08-08T22:07:55.985Z",
+      "sha256": "a710ffe1a7d74a9e7f03457b6d946b13287f08e029383572564e1843e08fb655"
+    },
+    "objectives-tree.mobile.png": {
+      "ok": true,
+      "at": "2026-08-08T22:07:55.985Z",
+      "sha256": "4dadcfabe08cbf5585a3a7dac8911f915adfa6fa7bc61fa069456b1078b30073"
+    },
+    "objectives-tree.png": {
+      "ok": true,
+      "at": "2026-08-08T22:07:55.985Z",
+      "sha256": "15880c43b82a7ee8bebdf068b3a1843a43dc301a493d5c4f20ac9b73014e5cc8"
+    },
+    "plan-my-week.mobile.png": {
+      "ok": true,
+      "at": "2026-08-08T22:07:55.985Z",
+      "sha256": "83c36e72b604bf1fe977aa46480a0f5c1abd55fbba2f87536cf606ea6adc700f"
+    },
+    "plan-my-week.png": {
+      "ok": true,
+      "at": "2026-08-08T22:07:55.985Z",
+      "sha256": "e90c69dc8835fabdebba5a0896397967ca4e0d64c7374ba0a3857d7878f6a124"
+    },
+    "priorities-hours.mobile.png": {
+      "ok": true,
+      "at": "2026-08-08T22:07:55.985Z",
+      "sha256": "9b541758c85e6596a8dbe47032d23c049ed0bae7fb572a4eca0f7002d112f2f7"
+    },
+    "priorities-hours.png": {
+      "ok": true,
+      "at": "2026-08-08T22:07:55.985Z",
+      "sha256": "dffdd6445e29e27ec7fcd28ed244380f3d147661fe71120d1218e4f84b2a40d7"
+    },
+    "today-cockpit.mobile.png": {
+      "ok": true,
+      "at": "2026-08-08T22:07:55.985Z",
+      "sha256": "779270509fedff65f9d9c62807a26058f01d17f26ee0bb0aa37ba0d113ce8fbe"
+    },
+    "today-cockpit.png": {
+      "ok": true,
+      "at": "2026-08-08T22:07:55.985Z",
+      "sha256": "af81fb595afe4cbe7be88e9d58d9b118621a33e1f1baae75084801a611625185"
+    }
+  }
+}

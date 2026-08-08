@@ -13,9 +13,10 @@
     "pacing": "fit"
   },
   "chapters": {
-    "setup": "First run",
-    "day": "Your day",
-    "plan": "The long game"
+    "day": "One day",
+    "week": "The week ahead",
+    "long": "The long game",
+    "yours": "What stays yours"
   },
   "media": {
     "music": null,
@@ -23,188 +24,83 @@
   },
   "scenes": [
     {
-      "id": "open",
-      "kind": "intro",
-      "seconds": 5,
-      "title": "Companion Planning",
-      "caption": "A planner that runs on your own machine.",
-      "narration": "Your whole plan is one SQLite file you can copy and keep.",
-      "mark": "./assets/app-icon.png"
-    },
-    {
-      "id": "ftue-time-place",
-      "kind": "screen",
-      "chapter": "setup",
-      "seconds": 5,
-      "caption": "Five skippable steps. Step two sets wake and bed.",
-      "narration": "Wake and bed times. The planner folds the hours outside them away.",
-      "shots": [
+      "id": "what-it-knows",
+      "kind": "feature",
+      "seconds": 6.5,
+      "reveal": "paced",
+      "title": "What a planner knows",
+      "caption": "The most personal file you keep.",
+      "narration": "A planner knows when you sleep, which doctor you see, and who you met on Tuesday.",
+      "items": [
         {
-          "id": "ftue-time-place",
-          "url": "planning.local",
-          "alt": "Step two: timezone, wake and bed times, workday bounds.",
-          "motion": "drift-down",
-          "capture": {
-            "path": "/?ftue=1",
-            "waitUntil": "domcontentloaded",
-            "waitFor": "h2:text-is(\"Welcome\")",
-            "before": [
-              {
-                "click": "button:text-is(\"Next\")"
-              },
-              {
-                "waitFor": "h2:text-is(\"Time and place\")"
-              }
-            ],
-            "settle": 600
-          },
-          "focus": {
-            "landscape": {
-              "x": 0.22,
-              "y": 0.22,
-              "w": 0.56,
-              "h": 0.56
-            }
-          }
+          "label": "Sleep",
+          "value": "when you turn in"
+        },
+        {
+          "label": "Health",
+          "value": "every appointment"
+        },
+        {
+          "label": "People",
+          "value": "who you meet"
         }
       ]
     },
     {
-      "id": "ftue-connect-source",
-      "kind": "screen",
-      "chapter": "setup",
-      "seconds": 6,
-      "caption": "Connect Google, or start on sample data.",
-      "narration": "Connect Google, or explore sample data first, as this build does. Your calendar lives on your machine, not someone else's.",
-      "shots": [
+      "id": "someone-elses-product",
+      "kind": "feature",
+      "seconds": 8,
+      "reveal": "paced",
+      "title": "Someone else's product",
+      "caption": "You are a renting tenant.",
+      "narration": "And it runs on their computer. Atlassian defaults Jira and Confluence customers into using their content to train its AI.",
+      "items": [
         {
-          "id": "ftue-connect-source",
-          "url": "planning.local",
-          "alt": "Step three: connect a mail and calendar source.",
-          "motion": "push-in",
-          "capture": {
-            "path": "/?ftue=1",
-            "waitUntil": "domcontentloaded",
-            "waitFor": "h2:text-is(\"Welcome\")",
-            "before": [
-              {
-                "click": "button:text-is(\"Next\")"
-              },
-              {
-                "waitFor": "h2:text-is(\"Time and place\")"
-              },
-              {
-                "click": "button:text-is(\"Next\")"
-              },
-              {
-                "waitFor": "h2:text-is(\"Connect a source\")"
-              }
-            ],
-            "settle": 600
-          },
-          "focus": {
-            "landscape": {
-              "x": 0.22,
-              "y": 0.22,
-              "w": 0.56,
-              "h": 0.56
-            }
-          }
-        }
-      ],
-      "transition": "cut"
-    },
-    {
-      "id": "ftue-trust-dial",
-      "kind": "screen",
-      "chapter": "setup",
-      "seconds": 5,
-      "caption": "Cautious, balanced, hands-off. You set the dial.",
-      "narration": "Then the trust dial — how much it may do unasked.",
-      "shots": [
+          "label": "Where it lives",
+          "value": "Their database"
+        },
         {
-          "id": "ftue-trust-dial",
-          "url": "planning.local",
-          "alt": "Step four: the trust dial, three options.",
-          "motion": "push-in",
-          "capture": {
-            "path": "/?ftue=1",
-            "waitUntil": "domcontentloaded",
-            "waitFor": "h2:text-is(\"Welcome\")",
-            "before": [
-              {
-                "click": "button:text-is(\"Next\")"
-              },
-              {
-                "waitFor": "h2:text-is(\"Time and place\")"
-              },
-              {
-                "click": "button:text-is(\"Next\")"
-              },
-              {
-                "waitFor": "h2:text-is(\"Connect a source\")"
-              },
-              {
-                "click": "button:text-is(\"Next\")"
-              },
-              {
-                "waitFor": "h2:text-is(\"Trust dial\")"
-              }
-            ],
-            "settle": 600
-          },
-          "focus": {
-            "landscape": {
-              "x": 0.22,
-              "y": 0.22,
-              "w": 0.56,
-              "h": 0.56
-            }
-          }
-        }
-      ],
-      "transition": "cut"
-    },
-    {
-      "id": "today-cockpit",
-      "kind": "screen",
-      "chapter": "day",
-      "seconds": 7.5,
-      "caption": "Today: everything staged for the day, in priority order.",
-      "narration": "Today is the cockpit. Staged work up top, the placed day underneath.",
-      "shots": [
-        {
-          "id": "today-cockpit",
-          "url": "planning.local",
-          "alt": "The Today screen: day stars, flight plan, and the planner grid.",
-          "motion": "drift-down",
-          "capture": {
-            "path": "/",
-            "waitUntil": "domcontentloaded",
-            "waitFor": "span:text-is(\"Planner\")",
-            "settle": 1200,
-            "mask": [
-              "span.bg-destructive",
-              ".bg-ring"
-            ]
-          }
+          "label": "Your access",
+          "value": "Subject to their terms"
         }
       ],
       "transition": "hold"
     },
     {
-      "id": "add-anything",
-      "kind": "screen",
+      "id": "most-people-quit",
+      "kind": "feature",
+      "seconds": 7,
+      "reveal": "paced",
+      "transition": "hold",
+      "title": "You could move it",
+      "caption": "All of it. At once.",
+      "narration": "Moving means moving all of it at once, into another company's database. Most people quit right about here."
+    },
+    {
+      "id": "title-card",
+      "kind": "intro",
+      "seconds": 7,
+      "minSeconds": 5.5,
+      "reveal": "paced",
+      "transition": "hold",
+      "title": "Companion Planning",
+      "caption": "A planner that runs on your own machine.",
+      "narration": "Companion Planning is the other way round. Your whole plan is one SQLite file you can copy and keep.",
+      "mark": "./assets/app-icon.png"
+    },
+    {
+      "id": "one-line-in",
+      "kind": "split",
       "chapter": "day",
-      "seconds": 8,
-      "caption": "One line in. Title, time and tag out — approve before it saves.",
-      "narration": "Type one line. It becomes a title, a time and a tag, waiting for your approval.",
+      "seconds": 7,
+      "transition": "cut",
+      "caption": "One line in. Title, time and tag out — yours to approve.",
+      "narration": "Type one line. It comes back as a title, a time and a tag, for you to approve.",
       "shots": [
         {
           "id": "add-element",
           "url": "planning.local",
-          "alt": "The add wizard, with a natural-language line typed into it.",
-          "motion": "push-in",
+          "alt": "The add wizard with one natural-language line typed into it: \"pay invoice 3pm #work #invoices ~20m\".",
           "capture": {
             "path": "/",
             "waitUntil": "domcontentloaded",
@@ -229,8 +125,7 @@
         {
           "id": "add-element-parsed",
           "url": "planning.local",
-          "alt": "The add wizard after parsing: title, time, duration and an intention tag, all still editable.",
-          "motion": "push-in",
+          "alt": "The same wizard after parsing: title, time, duration and an intention tag, all still editable.",
           "capture": {
             "path": "/",
             "waitUntil": "domcontentloaded",
@@ -264,18 +159,62 @@
       ]
     },
     {
+      "id": "today-cockpit",
+      "kind": "screen",
+      "chapter": "day",
+      "seconds": 5,
+      "transition": "cut",
+      "caption": "24 staged. 10h 15m of work, against a 9-hour day.",
+      "narration": "Today is the cockpit. Twenty-four things staged, and it tells you they don't fit.",
+      "shots": [
+        {
+          "id": "today-cockpit",
+          "url": "planning.local",
+          "alt": "The Today screen: the day header reading 10h 15m against a 9-hour day in red, above a flight plan of twenty-four staged tasks with the minutes each one will cost.",
+          "motion": "push-in",
+          "focus": {
+            "landscape": {
+              "x": 0.17,
+              "y": 0.13,
+              "w": 0.82,
+              "h": 0.62
+            }
+          },
+          "capture": {
+            "path": "/",
+            "waitUntil": "domcontentloaded",
+            "waitFor": "span:text-is(\"Planner\")",
+            "settle": 1200,
+            "mask": [
+              "span.bg-destructive",
+              ".bg-ring"
+            ]
+          }
+        }
+      ]
+    },
+    {
       "id": "focus-now",
       "kind": "screen",
       "chapter": "day",
       "seconds": 4.5,
-      "caption": "Focus: one list, and the block you are in.",
-      "narration": "Focus strips it to one list and the block you're in.",
+      "transition": "cut",
+      "caption": "Focus: today in time order, one Start at a time.",
+      "narration": "Focus strips the day to one list, in order, with one thing to start.",
       "shots": [
         {
           "id": "focus-now",
           "url": "planning.local/focus",
-          "alt": "The Focus screen with the current block and its time-sense bar.",
+          "alt": "The Focus screen: today's placed work as a single time-ordered list, each row with its own Start.",
           "motion": "push-in",
+          "focus": {
+            "landscape": {
+              "x": 0.17,
+              "y": 0.12,
+              "w": 0.7,
+              "h": 0.62
+            }
+          },
           "capture": {
             "path": "/focus",
             "waitUntil": "domcontentloaded",
@@ -289,81 +228,17 @@
       ]
     },
     {
-      "id": "calendar-week",
+      "id": "plan-the-week",
       "kind": "screen",
-      "chapter": "day",
+      "chapter": "week",
       "seconds": 5,
-      "caption": "The same day, widened to a week and a month.",
-      "narration": "The calendar carries that day out to a week and a month.",
-      "shots": [
-        {
-          "id": "calendar-week",
-          "url": "planning.local/calendar",
-          "alt": "The calendar week grid from the top of the working day: the day-name header row, meeting mirrors and auto-placed task blocks across Monday to Friday.",
-          "motion": "drift-down",
-          "capture": {
-            "path": "/calendar",
-            "waitUntil": "domcontentloaded",
-            "waitFor": "h1:text-is(\"Calendar\")",
-            "before": [
-              {
-                "click": "button:text-is(\"week\")"
-              },
-              {
-                "wait": 500
-              }
-            ],
-            "settle": 1000
-          }
-        }
-      ]
-    },
-    {
-      "id": "calendar-month",
-      "kind": "screen",
-      "chapter": "day",
-      "seconds": 5.5,
-      "caption": "A month at a glance — this week placed, the rest still open.",
-      "narration": "Zoom out to the month: this week placed, and the rest of it still open.",
-      "shots": [
-        {
-          "id": "calendar-month",
-          "url": "planning.local/calendar",
-          "alt": "The calendar month grid: six weeks of cells, this week carrying its event chips, today marked by a filled accent pill on its date number.",
-          "motion": "drift-down",
-          "capture": {
-            "path": "/calendar",
-            "waitUntil": "domcontentloaded",
-            "waitFor": "h1:text-is(\"Calendar\")",
-            "before": [
-              {
-                "click": "button:text-is(\"month\")"
-              },
-              {
-                "waitFor": "div.grid-cols-7"
-              },
-              {
-                "wait": 500
-              }
-            ],
-            "settle": 1000
-          }
-        }
-      ],
-      "transition": "cut"
-    },
-    {
-      "id": "plan-my-week",
-      "kind": "screen",
-      "chapter": "plan",
-      "seconds": 5.5,
       "caption": "Three ways to plan the week. None of them need a model.",
-      "narration": "Plan the week ahead in three moves; none of them need a model installed.",
+      "narration": "Planning the week is three choices. None of them need a model.",
       "shots": [
         {
           "id": "plan-my-week",
           "url": "planning.local/calendar",
-          "alt": "The weekly planning assistant: fill next week, schedule tasks, or review past data.",
+          "alt": "The Plan my week dialog: Fill next week — deterministic, no AI; Schedule tasks — one at a time, no AI; Review past data — read-only.",
           "motion": "push-in",
           "capture": {
             "path": "/calendar",
@@ -378,46 +253,77 @@
               }
             ],
             "settle": 800
+          },
+          "focus": {
+            "landscape": {
+              "x": 0.231,
+              "y": 0.251,
+              "w": 0.538,
+              "h": 0.538
+            }
           }
         }
-      ],
-      "transition": "hold"
+      ]
     },
     {
-      "id": "tasks-backlog",
+      "id": "the-week",
       "kind": "screen",
-      "chapter": "plan",
+      "chapter": "week",
       "seconds": 4.5,
-      "caption": "The backlog, filtered by direction and priority.",
-      "narration": "Everything unplaced lives here, ranked by priority.",
+      "transition": "cut",
+      "caption": "Meetings mirrored, and your own work placed around them.",
+      "narration": "It places your work around the meetings you already have.",
       "shots": [
         {
-          "id": "tasks-backlog",
-          "url": "planning.local/tasks",
-          "alt": "The Tasks backlog with its tabs and priority chips.",
-          "motion": "push-in",
+          "id": "calendar-week",
+          "url": "planning.local/calendar",
+          "alt": "The calendar week grid, Monday to Sunday with the day names still on top: locked meeting mirrors, and Wednesday's own task blocks placed into the gaps between them.",
+          "motion": "drift-down",
           "capture": {
-            "path": "/tasks",
+            "path": "/calendar",
             "waitUntil": "domcontentloaded",
-            "waitFor": "h1:text-is(\"Tasks\")",
+            "waitFor": "h1:text-is(\"Calendar\")",
+            "before": [
+              {
+                "click": "button:text-is(\"week\")"
+              },
+              {
+                "wait": 500
+              },
+              {
+                "eval": "() => { const c=[...document.querySelectorAll('div.overflow-auto')].filter(e=>e.scrollHeight>e.clientHeight+20).sort((a,b)=>(b.scrollHeight-b.clientHeight)-(a.scrollHeight-a.clientHeight))[0]; if(c) c.scrollTop = Math.round(c.scrollHeight*0.30); }"
+              },
+              {
+                "wait": 400
+              }
+            ],
             "settle": 1000
           }
         }
       ]
     },
     {
-      "id": "objectives-tree",
+      "id": "the-long-game",
       "kind": "screen",
-      "chapter": "plan",
-      "seconds": 5,
-      "caption": "Goals, projects, objectives — the tree tasks hang from.",
-      "narration": "Goals, projects and objectives sit above the backlog.",
+      "chapter": "long",
+      "seconds": 6,
+      "transition": "hold",
+      "caption": "Goals, projects, objectives — what the day is for.",
+      "narration": "Above the day sit goals, projects and objectives, so a Tuesday has something to be for.",
       "shots": [
         {
           "id": "objectives-tree",
           "url": "planning.local/tasks",
-          "alt": "The Objectives tab: a goal, project and objective tree with progress rollups.",
+          "alt": "The Objectives tab: a goal, project and objective tree with progress rolled up from the tasks linked underneath.",
           "motion": "drift-down",
+          "focus": {
+            "landscape": {
+              "x": 0.16,
+              "y": 0.14,
+              "w": 0.72,
+              "h": 0.72
+            }
+          },
           "capture": {
             "path": "/tasks?tab=objectives",
             "waitUntil": "domcontentloaded",
@@ -425,22 +331,30 @@
             "settle": 900
           }
         }
-      ],
-      "transition": "cut"
+      ]
     },
     {
-      "id": "priorities-hours",
+      "id": "the-arithmetic",
       "kind": "screen",
-      "chapter": "plan",
-      "seconds": 5.5,
-      "caption": "168 hours a week, minus sleep. You allocate the rest.",
-      "narration": "Name the hours each part of your life deserves, before the week claims them.",
+      "chapter": "long",
+      "seconds": 7,
+      "transition": "cut",
+      "caption": "168 hours a week. Sleep takes 63. You allocate the 105 that are left.",
+      "narration": "A week is a hundred and sixty-eight hours. Sleep takes sixty-three. You spend the rest on purpose.",
       "shots": [
         {
           "id": "priorities-hours",
           "url": "planning.local/priorities",
-          "alt": "The priorities wizard, step three: sleep reserved, then weekly hours per category.",
+          "alt": "The Life Balance wizard, step three: nine hours a night reserved as sixty-three hours a week, and a running Allocated 95h / 105h against the hours that are left.",
           "motion": "push-in",
+          "focus": {
+            "landscape": {
+              "x": 0.24,
+              "y": 0.16,
+              "w": 0.72,
+              "h": 0.66
+            }
+          },
           "capture": {
             "path": "/priorities",
             "waitUntil": "domcontentloaded",
@@ -471,94 +385,64 @@
       ]
     },
     {
-      "id": "balance-index",
+      "id": "the-dial",
       "kind": "screen",
-      "chapter": "plan",
+      "chapter": "yours",
       "seconds": 5.5,
-      "caption": "Balance Index — satisfaction against the importance you set.",
-      "narration": "Balance scores how closely satisfaction tracks stated importance.",
+      "transition": "cut",
+      "caption": "Cautious, balanced, hands-off. You set how much it may do unasked.",
+      "narration": "How much it does without asking is a dial you hold.",
       "shots": [
         {
-          "id": "balance-index",
-          "url": "planning.local/balance",
-          "alt": "Life Balance: index, weekly target, satisfaction, per category.",
-          "motion": "drift-down",
-          "capture": {
-            "path": "/balance",
-            "waitUntil": "domcontentloaded",
-            "waitFor": "h1:text-is(\"Life Balance\")",
-            "settle": 900
-          }
-        }
-      ]
-    },
-    {
-      "id": "tags-taxonomy",
-      "kind": "screen",
-      "chapter": "plan",
-      "seconds": 4,
-      "caption": "Directions, or Time Block Categories. The same tags, filed twice.",
-      "narration": "The same intention tags file two ways: under a direction, or under a time block category.",
-      "shots": [
-        {
-          "id": "tags-taxonomy",
-          "url": "planning.local/tags",
-          "alt": "The Tags screen on its Directions tab, with Time Block Categories beside it — both grouping the same intention tags.",
+          "id": "ftue-trust-dial",
+          "url": "planning.local",
+          "alt": "The first-run trust dial: cautious, balanced and hands-off, with balanced selected.",
           "motion": "push-in",
-          "capture": {
-            "path": "/tags",
-            "waitUntil": "domcontentloaded",
-            "waitFor": "h1:text-is(\"Tags\")",
-            "settle": 900
-          },
           "focus": {
             "landscape": {
-              "x": 0.16,
-              "y": 0.16,
-              "w": 0.84,
-              "h": 0.42
+              "x": 0.22,
+              "y": 0.22,
+              "w": 0.56,
+              "h": 0.56
             }
-          }
-        }
-      ]
-    },
-    {
-      "id": "settings-schedule-patterns",
-      "kind": "screen",
-      "chapter": "plan",
-      "seconds": 6,
-      "caption": "Work, home and community each get their own hours.",
-      "narration": "Placement obeys the windows you set for work, home and community.",
-      "shots": [
-        {
-          "id": "settings-schedule-patterns",
-          "url": "planning.local/settings",
-          "alt": "Settings, Preferences tab: day types and per-direction availability windows.",
-          "motion": "drift-down",
+          },
           "capture": {
-            "path": "/settings",
+            "path": "/?ftue=1",
             "waitUntil": "domcontentloaded",
-            "waitFor": "h1:text-is(\"Settings\")",
+            "waitFor": "h2:text-is(\"Welcome\")",
             "before": [
               {
-                "click": "button:text-is(\"Preferences\")"
+                "click": "button:text-is(\"Next\")"
               },
               {
-                "waitFor": "div.section-label:text-is(\"Schedule Patterns\")"
+                "waitFor": "h2:text-is(\"Time and place\")"
+              },
+              {
+                "click": "button:text-is(\"Next\")"
+              },
+              {
+                "waitFor": "h2:text-is(\"Connect a source\")"
+              },
+              {
+                "click": "button:text-is(\"Next\")"
+              },
+              {
+                "waitFor": "h2:text-is(\"Trust dial\")"
               }
             ],
-            "settle": 900
+            "settle": 600
           }
         }
       ]
     },
     {
-      "id": "recap",
+      "id": "what-stays-yours",
       "kind": "feature",
-      "seconds": 5.5,
-      "title": "Local by default",
-      "caption": "One SQLite file on hardware you own. The model runs there too.",
-      "narration": "All of it in one SQLite file on your disk, behind a local sign-in.",
+      "seconds": 7,
+      "reveal": "paced",
+      "title": "What stays yours",
+      "caption": "One file on hardware you own. Copy it, back it up, take it with you.",
+      "narration": "One file, on your disk, behind a local sign-in. Copy it, back it up, take it with you.",
       "items": [
         {
           "label": "Store",
@@ -576,16 +460,16 @@
           "label": "Runs on",
           "value": "Companion Hub, or your laptop"
         }
-      ],
-      "reveal": "paced"
+      ]
     },
     {
       "id": "close",
       "kind": "outro",
       "seconds": 5,
+      "minSeconds": 4.5,
+      "narration": "Companion Planning, from Companion Intelligence. UnCloud your life.",
       "cta": "UnCloud your life.",
       "url": "ci.computer",
-      "narration": "Companion Planning, from Companion Intelligence. UnCloud your life.",
       "mark": "brand:logo.full"
     }
   ]

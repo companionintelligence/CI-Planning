@@ -25,9 +25,8 @@
       "adopted": true
     },
     "today-cockpit": {
-      "text": "Today is the cockpit. Staged work up top, the placed day underneath.",
-      "seconds": 5.544,
-      "adopted": true
+      "text": "Today is the cockpit. Twenty-four things staged, and it tells you they don't fit.",
+      "seconds": 5.736
     },
     "add-anything": {
       "text": "Type one line. It becomes a title, a time and a tag, waiting for your approval.",
@@ -35,9 +34,8 @@
       "adopted": true
     },
     "focus-now": {
-      "text": "Focus strips it to one list and the block you're in.",
-      "seconds": 3.384,
-      "adopted": true
+      "text": "Focus strips the day to one list, in order, with one thing to start.",
+      "seconds": 4.896
     },
     "calendar-week": {
       "text": "The calendar carries that day out to a week and a month.",
@@ -88,6 +86,50 @@
       "text": "Companion Planning, from Companion Intelligence. UnCloud your life.",
       "seconds": 5.64,
       "adopted": true
+    },
+    "what-it-knows": {
+      "text": "A planner knows when you sleep, which doctor you see, and who you met on Tuesday.",
+      "seconds": 5.16
+    },
+    "someone-elses-product": {
+      "text": "And it runs on their computer. Atlassian defaults Jira and Confluence customers into using their content to train its AI.",
+      "seconds": 8.4
+    },
+    "most-people-quit": {
+      "text": "Moving means moving all of it at once, into another company's database. Most people quit right about here.",
+      "seconds": 7.368
+    },
+    "title-card": {
+      "text": "Companion Planning is the other way round. Your whole plan is one SQLite file you can copy and keep.",
+      "seconds": 6.984
+    },
+    "one-line-in": {
+      "text": "Type one line. It comes back as a title, a time and a tag, for you to approve.",
+      "seconds": 6.12
+    },
+    "plan-the-week": {
+      "text": "Planning the week is three choices. None of them need a model.",
+      "seconds": 4.344
+    },
+    "the-week": {
+      "text": "It places your work around the meetings you already have.",
+      "seconds": 3.672
+    },
+    "the-long-game": {
+      "text": "Above the day sit goals, projects and objectives, so a Tuesday has something to be for.",
+      "seconds": 6.096
+    },
+    "the-arithmetic": {
+      "text": "A week is a hundred and sixty-eight hours. Sleep takes sixty-three. You spend the rest on purpose.",
+      "seconds": 7.296
+    },
+    "the-dial": {
+      "text": "How much it does without asking is a dial you hold.",
+      "seconds": 3.744
+    },
+    "what-stays-yours": {
+      "text": "One file, on your disk, behind a local sign-in. Copy it, back it up, take it with you.",
+      "seconds": 7.032
     }
   }
 }
