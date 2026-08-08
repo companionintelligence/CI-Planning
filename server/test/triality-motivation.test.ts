@@ -1,4 +1,24 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+
+// Ollama is pinned DOWN for this whole file. Every motivation label asserted here is
+// meant to come from the deterministic keyword pass or an injected fake — never from a
+// live model. Quick-add's enrichQuick calls generateJson unguarded, so on a dev box with
+// Ollama up the model's own pick overwrites the keyword label and the "without Ollama"
+// test fails on the machine, not the code. Same idiom as time-sense.test.ts.
+vi.mock('../src/mcp/ollama.js', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../src/mcp/ollama.js')>();
+  const down = () => {
+    throw new mod.OllamaUnavailable('ollama down (mocked in triality-motivation.test.ts)');
+  };
+  return {
+    ...mod,
+    isAvailable: vi.fn(async () => false),
+    generate: vi.fn(down),
+    generateJson: vi.fn(down),
+    embed: vi.fn(down),
+  };
+});
+
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { MIGRATIONS } from '../src/db/migrations/index.js';
@@ -105,8 +125,8 @@ describe('deterministic keyword fallback (never us, unsure ⇒ null)', () => {
   });
 
   it('quick-add without Ollama still lands the keyword label', async () => {
-    // enrichQuick throws in tests (no Ollama) → route keeps the deterministic parse;
-    // the keyword pass inside createTask is what fires here.
+    // enrichQuick throws (the file-level Ollama mock) → route keeps the deterministic
+    // parse; the keyword pass inside createTask is what fires here.
     const res = await api(srv.url, '/api/tasks/quick', { method: 'POST', json: { text: 'volunteer at the food bank friday' } });
     expect(res.status).toBe(201);
     expect(res.body.task.motivation).toBe('them');
