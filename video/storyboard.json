@@ -36,7 +36,7 @@
       "kind": "screen",
       "chapter": "setup",
       "seconds": 5,
-      "caption": "First run: five skippable questions. Wake and bed first.",
+      "caption": "Five skippable steps. Step two sets wake and bed.",
       "narration": "Wake and bed times. The planner folds the hours outside them away.",
       "shots": [
         {
@@ -74,8 +74,8 @@
       "kind": "screen",
       "chapter": "setup",
       "seconds": 6,
-      "caption": "Point it at Gmail and Google Calendar. It syncs on your box.",
-      "narration": "Gmail and Google Calendar, pulled on your own machine — not on someone else's.",
+      "caption": "Connect Google, or start on sample data.",
+      "narration": "Connect Google and the calendar arrives on your own machine, not on someone else's. Gmail is a separate opt-in.",
       "shots": [
         {
           "id": "ftue-connect-source",
@@ -497,13 +497,13 @@
       "kind": "screen",
       "chapter": "plan",
       "seconds": 4,
-      "caption": "Tags file under a direction — home, work, community.",
-      "narration": "Two axes of tags: direction and intention.",
+      "caption": "Directions, or Time Block Categories. The same tags, filed twice.",
+      "narration": "The same intention tags file two ways: under a direction, or under a time block category.",
       "shots": [
         {
           "id": "tags-taxonomy",
           "url": "planning.local/tags",
-          "alt": "The Tags screen: direction and intention taxonomies.",
+          "alt": "The Tags screen on its Directions tab, with Time Block Categories beside it — both grouping the same intention tags.",
           "motion": "push-in",
           "capture": {
             "path": "/tags",
