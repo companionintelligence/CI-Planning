@@ -58,10 +58,9 @@ afterAll(() => {
 
 beforeEach(() => {
   resetDb(); // clears connection_tokens
-  // resetDb keeps the scheduling_prefs ROW (it only pins memory_pull_enabled), so
-  // push-side fields PATCHed by other suite files (memory_sync_enabled et al.) leak
-  // across the shared sequential DB — pin them back to schema defaults, same as
-  // settings-models-memory.test.ts does.
+  // Redundant since resetDb's baseline started pinning the push-side fields (it runs
+  // immediately above), but kept as a local guard so this suite still isolates itself
+  // if that baseline is ever trimmed. Safe to drop with the 0012 block in helpers.ts.
   sqlite.exec(`
     UPDATE scheduling_prefs SET
       memory_sync_enabled = 0,
