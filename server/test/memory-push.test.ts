@@ -75,7 +75,8 @@ beforeEach(() => {
   process.env.MEMORY_MODE = 'fixture'; // fixture (no network)
   process.env.CI_SERVER_URL = 'http://ci.local:3000'; // env creds → available
   delete process.env.CI_SERVER_API_KEY;
-  // Push side isn't reset by resetDb — pin to the "enabled + connected, all scopes on" baseline.
+  // resetDb pins the push side OFF (schema defaults); this suite needs the opposite, so
+  // pin forward to the "enabled + connected, all scopes on" baseline.
   setPrefs({
     memory_sync_enabled: 1,
     memory_account: 'liam@x.io',
@@ -94,10 +95,10 @@ afterAll(() => {
   restore('CI_SERVER_URL', SAVED.url);
   restore('CI_SERVER_API_KEY', SAVED.apiKey);
   restore('MEMORY_MODE', SAVED.mode);
-  // resetDb keeps the scheduling_prefs ROW and does NOT own the push-side fields, so a
-  // file that runs later over this shared sequential DB (e.g. graphql-prefs) would see
-  // our enabled+connected state leak. Pin them back to schema defaults on the way out —
-  // the same courtesy memory-connector.test.ts extends.
+  // resetDb's baseline now owns these too, but it only helps files that actually CALL
+  // resetDb — this afterAll also covers the ones that don't, so our enabled+connected
+  // state can't leak across the shared sequential DB. Belt and braces; the same
+  // courtesy memory-connector.test.ts extends.
   sqlite.exec(`
     UPDATE scheduling_prefs SET
       memory_sync_enabled = 0,
