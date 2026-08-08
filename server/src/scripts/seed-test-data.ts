@@ -23,6 +23,7 @@ import { upsertPossible } from '../agents/ingest.js';
 import { promotePossibles } from '../agents/groom.js';
 import { createFixtureGoogleClient, type EmailMessage, type CalendarEvent } from '../mcp/google.js';
 import { isAvailable, type ModelTier } from '../mcp/ollama.js';
+import { prepTaskTitle } from './prep-task-title.js';
 import { logger } from '../lib/logger.js';
 import { SYSTEM_OWNER, runWithOwner, ALL_SCOPES } from '../lib/context.js';
 
@@ -239,14 +240,17 @@ async function main() {
         .run(SYSTEM_OWNER, event.title, event.start, event.end, event.id);
     }
     const text = `${event.title}\n${event.description}`.trim();
+    // An event that implies no work produces no task — see prepTaskTitle.
+    const prep = prepTaskTitle(event);
+    const fallback = prep ? [fallbackTask(prep, event.description)] : [];
     let tasks: ExtractedTask[];
     try {
       tasks = llmUp
         ? await extractTasks({ kind: 'gcal', ref: event.id, subject: event.title, text, at: event.start }, { tier: args.tier })
-        : [fallbackTask(`Prep for ${event.title}`, event.description)];
+        : fallback;
     } catch (err) {
       logger.warn('seed: event extraction failed, using fallback', { id: event.id, err: (err as Error).message });
-      tasks = [fallbackTask(`Prep for ${event.title}`, event.description)];
+      tasks = fallback;
     }
     for (const [i, t] of tasks.entries()) {
       if ((await upsertPossible(t, 'gcal', `${event.id}#${i}`, { title: event.title })) === 'created') possiblesCreated++;
