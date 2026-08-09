@@ -10,7 +10,8 @@
   "meta": {
     "fps": 30,
     "transitionSeconds": 0.5,
-    "pacing": "fit"
+    "pacing": "fit",
+    "pacingTail": 0.2
   },
   "chapters": {
     "day": "One day",
