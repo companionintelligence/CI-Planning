@@ -134,13 +134,25 @@ To run the stage on other ports (six agents share this machine): `VITE_PORT=5183
 `PORT=3849`, `VITE_API_TARGET=http://localhost:3849`, then capture with
 `APP_URL=http://localhost:5183`.
 
-### Staging — run this before `npm run capture`
+### Staging — [`scripts/stage-data.sh`](scripts/stage-data.sh), run for you by `stage.sh`
 
 The seeder fills the **backlog** and nothing else, so Today's Planner, Today's Flight-plan,
 Focus, `/balance` and the Objectives tab all render their empty-state branches. Every one of
 those shots waits on a selector that matches in the empty state too, so they capture **green**
-and film an empty product — which is exactly how thin coverage went unnoticed. Nothing runs these
-for you: paste them into a shell once the dev server is up, before `npm run capture`.
+and film an empty product — which is exactly how thin coverage went unnoticed.
+
+> **This used to say "Nothing runs these for you: paste them into a shell."** That is how a shot
+> of an empty *"No plan yet"* objectives tree shipped. A step that exists only as prose is a step
+> that is sometimes skipped, and this one is invisible when skipped — the capture still exits 0.
+>
+> The block below is now [`video/scripts/stage-data.sh`](scripts/stage-data.sh), which
+> [`video/stage.sh`](stage.sh) runs after the seed, and which **asserts its own result** rather
+> than assuming it: 7/7 objectives carrying progress, 6 intention tags filed, 17 commitments. It
+> also refuses to run twice — `POST /api/objectives` has no upsert, so a second run would quietly
+> give you two of every goal.
+>
+> It is reproduced here because the *reasoning* is the valuable part and belongs next to the rest
+> of the stage documentation. Edit the script; this text describes it.
 
 ```bash
 API=http://localhost:3848/api; JSON='content-type: application/json'; DAY='{"date":"2026-06-03"}'
