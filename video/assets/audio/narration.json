@@ -27,7 +27,7 @@
     },
     "today-cockpit": {
       "text": "Today is the cockpit. Twenty-four things staged, and it tells you they don't fit.",
-      "seconds": 5.928,
+      "seconds": 5.588,
       "prosody": {
         "rate": "-3%",
         "pitch": "+0Hz",
@@ -41,7 +41,7 @@
     },
     "focus-now": {
       "text": "Focus strips the day to one list, in order, with one thing to start.",
-      "seconds": 5.04,
+      "seconds": 4.933,
       "prosody": {
         "rate": "-3%",
         "pitch": "+0Hz",
@@ -95,7 +95,7 @@
     },
     "close": {
       "text": "Companion Planning, from Companion Intelligence. UnCloud your life.",
-      "seconds": 6.12,
+      "seconds": 5.735,
       "prosody": {
         "rate": "-8%",
         "pitch": "-2Hz",
@@ -104,7 +104,7 @@
     },
     "what-it-knows": {
       "text": "A planner knows when you sleep, which doctor you see, and who you met on Tuesday.",
-      "seconds": 5.424,
+      "seconds": 5.295,
       "prosody": {
         "rate": "-5%",
         "pitch": "-1Hz",
@@ -113,7 +113,7 @@
     },
     "someone-elses-product": {
       "text": "And it runs on their computer. Atlassian defaults Jira and Confluence customers into using their content to train its AI.",
-      "seconds": 8.832,
+      "seconds": 8.575,
       "prosody": {
         "rate": "-5%",
         "pitch": "-1Hz",
@@ -122,7 +122,7 @@
     },
     "most-people-quit": {
       "text": "Moving means moving all of it at once, into another company's database. Most people quit right about here.",
-      "seconds": 7.752,
+      "seconds": 7.452,
       "prosody": {
         "rate": "-5%",
         "pitch": "-1Hz",
@@ -131,7 +131,7 @@
     },
     "title-card": {
       "text": "Companion Planning is the other way round. Your whole plan is one SQLite file you can copy and keep.",
-      "seconds": 7.416,
+      "seconds": 7.088,
       "prosody": {
         "rate": "-6%",
         "pitch": "-2Hz",
@@ -140,7 +140,7 @@
     },
     "one-line-in": {
       "text": "Type one line. It comes back as a title, a time and a tag, for you to approve.",
-      "seconds": 6.312,
+      "seconds": 6.051,
       "prosody": {
         "rate": "-3%",
         "pitch": "+0Hz",
@@ -149,7 +149,7 @@
     },
     "plan-the-week": {
       "text": "Planning the week is three choices. None of them need a model.",
-      "seconds": 4.488,
+      "seconds": 4.164,
       "prosody": {
         "rate": "-3%",
         "pitch": "+0Hz",
@@ -158,7 +158,7 @@
     },
     "the-week": {
       "text": "It places your work around the meetings you already have.",
-      "seconds": 3.792,
+      "seconds": 3.685,
       "prosody": {
         "rate": "-3%",
         "pitch": "+0Hz",
@@ -167,7 +167,7 @@
     },
     "the-long-game": {
       "text": "Above the day sit goals, projects and objectives, so a Tuesday has something to be for.",
-      "seconds": 6.288,
+      "seconds": 6.178,
       "prosody": {
         "rate": "-3%",
         "pitch": "+0Hz",
@@ -176,7 +176,7 @@
     },
     "the-arithmetic": {
       "text": "A week is a hundred and sixty-eight hours. Sleep takes sixty-three. You spend the rest on purpose.",
-      "seconds": 7.512,
+      "seconds": 6.99,
       "prosody": {
         "rate": "-3%",
         "pitch": "+0Hz",
@@ -185,7 +185,7 @@
     },
     "the-dial": {
       "text": "How much it does without asking is a dial you hold.",
-      "seconds": 3.864,
+      "seconds": 3.751,
       "prosody": {
         "rate": "-3%",
         "pitch": "+0Hz",
@@ -194,7 +194,7 @@
     },
     "what-stays-yours": {
       "text": "One file, on your disk, behind a local sign-in. Copy it, back it up, take it with you.",
-      "seconds": 7.416,
+      "seconds": 6.888,
       "prosody": {
         "rate": "-5%",
         "pitch": "-1Hz",
