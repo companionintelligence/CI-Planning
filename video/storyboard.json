@@ -114,7 +114,7 @@
       "shots": [
         {
           "id": "add-element",
-          "url": "planning.local",
+          "url": "planning-living-room-server-acme.ci.computer",
           "alt": "The add wizard with one natural-language line typed into it: \"pay invoice 3pm #work #invoices ~20m\".",
           "capture": {
             "path": "/",
@@ -139,7 +139,7 @@
         },
         {
           "id": "add-element-parsed",
-          "url": "planning.local",
+          "url": "planning-living-room-server-acme.ci.computer",
           "alt": "The same wizard after parsing: title, time, duration and an intention tag, all still editable.",
           "capture": {
             "path": "/",
@@ -184,7 +184,7 @@
       "shots": [
         {
           "id": "today-cockpit",
-          "url": "planning.local",
+          "url": "planning-living-room-server-acme.ci.computer",
           "alt": "The Today screen: the day header reading 10h 15m against a 9-hour day in red, above a flight plan of twenty-four staged tasks with the minutes each one will cost.",
           "motion": "push-in",
           "focus": {
@@ -219,7 +219,7 @@
       "shots": [
         {
           "id": "focus-now",
-          "url": "planning.local/focus",
+          "url": "planning-living-room-server-acme.ci.computer/focus",
           "alt": "The Focus screen: today's placed work as a single time-ordered list, each row with its own Start.",
           "motion": "push-in",
           "focus": {
@@ -252,7 +252,7 @@
       "shots": [
         {
           "id": "plan-my-week",
-          "url": "planning.local/calendar",
+          "url": "planning-living-room-server-acme.ci.computer/calendar",
           "alt": "The Plan my week dialog: Fill next week — deterministic, no AI; Schedule tasks — one at a time, no AI; Review past data — read-only.",
           "motion": "push-in",
           "capture": {
@@ -291,7 +291,7 @@
       "shots": [
         {
           "id": "calendar-week",
-          "url": "planning.local/calendar",
+          "url": "planning-living-room-server-acme.ci.computer/calendar",
           "alt": "The calendar grid scrolled to the middle of the working day: locked meeting mirrors with Wednesday's own task blocks placed into the gaps between them — the week Monday to Sunday on desktop, the single day on a phone.",
           "motion": "drift-down",
           "capture": {
@@ -328,7 +328,7 @@
       "shots": [
         {
           "id": "objectives-tree",
-          "url": "planning.local/tasks",
+          "url": "planning-living-room-server-acme.ci.computer/tasks",
           "alt": "The Objectives tab: a goal, project and objective tree with progress rolled up from the tasks linked underneath.",
           "motion": "drift-down",
           "focus": {
@@ -359,7 +359,7 @@
       "shots": [
         {
           "id": "priorities-hours",
-          "url": "planning.local/priorities",
+          "url": "planning-living-room-server-acme.ci.computer/priorities",
           "alt": "The Life Balance wizard, step three: nine hours a night reserved as sixty-three hours a week, and a running Allocated 95h / 105h against the hours that are left.",
           "motion": "push-in",
           "focus": {
@@ -410,7 +410,7 @@
       "shots": [
         {
           "id": "ftue-trust-dial",
-          "url": "planning.local",
+          "url": "planning-living-room-server-acme.ci.computer",
           "alt": "The first-run trust dial: cautious, balanced and hands-off, with balanced selected.",
           "motion": "push-in",
           "focus": {
