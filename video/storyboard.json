@@ -186,13 +186,19 @@
           "id": "today-cockpit",
           "url": "planning-living-room-server-acme.ci.computer",
           "alt": "The Today screen: the day header reading 10h 15m against a 9-hour day in red, above a flight plan of twenty-four staged tasks with the minutes each one will cost.",
-          "motion": "push-in",
+          "motion": "drift-down",
           "focus": {
             "landscape": {
               "x": 0.136,
               "y": 0.083,
               "w": 0.656,
               "h": 0.538
+            },
+            "portrait": {
+              "x": 0.04,
+              "y": 0.14,
+              "w": 0.74,
+              "h": 0.74
             }
           },
           "capture": {
@@ -224,10 +230,20 @@
           "motion": "push-in",
           "focus": {
             "landscape": {
-              "x": 0.136,
-              "y": 0.075,
+              "x": 0.27,
+              "y": 0.08,
               "w": 0.56,
-              "h": 0.538
+              "h": 0.56
+            }
+          },
+          "pointer": {
+            "landscape": {
+              "x": 0.728,
+              "y": 0.294
+            },
+            "portrait": {
+              "x": 0.848,
+              "y": 0.33
             }
           },
           "capture": {
@@ -247,6 +263,7 @@
       "kind": "screen",
       "chapter": "week",
       "seconds": 5,
+      "transition": "cut",
       "caption": "Three ways to plan the week. None of them need a model.",
       "narration": "Planning the week is three choices. None of them need a model.",
       "shots": [
@@ -254,7 +271,7 @@
           "id": "plan-my-week",
           "url": "planning-living-room-server-acme.ci.computer/calendar",
           "alt": "The Plan my week dialog: Fill next week — deterministic, no AI; Schedule tasks — one at a time, no AI; Review past data — read-only.",
-          "motion": "push-in",
+          "motion": "pull-back",
           "capture": {
             "path": "/calendar",
             "waitUntil": "domcontentloaded",
@@ -275,6 +292,22 @@
               "y": 0.147,
               "w": 0.538,
               "h": 0.538
+            },
+            "portrait": {
+              "x": 0.03,
+              "y": 0.26,
+              "w": 0.74,
+              "h": 0.74
+            }
+          },
+          "pointer": {
+            "landscape": {
+              "x": 0.4,
+              "y": 0.442
+            },
+            "portrait": {
+              "x": 0.145,
+              "y": 0.719
             }
           }
         }
@@ -294,6 +327,20 @@
           "url": "planning-living-room-server-acme.ci.computer/calendar",
           "alt": "The calendar grid scrolled to the middle of the working day: locked meeting mirrors with Wednesday's own task blocks placed into the gaps between them — the week Monday to Sunday on desktop, the single day on a phone.",
           "motion": "drift-down",
+          "focus": {
+            "landscape": {
+              "x": 0.199,
+              "y": 0.2,
+              "w": 0.538,
+              "h": 0.538
+            },
+            "portrait": {
+              "x": 0.05,
+              "y": 0.13,
+              "w": 0.74,
+              "h": 0.74
+            }
+          },
           "capture": {
             "path": "/calendar",
             "waitUntil": "domcontentloaded",
@@ -330,13 +377,29 @@
           "id": "objectives-tree",
           "url": "planning-living-room-server-acme.ci.computer/tasks",
           "alt": "The Objectives tab: a goal, project and objective tree with progress rolled up from the tasks linked underneath.",
-          "motion": "drift-down",
+          "motion": "push-in",
           "focus": {
             "landscape": {
               "x": 0.128,
               "y": 0.112,
               "w": 0.576,
               "h": 0.576
+            },
+            "portrait": {
+              "x": 0.05,
+              "y": 0.08,
+              "w": 0.74,
+              "h": 0.74
+            }
+          },
+          "pointer": {
+            "landscape": {
+              "x": 0.428,
+              "y": 0.176
+            },
+            "portrait": {
+              "x": 0.368,
+              "y": 0.189
             }
           },
           "capture": {
@@ -361,13 +424,29 @@
           "id": "priorities-hours",
           "url": "planning-living-room-server-acme.ci.computer/priorities",
           "alt": "The Life Balance wizard, step three: nine hours a night reserved as sixty-three hours a week, and a running Allocated 95h / 105h against the hours that are left.",
-          "motion": "push-in",
+          "motion": "drift-down",
           "focus": {
             "landscape": {
               "x": 0.192,
               "y": 0.123,
               "w": 0.576,
               "h": 0.538
+            },
+            "portrait": {
+              "x": 0.05,
+              "y": 0.16,
+              "w": 0.74,
+              "h": 0.74
+            }
+          },
+          "pointer": {
+            "landscape": {
+              "x": 0.551,
+              "y": 0.44
+            },
+            "portrait": {
+              "x": 0.365,
+              "y": 0.546
             }
           },
           "capture": {
@@ -419,6 +498,22 @@
               "y": 0.131,
               "w": 0.538,
               "h": 0.538
+            },
+            "portrait": {
+              "x": 0.055,
+              "y": 0.125,
+              "w": 0.74,
+              "h": 0.74
+            }
+          },
+          "pointer": {
+            "landscape": {
+              "x": 0.4,
+              "y": 0.521
+            },
+            "portrait": {
+              "x": 0.175,
+              "y": 0.513
             }
           },
           "capture": {
