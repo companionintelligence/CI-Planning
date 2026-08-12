@@ -105,7 +105,7 @@
     },
     {
       "id": "one-line-in",
-      "kind": "split",
+      "kind": "screen",
       "chapter": "day",
       "seconds": 7,
       "transition": "cut",
@@ -116,6 +116,21 @@
           "id": "add-element",
           "url": "planning-living-room-server-acme.ci.computer",
           "alt": "The add wizard with one natural-language line typed into it: \"pay invoice 3pm #work #invoices ~20m\".",
+          "motion": "push-in",
+          "focus": {
+            "landscape": {
+              "x": 0.285,
+              "y": 0.085,
+              "w": 0.43,
+              "h": 0.8
+            },
+            "portrait": {
+              "x": 0,
+              "y": 0,
+              "w": 1,
+              "h": 1
+            }
+          },
           "capture": {
             "path": "/",
             "waitUntil": "domcontentloaded",
@@ -141,6 +156,21 @@
           "id": "add-element-parsed",
           "url": "planning-living-room-server-acme.ci.computer",
           "alt": "The same wizard after parsing: title, time, duration and an intention tag, all still editable.",
+          "motion": "push-in",
+          "focus": {
+            "landscape": {
+              "x": 0.285,
+              "y": 0.1,
+              "w": 0.43,
+              "h": 0.8
+            },
+            "portrait": {
+              "x": 0,
+              "y": 0,
+              "w": 1,
+              "h": 1
+            }
+          },
           "capture": {
             "path": "/",
             "waitUntil": "domcontentloaded",
