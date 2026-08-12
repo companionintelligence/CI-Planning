@@ -209,13 +209,13 @@
       "chapter": "day",
       "seconds": 5,
       "transition": "cut",
-      "caption": "24 staged. 10h 15m of work, against a 9-hour day.",
+      "caption": "24 staged. More work than a 9-hour day holds.",
       "narration": "Today is the cockpit. Twenty-four things staged, and it tells you they don't fit.",
       "shots": [
         {
           "id": "today-cockpit",
           "url": "planning-living-room-server-acme.ci.computer",
-          "alt": "The Today screen: the day header reading 10h 15m against a 9-hour day in red, above a flight plan of twenty-four staged tasks with the minutes each one will cost.",
+          "alt": "The Today screen: the day header in red, showing more staged work than the nine-hour day holds, above a flight plan of twenty-four staged tasks with the minutes each one will cost.",
           "motion": "drift-down",
           "focus": {
             "landscape": {
