@@ -1,8 +1,35 @@
 # Companion Planning — Best-in-Class Roadmap (v2, resequenced)
 
-> ## ⚠️ Current status (2026-07-29, migration head **0138**)
+> ## ⚠️ Current status (2026-08-13 GitHub issue audit)
 >
-> **Read this box, not the archaeology below.** The status paragraph that follows is a
+> **Read this box, not the archaeology below.** Live `gh issue list --state open` on
+> 2026-08-13 shows **7 open issues total**, down from the 14-ticket FTUE track +
+> deferred M1–M5 this doc previously tracked:
+> - **FTUE track T1–T14 (#337–#350): all 14 CLOSED.** The 2026-07-29 box below still
+>   said "T13 is the next live ticket" — stale; T13 and T14 shipped and closed too.
+>   The whole FTUE / weekly-planning-assistant track (row in the Phase map) is now
+>   **✅ done**, not ⏳ open.
+> - **ENTITY-5 spike #361: CLOSED** (decided — matches this doc's own "Spike #361 is
+>   DECIDED" note below, but the Phase map row still said "⏳ open (#361)"; fixed).
+> - **Multi-user shared events M1–M5 (#351–#355): still OPEN, still deferred.** These
+>   are the only roadmap-tracked work left open — stub tickets, not started.
+> - **Two new issues, unrelated to this roadmap's phases — video/product-marketing
+>   pipeline, filed 2026-08-12:**
+>   - **[#517](https://github.com/companionintelligence/CI-Planning/issues/517)** —
+>     the Today header shows two different day totals (15h5m vs 10h15m) for the same
+>     fixture day at desktop vs mobile viewport in the acquisition-video capture. Filed
+>     as possibly a **real product bug** in `Today.tsx`'s capacity calc (not just a
+>     video defect) — candidate #1 is capture-harness state drift between the two
+>     viewport passes, candidate #2 is a genuine responsive-layout data bug. Not
+>     resolved by the 2026-08-13 video rewrite (#519/941bad6), which only changed
+>     captions/narration/audio — the underlying plates and `Today.tsx` are untouched.
+>   - **[#518](https://github.com/companionintelligence/CI-Planning/issues/518)** —
+>     two mobile capture plates (`add-element-parsed.mobile.png`,
+>     `plan-my-week.mobile.png`) can't show what their scene captions promise; needs
+>     new capture recipes (scroll-into-view / different bottom-sheet presentation),
+>     not a crop. Also untouched by the 2026-08-13 rewrite.
+>
+> The status paragraph that follows is a
 > stack of dated "Update:" parentheticals and **contradicts itself on the migration head
 > (it says 0126, 0117 and 0112 in three places) and on naming-Z W4 (both "planned/unbuilt"
 > and "shipped")**. It is kept for history. Where they disagree, this box wins.
@@ -107,8 +134,8 @@
 | | **AG** Multi-tenant RBAC (`owners.role` → `roleToScopes`; operator-gated `/api/accounts`) | T, U | M | ✅ done (mig 0125) — supersedes **D1** |
 | Post-AG *(no phase letter)* | **Life priorities** — `/priorities` wizard + `/balance` dashboard; sleep reserved from the weekly pool | AG | M | ✅ done (migs 0127/0128, #356) |
 | | **ENTITY** — wizard gating · confirm-before-delete · promote-task-to-objective (Planner + picker) · **objectives archive + 48h purge** | N, AF | M | ✅ done (#357–#360, #363 → PRs #362–#368; migs 0129/0130). Archive leak follow-ups #369–#372 |
-| | **ENTITY-5** Spike — objectives as Planner block groupings | ENTITY | S | ⏳ **open (#361)** — blocked: objectives carry no time; see the issue |
-| | **FTUE / weekly-planning assistant** — T1–T14 (session logs · "Plan my week" · deterministic branches · LLM hybrid follow-ups · onboarding wizard) | AG | L | ⏳ **open** — 14 tickets (#337–#350); doc `ftue-plan.md` §1 is stale |
+| | **ENTITY-5** Spike — objectives as Planner block groupings | ENTITY | S | ✅ **closed (#361)** — decided (option c, non-geometric accent); see [objectives-in-planner.md](objectives-in-planner.md) |
+| | **FTUE / weekly-planning assistant** — T1–T14 (session logs · "Plan my week" · deterministic branches · LLM hybrid follow-ups · onboarding wizard) | AG | L | ✅ **done** — 14/14 tickets closed (#337–#350) as of 2026-08-13; doc `ftue-plan.md` §1 is stale |
 | | **Multi-user shared events** — M1–M5 (outbound share · share chip · cross-owner comments · comment UI · structured apply) | FTUE | L | ⏸ **deferred** — 5 tickets (#351–#355) |
 
 **G ticket order (✅ shipped):** G1 patterns → G3 time-blocks → G4/A′ flight-plan+Auto → G6/F′ PLANNER → G5 cockpit → G8 textures all landed (G2's "habit→pattern" was superseded: habits stayed **task-level** via `subtype`). **G7** custom Routine-type management UI is **shipped** (#115, W1-C); **G-INT** (timing intelligence) remains deferred. The detailed spec [archive/G-rituals-reflection.md](archive/G-rituals-reflection.md) is **HISTORICAL** (old `pattern_types`-as-routine model) — archived for history only.
