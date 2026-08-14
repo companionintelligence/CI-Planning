@@ -14,6 +14,7 @@ import { placeTasksInBlock, type PlaceTasksResult } from '../engine/blocks-place
 import { removeEntityTags, splitTagString, syncLeveledEntityTags, entityTagLevels, setEntityCategories, categoryIdsForOwner, entityCategoryNames, entityCategoryNamesByIds } from './tags.js';
 import { getCategoryPrefs } from './category-prefs.js';
 import { syncTaskFromBlock, mirrorBlockStatusToTask, applyTaskPlacementStatus, revertTaskPlacementStatus, TERMINAL_BLOCK_STATUS_SQL } from './block-task-sync.js';
+import { resolveAutoNestParent } from './auto-nest.js';
 
 /**
  * Time-Block CRUD orchestration (Phase W step 3.2) — extracted from routes/blocks.ts so
@@ -339,13 +340,43 @@ export async function createBlock(ownerId: string, input: CreateBlockInput): Pro
     return { ok: false, error: 'invalid_parent' };
   }
 
+  // Auto-nest (Phase 5): a task block created inside a matching Time Block's span
+  // becomes its member. Explicit intent always wins — a caller that passes a parent
+  // attaches there, and an explicit `parent_block_id: null` means "keep it loose".
+  //
+  // The opt-in test is `=== undefined`, NOT `'parent_block_id' in input`: the GraphQL
+  // mapper (`toSvcCreate`) builds a full object and sets every unsent field to
+  // undefined, so a key-presence test would silently disable auto-nest for every
+  // GraphQL caller while working fine over REST. The cost is that GraphQL cannot
+  // express "definitely loose" — it collapses null to undefined before we see it —
+  // which is unchanged from before: both already meant the same thing there.
+  //
+  // Restricted to timed, scheduled task blocks: containment is a time relation
+  // (all-day blocks are off the minute axis), a container cannot nest in a container,
+  // and a recurrence template is never rendered.
+  const wantsAutoNest =
+    input.parent_block_id === undefined &&
+    (input.block_kind ?? 'task') === 'task' &&
+    !input.all_day &&
+    !input.recurrence_rule &&
+    input.block_type !== 'someday';
+  const autoParent = wantsAutoNest
+    ? await resolveAutoNestParent(ownerId, {
+        startAt: input.start_at,
+        endAt: input.end_at,
+        taskId: input.task_id,
+        tag: input.tag,
+        categories: input.categories,
+      })
+    : null;
+
   const [block] = await db
     .insert(timeBlocks)
     .values({
       taskId: input.task_id,
       ownerId,
       title: input.title,
-      parentBlockId: input.parent_block_id ?? null,
+      parentBlockId: input.parent_block_id ?? autoParent,
       blockKind: input.block_kind ?? 'task',
       tag: input.tag,
       // category_id is NOT written (0135 retired it); categories go to entity_categories below.
