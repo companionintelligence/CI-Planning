@@ -187,11 +187,54 @@ export async function generate(prompt: string, opts: GenerateOpts = {}): Promise
 
 /**
  * Generate and parse a JSON object. Tolerates models that wrap JSON in prose or fences.
- * Throws OllamaUnavailable on transport failure; throws a plain Error if no JSON can be parsed.
+ * Throws OllamaUnavailable on transport failure; throws LlmParseError if no JSON can be parsed.
  */
 export async function generateJson<T = unknown>(prompt: string, opts: GenerateOpts = {}): Promise<T> {
   const raw = await generate(prompt, { ...opts, json: true });
   return parseJsonLoose<T>(raw);
+}
+
+/**
+ * THE degrade contract for every best-effort LLM path.
+ *
+ * Run `fn`; return `null` for the two failures a caller can do nothing about — Ollama
+ * unreachable/timed out/model not pulled ({@link OllamaUnavailable}) and a reply that is
+ * not JSON ({@link LlmParseError}) — logging one `warn` naming `op`. **Anything else
+ * re-throws**: a `TypeError` in a caller's own callback is a bug, and six hand-rolled
+ * `catch {}` blocks used to swallow it into an empty result that looked like "the model
+ * had nothing to say".
+ *
+ * NOT for `runLoop` stage callbacks (`agents/loop.ts`). The loop's error contract is that
+ * a generator/judge transport failure propagates OUT to the authoring caller, which falls
+ * back to the deterministic baseline; a `null` returned INTO the loop would flow through
+ * `check()`/`judge()` as a candidate and silently break the stall→baseline escape hatch
+ * and the call-budget accounting. The loop and its caller ARE the handler there.
+ *
+ * Callers owing the user a *reason* (task-enrich's `reason` string, `parseInstruction`'s
+ * 503) keep their own branch on the `null` — but never a bare `catch {}`.
+ */
+export async function llmOrNull<T>(op: string, fn: () => Promise<T>): Promise<T | null> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof OllamaUnavailable || err instanceof LlmParseError) {
+      logger.warn('llm degraded', { op, err: (err as Error).message });
+      return null;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Thrown when a model reply cannot be parsed as JSON. Distinct from a caller bug, so
+ * {@link llmOrNull} can degrade on it without swallowing real errors. Still an `Error`,
+ * so the broad catches that predate this class are unaffected.
+ */
+export class LlmParseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'LlmParseError';
+  }
 }
 
 /** Best-effort JSON extraction from a model response. */
@@ -209,7 +252,7 @@ export function parseJsonLoose<T = unknown>(raw: string): T {
         /* fall through */
       }
     }
-    throw new Error(`Could not parse JSON from model output: ${raw.slice(0, 200)}`);
+    throw new LlmParseError(`Could not parse JSON from model output: ${raw.slice(0, 200)}`);
   }
 }
 
@@ -343,10 +386,19 @@ export async function status(owner?: string): Promise<OllamaStatus> {
   }
 }
 
-/** Convenience: is Ollama reachable right now? Used by tests to skip gracefully. */
-export async function isAvailable(): Promise<boolean> {
-  return (await status()).available;
+/**
+ * THE availability predicate: can we actually call a model right now?
+ *
+ * `ready`, NOT `available`. `available` only means Ollama answered `/api/tags` — a green
+ * light with nothing behind it, since the effective models may not be pulled. Gating on
+ * it ran whole LLM paths against an Ollama that could not serve one call. The client
+ * (`stores/index.ts`) and the Settings card already mean `ready` by "AI is on"; this is
+ * the server saying the same thing. `status().available` stays on the status object for
+ * the Settings card, which legitimately shows reachable-vs-usable as distinct states.
+ */
+export async function isReady(): Promise<boolean> {
+  return (await status()).ready;
 }
 
-export const ollama = { generate, generateJson, parseJsonLoose, embed, status, isAvailable };
+export const ollama = { generate, generateJson, llmOrNull, parseJsonLoose, embed, status, isReady };
 logger.debug('ollama client ready', { url: config.ollamaUrl });

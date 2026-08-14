@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 
 // Ollama is pinned DOWN for this whole file — the LLM-off branch is the contract under
 // test, so it has to be a property of the test, not of the machine. Left to the real
-// client, `isAvailable()` answers true on any dev box running Ollama on the default
+// client, `isReady()` answers true on any dev box running Ollama on the default
 // 127.0.0.1:11434 and instructPlan quietly succeeds. Same idiom as time-sense.test.ts.
 vi.mock('../src/mcp/ollama.js', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../src/mcp/ollama.js')>();
@@ -11,7 +11,7 @@ vi.mock('../src/mcp/ollama.js', async (importOriginal) => {
   };
   return {
     ...mod,
-    isAvailable: vi.fn(async () => false),
+    isReady: vi.fn(async () => false),
     generate: vi.fn(down),
     generateJson: vi.fn(down),
     embed: vi.fn(down),
@@ -27,7 +27,7 @@ import { SYSTEM_OWNER } from '../src/lib/context.js';
  * a thin caller over the SAME engine functions the REST routes drive (cross-checked via
  * REST GET /api/blocks + /api/flight-plan), through services/engine-ops.ts. Covers:
  * runSchedule reflow, instructPlan error mapping (empty-text → BAD_USER_INPUT; LLM-off →
- * SERVICE_UNAVAILABLE — the mock above forces isAvailable() false, so parseInstruction
+ * SERVICE_UNAVAILABLE — the mock above forces isReady() false, so parseInstruction
  * throws InstructError('unavailable')), planSuggestion query, reauthorPlan/dismissReauthor
  * (suggestion clears), autoFill/autoRun/autoPriority/autoUndo (blocks placed + flightPlan
  * drains + the returned flightPlan uses FlightPlanEntryType), clearPlanner (bad dates →
@@ -115,7 +115,7 @@ describe('W13 — instructPlan error mapping', () => {
   });
 
   it('LLM unavailable → SERVICE_UNAVAILABLE + no writes', async () => {
-    // The file-level mock pins isAvailable() false → parseInstruction throws
+    // The file-level mock pins isReady() false → parseInstruction throws
     // InstructError('unavailable') → the resolver maps it to SERVICE_UNAVAILABLE.
     const before = (sqlite.prepare(`SELECT COUNT(*) AS n FROM time_blocks`).get() as { n: number }).n;
     const r = await gql(`mutation { instructPlan(input: { text: "dentist 2-3pm", date: "${DATE}" }) { ok created } }`);
@@ -188,9 +188,9 @@ describe('W13 — auto ops', () => {
   /**
    * T9 — REST/GraphQL parity for the `smart` flag. `smart: true` still lands on the
    * deterministic path here for TWO independent reasons: the file-level mock pins
-   * isAvailable() false, and the gate is `!opts.deterministic && planning_mode === 'smart'`
+   * isReady() false, and the gate is `!opts.deterministic && planning_mode === 'smart'`
    * (agents/plan.ts) while these owners default to 'basic', which short-circuits the
-   * isAvailable() half anyway. The point of this test is that the GraphQL resolver
+   * isReady() half anyway. The point of this test is that the GraphQL resolver
    * actually forwards `input.smart` through to
    * `autoRun` (a typo in `input.smart ?? undefined` wouldn't be caught by the REST test
    * alone) and that both transports surface the same `llm` field, truthfully false when

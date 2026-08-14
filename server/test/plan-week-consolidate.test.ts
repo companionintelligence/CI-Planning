@@ -6,7 +6,9 @@ vi.mock('../src/mcp/ollama.js', async (importOriginal) => {
 });
 
 import { sqlite } from '../src/db/index.js';
-import { generate } from '../src/mcp/ollama.js';
+// OllamaUnavailable is what the real `generate` seam throws for a transport failure —
+// the doubles below throw it so "Ollama down" means here what it means in production.
+import { generate, OllamaUnavailable } from '../src/mcp/ollama.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { startTestServer, resetDb, api, createOwner, SECOND_OWNER_ID, type TestServer } from './helpers.js';
 import { consolidateSessions, type PlanningSession } from '../src/services/planning-sessions.js';
@@ -43,7 +45,7 @@ describe('consolidateSessions (service)', () => {
   });
 
   it('digest content: count, date range, branches, and derived action/task counts (fallback path)', async () => {
-    mockGenerate.mockRejectedValue(new Error('ECONNREFUSED'));
+    mockGenerate.mockRejectedValue(new OllamaUnavailable('ECONNREFUSED'));
 
     seed('s-a', 'fill_week', '2026-07-01T00:00:00.000Z', [
       { text: 'Horizon: 5 days', kind: 'plan_week:horizon' },
@@ -71,7 +73,7 @@ describe('consolidateSessions (service)', () => {
   });
 
   it('persists onto the newest selected session only, and deletes nothing', async () => {
-    mockGenerate.mockRejectedValue(new Error('ECONNREFUSED'));
+    mockGenerate.mockRejectedValue(new OllamaUnavailable('ECONNREFUSED'));
     seed('s-old', 'review', '2026-07-01T00:00:00.000Z', [{ text: 'x' }]);
     seed('s-new', 'review', '2026-07-05T00:00:00.000Z', [{ text: 'y' }]);
 
@@ -99,7 +101,7 @@ describe('consolidateSessions (service)', () => {
 
   it('owner scoping: ignores ids from another owner and never mutates their rows', async () => {
     createOwner(SECOND_OWNER_ID);
-    mockGenerate.mockRejectedValue(new Error('ECONNREFUSED'));
+    mockGenerate.mockRejectedValue(new OllamaUnavailable('ECONNREFUSED'));
     seed('s-mine', 'review', '2026-07-01T00:00:00.000Z', [{ text: 'x' }]);
     sqlite
       .prepare(`INSERT INTO planning_sessions (id, owner_id, entry_branch, started_at) VALUES (?, ?, ?, ?)`)
@@ -130,7 +132,7 @@ describe('POST /api/plan-week/sessions/consolidate (route)', () => {
     api<{ session: PlanningSession }>(server.url, '/api/plan-week/sessions', { method: 'POST', json: { entry_branch } });
 
   it('200s with { summary, source } for a valid owned selection', async () => {
-    mockGenerate.mockRejectedValue(new Error('ECONNREFUSED'));
+    mockGenerate.mockRejectedValue(new OllamaUnavailable('ECONNREFUSED'));
     const id = (await open()).body.session.id;
 
     const res = await api<{ summary: string; source: string }>(server.url, '/api/plan-week/sessions/consolidate', {
@@ -160,7 +162,7 @@ describe('POST /api/plan-week/sessions/consolidate (route)', () => {
   });
 
   it('does not delete any source session', async () => {
-    mockGenerate.mockRejectedValue(new Error('ECONNREFUSED'));
+    mockGenerate.mockRejectedValue(new OllamaUnavailable('ECONNREFUSED'));
     const id = (await open()).body.session.id;
     await api(server.url, '/api/plan-week/sessions/consolidate', { method: 'POST', json: { ids: [id] } });
     expect((await api(server.url, `/api/plan-week/sessions/${id}`)).status).toBe(200);

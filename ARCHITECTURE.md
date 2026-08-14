@@ -811,6 +811,37 @@ generator on `fast` and `plan_judge` on `quality`. These are code constants, not
 configuration — they were measured against a live model, so they change under a measured
 retune, never through an env var.
 
+**Failure handling lives in one helper, and availability in one predicate.** "Ollama
+might be down, degrade gracefully" is the most-repeated rule in the codebase, and it used
+to have six implementations — four of them a bare `catch {}`. It now has one:
+`llmOrNull(op, fn)` in `server/src/mcp/ollama.ts` returns `null` for the two failures a
+caller can do nothing about — `OllamaUnavailable` (unreachable, timed out, model not
+pulled) and `LlmParseError` (the reply is not JSON) — logs exactly one `warn` naming the
+op, and **re-throws everything else**. That last clause is the point: a `TypeError` in our
+own callback is a bug, and the old `catch {}` blocks turned it into an empty result
+indistinguishable from a model that had nothing to say. Each caller still owns its own
+fallback — `suggestTags` returns `[]`, `enrichTaskFromMemory` returns
+`{ enriched: false, reason }`, `renderCopy` drops to its rotation pool, ingest stages a
+raw `fallbackTask` — only the plumbing converges.
+
+Two paths are deliberately outside it. The `runLoop` stage callbacks (`generate` /
+`judge` / `revise` in `agents/plan.ts`) must keep THROWING: the §A0 loop's error contract
+(`agents/loop.ts`) is that a transport failure propagates out to the authoring caller,
+which falls back to the deterministic baseline. A `null` returned *into* the loop would
+flow through `check()`/`judge()` as a candidate and silently break the stall→baseline
+escape hatch and the call-budget accounting — the loop and its caller ARE the handler
+there. And in `agents/render-copy.ts` the two exits stay distinct: transport failure
+breaks straight to the pool, while a gate rejection regenerates once with the reason fed
+back.
+
+"Can we call a model?" is answered only by `isReady()` — `status().ready`, meaning
+reachable **and** the effective fast/quality models are actually pulled. The predicate it
+replaced, `isAvailable()` (`status().available`, "Ollama answered `/api/tags`"), is a
+green light with nothing behind it, and gating on it ran the full generate→judge→revise
+loop against installs that could not serve a single call. `status().available` survives
+only on the status object, for the Settings card that legitimately shows reachable and
+usable as distinct states.
+
 ### 7.1 Scheduled jobs (current)
 
 | Kind | Cron | Purpose |
