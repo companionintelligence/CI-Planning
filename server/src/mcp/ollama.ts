@@ -1,5 +1,6 @@
 import { config } from '../lib/config.js';
 import { logger } from '../lib/logger.js';
+import { ConnectorUnavailable } from '../lib/connector-error.js';
 import {
   resolveModel,
   resolveEmbedModel,
@@ -16,9 +17,9 @@ import {
 } from '../lib/models.js';
 
 /** Thrown when Ollama is unreachable or a model isn't available. Callers may catch and degrade. */
-export class OllamaUnavailable extends Error {
+export class OllamaUnavailable extends ConnectorUnavailable {
   constructor(message: string) {
-    super(message);
+    super('ollama', message);
     this.name = 'OllamaUnavailable';
   }
 }
@@ -181,17 +182,84 @@ export async function generate(prompt: string, opts: GenerateOpts = {}): Promise
   );
 
   if (!res.ok) throw await ollamaError('generate', res, model);
-  const data = (await res.json()) as { response?: string };
+  const data = await decodeJson<{ response?: string }>(res, 'generate');
   return data.response ?? '';
 }
 
 /**
+ * Decode a 200 response body as JSON, as OllamaUnavailable when it isn't.
+ *
+ * A 200 whose body is not JSON means whatever answered is not speaking Ollama's protocol —
+ * a proxy or tunnel returning an HTML error page, a truncated body, an API-path mismatch.
+ * That is a TRANSPORT failure and belongs in the same family as the non-OK path above
+ * (see ollamaError's note that a bare 404 can equally mean a wrong OLLAMA_URL or a proxy).
+ *
+ * Typing it that way is load-bearing for the degrade contract: `llmOrNull` degrades on
+ * OllamaUnavailable and LlmParseError and RE-THROWS everything else, so a raw SyntaxError
+ * escaping from here would turn what used to be a silent, correct degrade (suggestTags → [],
+ * subtasks → []) into a 500. It is NOT LlmParseError — that one means the model's own reply
+ * wasn't the JSON we asked for, which is a model problem, not a transport one.
+ */
+async function decodeJson<T>(res: Response, op: string): Promise<T> {
+  try {
+    return (await res.json()) as T;
+  } catch (err) {
+    throw new OllamaUnavailable(
+      `Ollama ${op} returned a non-JSON body from ${config.ollamaUrl} — check OLLAMA_URL and any proxy in front of it: ${(err as Error).message}`,
+    );
+  }
+}
+
+/**
  * Generate and parse a JSON object. Tolerates models that wrap JSON in prose or fences.
- * Throws OllamaUnavailable on transport failure; throws a plain Error if no JSON can be parsed.
+ * Throws OllamaUnavailable on transport failure; throws LlmParseError if no JSON can be parsed.
  */
 export async function generateJson<T = unknown>(prompt: string, opts: GenerateOpts = {}): Promise<T> {
   const raw = await generate(prompt, { ...opts, json: true });
   return parseJsonLoose<T>(raw);
+}
+
+/**
+ * THE degrade contract for every best-effort LLM path.
+ *
+ * Run `fn`; return `null` for the two failures a caller can do nothing about — Ollama
+ * unreachable/timed out/model not pulled ({@link OllamaUnavailable}) and a reply that is
+ * not JSON ({@link LlmParseError}) — logging one `warn` naming `op`. **Anything else
+ * re-throws**: a `TypeError` in a caller's own callback is a bug, and six hand-rolled
+ * `catch {}` blocks used to swallow it into an empty result that looked like "the model
+ * had nothing to say".
+ *
+ * NOT for `runLoop` stage callbacks (`agents/loop.ts`). The loop's error contract is that
+ * a generator/judge transport failure propagates OUT to the authoring caller, which falls
+ * back to the deterministic baseline; a `null` returned INTO the loop would flow through
+ * `check()`/`judge()` as a candidate and silently break the stall→baseline escape hatch
+ * and the call-budget accounting. The loop and its caller ARE the handler there.
+ *
+ * Callers owing the user a *reason* (task-enrich's `reason` string, `parseInstruction`'s
+ * 503) keep their own branch on the `null` — but never a bare `catch {}`.
+ */
+export async function llmOrNull<T>(op: string, fn: () => Promise<T>): Promise<T | null> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof OllamaUnavailable || err instanceof LlmParseError) {
+      logger.warn('llm degraded', { op, err: (err as Error).message });
+      return null;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Thrown when a model reply cannot be parsed as JSON. Distinct from a caller bug, so
+ * {@link llmOrNull} can degrade on it without swallowing real errors. Still an `Error`,
+ * so the broad catches that predate this class are unaffected.
+ */
+export class LlmParseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'LlmParseError';
+  }
 }
 
 /** Best-effort JSON extraction from a model response. */
@@ -209,7 +277,7 @@ export function parseJsonLoose<T = unknown>(raw: string): T {
         /* fall through */
       }
     }
-    throw new Error(`Could not parse JSON from model output: ${raw.slice(0, 200)}`);
+    throw new LlmParseError(`Could not parse JSON from model output: ${raw.slice(0, 200)}`);
   }
 }
 
@@ -226,7 +294,7 @@ export async function embed(text: string, timeoutMs = 30_000): Promise<number[]>
     timeoutMs
   );
   if (!res.ok) throw await ollamaError('embeddings', res, model);
-  const data = (await res.json()) as { embedding?: number[] };
+  const data = await decodeJson<{ embedding?: number[] }>(res, 'embeddings');
   if (!data.embedding?.length) throw new OllamaUnavailable('Ollama returned an empty embedding');
   return data.embedding;
 }
@@ -262,18 +330,104 @@ export interface OllamaStatus {
 }
 
 /**
+ * The `/api/tags` half of a status read: did Ollama answer, and with what.
+ *
+ * Deliberately NOT the resolved models — see {@link status} for why those are never
+ * cached alongside this.
+ */
+interface TagsProbe {
+  ok: boolean;
+  rows: InstalledModel[];
+  error?: string;
+}
+
+/**
+ * How long one `/api/tags` probe stands in for the next.
+ *
+ * A CODE constant, not configuration — there is nothing here an operator tunes. It only
+ * has to be shorter than the Settings poll and longer than a plan render, and the one
+ * case a TTL cannot cover (an Ollama that came up seconds ago) has an explicit escape
+ * hatch: "Re-check" → `/api/llm/status?fresh=1` → `status(owner, { fresh: true })`.
+ */
+const PROBE_TTL_MS = 30_000;
+
+let probeCache: { at: number; probe: TagsProbe } | null = null;
+
+/** Drop the cached probe. For tests — production bypasses with `{ fresh: true }`. */
+export function resetProbeCache(): void {
+  probeCache = null;
+}
+
+/** Feed a probe result to the installed-model cache `lib/models.ts` auto-selects from. */
+function applyInstalled(probe: TagsProbe): void {
+  // A failed read is "unknown", not "none" — don't auto-select off a bad read.
+  if (!probe.ok) return setInstalledModels(null);
+  // Never auto-select during tests. Otherwise the suite's behavior depends on whether
+  // the developer happens to be running Ollama: with it up, auto-selection hands every
+  // agent a REAL model, so jobs/enrichment stop failing fast on "model not found" and
+  // instead perform genuine inference — run-now alone went from ~1s to 124s, and the
+  // parallel suite then times out. Tests that exercise selection set the cache directly
+  // via setInstalledModels(); leaving it unknown here keeps every other suite on the
+  // deterministic degrade path it was written against.
+  if (process.env.NODE_ENV !== 'test') setInstalledModels(probe.rows);
+}
+
+/** One live `/api/tags` read. Never throws — a failure IS a result (`ok: false`). */
+async function fetchTags(): Promise<TagsProbe> {
+  try {
+    const res = await fetchWithTimeout(`${config.ollamaUrl}/api/tags`, {}, 5_000);
+    if (!res.ok) return { ok: false, rows: [], error: `HTTP ${res.status}` };
+    const data = (await res.json()) as {
+      models?: { name: string; capabilities?: string[]; details?: { parameter_size?: string } }[];
+    };
+    return {
+      ok: true,
+      rows: (data.models ?? []).map((m) => ({
+        name: m.name,
+        capabilities: m.capabilities ?? [],
+        paramB: parseParamB(m.details?.parameter_size),
+      })),
+    };
+  } catch (err) {
+    return { ok: false, rows: [], error: (err as Error).message };
+  }
+}
+
+/** The probe, from cache when it is fresh enough and not bypassed. */
+async function tagsProbe(fresh: boolean): Promise<TagsProbe> {
+  // The cache is OFF under test, for the same reason as the auto-select guard in
+  // applyInstalled(): no suite's behavior may depend on which test probed first.
+  const cacheable = process.env.NODE_ENV !== 'test';
+  if (cacheable && !fresh && probeCache && Date.now() - probeCache.at < PROBE_TTL_MS) {
+    applyInstalled(probeCache.probe); // keep lib/models in step even on a hit
+    return probeCache.probe;
+  }
+  const probe = await fetchTags();
+  applyInstalled(probe);
+  probeCache = cacheable ? { at: Date.now(), probe } : null;
+  return probe;
+}
+
+/**
  * Health check + installed model list. Never throws.
  *
  * Also the single place that refreshes the installed-model cache `lib/models.ts` uses to
  * auto-select a real model — `resolveModel` is synchronous and on the inference hot path,
  * so it can't fetch `/api/tags` itself. Called at boot, by the Settings/integrations poll,
- * and by "Re-check".
+ * by "Re-check", and — via `isReady()` — on the day-authoring and NL-instruct paths.
+ *
+ * ONLY the `/api/tags` probe is cached (`PROBE_TTL_MS`); model resolution is redone on
+ * every call. That split is load-bearing, not an optimization detail: a Settings model
+ * override is a DB write that must take effect on the very NEXT request, so caching the
+ * resolved names would make a saved model choice look like it did not apply.
  *
  * `owner` is optional because this runs outside a request too (boot, tests), where
  * `currentOwnerId()` throws by design; without one, per-owner Settings overrides are
  * skipped and the env/auto-selected models are reported.
+ *
+ * `fresh` bypasses the probe cache and refills it — the "Re-check" path.
  */
-export async function status(owner?: string): Promise<OllamaStatus> {
+export async function status(owner?: string, opts?: { fresh?: boolean }): Promise<OllamaStatus> {
   /** Effective models — resolved AFTER the cache refresh so auto-selection is applied. */
   const effective = async () => {
     // No owner context (boot health logging): drop only the per-owner override and still
@@ -302,51 +456,39 @@ export async function status(owner?: string): Promise<OllamaStatus> {
     };
   };
 
-  try {
-    const res = await fetchWithTimeout(`${config.ollamaUrl}/api/tags`, {}, 5_000);
-    if (!res.ok) {
-      setInstalledModels(null); // unknown, not "none" — don't auto-select off a bad read
-      return { ...(await effective()), url: config.ollamaUrl, available: false, ready: false, models: [], missingModels: [], error: `HTTP ${res.status}` };
-    }
-    const data = (await res.json()) as {
-      models?: { name: string; capabilities?: string[]; details?: { parameter_size?: string } }[];
-    };
-    const rows: InstalledModel[] = (data.models ?? []).map((m) => ({
-      name: m.name,
-      capabilities: m.capabilities ?? [],
-      paramB: parseParamB(m.details?.parameter_size),
-    }));
-    // Never auto-select during tests. Otherwise the suite's behavior depends on whether
-    // the developer happens to be running Ollama: with it up, auto-selection hands every
-    // agent a REAL model, so jobs/enrichment stop failing fast on "model not found" and
-    // instead perform genuine inference — run-now alone went from ~1s to 124s, and the
-    // parallel suite then times out. Tests that exercise selection set the cache directly
-    // via setInstalledModels(); leaving it unknown here keeps every other suite on the
-    // deterministic degrade path it was written against.
-    if (process.env.NODE_ENV !== 'test') setInstalledModels(rows);
-
-    const eff = await effective();
-    // The embed tier is only exercised by dedupe/memory, so a missing embedder is
-    // reported but does not by itself make the app "not ready" for AI features.
-    const missingModels = [eff.fastModel, eff.qualityModel, eff.embedModel].filter((m) => !isInstalled(m));
-    return {
-      ...eff,
-      url: config.ollamaUrl,
-      available: true,
-      ready: isInstalled(eff.fastModel) && isInstalled(eff.qualityModel),
-      models: rows.map((m) => m.name),
-      missingModels,
-    };
-  } catch (err) {
-    setInstalledModels(null);
-    return { ...(await effective()), url: config.ollamaUrl, available: false, ready: false, models: [], missingModels: [], error: (err as Error).message };
+  const probe = await tagsProbe(opts?.fresh === true);
+  // Resolved AFTER the probe was applied (so auto-selection sees the installed set) and
+  // on EVERY call, cache hit or not — this is the per-owner override read.
+  const eff = await effective();
+  if (!probe.ok) {
+    return { ...eff, url: config.ollamaUrl, available: false, ready: false, models: [], missingModels: [], error: probe.error };
   }
+  // The embed tier is only exercised by dedupe/memory, so a missing embedder is
+  // reported but does not by itself make the app "not ready" for AI features.
+  const missingModels = [eff.fastModel, eff.qualityModel, eff.embedModel].filter((m) => !isInstalled(m));
+  return {
+    ...eff,
+    url: config.ollamaUrl,
+    available: true,
+    ready: isInstalled(eff.fastModel) && isInstalled(eff.qualityModel),
+    models: probe.rows.map((m) => m.name),
+    missingModels,
+  };
 }
 
-/** Convenience: is Ollama reachable right now? Used by tests to skip gracefully. */
-export async function isAvailable(): Promise<boolean> {
-  return (await status()).available;
+/**
+ * THE availability predicate: can we actually call a model right now?
+ *
+ * `ready`, NOT `available`. `available` only means Ollama answered `/api/tags` — a green
+ * light with nothing behind it, since the effective models may not be pulled. Gating on
+ * it ran whole LLM paths against an Ollama that could not serve one call. The client
+ * (`stores/index.ts`) and the Settings card already mean `ready` by "AI is on"; this is
+ * the server saying the same thing. `status().available` stays on the status object for
+ * the Settings card, which legitimately shows reachable-vs-usable as distinct states.
+ */
+export async function isReady(): Promise<boolean> {
+  return (await status()).ready;
 }
 
-export const ollama = { generate, generateJson, parseJsonLoose, embed, status, isAvailable };
+export const ollama = { generate, generateJson, llmOrNull, parseJsonLoose, embed, status, isReady };
 logger.debug('ollama client ready', { url: config.ollamaUrl });

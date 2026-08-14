@@ -2,32 +2,71 @@ import { store } from '../db/store.js';
 import { open, loadKek } from './crypto/index.js';
 import { logger } from './logger.js';
 import { revoke } from '../connectors/index.js';
+import { MEMORY_PROVIDER } from '../connectors/memory.js';
 
 /**
- * WP7 — read-only Google connection health for the Settings "Connections" card.
+ * ONE shape for a connection, over the one table that stores them.
  *
- * A "connection" is a SETTING surfaced for observability, NOT a new glossary noun.
- * This shape is deliberately MINIMAL and is the locked client/server contract:
- * it exposes ONLY a status, the access-token expiry, a mapped-event count and the
- * latest sync outcome. It NEVER leaks token material (accessToken/refreshToken/
- * ciphertext/iv/auth_tag/key_version) — see the no-leak guard in connections.test.ts.
+ * `connection_tokens` holds every provider's credentials (`google`, `ci_memory`,
+ * fixture) and used to be read through two different "deliberately minimal" contracts:
+ * `ConnectionHealth` (google-only, decrypted, for GET /api/integrations) and
+ * `ConnectionSummary` (all providers, no decrypt, for GET /api/connections). Two minimal
+ * contracts over the same rows is one contract too many, so this is the single one.
+ *
+ * A "connection" is a SETTING surfaced for observability, NOT a new glossary noun. The
+ * shape NEVER leaks token material (accessToken/refreshToken/ciphertext/iv/auth_tag/
+ * key_version) — see the no-leak guards in connections-unified.test.ts and
+ * connections-route.test.ts.
+ *
+ * `status` is the MAPPED status, never the raw `connection_tokens.status` column: the raw
+ * 'active' | 'revoked' | 'error' string used to reach clients through ConnectionSummary
+ * and no longer does.
  */
-export interface ConnectionHealth {
-  provider: string;                                  // always 'google' in WP7
+export interface ConnectionRecord {
+  /** 'google' | 'ci_memory' | … — whatever the row says. */
+  provider: string;
   account: string;
+  /** Mapped, never the raw column: revoked/error/undecryptable ⇒ 'inactive'. */
   status: 'connected' | 'expired' | 'inactive';
-  expiresAt: string | null;                          // access-token expiry (ISO); null when inactive / unknown
-  mappedEventCount: number;                           // external_events rows for this (owner, provider, account)
-  lastSyncAt: string | null;                          // finished_at ?? started_at of the most recent sync_calendar run
-  lastError: string | null;                           // job_runs.log of that run when it errored, else null
+  /** ISO-8601 (connection_tokens.created_at). */
+  createdAt: string;
+  /** Access-token expiry (ISO). Null when inactive/unknown, and always null unless the
+   *  caller asked for it (`withExpiry`) — resolving it costs a decrypt. */
+  expiresAt: string | null;
+  /** finished_at ?? started_at of the most recent sync_calendar run (google only). */
+  lastSyncAt: string | null;
+  /** job_runs.log of that run when it errored, else null (google only). */
+  lastError: string | null;
+  /** external_events rows for this (owner, 'google', account). GOOGLE ONLY — absent,
+   *  never 0, for other providers, so "no events" and "not an event source" stay
+   *  distinguishable. */
+  mappedEventCount?: number;
 }
 
-interface TokenRow {
+export interface ListConnectionsOptions {
+  /**
+   * Decrypt each active token just far enough to read its expiry, so `status` can be
+   * 'expired' and `expiresAt` is populated. OPT-IN because it costs a KEK load + one
+   * AES-GCM open per row: GET /api/connections (a plain list) leaves it off, GET
+   * /api/integrations (the health card) turns it on. Same cost profile as the two
+   * separate functions this replaced.
+   */
+  withExpiry?: boolean;
+}
+
+interface SafeRow {
+  provider: string;
+  account: string;
+  status: string; // raw column: 'active' | 'revoked' | 'error' — mapped before it leaves
+  created_at: string;
+}
+
+interface SealedRow {
+  provider: string;
   account: string;
   iv: string;
   auth_tag: string;
   ciphertext: string;
-  status: string; // 'active' | 'revoked' | 'error'
 }
 
 interface SyncRunRow {
@@ -38,44 +77,61 @@ interface SyncRunRow {
 }
 
 /**
- * Build one ConnectionHealth per (provider='google', account) connection_tokens row
- * for `ownerId`. Returns [] (never null) when the owner has no Google tokens.
+ * Every connection the owner holds, across all providers, ordered by provider then
+ * account. Returns [] (never null) when the owner has none. Mode-blind ON PURPOSE: a user
+ * whose Google integration is `off` must still see (and be able to drop) the stored token
+ * — visibility of stored connections is exactly what this surface is for.
  *
  * status resolution:
- *  - row.status <> 'active'              → 'inactive' (expiresAt null; we never decrypt)
- *  - else decrypt ONLY the token's expiresAt:
- *      - decoded expiresAt <= now        → 'expired'
- *      - else                            → 'connected'
- *  - if open() throws (tamper/wrong key) → 'inactive', expiresAt null, log a redacted
- *    warning (NEVER the ciphertext). A bad row must NOT 500 the /api/integrations endpoint.
+ *  - row.status <> 'active'                    → 'inactive' (expiresAt null; never decrypts)
+ *  - active, without `withExpiry`               → 'connected' (expiresAt null — not read)
+ *  - active, with `withExpiry`, decoded expiry <= now → 'expired'
+ *  - active, with `withExpiry`, otherwise       → 'connected'
+ *  - decrypt throws (tamper / rotated KEK)      → 'inactive', expiresAt null, plus a
+ *    REDACTED warning (never the ciphertext). A bad row must NOT 500 the endpoint.
  */
-export async function connectionHealth(ownerId: string): Promise<ConnectionHealth[]> {
-  const tokens = await store()
+export async function listConnections(
+  ownerId: string,
+  opts: ListConnectionsOptions = {},
+): Promise<ConnectionRecord[]> {
+  // The list SELECT names only safe columns — no iv / auth_tag / ciphertext / key_version.
+  // The sealed columns are fetched separately, and only when a decrypt was asked for.
+  const rows = await store()
     .prepare(
-      `SELECT account, iv, auth_tag, ciphertext, status
+      `SELECT provider, account, status, created_at
          FROM connection_tokens
-        WHERE owner_id = ? AND provider = 'google'
-        ORDER BY account ASC`,
+        WHERE owner_id = ?
+        ORDER BY provider, account`,
     )
-    .all<TokenRow>(ownerId);
+    .all<SafeRow>(ownerId);
+  if (rows.length === 0) return [];
 
+  const sealed = opts.withExpiry ? await sealedByAccount(ownerId) : null;
+  const counts = rows.some((r) => r.provider === 'google') ? await mappedEventCounts(ownerId) : null;
+  // One sync_calendar lookup for the whole list: the query is keyed by job kind, not by
+  // account (job_runs is not owner-scoped — a system actor runs the shared nightly cron),
+  // so it returned the same row for every account when it ran per row.
+  const sync = counts ? await latestSyncRun() : null;
   const now = Date.now();
 
-  const out: ConnectionHealth[] = [];
-  for (const row of tokens) {
-    let status: ConnectionHealth['status'];
+  const out: ConnectionRecord[] = [];
+  for (const row of rows) {
+    let status: ConnectionRecord['status'];
     let expiresAt: string | null = null;
 
     if (row.status !== 'active') {
       // Revoked / error rows are inactive — no decrypt, no expiry.
       status = 'inactive';
+    } else if (!sealed) {
+      // No decrypt requested: an active row is 'connected'; we cannot prove it expired.
+      status = 'connected';
     } else {
+      const tok = sealed.get(`${row.provider}\u0000${row.account}`);
       try {
-        const plain = open(
-          { iv: row.iv, authTag: row.auth_tag, ciphertext: row.ciphertext },
-          await loadKek(),
+        if (!tok) throw new Error('sealed token row disappeared');
+        const exp = extractExpiresAt(
+          open({ iv: tok.iv, authTag: tok.auth_tag, ciphertext: tok.ciphertext }, await loadKek()),
         );
-        const exp = extractExpiresAt(plain);
         expiresAt = exp;
         const expMs = exp ? Date.parse(exp) : NaN;
         // No / unparseable expiry → treat as connected (can't prove it's expired).
@@ -83,7 +139,7 @@ export async function connectionHealth(ownerId: string): Promise<ConnectionHealt
       } catch (err) {
         // Decrypt failed (tamper, missing/rotated KEK). Degrade to inactive; never
         // surface or log the ciphertext. logger.redact masks token-shaped fields too.
-        logger.warn('connectionHealth: failed to open token; treating as inactive', {
+        logger.warn('listConnections: failed to open token; treating as inactive', {
           account: row.account,
           err: (err as Error).message,
         });
@@ -92,19 +148,33 @@ export async function connectionHealth(ownerId: string): Promise<ConnectionHealt
       }
     }
 
-    const sync = await latestSyncRun(ownerId, 'google', row.account);
-
+    const isGoogle = row.provider === 'google';
     out.push({
-      provider: 'google',
+      provider: row.provider,
       account: row.account,
       status,
+      createdAt: row.created_at,
       expiresAt,
-      mappedEventCount: await mappedEventCount(ownerId, row.account),
-      lastSyncAt: sync ? sync.finished_at ?? sync.started_at : null,
-      lastError: sync && sync.status === 'error' ? sync.log : null,
+      lastSyncAt: isGoogle && sync ? sync.finished_at ?? sync.started_at : null,
+      lastError: isGoogle && sync && sync.status === 'error' ? sync.log : null,
+      // Google only, and ABSENT rather than 0 elsewhere.
+      ...(isGoogle ? { mappedEventCount: counts?.get(row.account) ?? 0 } : {}),
     });
   }
   return out;
+}
+
+/** The owner's sealed token columns, keyed by provider\0account. Active rows only —
+ *  inactive rows are never decrypted. */
+async function sealedByAccount(ownerId: string): Promise<Map<string, SealedRow>> {
+  const rows = await store()
+    .prepare(
+      `SELECT provider, account, iv, auth_tag, ciphertext
+         FROM connection_tokens
+        WHERE owner_id = ? AND status = 'active'`,
+    )
+    .all<SealedRow>(ownerId);
+  return new Map(rows.map((r) => [`${r.provider}\u0000${r.account}`, r]));
 }
 
 /**
@@ -137,16 +207,17 @@ function extractExpiresAt(plain: string): string | null {
   return null;
 }
 
-/** COUNT(*) of external_events mapped to this (owner, 'google', account). */
-async function mappedEventCount(ownerId: string, account: string): Promise<number> {
-  const row = await store()
+/** COUNT(*) of external_events per (owner, 'google', account), in one grouped query. */
+async function mappedEventCounts(ownerId: string): Promise<Map<string, number>> {
+  const rows = await store()
     .prepare(
-      `SELECT COUNT(*) AS n
+      `SELECT account, COUNT(*) AS n
          FROM external_events
-        WHERE owner_id = ? AND provider = 'google' AND account = ?`,
+        WHERE owner_id = ? AND provider = 'google'
+        GROUP BY account`,
     )
-    .get<{ n: number }>(ownerId, account);
-  return row!.n;
+    .all<{ account: string; n: number }>(ownerId);
+  return new Map(rows.map((r) => [r.account, r.n]));
 }
 
 /**
@@ -154,7 +225,7 @@ async function mappedEventCount(ownerId: string, account: string): Promise<numbe
  * NB: job_runs is not owner-scoped (system actor), so the join is by kind only — this
  * mirrors the shared nightly cron. ORDER BY started_at DESC LIMIT 1.
  */
-async function latestSyncRun(_ownerId: string, _provider: string, _account: string): Promise<SyncRunRow | undefined> {
+async function latestSyncRun(): Promise<SyncRunRow | undefined> {
   return store()
     .prepare(
       `SELECT jr.finished_at, jr.started_at, jr.status, jr.log
@@ -168,45 +239,6 @@ async function latestSyncRun(_ownerId: string, _provider: string, _account: stri
 }
 
 /**
- * T13 (#349) — provider-agnostic connection summary for the Settings "Connections" tab.
- *
- * Deliberately even leaner than ConnectionHealth: it is the raw `status` column, so it
- * needs NO decrypt (never calls open()/loadKek()) and carries only four columns. Like
- * ConnectionHealth it NEVER exposes token material (iv/auth_tag/ciphertext/key_version/
- * accessToken/refreshToken) — the SELECT names only the four safe columns, and the
- * connections-route no-leak guard asserts it.
- */
-export interface ConnectionSummary {
-  provider: string;
-  account: string;
-  status: string;      // raw connection_tokens.status: 'active' | 'revoked' | 'error'
-  createdAt: string;   // ISO-8601 (connection_tokens.created_at)
-}
-
-/**
- * Every connection the owner holds, across all providers, ordered by provider then
- * account. Returns [] (never null) when the owner has none. Mode-blind ON PURPOSE:
- * a user whose Google integration is `off` must still see (and be able to drop) the
- * stored token — visibility of stored connections is exactly what this surface is for.
- */
-export async function listConnections(ownerId: string): Promise<ConnectionSummary[]> {
-  const rows = await store()
-    .prepare(
-      `SELECT provider, account, status, created_at
-         FROM connection_tokens
-        WHERE owner_id = ?
-        ORDER BY provider, account`,
-    )
-    .all<{ provider: string; account: string; status: string; created_at: string }>(ownerId);
-  return rows.map((r) => ({
-    provider: r.provider,
-    account: r.account,
-    status: r.status,
-    createdAt: r.created_at,
-  }));
-}
-
-/**
  * Disconnect one (owner, provider, account): best-effort revoke at the provider, then
  * hard-delete the connection_tokens row AND any pending outbound_queue rows for it (I12,
  * so a re-connect starts clean). Returns true iff a connection_tokens row was deleted.
@@ -215,8 +247,9 @@ export async function listConnections(ownerId: string): Promise<ConnectionSummar
  * / fixture have none and are simply dropped locally). Revoke is best-effort: a decrypt
  * or network failure is warn-logged (redacted) and never blocks the local delete.
  *
- * Extracted from the former DELETE /api/oauth/google/accounts/:account handler so that
- * handler and the generic DELETE /api/connections/:provider/:account share one path.
+ * The ONE disconnect implementation, behind the ONE disconnect route
+ * (DELETE /api/connections/:provider/:account). POST /api/memory/disconnect delegates
+ * here too, so a memory connection drops identically however it is dropped.
  */
 export async function disconnectConnection(
   ownerId: string,
@@ -249,6 +282,16 @@ export async function disconnectConnection(
   await store()
     .prepare('DELETE FROM outbound_queue WHERE owner_id = ? AND provider = ? AND account = ?')
     .run(ownerId, provider, account);
+
+  // Memory's display label lives in scheduling_prefs.memory_account, not on the row, so
+  // dropping the row must clear it here — otherwise GET /api/memory/status would keep
+  // reporting `connected` for a connection that no longer exists. This is what made
+  // memory's own disconnect route provider-specific; now every path clears it.
+  if (provider === MEMORY_PROVIDER && delTokens.changes > 0) {
+    await store()
+      .prepare('UPDATE scheduling_prefs SET memory_account = NULL WHERE owner_id = ?')
+      .run(ownerId);
+  }
 
   return delTokens.changes > 0;
 }

@@ -14,8 +14,10 @@
  */
 import { store } from '../db/store.js';
 import { logger } from '../lib/logger.js';
+import { listConnections } from '../lib/connections.js';
 import {
   memoryCreds,
+  MEMORY_PROVIDER,
   memoryMode,
   postEvents,
   MemoryUnavailable,
@@ -126,10 +128,17 @@ export async function memoryStatus(owner: string): Promise<MemoryStatus> {
       host = creds.url;
     }
   }
+  // The CONNECTION facts come from the one connection surface (lib/connections.ts), not
+  // from scheduling_prefs: a ci_memory row in connection_tokens IS the connection, and it
+  // can now be dropped through the generic DELETE /api/connections route, which
+  // scheduling_prefs would not have known about. Everything else this endpoint reports
+  // (pull/sync flags, scopes, creds source) is genuinely not a connection fact, which is
+  // why the endpoint stays.
+  const connection = (await listConnections(owner)).find((c) => c.provider === MEMORY_PROVIDER);
   return {
     enabled: !!p?.memory_sync_enabled,
-    connected: !!p?.memory_account,
-    account: p?.memory_account ?? null,
+    connected: connection !== undefined,
+    account: connection?.account ?? null,
     lastSyncedAt: p?.memory_last_synced_at ?? null,
     available: creds !== null,
     scopes: {

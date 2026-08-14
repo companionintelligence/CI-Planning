@@ -1,5 +1,5 @@
 import { store } from '../db/store.js';
-import { generate } from '../mcp/ollama.js';
+import { generate, llmOrNull } from '../mcp/ollama.js';
 import { logger } from '../lib/logger.js';
 import { currentOwnerId } from '../lib/context.js';
 import {
@@ -307,20 +307,21 @@ export async function renderCopy(
 
   let failure: string | undefined;
   for (let attempt = 0; attempt < MODEL_ATTEMPTS; attempt++) {
-    let raw: string;
-    try {
-      raw = await generate(buildPrompt(cfg, payload, recent, failure), {
+    // EXIT 1 of 2 — transport failure. `llmOrNull` logs the one warn and hands back null;
+    // we break STRAIGHT to the rotation pool without burning the remaining attempt, since
+    // a down Ollama will not come back within this loop. Kept distinct from exit 2 (the
+    // gate rejecting a draft), which regenerates once with the reason fed back.
+    const raw = await llmOrNull(`renderCopy:${surface}`, () =>
+      generate(buildPrompt(cfg, payload, recent, failure), {
         // `voice` carries the temperature (microcopy wants variety; the gate enforces the
         // floor) and the fast-tier timeout. Tier is per-surface, and a quality-tier surface
         // needs a longer ceiling than the policy's — an explicit value overrides it.
         purpose: 'voice',
         tier: cfg.tier,
         ...(cfg.tier === 'quality' ? { timeoutMs: 45_000 } : {}),
-      });
-    } catch (err) {
-      logger.warn('renderCopy: model unavailable, using fallback pool', { surface, err: (err as Error).message });
-      break; // Ollama down → straight to the rotation pool
-    }
+      }),
+    );
+    if (raw === null) break; // Ollama down → straight to the rotation pool
     const text = cleanLine(raw, cfg.tier === 'quality');
     const g = gateCopy(text, { required, recent, maxLen: cfg.maxLen });
     if (g.ok) {

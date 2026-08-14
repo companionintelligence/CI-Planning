@@ -17,8 +17,12 @@ import { readFileSync } from 'node:fs';
  */
 
 // Mocked at the module seam so no test can reach a developer's running Ollama —
-// `status` decides availability, `generateJson` records the single call, and the
+// `isReady` decides availability, `generateJson` records the single call, and the
 // engine's embedding path is stubbed shut (its ladder is T3's business, not T9's).
+//
+// `isReady` (not `status().ready`, which this file used to reach through) is now THE
+// availability predicate for the whole server; the garnish had the right semantics
+// hand-rolled before the shared one existed.
 let ollamaReady = false;
 let genResponse: unknown = {};
 let genThrows: Error | null = null;
@@ -36,18 +40,9 @@ vi.mock('../src/mcp/ollama.js', async (importActual) => {
       if (genThrows) throw genThrows;
       return genResponse;
     }),
-    status: vi.fn(async () => {
+    isReady: vi.fn(async () => {
       statusCalls++;
-      return {
-        available: ollamaReady,
-        ready: ollamaReady,
-        url: 'http://mock',
-        models: [],
-        fastModel: 'mock-fast',
-        qualityModel: 'mock-quality',
-        embedModel: 'mock-embed',
-        missingModels: [],
-      };
+      return ollamaReady;
     }),
     ollama: {
       ...actual.ollama,

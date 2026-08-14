@@ -344,6 +344,19 @@ export const [integrations, { refetch: refetchIntegrations }] = createResource((
 );
 
 /**
+ * The "Re-check" affordance. `/api/integrations` reads a probe the server caches for 30s,
+ * which is right for polling and wrong for exactly this: an operator who just started
+ * Ollama and wants to know NOW. So bust the cache first (`/api/llm/status?fresh=1`), then
+ * re-read. A plain refetch would faithfully return the stale probe and read as broken.
+ *
+ * The bust is best-effort — if it fails we still refetch, and the poll heals it within
+ * the TTL. Returns the refetch so the button can await the whole round trip.
+ */
+export function recheckIntegrations() {
+  return api.llm.recheck().catch(() => undefined).then(() => refetchIntegrations());
+}
+
+/**
  * True when AI features can actually run. Everything AI gates on this.
  *
  * Keys on `ready`, not `available`: `available` only means Ollama answered, and the
@@ -355,10 +368,12 @@ export const [integrations, { refetch: refetchIntegrations }] = createResource((
 export const aiAvailable = () => integrations()?.ollama.ready ?? integrations()?.ollama.available ?? false;
 
 // ── Connections (T13 #349) ─────────────────────────────────────────────────────
-// Provider-agnostic list of the owner's stored connections (provider/account/status),
-// backing the Settings → Connections "Connected accounts" card. Distinct from
-// `integrations().google.connections` (WP7 health): this is mode-blind and covers every
-// provider, so a user whose Google is `off` still sees (and can drop) a stored token.
+// Provider-agnostic list of the owner's stored connections in the one ConnectionRecord
+// shape, backing the Settings → Connections "Connected accounts" card. Same shape as
+// `integrations().google.connections`, different reach: this is mode-blind and covers
+// every provider (so a user whose Google is `off` still sees — and can drop — a stored
+// token), while the integrations copy is google-only and pays for a decrypt to resolve
+// the token expiry.
 export const [connections, { refetch: refetchConnections }] = createResource(() =>
   // .catch(() => null) mirrors the failure-closed convention of the other Settings
   // resources (me/gcfg/accounts): a 500/transient drop degrades to the card's "No

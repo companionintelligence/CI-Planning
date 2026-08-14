@@ -2,7 +2,7 @@ import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { serverTimezone, localDateInTZ, utcToZonedWallTime } from '../lib/tz.js';
 import { logger } from '../lib/logger.js';
-import { generateJson, OllamaUnavailable } from '../mcp/ollama.js';
+import { generateJson, llmOrNull } from '../mcp/ollama.js';
 import {
   graphData,
   nodeStartTime,
@@ -307,19 +307,15 @@ export async function suggestFromMemory(
   const fallbackMin = await memoryFallbackEstimate(owner);
   const drafts = new Map(candidates.map((c) => [c.node.id, templateTask(c, tz, fallbackMin)]));
 
-  // Optional polish — best-effort by contract. OllamaUnavailable is the expected
-  // degrade; a parse/shape failure is equally non-fatal for a cosmetic pass.
+  // Optional polish — best-effort by contract. Ollama unreachable is the expected
+  // degrade; an unparseable reply is equally non-fatal for a cosmetic pass. Either way
+  // the templates already in `drafts` stand, and one warn names the op.
   if (opts.polish !== false) {
     const polish = opts.polish ?? ollamaPolish;
-    try {
-      const refined = await polish(candidates, drafts);
-      for (const [ref, patch] of refined) {
-        const base = drafts.get(ref);
-        if (base) drafts.set(ref, { ...base, ...patch });
-      }
-    } catch (err) {
-      const level = err instanceof OllamaUnavailable ? 'warn' : 'error';
-      logger[level]('memory suggest: polish failed — using templates', { err: (err as Error).message });
+    const refined = await llmOrNull('memorySuggestPolish', () => polish(candidates, drafts));
+    for (const [ref, patch] of refined ?? []) {
+      const base = drafts.get(ref);
+      if (base) drafts.set(ref, { ...base, ...patch });
     }
   }
 

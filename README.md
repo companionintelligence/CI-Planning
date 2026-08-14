@@ -3,8 +3,17 @@
 A **private, local-first** personal todo and planning app. Tasks, time blocks,
 tags, and an automation pipeline live in a single SQLite file on your machine; an
 optional local LLM (Ollama) adds AI briefings, task extraction, grooming, and
-auto-scheduling. No cloud, no account, no telemetry — everything runs on your
+auto-scheduling. No cloud and no account — your planning data lives on your
 hardware and stays there.
+
+**On crash reporting, plainly:** released container images are built with a Sentry
+DSN and report **crashes** by default — errors only, no tracing, no session replay,
+no PII, and every payload scrubbed of credentials and home paths first. Your tasks,
+calendar and reflections are never sent. Turn it off without a rebuild with
+`CI_TELEMETRY=off` (what the app store's *Share crash reports* toggle sets) or
+`CI_LOCAL_ONLY=true` (zero phone-home, beats everything). A **source checkout or
+any build made without a DSN initialises no Sentry at all** and opens no outbound
+connection. Full posture: [docs/operations/error-reporting.md](docs/operations/error-reporting.md).
 
 Companion Planning is currently in **v0.3 active development**. The core app is
 fully local and usable today. A **standalone Google OAuth 2.1 flow** (Authorization
@@ -89,11 +98,10 @@ in a **New Today** section at the top and flows into the normal sections at the
 owner-local midnight rollover (the standalone Inbox view was retired in Phase AF:
 suggestions now auto-promote, so there is nothing left to triage).
 
-> **Unreleased:** the section precedence is changing from Routine › New Today ›
-> Scheduled › Open to **Routine › Scheduled › New Today › Open**, so scheduling a task
-> the same day it arrived moves its card to **Scheduled** immediately instead of leaving
-> it in New Today until midnight. New Today then means *arrived today and still needs a
-> decision*. See [Unreleased on this branch](#unreleased-on-this-branch).
+Section precedence is **Routine › Scheduled › New Today › Open**, so scheduling a task
+the same day it arrived moves its card to **Scheduled** immediately rather than leaving
+it in New Today until midnight. New Today therefore means *arrived today and still needs
+a decision*.
 
 | Light | Dark |
 |-------|------|
@@ -212,9 +220,9 @@ classDiagram
         +int recurrenceHorizonDays
         +string planningMode  basic|smart
         +string trustMode  cautious|balanced|hands_off
-        +string fillOrder  priority|overdue|new_today †
-        +int memoryWindowDays  1-30, reads AHEAD †
-        +int emailLookbackDays  1-90, reads BACK †
+        +string fillOrder  priority|overdue|new_today
+        +int memoryWindowDays  1-30, reads AHEAD
+        +int emailLookbackDays  1-90, reads BACK
         +bool autoFillWorkday
         +bool autoDefenseEnabled
     }
@@ -605,9 +613,6 @@ classDiagram
 > spans several tables: `entity_tags` (task · time block · routine) and
 > `entity_categories` (task · time block). `services/tags.ts` owns every entity-delete
 > path, and the orphan-free tests are the gate.
->
-> **†** marks fields that are **not yet in `main`** — see
-> [Unreleased on this branch](#unreleased-on-this-branch).
 
 ### How the server finds and connects to the database
 
@@ -641,8 +646,7 @@ no `.sql` files, no external tool.
 Migrations produce the tables below. The authoritative, ordered migration list — and
 therefore the current head — is
 [`server/src/db/migrations/index.ts`](server/src/db/migrations/index.ts); at the time
-of writing (2026-08-01) `main` is at `0146_ingest_gmail_15m`, and
-`0147_ingest_windows` is [unreleased](#unreleased-on-this-branch).
+of writing (2026-08-13) `main` is at `0147_ingest_windows`.
 
 | Table | Purpose |
 |---|---|
@@ -665,7 +669,7 @@ of writing (2026-08-01) `main` is at `0146_ingest_gmail_15m`, and
 | `day_types` · `day_of_week_map` · `day_assignments` | Which day-type a date is (0068): a per-date assignment beats the weekly map, which beats the weekend heuristic. The resolved key selects the `pattern_blocks` windows Auto places into |
 | `tag_prefs` | Per-owner × per-tag config, partitioned by `kind` (`direction` \| `category`): shared `color_token`/`default_minutes`, plus direction-only `auto_fill`/`reminder_offsets`/`icon_shape`; merged from `pattern_prefs` + `category_prefs` (0097). `category` rows are the six Balance-dimension hues (0134) |
 | `flight_plan` | Staged task list for the two-step Auto (select → schedule); composite PK `(owner_id, task_id)` with `owner_id` `TEXT NOT NULL` (0093) |
-| `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (materialization ceiling, default 7; 0091), `sleep_hours_per_week` (default 63 — reserved as unschedulable; 0128), and the **ingestion windows** `memory_window_days` / `email_lookback_days` (**unreleased**, 0147 — see [below](#unreleased-on-this-branch)) |
+| `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (materialization ceiling, default 7; 0091), `sleep_hours_per_week` (default 63 — reserved as unschedulable; 0128), and the **ingestion windows** `memory_window_days` / `email_lookback_days` (0147) |
 | `app_config` | Server-owned singleton config set in-app rather than via env — Google connection setup + the auto-provisioned Web Push VAPID keypair (0124) |
 | `life_priorities` | Life-priorities self-audit per (owner, category) — satisfaction · importance · target hours/week; backs `/priorities` + `/balance` (0127). `/balance` also joins tasks by their `entity_categories` to show each dimension's related open tasks (0134) |
 | `scheduled_jobs` | Croner job registry (name, cron expression, enabled) |
@@ -858,7 +862,7 @@ planner place it on your calendar — no cloud round-trip, all on-device.
   inline (embedding-based when available) and **auto-promoted into real tasks** at the
   end of each run (Phase AF); they land in the **New Today** section at the top of the
   Tasks view, and the staging rows are kept as an audit/dedup trail
-- **Ingestion windows** *(unreleased — see [below](#unreleased-on-this-branch))* — two
+- **Ingestion windows** — two
   per-owner settings bounding how much of each source a pull reads: **Look ahead**
   (`memory_window_days`, 1–30, default 2) for the Companion Memory pull, and **Look back**
   (`email_lookback_days`, 1–90, default 7) for a Gmail ingest. They point in opposite
@@ -1093,10 +1097,9 @@ A few properties worth calling out, because they are what make the loop safe:
   whole reactive path is opt-out per owner via `auto_defense_enabled`.
 - **Where the card lands is derived, never stored.** A task's Tasks-tab section is
   recomputed from `created_at`, its placement, and today's date — there is no section
-  column and no job that moves anything. *Unreleased:* placing a task now moves it out of
-  **New Today** on placement rather than at midnight, and `created_at` is normalized as
-  UTC on both ends so an evening-created task lands in the right day. See
-  [Unreleased on this branch](#unreleased-on-this-branch).
+  column and no job that moves anything. Placing a task moves it out of **New Today** on
+  placement rather than at midnight, and `created_at` is normalized as UTC on both ends so
+  an evening-created task lands in the right day.
 
 ## Scheduling system
 
@@ -1148,7 +1151,7 @@ flowchart TD
     P15 --> P175["Pass 1.75 · Natural-language hint windows<br/>a same-day instruction outranks a recurring window<br/>HARD: a full window leaves the task unplaced"]
     P175 --> P2A["Pass 2a · Direction windows for the day-type<br/>pattern_blocks, union, earliest first<br/>honours the per-direction auto_fill gate"]
     P2A --> P2B{auto_fill_workday on?}
-    P2B -->|yes| P2BB["Pass 2b · Workday fallback<br/>ordered by daily_plan, else by fill_order<br/>priority-first · overdue-first · new-today-first †"]
+    P2B -->|yes| P2BB["Pass 2b · Workday fallback<br/>ordered by daily_plan, else by fill_order<br/>priority-first · overdue-first · new-today-first"]
     P2B -->|no| U
     P2BB --> U[Anything still unplaced<br/>reverts to the open backlog]
 
@@ -1169,9 +1172,7 @@ flight plan. It only applies to Pass 2b, and only when the day has *no* authored
 |---|---|---|
 | `priority` | Priority | P1 first, then due date |
 | `overdue` | Due Date | Soonest-due first, then priority |
-| `new_today` **†** | New Today | Today's arrivals take the earliest slots; each half stays deadline-first |
-
-**†** unreleased — see [Unreleased on this branch](#unreleased-on-this-branch).
+| `new_today` | New Today | Today's arrivals take the earliest slots; each half stays deadline-first |
 
 **The gap math** (`server/src/engine/scheduler.ts`) is small and shared by every path:
 
@@ -1257,10 +1258,10 @@ all of them are listed and manually runnable from the **Jobs** view.
 | Job | Cron | What it does |
 |---|---|---|
 | `fire_reminders` | `* * * * *` | Claim-by-UPDATE dispatcher — fires each due reminder **exactly once**, in-app via SSE and via Web Push |
-| `ingest_gmail` | `*/15 * * * *` | Mine email for action items into `possible_tasks`. Reads from the `(owner, google, account)` watermark — **unreleased:** floored at `now − email_lookback_days` so a first run, or the first run after an outage, can't replay months of mail |
+| `ingest_gmail` | `*/15 * * * *` | Mine email for action items into `possible_tasks`. Reads from the `(owner, google, account)` watermark, floored at `now − email_lookback_days` so a first run, or the first run after an outage, can't replay months of mail |
 | `sync_calendar` | `*/15 * * * *` | Two-way calendar reconcile keyed on event identity + etag; requests a reflow when anything changed |
 | `ingest_gcal` | `*/30 * * * *` | Extract **tasks** from calendar text (meeting blocks are mirrored by `sync_calendar`, not here) |
-| `memory_suggest` | `0 */6 * * *` | Stage upcoming Companion Memory events as suggestions (needs `memory_pull_enabled`). Looks 48h ahead — **unreleased:** that becomes the configurable `memory_window_days`, which the daily brief reads too |
+| `memory_suggest` | `0 */6 * * *` | Stage upcoming Companion Memory events as suggestions (needs `memory_pull_enabled`). Looks ahead by the configurable `memory_window_days` (default 2), which the daily brief reads too |
 | `tag_tasks` | `0 * * * *` | Tag untagged top-level open tasks |
 | `purge_objectives` | `0 * * * *` | Reap objectives whose 48-hour purge deadline has passed |
 | `reset_routines` | `0 0 * * *` | Midnight routine rollover |
@@ -1329,16 +1330,16 @@ them at different moments and can produce a corrupt or inconsistent database. Us
 `pnpm snapshot` or Litestream — both open a proper SQLite connection and export a
 consistent snapshot.
 
-## Unreleased on this branch
+## Latest change set — migration 0147
 
-Everything above describes the app **as it runs on `main`** (migration head `0146`). One
-change set is finished but **not yet merged** — migration `0147_ingest_windows`. It is
-marked **†** or *unreleased* wherever it appears above; this section is the single
-description of it.
+Everything above describes the app **as it runs on `main`**, which is at migration head
+`0147_ingest_windows`. This section is the single narrative description of that change
+set: three related changes to *how work arrives and gets ordered*, plus one real bug
+found on the way. The through-line is arrival time.
 
 ### Ingestion windows — two settings, pointing in opposite directions
 
-How much of each upstream source a pull actually reads becomes per-owner configuration on
+How much of each upstream source a pull actually reads is per-owner configuration on
 `scheduling_prefs`, surfaced in **Settings → Connections**:
 
 | Setting | Range | Default | Direction | What it bounds |
@@ -1352,11 +1353,11 @@ happened — while an inbox is only ever read backwards.
 
 - **The memory half is a no-op upgrade.** The default `2` is exactly the 48 hours that
   `agents/memory-suggest.ts` and `agents/summarize.ts` each hardcoded separately;
-  `memoryWindowMs()` becomes the single authority both read, so one setting now moves the
+  `memoryWindowMs()` is the single authority both read, so one setting moves the
   suggestion agent and the daily brief together.
 - **The email half is not.** The Gmail `since` cursor previously had **no floor at all**,
   so a first ingest — or the first run after a long outage — read as far back as the MCP
-  Gmail tool would return. `since` becomes `max(watermark, now − N days)`. On the healthy
+  Gmail tool would return. `since` is now `max(watermark, now − N days)`. On the healthy
   15-minute cadence the watermark is always newer, so the steady state is unchanged.
 - **Range-checked once, in `services/prefs.ts`**, so REST and GraphQL cannot drift.
   Out-of-range **rejects** (422 / `BAD_USER_INPUT`) rather than clamping — a silently
@@ -1369,7 +1370,7 @@ happened — while an inbox is only ever read backwards.
 
 ### Tasks view — Scheduled now outranks New Today
 
-Section membership precedence changes from **Routine › New Today › Scheduled › Open** to
+Section membership precedence changed from **Routine › New Today › Scheduled › Open** to
 **Routine › Scheduled › New Today › Open**. Scheduling a task the same day it was created
 moves its card to **Scheduled** immediately; previously it sat in New Today until local
 midnight, so placing it produced no visible movement and the section read as "created
@@ -1382,7 +1383,7 @@ tasks back out of New Today under the old order, and the partition now drains th
 
 ### Scheduling — a third fill order, "New Today"
 
-`fill_order` gains `new_today` alongside Priority and Due Date in the flight-plan toggle:
+`fill_order` gained `new_today` alongside Priority and Due Date in the flight-plan toggle:
 today's arrivals take the earliest slots, and **each half stays deadline-first**, so it
 layers on top of `overdue` rather than replacing it. It is keyed on the owner's **real
 today**, not the date being placed — keying it to `date` would make the mode a silent
@@ -1391,7 +1392,7 @@ no-op on every day but today, since nothing is ever created on a future date.
 It is wired into **both** ordering paths, which is necessary rather than thorough:
 `placeFlightPlan` skips its own `fill_order` branch whenever a `daily_plan` exists for the
 day, so a value only the placer understood would be inert on exactly the days the owner
-planned deliberately. `deterministicIndices` gains a matching band (after theme/memory,
+planned deliberately. `deterministicIndices` carries a matching band (after theme/memory,
 before deadline/priority) — the same parity the existing two values already have.
 
 ### Bug fix — `CURRENT_TIMESTAMP` was being parsed as local time
@@ -1826,7 +1827,7 @@ All from the repo root:
 | POST/DELETE | `/api/push/subscribe` | Register / remove a browser push subscription |
 | GET/POST/DELETE | `/api/reminders` · POST `/api/reminders/:id/snooze` | Reminders CRUD + snooze |
 | GET | `/api/jobs` · POST `/api/jobs/:id/run` | List / manually run background jobs. The Jobs view's **Run all** button is client-side sugar — it loops this same per-job endpoint over every listed job; no separate batch route |
-| GET/PATCH | `/api/prefs` | Scheduling preferences (incl. `recurrence_horizon_days`; a shorten auto-prunes and returns `pruned` count). **Unreleased:** also carries `memory_window_days` (1–30) and `email_lookback_days` (1–90); an out-of-range value is **rejected with a 422**, never clamped, so the Settings field can't show a number the server didn't store |
+| GET/PATCH | `/api/prefs` | Scheduling preferences (incl. `recurrence_horizon_days`; a shorten auto-prunes and returns `pruned` count). Also carries `memory_window_days` (1–30) and `email_lookback_days` (1–90); an out-of-range value is **rejected with a 422**, never clamped, so the Settings field can't show a number the server didn't store |
 | POST | `/api/planner/clear` | Preview (`dry_run`) or apply a Clear Date Range — bounded suppresses just that window, open-ended permanently caps the rule; snapshots + audits on apply (Phase P) |
 | GET/POST | `/api/memory` | Companion Memory sync state |
 | GET | `/api/llm/status` · `/api/integrations` | Ollama & integration health |

@@ -12,7 +12,7 @@ vi.mock('../src/mcp/ollama.js', async (importOriginal) => {
   };
   return {
     ...mod,
-    isAvailable: vi.fn(async () => false),
+    isReady: vi.fn(async () => false),
     generate: vi.fn(down),
     generateJson: vi.fn(down),
     embed: vi.fn(down),
