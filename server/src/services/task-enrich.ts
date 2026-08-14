@@ -2,6 +2,7 @@ import { store } from '../db/store.js';
 import { generateJson } from '../mcp/ollama.js';
 import { graphSearch, memoryMode, type MemoryNode } from '../connectors/memory.js';
 import { directionGuide, isMotivation, MOTIVATION_RUBRIC } from '../agents/rubric.js';
+import { constrainToVocabulary, constrainOne, type EnrichOut } from '../agents/constrain.js';
 import { applyMachineMotivation } from './motivation.js';
 import {
   resolveTagId, taskHasLevel1Direction,
@@ -49,27 +50,8 @@ export interface EnrichTaskResult {
   sources?: string[];
 }
 
-/**
- * Constrain a model's category answer to the owner's real vocabulary: canonical casing
- * from the vocab, unknown names dropped, deduped, capped at 3 (the entity_categories
- * limit). Exported for its unit tests — the same never-invent rule as every classifier.
- */
-export function constrainCategories(raw: unknown, vocabulary: string[]): string[] {
-  if (!Array.isArray(raw)) return [];
-  const byLower = new Map(vocabulary.map((c) => [c.toLowerCase(), c]));
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const v of raw) {
-    if (out.length >= 3) break;
-    if (typeof v !== 'string') continue;
-    const canonical = byLower.get(v.trim().toLowerCase());
-    if (canonical && !seen.has(canonical)) {
-      seen.add(canonical);
-      out.push(canonical);
-    }
-  }
-  return out;
-}
+/** The entity_categories limit — how many category names one task may carry. */
+const MAX_CATEGORIES = 3;
 
 // SQL at module level, prepared inside the functions — a module-level store() call
 // would throw when this module loads before db/index installs the backend (§5.5).
@@ -125,13 +107,6 @@ function describeNodes(nodes: MemoryNode[]): string {
       return `- ${n.name} (${n.entityType})${desc ? `: ${desc.slice(0, 200)}` : ''}`;
     })
     .join('\n');
-}
-
-interface EnrichOut {
-  description?: unknown;
-  direction?: unknown;
-  categories?: unknown;
-  motivation?: unknown;
 }
 
 /**
@@ -215,9 +190,10 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
   }
 
   // Direction: constrained to the owner's real direction tags, canonical casing from the
-  // vocabulary — same never-invent rule as every other classifier here.
-  if (needsDirection && typeof out.direction === 'string') {
-    const canonical = directions.find((d) => d.toLowerCase() === out.direction!.toString().trim().toLowerCase());
+  // vocabulary — literally the same never-invent rule as every other classifier
+  // (agents/constrain.ts), not a restatement of it.
+  if (needsDirection) {
+    const canonical = constrainOne(out.direction, directions);
     // Re-check the guard: a concurrent edit may have given the task a direction since.
     if (canonical && !await taskHasLevel1Direction(taskId, owner)) {
       await store().prepare(INSERT_DIRECTION).run(taskId, await resolveTagId(canonical, owner));
@@ -229,7 +205,7 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
   // Categories (§4.5's "category call"): same fill-blanks-only doctrine, on the
   // entity_categories axis (Phase B) — NEVER entity_tags, where a category must not leak.
   if (needsCategories) {
-    const picked = constrainCategories(out.categories, categories);
+    const picked = constrainToVocabulary(out.categories, categories, MAX_CATEGORIES);
     // Names → the owner's category-tag ids; then re-check the guard — a concurrent edit
     // may have given the task categories since the read above, and setEntityCategories
     // REPLACES the set, so writing over a user's picks would be destructive, not additive.

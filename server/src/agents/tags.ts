@@ -1,5 +1,6 @@
 import { generateJson } from '../mcp/ollama.js';
 import { directionGuide } from './rubric.js';
+import { constrainToVocabulary } from './constrain.js';
 
 /**
  * Best-effort LLM tag suggestion for the New Task wizard and the Tasks Auto-tag sweep,
@@ -38,10 +39,12 @@ export async function suggestTags(
         `List: ${JSON.stringify(vocabulary)}. Task: "${title.trim()}"`,
       { tier: 'fast', temperature: 0.1, timeoutMs: 15_000 },
     );
-    const allow = new Set(vocabulary);
-    return Array.isArray(out.tags)
-      ? out.tags.filter((t): t is string => typeof t === 'string' && allow.has(t))
-      : [];
+    // The allow-list IS the shared never-invent rule (agents/constrain.ts) — same
+    // function the quick-add overlay and the memory pass use, so "what stops the model
+    // inventing a tag" has exactly one answer. This surface caps nothing of its own:
+    // after the case-insensitive dedupe an answer cannot exceed the vocabulary's own
+    // size, so `vocabulary.length` is the no-op ceiling it has always had.
+    return constrainToVocabulary(out.tags, vocabulary, vocabulary.length);
   } catch {
     return []; // Ollama down / unparseable → no suggestions, never throws
   }

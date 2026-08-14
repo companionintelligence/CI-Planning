@@ -4,6 +4,7 @@ import {
   directionGuide, isTimeOfDay, titleSuggestsComplex, isMotivation,
   PRIORITY_RUBRIC, DURATION_RUBRIC, TIME_OF_DAY_RUBRIC, COMPLEXITY_RUBRIC, MOTIVATION_RUBRIC,
 } from './rubric.js';
+import { constrainToVocabulary, constrainOne, type EnrichOut } from './constrain.js';
 
 /**
  * Optional best-effort overlay on the deterministic parse: a small local model
@@ -43,18 +44,6 @@ export interface QuickVocab {
   others: string[];
 }
 
-interface EnrichOut {
-  estimatedMinutes?: number | null;
-  priority?: number | null;
-  direction?: string | null;
-  tags?: unknown;
-  categories?: unknown;
-  timeOfDay?: unknown;
-  timeOfDayReason?: unknown;
-  isComplex?: unknown;
-  motivation?: unknown;
-}
-
 /**
  * Pure merge of the model's suggestion onto the deterministic parse — exported
  * for unit tests. Constrained: `direction` must name an existing direction tag
@@ -73,52 +62,33 @@ export function mergeEnrichment(parsed: ParsedQuick, out: EnrichOut, vocab: Quic
 
   // Direction: only when the entry didn't already name one of the owner's
   // direction tags; the model's pick must match an existing direction (canonical
-  // casing comes from the vocabulary, not the model).
-  const dirByLower = new Map(vocab.directions.map((d) => [d.toLowerCase(), d]));
-  const hasDirection = parsed.tags.some((t) => dirByLower.has(t.toLowerCase()));
-  if (!hasDirection && typeof out.direction === 'string') {
-    const canonical = dirByLower.get(out.direction.trim().toLowerCase());
+  // casing comes from the vocabulary, not the model — agents/constrain.ts).
+  const hasDirection = parsed.tags.some((t) => constrainOne(t, vocab.directions) !== null);
+  if (!hasDirection) {
+    const canonical = constrainOne(out.direction, vocab.directions);
     if (canonical && !have.has(canonical.toLowerCase())) {
       tags.push(canonical);
       have.add(canonical.toLowerCase());
     }
   }
 
-  // Secondary tags: existing non-direction tags only, max two, deduped.
-  const otherByLower = new Map(vocab.others.map((t) => [t.toLowerCase(), t]));
-  if (Array.isArray(out.tags)) {
-    let added = 0;
-    for (const raw of out.tags) {
-      if (added >= 2) break;
-      if (typeof raw !== 'string') continue;
-      const canonical = otherByLower.get(raw.trim().toLowerCase());
-      if (canonical && !have.has(canonical.toLowerCase())) {
-        tags.push(canonical);
-        have.add(canonical.toLowerCase());
-        added++;
-      }
-    }
+  // Secondary tags: existing non-direction tags only, max two, deduped. Tags the parse
+  // already carries are withdrawn from the OFFERED vocabulary rather than filtered out
+  // afterwards, so a name the model merely echoes back can never spend one of the two
+  // slots — the cap counts tags actually ADDED, as it always has.
+  const offered = vocab.others.filter((t) => !have.has(t.toLowerCase()));
+  for (const canonical of constrainToVocabulary(out.tags, offered, 2)) {
+    tags.push(canonical);
+    have.add(canonical.toLowerCase());
   }
 
   // Categories (Phase B): 1–3 of the owner's category names — its OWN axis, never
   // mixed into `tags` (a model pick of "finance" must become a category, not an
-  // intention). Same constrained-vocabulary rule: canonical casing from the vocab,
-  // unknown names dropped, deduped, capped at 3. A parse that already carries
-  // categories (future syntax) wins.
+  // intention). Same constrained-vocabulary rule, same function. A parse that already
+  // carries categories (future syntax) wins.
   let categories = parsed.categories;
-  if (!categories?.length && Array.isArray(out.categories)) {
-    const catByLower = new Map((vocab.categories ?? []).map((c) => [c.toLowerCase(), c]));
-    const seen = new Set<string>();
-    const picked: string[] = [];
-    for (const raw of out.categories) {
-      if (picked.length >= 3) break;
-      if (typeof raw !== 'string') continue;
-      const canonical = catByLower.get(raw.trim().toLowerCase());
-      if (canonical && !seen.has(canonical.toLowerCase())) {
-        picked.push(canonical);
-        seen.add(canonical.toLowerCase());
-      }
-    }
+  if (!categories?.length) {
+    const picked = constrainToVocabulary(out.categories, vocab.categories ?? [], 3);
     if (picked.length) categories = picked;
   }
 
@@ -197,8 +167,7 @@ export async function enrichQuick(
   // yielded none, ask once more with a single-field prompt — small models answer a
   // narrow question far more reliably than a wide one. Still constrained: an
   // invalid answer is dropped by the same merge, never invented.
-  const dirLower = new Set(vocab.directions.map((d) => d.toLowerCase()));
-  const hasDirection = merged.tags.some((t) => dirLower.has(t.toLowerCase()));
+  const hasDirection = merged.tags.some((t) => constrainOne(t, vocab.directions) !== null);
   if (!hasDirection && vocab.directions.length > 0) {
     const retry = await generateJson<{ direction?: string | null }>(
       `Which area of life does this task belong to? Answer with JSON ` +
