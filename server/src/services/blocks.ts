@@ -494,7 +494,17 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
   // edit their title or time. The next sync cycle will overwrite any local change
   // anyway; rejecting here prevents silent drift and a confusing UX. Scoped by
   // owner_id too (defense-in-depth; the ownership check above already gates this).
-  if (input.title !== undefined || input.start_at !== undefined || input.end_at !== undefined) {
+  //
+  // Phase 1 (decision 1): nor may they UNLOCK one. A synced event is L00 — its
+  // calendar owns its time and the scheduler only routes around it. The client
+  // renders its source in place of a lock toggle, and this makes that a real
+  // invariant rather than a UI convention: without it, "cannot be unlocked" would
+  // hold only for callers that happen to use our UI. Re-LOCKING stays allowed, since
+  // it is a no-op on a row that is already locked.
+  if (
+    input.title !== undefined || input.start_at !== undefined || input.end_at !== undefined ||
+    input.is_locked === false
+  ) {
     const isInboundBlock = await store()
       .prepare(`SELECT 1 FROM external_events WHERE block_id = ? AND owner_id = ? AND direction = 'inbound'`)
       .get(id, ownerId);

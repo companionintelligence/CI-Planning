@@ -10,6 +10,8 @@ import { activeTask, activeBlock, activeEntity, clearActiveEntity, setActiveTask
 import { blocks, tasks, taskOf, tags, showToast } from '../stores/index.js';
 import { api, type Task, type Block, type Tag } from '../lib/api.js';
 import { displayTag } from '../lib/tag-tax.js';
+import { LockToggle } from './LockToggle.js';
+import { lockAffordance } from '../lib/lock.js';
 
 const PRIORITY_NAME: Record<number, string> = { 1: 'High', 2: 'Medium', 3: 'Low' };
 
@@ -146,6 +148,12 @@ function BlockPanel(props: { block: Block }) {
           </Group>
         )}
       </Show>
+      {/* Phase 1 — lock state is universal: every scheduled item shows it here, and
+          the owner's own blocks toggle it. A synced event shows its source instead
+          of a control (decision 1). */}
+      <Group label={lockAffordance(b()) === 'source' ? 'Source' : 'Mobility'}>
+        <LockToggle block={b()} />
+      </Group>
     </div>
   );
 }
