@@ -33,6 +33,7 @@
  * can't leak rows into the user's staging area.
  */
 import { store } from '../db/store.js';
+import { AUTO_PLACED_SQL } from './mobility.js';
 import { placeFlightPlan } from './autoplan.js';
 import { serverTimezone, utcDayBounds, localDateInTZ } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
@@ -85,7 +86,7 @@ function snapshotAutoBlocks(owner: string, dayStartISO: string, dayEndISO: strin
       `SELECT id, task_id, start_at, end_at, is_locked, status, last_moved_at
          FROM time_blocks
         WHERE owner_id = ? AND task_id IS NOT NULL
-          AND is_auto = 1 AND block_kind = 'task' AND source_kind = 'agent'
+          AND ${AUTO_PLACED_SQL}
           AND start_at < ? AND end_at > ?
           AND status NOT IN ('completed', 'skipped', 'cancelled', 'missed')`
     )
@@ -415,7 +416,7 @@ export async function sweepMissedBlocks(
     .prepare(
       `SELECT id, task_id FROM time_blocks
         WHERE owner_id = ? AND task_id IS NOT NULL
-          AND is_auto = 1 AND block_kind = 'task' AND source_kind = 'agent'
+          AND ${AUTO_PLACED_SQL}
           AND status = 'planned'
           AND end_at <= ?
           AND start_at < ? AND end_at > ?`
