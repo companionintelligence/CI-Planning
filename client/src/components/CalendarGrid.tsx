@@ -31,8 +31,22 @@ const MIN_CHIP_PX = 18;
 // A pointer move under this many px is treated as a click (open the add wizard).
 const CLICK_PX = 5;
 
+/**
+ * Width (px) of a container's thick coloured left edge. This is the Calendar's
+ * stand-in for the Planner's solid category label cell (`CAT_WIDTH_PX = 104`):
+ * both are the container's label region, and in both views a member chip is framed
+ * in the *task region* to the right of it. The Planner's literal 104px cannot be
+ * reused here — a week column floors at 7rem, so a 104px inset would leave ~8px of
+ * chip — but the geometry (label cell on the left, members tiling the remainder) is
+ * the same one, at Calendar scale.
+ */
+const CONTAINER_EDGE_PX = 15;
+
+/** Gutter (px) kept to the right of each chip so neighbours don't touch. */
+const CHIP_GAP_PX = 2;
+
 /** A block placed in the overlap layout: vertical extent + horizontal column slot. */
-interface Placed {
+export interface Placed {
   block: Block;
   top: number;     // minutes into day
   height: number;  // minutes
@@ -89,6 +103,70 @@ export function layoutBlocks(blocks: Block[], dayStr: string): Placed[] {
   return out;
 }
 
+/** A Time-Block container drawn on the minute axis. Matches the server's rule —
+ * `isValidParent` only accepts `block_kind = 'timeblock'` as a parent — and the
+ * Planner's `containers()`, so all three agree on what "container" means. */
+const isContainer = (b: Pick<Block, 'block_kind' | 'all_day'>): boolean =>
+  b.block_kind === 'timeblock' && isTimed(b);
+
+/** A day's blocks split into the top-level pass and each container's members. */
+export interface Containment {
+  /** Containers + loose blocks. This pass alone drives conflict highlighting. */
+  top: Block[];
+  /** Container block id → the member blocks nested inside it. */
+  membersOf: Map<string, Block[]>;
+}
+
+/**
+ * Split a day's blocks into containers-and-loose (top level) versus members.
+ *
+ * A block is a member when its `parent_block_id` names a container **drawn on this
+ * day**; an orphan whose parent isn't here stays top-level so it still renders
+ * rather than vanishing. This is the Planner's `isNested` rule
+ * (`Planner.tsx:731` — parent id ∈ the day's container ids), lifted so the Calendar
+ * can draw the same containment instead of tiling a member beside its own
+ * container and ringing the pair as a conflict.
+ */
+export function splitContainment(blocks: Block[]): Containment {
+  const containerIds = new Set(blocks.filter(isContainer).map((b) => b.id));
+  const top: Block[] = [];
+  const membersOf = new Map<string, Block[]>();
+  for (const b of blocks) {
+    const pid = b.parent_block_id;
+    if (pid != null && isTimed(b) && containerIds.has(pid)) {
+      const siblings = membersOf.get(pid);
+      if (siblings) siblings.push(b);
+      else membersOf.set(pid, [b]);
+    } else {
+      top.push(b);
+    }
+  }
+  return { top, membersOf };
+}
+
+/**
+ * Inline left/width for a chip: tiled across the day column when it's top-level, or
+ * framed inside its container's task region when it's a member. The nested branch
+ * mirrors the Planner's `chipFrame` (`Planner.tsx:96`) — origin past the label cell,
+ * the remaining region split into the chip's own overlap columns — with the
+ * container's share of the column standing in for the Planner's full width.
+ */
+export function chipFrame(p: Placed, container?: Placed): { left: string; width: string } {
+  if (!container) {
+    return {
+      left: `${(p.col / p.cols) * 100}%`,
+      width: `calc(${100 / p.cols}% - ${CHIP_GAP_PX}px)`,
+    };
+  }
+  const outerPct = 100 / container.cols;                    // container's width, % of the column
+  const originPct = (container.col / container.cols) * 100; // container's left, % of the column
+  const region = `(${outerPct}% - ${CONTAINER_EDGE_PX}px)`; // task region, right of the label edge
+  return {
+    left: `calc(${originPct}% + ${CONTAINER_EDGE_PX}px + ${p.col / p.cols} * ${region})`,
+    width: `calc(${region} / ${p.cols} - ${CHIP_GAP_PX}px)`,
+  };
+}
+
 function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 }
@@ -132,7 +210,12 @@ function NowLine(props: { day: string; state: () => AxisState }) {
 //   • TASK chip  → keeps its title; a click opens the task editor.
 //   • CONTAINER  → label hidden; a thick 15px colored left edge stands in for it,
 //                  revealing the name on hover (native `title`).
-function BlockChip(props: { placed: Placed; day: string; state: () => AxisState }) {
+//   • CONTAINER  → additionally drawn as an OUTLINE (transparent fill, 2px border),
+//                  so its members read as sitting inside it rather than on top of it.
+//   • MEMBER     → framed in its container's task region via `container`, and laid
+//                  out against its siblings only, so it can never ring as a conflict
+//                  with the container it belongs to.
+function BlockChip(props: { placed: Placed; day: string; state: () => AxisState; container?: Placed }) {
   const b = () => props.placed.block;
   // A configured connection colour wins over the block-kind palette: the owner set it
   // precisely so events from THIS calendar are identifiable at a glance.
@@ -143,9 +226,17 @@ function BlockChip(props: { placed: Placed; day: string; state: () => AxisState 
   // views disagree.
   const color = () => connectionColor(b()) ?? blockColorVar(b(), categoryPrefs()?.prefs);
   const texture = () => connectionTextureFor(b());
+  // Conflict = sharing a cluster in the pass this chip was laid out in. Top-level
+  // chips cluster against containers and loose blocks; a member clusters against its
+  // SIBLINGS only — so two tasks double-booked inside one Time Block still ring, but
+  // a member overlapping its own container never does. A foreign block overlapping a
+  // member also overlaps that member's container, so the collision still surfaces —
+  // on the container, which is the honest place for it.
   const conflict = () => props.placed.cols > 1;
   const done = () => ['completed', 'skipped'].includes(b().status);
   const isTask = () => isTaskBlock(b());
+  const container = () => isContainer(b());
+  const frame = () => chipFrame(props.placed, props.container);
   // Labelling is decided separately from interaction: a synced meeting shows its name
   // but is not clickable (there is no task behind it to open).
   const labelled = () => showsBlockLabel(b());
@@ -181,17 +272,22 @@ function BlockChip(props: { placed: Placed; day: string; state: () => AxisState 
   return (
    <Show when={extent()}>
     <div
-      class="absolute rounded-md overflow-hidden text-[11px] leading-tight border transition-colors select-none bg-card"
+      class="absolute overflow-hidden text-[11px] leading-tight transition-colors select-none"
       classList={{
         'opacity-40': done(),
         'ring-1 ring-amber-400/70': conflict(),
         'cursor-pointer': true,
+        // A container is an outline box wrapping its members — no card fill to paint
+        // over them, a 2px edge to read as an enclosure. Same treatment as the
+        // Planner's ContainerOutline, so a Time Block looks the same in both views.
+        'rounded-lg border-2': container(),
+        'rounded-md border bg-card': !container(),
       }}
       style={{
         top: `${topPx()}px`,
         height: `${heightPx()}px`,
-        left: `${(props.placed.col / props.placed.cols) * 100}%`,
-        width: `calc(${100 / props.placed.cols}% - 2px)`,
+        left: frame().left,
+        width: frame().width,
         // Solid card ground with the block colour on the border — the same treatment
         // the Planner chips use on Today, so one block reads identically in both views.
         // Previously a ~15% alpha tint, which made the same colour look weaker here.
@@ -199,7 +295,9 @@ function BlockChip(props: { placed: Placed; day: string; state: () => AxisState 
         // The thick edge STANDS IN for a missing label, so it applies only to chips
         // that render no title. Anything showing its name keeps the slim accent, which
         // also leaves the width for the text to read cleanly.
-        'border-left-width': labelled() ? '3px' : '15px',
+        // CONTAINER_EDGE_PX is the same width a member chip insets past, so the edge
+        // and the task region beside it always line up.
+        'border-left-width': labelled() ? '3px' : `${CONTAINER_EDGE_PX}px`,
       }}
       // The name always lives in the tooltip. For a container the thick left edge is
       // the affordance the owner asked for; the whole chip carries `title` so a hover
@@ -549,7 +647,20 @@ export function CalendarGrid(props: Props) {
         <TimeGutter state={axisState} class={STICKY_GUTTER} />
         <For each={props.days}>
           {(day) => {
-            const placed = createMemo(() => layoutBlocks(props.blocksByDay()[day] ?? [], day));
+            // Two passes, as the Planner does it: containers + loose blocks tile the
+            // column, then each container's members lay out (and overlap-cluster)
+            // inside that container alone. Before this split a member was swept into
+            // its own container's cluster, tiled beside it, and — since `cols > 1` is
+            // the conflict signal — ringed amber as if nested were a collision.
+            const split = createMemo(() => splitContainment(props.blocksByDay()[day] ?? []));
+            const placed = createMemo(() => layoutBlocks(split().top, day));
+            const nested = createMemo(() =>
+              placed().flatMap((c) => {
+                const members = split().membersOf.get(c.block.id);
+                if (!members?.length) return [];
+                return layoutBlocks(members, day).map((m) => ({ placed: m, container: c }));
+              }),
+            );
             return (
               <div
                 class="relative border-l border-surface-700/60"
@@ -561,6 +672,11 @@ export function CalendarGrid(props: Props) {
                 <HourLines state={axisState} />
                 <For each={placed()}>
                   {(p) => <BlockChip placed={p} day={day} state={axisState} />}
+                </For>
+                {/* Members render after their containers so they paint inside the
+                    outline rather than under it. */}
+                <For each={nested()}>
+                  {(n) => <BlockChip placed={n.placed} day={day} state={axisState} container={n.container} />}
                 </For>
                 <Show when={day === today()}>
                   <NowLine day={day} state={axisState} />
