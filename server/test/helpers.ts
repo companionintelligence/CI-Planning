@@ -4,6 +4,7 @@ import { buildApp } from '../src/app.js';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { status } from '../src/mcp/ollama.js';
+import { setInstalledModels } from '../src/lib/models.js';
 // NOTE: the data facade's SQLite backend is installed by src/db/index.ts on import, so
 // it is live for every test — including the many that never import this harness. Doing
 // it here as well was not enough: a test that imports a service directly would still
@@ -155,6 +156,34 @@ export async function api<T = any>(
   });
   const text = await res.text();
   return { status: res.status, body: text ? JSON.parse(text) : (undefined as T) };
+}
+
+/**
+ * Prime the installed-model cache from the live probe, so `isReady()` — and the production
+ * gates built on it — answer truthfully for the duration of one test. Returns a restore fn.
+ *
+ * status() deliberately skips setInstalledModels() under NODE_ENV=test, which is what keeps
+ * the rest of the suite on its deterministic degrade path. The side effect is that
+ * isInstalled() is false for every model here, so `status().ready` and isReady() are
+ * structurally false — and a test named for an LLM path silently gets the fallback instead.
+ * plan.ts's authorPlanOrder gates on isReady() (2e713fa, which replaced the old
+ * `available` predicate), so it returned 'deterministic' every time. ollama.ts names
+ * setInstalledModels() as the sanctioned way in for tests that need the real answer.
+ *
+ * Capabilities are left empty, which is safe rather than merely convenient: callers gate on
+ * ollamaAvailable() first, so every configured model is installed, and resolveConfiguredDetailed
+ * returns a configured-and-installed model as 'default' before it ever consults the
+ * capability-based auto-selector (models.ts:238). Priming therefore cannot change WHICH model
+ * runs — only whether isReady() tells the truth about it. Were that order to change, an empty
+ * capability list would stop generationCandidates() excluding 'thinking' models, which return
+ * "" under format:json.
+ *
+ * ALWAYS restore in a finally — a leaked cache turns auto-selection on for whatever runs next.
+ */
+export async function primeInstalledModels(): Promise<() => void> {
+  const s = await status();
+  setInstalledModels(s.models.map((name) => ({ name, capabilities: [], paramB: null })));
+  return () => setInstalledModels(null);
 }
 
 /**
