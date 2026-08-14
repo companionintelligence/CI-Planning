@@ -16,8 +16,15 @@ import { sqlite } from '../src/db/index.js';
 import { generate } from '../src/mcp/ollama.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { resetDb } from './helpers.js';
-import { renderCopy, SURFACES } from '../src/agents/render-copy.js';
-import { gateCopy, computeSignature, isRepetitive, trigramSimilarity } from '../src/agents/voice-gate.js';
+import { renderCopy, SURFACES, VOICE_RULES } from '../src/agents/render-copy.js';
+import {
+  gateCopy,
+  computeSignature,
+  isRepetitive,
+  trigramSimilarity,
+  BANNED_PHRASES,
+  BANNED_PHRASES_PROMPT,
+} from '../src/agents/voice-gate.js';
 
 const mockGenerate = generate as unknown as ReturnType<typeof vi.fn>;
 const OWNER = SYSTEM_OWNER;
@@ -88,6 +95,38 @@ describe('voice gate', () => {
     const b = computeSignature('a slow green turtle crawls low').trigrams;
     expect(trigramSimilarity(a, b)).toBeLessThan(0.6);
     expect(isRepetitive(computeSignature('a slow green turtle crawls low'), [computeSignature('the quick brown fox jumps high')])).toBe(false);
+  });
+});
+
+// ── The card the model is GIVEN vs. the list the gate ENFORCES ───────────────────
+// These two used to be hand-typed twice and had already drifted: `seamlessly` and
+// `lets` were enforced but never disclosed, so a model obeying its prompt was still
+// rejected — a wasted regeneration and, on a second miss, a fallback nobody could see.
+
+describe('the voice card discloses exactly what the gate enforces', () => {
+  it('every banned phrase appears in VOICE_RULES — the anti-drift invariant', () => {
+    expect(BANNED_PHRASES.every((p) => VOICE_RULES.includes(p))).toBe(true);
+  });
+
+  it('the card interpolates the derived list, so a new banned word needs no second edit', () => {
+    expect(VOICE_RULES).toContain(BANNED_PHRASES_PROMPT);
+    // Phrases and apostrophe forms are quoted so the run-on reads as discrete items.
+    expect(BANNED_PHRASES_PROMPT).toContain('"great job"');
+    expect(BANNED_PHRASES_PROMPT).toContain(`"you've got this"`);
+    expect(BANNED_PHRASES_PROMPT).toContain('leverage');
+  });
+
+  it('a "seamlessly" draft is gate-rejected AND the prompt it came from listed the word', async () => {
+    const draft = 'Your day flows seamlessly from 12:00.';
+    // The gate rejects it...
+    expect(gateCopy(draft, { required: [], recent: [], maxLen: 140 }).reason).toBe('banned');
+    // ...and the model was told so up front — it was not set up to fail.
+    mockGenerate.mockResolvedValue(draft);
+    const r = await renderCopy('timing_note', { planned_departure: '12:00' }, { ownerId: OWNER });
+    expect(r.source).toBe('fallback'); // rejected on both attempts
+    const firstPrompt = mockGenerate.mock.calls[0][0] as string;
+    expect(firstPrompt).toContain('seamlessly');
+    expect(firstPrompt).toContain('lets');
   });
 });
 

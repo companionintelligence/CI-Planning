@@ -6,6 +6,7 @@ import {
   gateCopy,
   computeSignature,
   isRepetitive,
+  BANNED_PHRASES_PROMPT,
   type Signature,
 } from './voice-gate.js';
 
@@ -190,12 +191,18 @@ export const SURFACES: Record<Surface, SurfaceConfig> = {
 };
 
 /** The Voice rules card, embedded in every prompt (§2V.4). Shape/length is per-surface
- *  (see lengthHint) so the same voice covers a one-line nudge and a short paragraph. */
-const VOICE_RULES = `You write app copy for a calm planning tool. Voice: warm, plain, brief.
+ *  (see lengthHint) so the same voice covers a one-line nudge and a short paragraph.
+ *
+ *  The banned list is INTERPOLATED from voice-gate.ts, never retyped: it used to be a
+ *  second hand-written copy, and it had already drifted — `seamlessly` and `lets` were
+ *  enforced by the gate but never disclosed here, so a model obeying this card could
+ *  still be rejected, burn its one regeneration (MODEL_ATTEMPTS), and push the surface
+ *  onto the template pool. Exported so the test suite can assert the invariant that the
+ *  drift can never come back: every BANNED_PHRASES entry appears in this card. */
+export const VOICE_RULES = `You write app copy for a calm planning tool. Voice: warm, plain, brief.
 Sentence case, contractions, verb-first. State the fact, then at most one light
 forward nudge. No praise, no confetti, no exclamation marks, no emoji.
-Never use: successfully, simply, just, unlock, leverage, seamless, empower,
-"great job", "keep it up", "you've got this", "let's". Reference the real numbers
+Never use: ${BANNED_PHRASES_PROMPT}. Reference the real numbers
 and names given; never invent. Output ONLY the copy — no preamble, no quotes.`;
 
 const MODEL_ATTEMPTS = 2; // initial draft + one regeneration (§2V.2: "regenerate once"; ceiling is ≤2 retries)
