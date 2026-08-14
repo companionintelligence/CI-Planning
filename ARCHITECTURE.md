@@ -929,6 +929,16 @@ flowchart LR
 
 ---
 
+## 10b. One connection surface
+
+Every provider's credentials live in **one** table (`connection_tokens`: `google`, `ci_memory`, fixture), and they are read through **one shape** — `ConnectionRecord` in `lib/connections.ts` — served by both `GET /api/connections` (all providers) and `GET /api/integrations` → `google.connections`. It replaced a `ConnectionHealth` / `ConnectionSummary` pair that each called itself "the locked contract" over the same rows. `status` is always the mapped `connected | expired | inactive`; the raw `connection_tokens.status` column never leaves the server. Decryption is opt-in (`listConnections(owner, { withExpiry })`) because resolving a token expiry costs a KEK load plus an AES-GCM open per row: the plain list does not decrypt at all, only the integrations card does. `mappedEventCount` is Google-only and **absent, not 0**, elsewhere. The SELECT behind the plain list names only safe columns — never `iv` / `auth_tag` / `ciphertext` / `key_version` — which the no-leak guards in `connections-unified.test.ts` and `connections-route.test.ts` assert on the serialized response.
+
+There is **one disconnect**: `DELETE /api/connections/:provider/:account` → `disconnectConnection()` (best-effort Google revoke, then hard-delete of the token row and its `outbound_queue` rows; for `ci_memory` it also clears the `scheduling_prefs.memory_account` label). The Google-specific duplicate route is gone, and `POST /api/memory/disconnect` delegates to the same function. Connecting stays provider-specific by nature — Google OAuth, CI-Portal SSO, and memory's pasted URL + key have nothing in common — so only **list / status / disconnect** unify. `GET /api/memory/status` remains for the pull/sync flags and creds source, which are not connection facts, but its connection block is sourced from `listConnections` so the two endpoints cannot disagree.
+
+Connector failures share **one error contract** as well: `ConnectorUnavailable` (`lib/connector-error.ts`) is the base of `OllamaUnavailable`, `McpUnavailable` and `MemoryUnavailable`, which keep their exact names and `.name` values. One `catch (err instanceof ConnectorUnavailable)` covers "a connector is down"; each specific class still narrows for callers that care which.
+
+---
+
 ## 11. Life-planning layer (Phase N)
 
 Phase N turns Companion Planning from a workday planner into a life planner.

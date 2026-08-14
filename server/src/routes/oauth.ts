@@ -10,7 +10,6 @@ import { loadKek, open } from '../lib/crypto/index.js';
 import { verifyOidcIdToken, type OidcClaims } from '../lib/auth/verifyOidcIdToken.js';
 import { base64url, s256 } from '../lib/auth/pkce.js';
 import { BaseOAuth2Client } from '../connectors/index.js';
-import { disconnectConnection } from '../lib/connections.js';
 import { buildGoogleScopes } from '../mcp/gmail-flag.js';
 
 /**
@@ -19,11 +18,11 @@ import { buildGoogleScopes } from '../mcp/gmail-flag.js';
  * BaseOAuth2Client.getAccessToken() returns a live, self-refreshing token. No live
  * MCP / calendar calls here (WP4).
  *
- * Routes (all under /api/oauth/google):
+ * Routes (all under /api/oauth/google) — CONNECT ONLY. Listing and disconnecting are
+ * provider-agnostic and live on /api/connections; the former GET /accounts (T13) and
+ * DELETE /accounts/:account (llm-7) duplicates of that surface are gone.
  *   GET    /start              → returns { url } for the SPA to navigate to (refused in test mode)
  *   GET    /callback           → exchanges the code, stores tokens, 302 to the SPA
- *   GET    /accounts           → list connected accounts (status only, no secrets)
- *   DELETE /accounts/:account  → revoke + delete the connection
  *
  * The callback is in requireAuth's PUBLIC_PREFIXES (Google redirects with no app
  * credential); it resolves the owner SOLELY from the matched oauth_states row (I2).
@@ -302,29 +301,11 @@ export function oauthRouter() {
     ctx.redirect(settingsRedirect('google=connected'));
   });
 
-  // ── DELETE /api/oauth/google/accounts/:account ──────────────────────────────
-  // Gated. Best-effort token revoke at Google, then delete the connection AND any
-  // pending outbound queue rows for it (I12) so a re-connect starts clean. The
-  // revoke+delete+queue-cleanup body lives in the shared disconnectConnection()
-  // (server/src/lib/connections.ts), which the generic DELETE /api/connections/
-  // :provider/:account route (T13 #349) also delegates to. This route keeps its
-  // original { disconnected: account } / 404 { error: 'account_not_found' } contract.
-  // (The former dead GET /accounts list route was removed in T13 — Settings sources
-  // the account list from GET /api/connections + /api/integrations.)
-  router.delete('/accounts/:account', async (ctx) => {
-    const ownerId = currentOwnerId();
-    const account = ctx.params.account;
-
-    const removed = await disconnectConnection(ownerId, 'google', account);
-    if (!removed) {
-      ctx.status = 404;
-      ctx.body = { error: 'account_not_found' };
-      return;
-    }
-
-    logger.info('OAuth connection removed', { provider: 'google', owner: ownerId });
-    ctx.body = { disconnected: account };
-  });
+  // (Two removed duplicates of the provider-agnostic connection surface: the dead
+  // GET /accounts list route went in T13 (#349), and DELETE /accounts/:account went in
+  // llm-7 — both routes only ever wrapped what DELETE /api/connections/google/:account
+  // and GET /api/connections already do, sharing the very same disconnectConnection()
+  // implementation. Settings uses the generic routes for every provider.)
 
   return router;
 }

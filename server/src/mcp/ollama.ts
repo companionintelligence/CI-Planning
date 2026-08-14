@@ -1,5 +1,6 @@
 import { config } from '../lib/config.js';
 import { logger } from '../lib/logger.js';
+import { ConnectorUnavailable } from '../lib/connector-error.js';
 import {
   resolveModel,
   resolveEmbedModel,
@@ -16,9 +17,9 @@ import {
 } from '../lib/models.js';
 
 /** Thrown when Ollama is unreachable or a model isn't available. Callers may catch and degrade. */
-export class OllamaUnavailable extends Error {
+export class OllamaUnavailable extends ConnectorUnavailable {
   constructor(message: string) {
-    super(message);
+    super('ollama', message);
     this.name = 'OllamaUnavailable';
   }
 }
