@@ -1,5 +1,5 @@
 import { Show, For, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
-import { Pencil, Repeat, Unlink, LockOpen, Lock, Trash2, X, Save, Star, Sparkles, Play, Plus, LayoutTemplate, Target } from 'lucide-solid';
+import { Pencil, Repeat, Unlink, Lock, Trash2, X, Save, Star, Sparkles, Play, Plus, LayoutTemplate, Target } from 'lucide-solid';
 import {
   tasks, taskOf, blocks, tags, patternPrefs, categoryPrefs, patterns, patternTypes, blockTemplates,
   setElementModal, showToast, refetchBlocks, refetchFlightPlan, refetchTasks,
@@ -17,6 +17,7 @@ import { PX_PER_MIN, minutesIntoDay } from '../lib/grid.js';
 import { type AxisState, yOf as axisYOf, axisHeightPx, visibleExtent, topCollapseEnd, bottomCollapseStart } from '../lib/day-axis.js';
 import { isImmovable } from '../lib/drag.js';
 import { ShapeIcon } from './ShapeIcon.js';
+import { LockToggle } from './LockToggle.js';
 
 function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
@@ -176,11 +177,6 @@ export function PlannerEntityCard(props: {
   async function detach() {
     const b = block(); if (!b) return;
     try { await api.blocks.update(b.id, { parent_block_id: null }); refetchBlocks(); showToast('Removed from Time Block', 'default'); }
-    catch (err) { showToast((err as Error).message, 'error'); }
-  }
-  async function unlock() {
-    const b = block(); if (!b) return;
-    try { await api.blocks.update(b.id, { is_locked: false }); refetchBlocks(); showToast('Unlocked', 'default'); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
   async function saveTemplate() {
@@ -411,8 +407,11 @@ export function PlannerEntityCard(props: {
           <Show when={block()?.parent_block_id != null}>
             <button onClick={detach} class="btn-ghost text-xs px-2 py-1"><Unlink size={13} /> Remove from Time Block</button>
           </Show>
-          <Show when={locked()}>
-            <button onClick={unlock} class="btn-ghost text-xs px-2 py-1"><LockOpen size={13} /> Unlock</button>
+          {/* Phase 1 — the card used to offer Unlock only when a block was already
+              locked, so there was no way to lock one from here. One toggle covers
+              both directions; a synced event renders its source instead (decision 1). */}
+          <Show when={block()}>
+            {(b) => <LockToggle block={b()} />}
           </Show>
           <Show when={block()}>
             <button onClick={remove} class="btn-ghost text-xs px-2 py-1 hover:text-destructive ml-auto"><Trash2 size={13} /> Remove</button>
