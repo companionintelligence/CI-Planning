@@ -25,6 +25,12 @@ describe('parseQuick — deterministic NL parse', () => {
     { in: 'asdfghjkl', title: 'asdfghjkl', tags: [] }, // junk ⇒ whole string is the title
     { in: '  spaced   out   title  ', title: 'spaced out title', tags: [] },
     { in: 'Ship #a #b #c', title: 'Ship', tags: ['a', 'b', 'c'] },
+    // Compound adjectives: "week-long" is the trip's DURATION, not its start. chrono reads
+    // the "a week" half, which used to both gut the title ("Plan -long trip to Japan") and
+    // invent a start date a week out. No date ⇒ these belong in the exact (dateless) table.
+    { in: 'Plan a week-long trip to Japan', title: 'Plan a week-long trip to Japan', tags: [] },
+    { in: 'Plan a day-long offsite', title: 'Plan a day-long offsite', tags: [] },
+    { in: 'Book an hour-long call #work', title: 'Book an hour-long call', tags: ['work'] },
   ];
   for (const c of exact) {
     it(`exact: "${c.in}"`, () => {
@@ -69,6 +75,22 @@ describe('parseQuick — deterministic NL parse', () => {
       expect(p.title.length).toBeGreaterThan(0);
     });
   }
+
+  // The guard above must not cost us genuine dates — it drops the compound match only,
+  // and keeps looking at the rest of the entry.
+  it('a genuine date still schedules, and still leaves the title', () => {
+    const p = parseQuick('Plan a trip next week', REF);
+    expect(p.scheduledFor).toBe('2026-06-22'); // a week on from Mon 2026-06-15
+    expect(p.title).toBe('Plan a trip'); // the date phrase is removed, as ever
+    expect(p.dueAt).toBeUndefined();
+  });
+
+  it('a compound adjective is skipped, not treated as end-of-search', () => {
+    // Two chrono matches: "a week" (bogus) then "next friday" (real). The real one wins.
+    const p = parseQuick('Plan a week-long trip next friday', REF);
+    expect(p.scheduledFor).toBe('2026-06-26'); // chrono's "next friday" = the FOLLOWING week's
+    expect(p.title).toBe('Plan a week-long trip');
+  });
 
   it('combines tags + estimate + time in one phrase', () => {
     const p = parseQuick('Ship release friday 5pm ~90m #eng', REF);
