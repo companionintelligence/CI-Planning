@@ -1,6 +1,8 @@
 import { Navigate, Route, Router, useLocation, useNavigate, useSearchParams } from '@solidjs/router';
 import { ErrorBoundary, Show, createEffect, createResource, createSignal, onCleanup, onMount } from 'solid-js';
-import { Plus, Cpu, Loader2, RefreshCw } from 'lucide-solid';
+import { Plus, Cpu, Loader2, RefreshCw, PanelLeft } from 'lucide-solid';
+import { DetailsDrawer, DetailsToggle } from './components/DetailsDrawer.js';
+import { navCollapsed, toggleNav, detailsOpen } from './stores/ui.js';
 import { Nav }      from './components/Nav.js';
 import { CloseRitual } from './components/CloseRitual.js';
 import { Login }    from './views/Login.js';
@@ -128,7 +130,7 @@ function Shell(props: { children?: any }) {
   }
 
   return (
-    <div class="flex h-screen overflow-hidden bg-surface-950">
+    <div class="flex h-screen overflow-hidden bg-surface-950" data-app-shell>
       <Nav />
       <main class="flex-1 flex flex-col overflow-hidden relative min-w-0">
         {/* Top bar */}
@@ -140,6 +142,19 @@ function Shell(props: { children?: any }) {
             only thing here that can be shortened without losing meaning) and every
             control is pinned with flex-shrink-0. */}
         <div class="flex-shrink-0 h-11 border-b border-surface-700/40 flex items-center px-4 md:px-6 gap-2 md:gap-3 bg-surface-900/50">
+          {/* Rail collapse — in the bar next to the edge it moves, not inside the rail
+              that collapses, which would carry the button off with it. Desktop only:
+              below md the rail is already hidden and the bottom tab bar navigates. */}
+          <button
+            type="button"
+            class="btn-icon flex-shrink-0 hidden md:grid"
+            aria-expanded={!navCollapsed()}
+            aria-label={navCollapsed() ? 'Expand navigation' : 'Collapse navigation'}
+            title={navCollapsed() ? 'Expand navigation' : 'Collapse navigation'}
+            onClick={toggleNav}
+          >
+            <PanelLeft size={13} />
+          </button>
           {/* Brand mark — hidden on desktop where the left rail shows it */}
           <div class="flex items-center gap-2 md:hidden min-w-0 flex-1">
             <div class="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 text-surface-950"
@@ -182,6 +197,7 @@ function Shell(props: { children?: any }) {
           <span class="text-xs font-mono text-foreground flex-shrink-0 whitespace-nowrap">
             {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
           </span>
+          <DetailsToggle />
         </div>
 
         {/* Phase L: persistent conflict banner — shown when sync ops lost a LWW race */}
@@ -216,6 +232,10 @@ function Shell(props: { children?: any }) {
           </ErrorBoundary>
         </div>
       </main>
+
+      {/* Docked details drawer — describes whatever entity is expanded. Mounted at the
+          shell so it is one surface for every route rather than per-view panels. */}
+      <DetailsDrawer />
 
       {/* Floating Create button — lifted above the bottom nav on mobile. On Today,
           Tasks, Calendar, Tags, Focus, and Jobs; other views own their own create
