@@ -53,7 +53,7 @@ export type MotivationLLM = (prompt: string) => Promise<unknown>;
 export async function classifyMotivationLLM(
   title: string,
   notes?: string | null,
-  llm: MotivationLLM = (p) => generateJson(p, { tier: 'fast', temperature: 0.1, timeoutMs: 15_000 }),
+  llm: MotivationLLM = (p) => generateJson(p, { purpose: 'classify' }),
 ): Promise<Motivation | null> {
   // Output shape first, rule adjacent to the field it governs (the 3B layout
   // doctrine measured in agents/quickadd.ts).

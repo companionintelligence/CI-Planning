@@ -310,9 +310,12 @@ export async function renderCopy(
     let raw: string;
     try {
       raw = await generate(buildPrompt(cfg, payload, recent, failure), {
+        // `voice` carries the temperature (microcopy wants variety; the gate enforces the
+        // floor) and the fast-tier timeout. Tier is per-surface, and a quality-tier surface
+        // needs a longer ceiling than the policy's — an explicit value overrides it.
+        purpose: 'voice',
         tier: cfg.tier,
-        temperature: 0.7, // microcopy wants variety; the gate enforces the floor
-        timeoutMs: cfg.tier === 'fast' ? 15_000 : 45_000,
+        ...(cfg.tier === 'quality' ? { timeoutMs: 45_000 } : {}),
       });
     } catch (err) {
       logger.warn('renderCopy: model unavailable, using fallback pool', { surface, err: (err as Error).message });

@@ -27,9 +27,11 @@ vi.mock('../src/mcp/ollama.js', async (importActual) => {
   return {
     ...actual,
     isAvailable: vi.fn(async () => ollamaUp),
-    generateJson: vi.fn(async (_prompt: string, opts?: { tier?: string; system?: string }) => {
+    generateJson: vi.fn(async (_prompt: string, opts?: { purpose?: string; system?: string }) => {
       if (opts?.system?.includes('explain a finished day plan')) return rationaleResp();
-      if (opts?.tier === 'quality') return { overall: judgeOverall, critique: 'looks coherent' };
+      // The judge names its purpose rather than its tier since llm-2 (`plan_judge` is the
+      // quality tier, `plan_generate` the fast one — the loop's generator ≠ evaluator split).
+      if (opts?.purpose === 'plan_judge') return { overall: judgeOverall, critique: 'looks coherent' };
       return llmOrder();
     }),
   };

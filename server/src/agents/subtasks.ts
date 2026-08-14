@@ -43,9 +43,10 @@ export async function suggestSubtasks(title: string, context = ''): Promise<stri
         `as a step. When false, subtasks is []. ` +
         (context ? `Background that may help: "${context.slice(0, 600)}". ` : '') +
         `Task: "${title.trim()}"`,
-      // Small tier: the boolean-gate refusal works at 3B (measured), and the 3B's steps
-      // for genuinely complex tasks were as good as the 8B's — no reason to pay 8B latency.
-      { tier: 'fast', temperature: 0.3, timeoutMs: 20_000 },
+      // `brainstorm` is a fast-tier policy: the boolean-gate refusal works at 3B (measured),
+      // and the 3B's steps for genuinely complex tasks were as good as the 8B's — no reason
+      // to pay 8B latency.
+      { purpose: 'brainstorm' },
     );
     // The model judged a breakdown unhelpful — honor it. (Explicit !== true: a missing or
     // junk field from an older/looser model falls through to the array, which older
