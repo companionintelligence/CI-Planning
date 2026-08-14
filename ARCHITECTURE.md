@@ -860,6 +860,46 @@ TTL alone cannot cover. Settings renders Ollama health in exactly one place — 
 card, beside the selects — with the same three states (unavailable / reachable-but-unusable
 / ready) it always had.
 
+**What a model is allowed to write is decided in two shared modules, not per agent.** A
+classifier's answer reaches the user's own taxonomy, so the rule that filters it is the one
+place a bug would be least visible and most damaging — a suggester that can mint new
+directions, categories or tags is not a suggester, it is a second author of the user's data.
+
+- **`agents/constrain.ts`** owns the never-invent rule: `constrainToVocabulary(raw, vocabulary,
+  max)` and `constrainOne(raw, vocabulary)` keep only names the owner actually has, in the
+  vocabulary's casing (never the model's), deduped case-insensitively and capped. Quick-add's
+  overlay, the Auto-tag sweep and the memory enrichment pass each used to carry their own copy,
+  and the copies had already drifted — one deduped on the canonical name, the other on its
+  lowercase, equivalent only while canonical names stay unique case-insensitively. Matching is
+  case-**insensitive** on purpose: a model answering `"finance"` for a `"Finance"` tag is right,
+  and dropping it silently was the older behaviour (`tags-suggest.test.ts` pins this, including
+  the downstream invariant that a canonical name survives `mergeTags`' case-sensitive filter).
+  The vocabulary itself is never re-derived here — it comes from `suggestibleVocabulary`
+  (`services/tags.ts`), which owns the muted rule for every suggester.
+- **`agents/rubric.ts`** owns the prompt text every classifier shares — priority, duration,
+  time-of-day, motivation, complexity, and the direction definitions. Each exists because a bare
+  label under-specifies the axis for a small local model: `"priority 1-5"` is not a rubric, so
+  the model guesses high and the axis degrades into noise. Kept in one module so quick-add, the
+  Auto-tag sweep and the memory pass cannot drift into three definitions of the same word.
+
+Two rules that layer carries are easy to undo by accident. **A shared definition must not name
+the caller's field**: `COMPLEXITY_DEFINITION` is field-neutral, and each caller supplies its own
+leading sentence — quick-add's `COMPLEXITY_RUBRIC` prepends `"Set isComplex true when …"`, while
+`agents/subtasks.ts` prepends `"isBreakdownUseful is true when …"`, because that model ignores
+instructions no schema field backs and a borrowed field name would disarm its refusal gate. And
+**the deterministic gate must not import from the generator**: `agents/voice-gate.ts` owns
+`BANNED_PHRASES` and derives the prompt text `render-copy.ts` interpolates, so the list the gate
+enforces and the list the model is shown cannot diverge — they had, by two words, which cost a
+regeneration every time a model used one of them.
+
+Prompt text is behaviour. Every string in those modules is sent to a model, so an edit is a
+behaviour change that needs re-measuring against a live model — and measuring means sampling,
+not one before/after pair: `llama3.2` at `temperature: 0.1` is **not** deterministic, and
+incidental fields drift between runs of a byte-identical prompt. Compare only the
+rubric-governed verdict, over N≥5 runs, and assert the completion is non-empty first — a
+`thinking`-capable model returns `""` under `format:"json"`, which reads exactly like
+"unchanged". `docs/complexity-rubric-measurement-2026-08.md` is the worked example.
+
 ### 7.1 Scheduled jobs (current)
 
 | Kind | Cron | Purpose |

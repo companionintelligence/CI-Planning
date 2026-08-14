@@ -1767,10 +1767,30 @@ ollama pull gemma3n:e4b            # OLLAMA_QUALITY — briefings / planning
 ollama pull nomic-embed-text       # OLLAMA_EMBED   — dedupe embeddings
 ```
 
-Already have other models? Skip the pulls and set `OLLAMA_FAST` / `OLLAMA_QUALITY` /
-`OLLAMA_EMBED` in `server/.env` to any name from `ollama list`. Check health anytime
-at `GET /api/llm/status` (`available` + installed `models`). A model that's configured
-but not pulled fails with an actionable `ollama pull …` error.
+**Already have other models? You usually don't need to pull anything.** The names above are
+last-resort defaults, not requirements: when a tier isn't pinned, the app selects a model from
+what `ollama list` actually reports — smallest for the fast tier (latency dominates triage),
+largest for the quality tier, and it excludes models that would fail silently. Set
+`OLLAMA_FAST` / `OLLAMA_QUALITY` / `OLLAMA_EMBED` in `server/.env` only when you want to force a
+specific one; a pin is then used verbatim, and an unpulled pin fails with an actionable
+`ollama pull …` error rather than being quietly swapped.
+
+Two selection rules worth knowing:
+
+- **`thinking`-capable models are never auto-selected for generation.** Under `format:"json"` such
+  a model can return an empty response with its reasoning diverted elsewhere, which reads exactly
+  like "the model had nothing to say" — so every AI feature would degrade silently. A pin or a
+  Settings override still forces one if you want it.
+- **Tool-capable models are preferred**, because instruction tuning is the best available proxy
+  for "can follow a structured-output prompt". Without that rule a 1B vision model once ended up
+  driving tagging on a real install.
+
+Check health at `GET /api/llm/status`, or `?fresh=1` to bypass the 30s probe cache (this is what
+Settings' **Re-check** button calls). Two fields matter and they differ: **`available`** means
+Ollama answered; **`ready`** means the models that will actually be used are installed. AI
+surfaces gate on `ready` — a reachable Ollama with nothing pulled is not a working one. Settings →
+Connections shows the same three states, names any missing model, and warns when a pick was
+auto-selected rather than chosen.
 
 ### Production-style run
 
@@ -1830,11 +1850,11 @@ All from the repo root:
 | GET/PATCH | `/api/prefs` | Scheduling preferences (incl. `recurrence_horizon_days`; a shorten auto-prunes and returns `pruned` count). Also carries `memory_window_days` (1–30) and `email_lookback_days` (1–90); an out-of-range value is **rejected with a 422**, never clamped, so the Settings field can't show a number the server didn't store |
 | POST | `/api/planner/clear` | Preview (`dry_run`) or apply a Clear Date Range — bounded suppresses just that window, open-ended permanently caps the rule; snapshots + audits on apply (Phase P) |
 | GET/POST | `/api/memory` | Companion Memory sync state |
-| GET | `/api/llm/status` · `/api/integrations` | Ollama & integration health |
+| GET | `/api/llm/status` · `/api/integrations` | Ollama & integration health. Both read a probe cached for 30s; `/api/llm/status?fresh=1` forces a live `/api/tags` probe (the Settings **Re-check** path). Gate AI surfaces on `ready`, not `available`. |
 | GET | `/api/oauth/google/start` | Begin the standalone Google OAuth flow (Auth Code + PKCE); returns `{ url }` for the SPA to navigate to. Gated; refused under `AUTH_MODE=test`. |
 | GET | `/api/oauth/google/callback` | Public OAuth redirect target; verifies the `id_token`, exchanges the code, seals tokens into `connection_tokens`. |
 | DELETE | `/api/oauth/google/accounts/:account` | Disconnect a Google account (revoke at Google + drop its tokens and queued pushes). Delegates to the shared `disconnectConnection`. |
-| GET | `/api/connections` | List every connection the owner holds, any provider (`{ provider, account, status, createdAt }` — status only, no secrets). |
+| GET | `/api/connections` | List every connection the owner holds, any provider — one `ConnectionRecord` shape: `{ provider, account, status, createdAt, expiresAt, lastSyncAt, lastError }`, plus `mappedEventCount` on Google rows only (absent, not `0`, elsewhere). `status` is the mapped `connected \| expired \| inactive`; the raw `connection_tokens.status` never leaves the server, and `connected` means the stored token actually decrypted. No secrets. |
 | DELETE | `/api/connections/:provider/:account` | Provider-agnostic disconnect (Google also revokes); `404 connection_not_found` when the owner holds none. |
 | GET/PUT/DELETE | `/api/reflections` · `/api/reflections/today` · `/api/reflections/weekly/:pos` | Today goal + weekly goals (Phase N) |
 | POST | `/api/reflections/:kind/:pos/done` | Mark a goal done / undone (`today_goal`/`weekly_goal` only — `day_note` is 422'd here) |
