@@ -22,6 +22,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   llmOrNull,
   parseJsonLoose,
+  generate,
   OllamaUnavailable,
   LlmParseError,
   isReady,
@@ -85,6 +86,28 @@ describe('parseJsonLoose', () => {
   it('still parses everything it parsed before', () => {
     expect(parseJsonLoose('{"a":1}')).toEqual({ a: 1 });
     expect(parseJsonLoose('```json\n{"a":2}\n```')).toEqual({ a: 2 });
+  });
+});
+
+describe('a 200 with a non-JSON body is a TRANSPORT failure, not a bug', () => {
+  // The degrade contract's sharp edge. `llmOrNull` re-throws anything that is not
+  // OllamaUnavailable/LlmParseError, so if `generate()` let a raw SyntaxError out of
+  // `res.json()`, a proxy or tunnel answering 200 with an HTML error page would turn
+  // what has always been a silent, correct degrade (suggestTags → []) into a 500.
+  // Classifying it as OllamaUnavailable — not LlmParseError, which means the MODEL
+  // misbehaved — is what keeps that degrade intact.
+  const realFetchLocal = globalThis.fetch;
+  afterEach(() => { vi.stubGlobal('fetch', realFetchLocal); });
+
+  it('surfaces as OllamaUnavailable, so llmOrNull degrades instead of throwing', async () => {
+    vi.stubGlobal('fetch', async () =>
+      new Response('<html><body>502 Bad Gateway</body></html>', {
+        status: 200,
+        headers: { 'Content-Type': 'text/html' },
+      }));
+
+    await expect(generate('hi', { model: 'x' })).rejects.toBeInstanceOf(OllamaUnavailable);
+    expect(await llmOrNull('probe', () => generate('hi', { model: 'x' }))).toBeNull();
   });
 });
 

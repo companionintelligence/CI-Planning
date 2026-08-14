@@ -181,8 +181,32 @@ export async function generate(prompt: string, opts: GenerateOpts = {}): Promise
   );
 
   if (!res.ok) throw await ollamaError('generate', res, model);
-  const data = (await res.json()) as { response?: string };
+  const data = await decodeJson<{ response?: string }>(res, 'generate');
   return data.response ?? '';
+}
+
+/**
+ * Decode a 200 response body as JSON, as OllamaUnavailable when it isn't.
+ *
+ * A 200 whose body is not JSON means whatever answered is not speaking Ollama's protocol —
+ * a proxy or tunnel returning an HTML error page, a truncated body, an API-path mismatch.
+ * That is a TRANSPORT failure and belongs in the same family as the non-OK path above
+ * (see ollamaError's note that a bare 404 can equally mean a wrong OLLAMA_URL or a proxy).
+ *
+ * Typing it that way is load-bearing for the degrade contract: `llmOrNull` degrades on
+ * OllamaUnavailable and LlmParseError and RE-THROWS everything else, so a raw SyntaxError
+ * escaping from here would turn what used to be a silent, correct degrade (suggestTags → [],
+ * subtasks → []) into a 500. It is NOT LlmParseError — that one means the model's own reply
+ * wasn't the JSON we asked for, which is a model problem, not a transport one.
+ */
+async function decodeJson<T>(res: Response, op: string): Promise<T> {
+  try {
+    return (await res.json()) as T;
+  } catch (err) {
+    throw new OllamaUnavailable(
+      `Ollama ${op} returned a non-JSON body from ${config.ollamaUrl} — check OLLAMA_URL and any proxy in front of it: ${(err as Error).message}`,
+    );
+  }
 }
 
 /**
@@ -269,7 +293,7 @@ export async function embed(text: string, timeoutMs = 30_000): Promise<number[]>
     timeoutMs
   );
   if (!res.ok) throw await ollamaError('embeddings', res, model);
-  const data = (await res.json()) as { embedding?: number[] };
+  const data = await decodeJson<{ embedding?: number[] }>(res, 'embeddings');
   if (!data.embedding?.length) throw new OllamaUnavailable('Ollama returned an empty embedding');
   return data.embedding;
 }
