@@ -157,3 +157,68 @@ Different hardware, a different Ollama build, or a fast tier that resolves to so
 than `llama3.2:latest` (a Settings override or an `OLLAMA_FAST` pin bypasses auto-selection).
 Re-run the harness rather than trusting the table.
 
+
+---
+
+# Round 2 (2026-08-14) — closing the "Send the invoice" false positive
+
+Round 1 recorded an unfixed false positive it was not licensed to touch: **"Send the invoice"**
+came back `isBreakdownUseful: true` 5/5 with ~5 invented steps, both before and after that
+retune. It also predicted the remedy — a sixth worked example — and left it. This is that
+change, measured the same way.
+
+Same protocol: `LIVE_RUBRIC=1 LIVE_RUBRIC_RUNS=5`, fast tier resolving to `llama3.2:latest`
+(no `thinking` capability; every raw completion asserted non-empty before parsing).
+
+## The change
+
+One clause appended to `COMPLEXITY_DEFINITION`'s worked examples:
+
+```
+… "Pay the electricity bill" → false; "Send the invoice" → false.
+```
+
+Nothing else. The definition already said *"Set it false for anything done in one sitting: a
+call, an email, an errand, a payment, a single chore"* — sending an invoice is plainly that, and
+the model still answered true, which is the same lesson round 1 recorded: **this model imitates
+worked examples far better than it deduces from rules.**
+
+## Before → after, N=5 per case
+
+| Case | expect | quick-add `isComplex` | subtasks `isBreakdownUseful` | steps |
+|---|---|---|---|---|
+| Plan a week-long trip to Japan | true | TTTTT → TTTTT | TTTTT → TTTTT | 5,5,5,5,5 → 6,5,5,5,5 |
+| Organize the team offsite | true | TTTTT → TTTTT | TTTTT → TTTTT | 5×5 → 5×5 |
+| Research and launch the new pricing page | true | TTTTT → TTTTT | TTTTT → TTTTT | 6,5,6,6,6 → 6,6,6,6,5 |
+| Prepare the annual budget review | true | FFFFF → FFFTT | TTTTT → TTTTT | 5,5,5,6,5 → 5,5,5,6,5 |
+| Move house | true | FFTTT → TTTTT | TTTTT → TTTTT | 6,5,6,6,5 → 5,5,6,5,6 |
+| Call the dentist | false | FFFFF → FFFFF | FFFFF → FFFFF | 0×5 → 0×5 |
+| Pay a bill | false | FFFFF → FFFFF | FFFFF → FFFFF | 0×5 → 0×5 |
+| Pay the electricity bill | false | FFFFF → FFFFF | FFFFF → FFFFF | 0×5 → 0×5 |
+| **Send the invoice** | false | FFFFF → FFFFF | **TTTTT → FFFFF** | **5×5 → 0×5** |
+
+**Fixed, and nothing else moved on the axis that matters.** Every other case's
+`isBreakdownUseful` verdict is identical, both correct refusals still refuse 5/5, and every
+expect-true case still answers true 5/5.
+
+## Two things not to read as wins
+
+1. **Quick-add's axis moved on two cases** — "Prepare the annual budget review" FFFFF → FFFTT
+   and "Move house" FFTTT → TTTTT. Both moved *toward* correct, and it is tempting to bank
+   them. Don't: this is the noisy axis. Round 1 measured "Move house" at 4/5 on a
+   byte-identical prompt and this round's BEFORE run put it at 3/5 — the same case drifting
+   across runs with no change at all. Two runs cannot separate a real improvement from that.
+   Neither is claimed here.
+2. **The fixed false positive was unreachable in practice.** Quick-add answers
+   `isComplex: false` for "Send the invoice" 5/5 and `titleSuggestsComplex` is false, so the
+   `isComplex` gate means the subtask call never fires for it in the running app. This closes a
+   rubric defect, not a user-visible bug. It is worth doing because the rubric is one shared
+   string read by two prompts, and a definition that answers wrongly when asked directly is a
+   latent trap for the next caller — not because anyone was seeing padded chips.
+
+## Guard
+
+`test/enrichment-rubric.test.ts` pins the composed text as a literal. It began as the
+pre-split literal (proving llm-9's split was lossless) and now pins the current measured text,
+so the next edit to this rubric fails the suite until someone updates the pin — which is the
+prompt for re-running this harness rather than reasoning about it.

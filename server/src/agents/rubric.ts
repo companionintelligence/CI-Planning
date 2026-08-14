@@ -143,10 +143,13 @@ export const COMPLEXITY_DEFINITION =
   'a single chore. ' +
   'Examples: "Plan a trip to Japan" → true; "Organize the team offsite" → true; ' +
   '"Research and launch the pricing page" → true; "Call the dentist" → false; ' +
-  '"Pay the electricity bill" → false.';
+  '"Pay the electricity bill" → false; "Send the invoice" → false.';
 
-/** Quick-add's field sentence + the shared definition. Byte-identical to the pre-split
- *  constant — `test/enrichment-rubric.test.ts` pins the old literal so it stays that way. */
+/** Quick-add's field sentence + the shared definition. `test/enrichment-rubric.test.ts` pins
+ *  the composed result as a literal — originally the pre-split text, to prove the field-name
+ *  split was lossless, and now the CURRENT measured text. Editing this rubric fails that test
+ *  until the pin is updated too, which is the prompt to re-run the live harness rather than
+ *  reason about the change. */
 export const COMPLEXITY_RUBRIC = `Set isComplex true when ${COMPLEXITY_DEFINITION}`;
 
 // The rubric's verb rule, enforced in code. Measured: llama3.2 applies its own verb rule
