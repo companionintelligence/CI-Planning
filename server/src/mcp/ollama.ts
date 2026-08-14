@@ -356,6 +356,8 @@ let probeCache: { at: number; probe: TagsProbe } | null = null;
 /** Drop the cached probe. For tests — production bypasses with `{ fresh: true }`. */
 export function resetProbeCache(): void {
   probeCache = null;
+  // Drop any joined probe too, or a test could inherit the previous one's in-flight request.
+  probeInFlight = null;
 }
 
 /** Feed a probe result to the installed-model cache `lib/models.ts` auto-selects from. */
@@ -393,6 +395,15 @@ async function fetchTags(): Promise<TagsProbe> {
   }
 }
 
+/**
+ * A probe already in flight, so concurrent callers share one `/api/tags` request instead of
+ * racing to issue their own. The TTL alone does not cover this: it only helps once a probe has
+ * COMPLETED, and the window before that is exactly when callers pile up — boot, the Settings
+ * poll, and `isReady()` on the day-authoring and NL-instruct paths can all land on a cold
+ * cache together. Cleared in a `finally` so a failed probe is retried rather than remembered.
+ */
+let probeInFlight: Promise<TagsProbe> | null = null;
+
 /** The probe, from cache when it is fresh enough and not bypassed. */
 async function tagsProbe(fresh: boolean): Promise<TagsProbe> {
   // The cache is OFF under test, for the same reason as the auto-select guard in
@@ -402,10 +413,23 @@ async function tagsProbe(fresh: boolean): Promise<TagsProbe> {
     applyInstalled(probeCache.probe); // keep lib/models in step even on a hit
     return probeCache.probe;
   }
-  const probe = await fetchTags();
-  applyInstalled(probe);
-  probeCache = cacheable ? { at: Date.now(), probe } : null;
-  return probe;
+  // Join an in-flight probe rather than starting a second one. `fresh` deliberately does NOT
+  // join: "Re-check" means the caller wants a reading taken after they asked, and a probe
+  // already in flight may have been issued before.
+  if (cacheable && !fresh && probeInFlight) return probeInFlight;
+
+  const run = (async () => {
+    const probe = await fetchTags();
+    applyInstalled(probe);
+    probeCache = cacheable ? { at: Date.now(), probe } : null;
+    return probe;
+  })();
+  if (cacheable && !fresh) probeInFlight = run;
+  try {
+    return await run;
+  } finally {
+    if (probeInFlight === run) probeInFlight = null;
+  }
 }
 
 /**
