@@ -106,7 +106,7 @@ export async function extractTasks(
   opts: { tier?: ModelTier; timeoutMs?: number } = {}
 ): Promise<ExtractedTask[]> {
   const result = await generateJson<RawResult>(buildPrompt(source), {
-    tier: opts.tier ?? 'medium',
+    tier: opts.tier ?? 'quality',
     system: SYSTEM,
     temperature: 0.1,
     timeoutMs: opts.timeoutMs ?? 60_000,

@@ -83,7 +83,7 @@ void ollamaStatus().then((s) => {
         `AI features stay off. Pull it (\`ollama pull …\`) or pick an installed model in Settings → Models.`,
     );
   } else {
-    logger.info(`Ollama ready — small=${s.smallModel} medium=${s.mediumModel} embed=${s.embedModel}`);
+    logger.info(`Ollama ready — fast=${s.fastModel} quality=${s.qualityModel} embed=${s.embedModel}`);
   }
 });
 

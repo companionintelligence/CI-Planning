@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { config } from '../src/lib/config.js';
+import { config, ollamaModelsFromEnv } from '../src/lib/config.js';
 import {
   resolveModel,
   resolveEmbedModel,
@@ -84,88 +84,88 @@ describe('parseParamB', () => {
 describe('auto-selection', () => {
   it('excludes thinking models — they return "" under format:json', () => {
     setInstalledModels(REALISTIC);
-    expect(autoSelectModel('small')).toBe(LLAMA_32.name);
-    expect(autoSelectModel('medium')).toBe(LLAMA_31.name);
+    expect(autoSelectModel('fast')).toBe(LLAMA_32.name);
+    expect(autoSelectModel('quality')).toBe(LLAMA_31.name);
   });
 
   it('picks smallest for the fast tier and largest for the quality tier', () => {
     setInstalledModels([LLAMA_31, LLAMA_32]);
-    expect(autoSelectModel('small')).toBe(LLAMA_32.name); // 3.2B
-    expect(autoSelectModel('medium')).toBe(LLAMA_31.name); // 8.0B
+    expect(autoSelectModel('fast')).toBe(LLAMA_32.name); // 3.2B
+    expect(autoSelectModel('quality')).toBe(LLAMA_31.name); // 8.0B
   });
 
   it('never offers an embedding model for generation, or a generation model for embedding', () => {
     setInstalledModels(REALISTIC);
-    expect(autoSelectModel('small')).not.toBe(EMBEDDER.name);
+    expect(autoSelectModel('fast')).not.toBe(EMBEDDER.name);
     expect(autoSelectEmbedModel()).toBe(EMBEDDER.name);
   });
 
   it('returns null when only unusable models are installed, so callers keep the default', () => {
     setInstalledModels([QWEN_THINK]);
-    expect(autoSelectModel('small')).toBeNull();
+    expect(autoSelectModel('fast')).toBeNull();
     expect(autoSelectEmbedModel()).toBeNull();
   });
 
   it('degrades open when the Ollama build reports no capabilities at all', () => {
     // Older Ollama omits `capabilities`; excluding on that would select nothing.
     setInstalledModels([{ name: 'mystery:7b', capabilities: [], paramB: 7 }]);
-    expect(autoSelectModel('small')).toBe('mystery:7b');
+    expect(autoSelectModel('fast')).toBe('mystery:7b');
   });
 
   it('does not hand the fast tier to a small vision model over a tool-capable one', () => {
     // The reported regression: smallest-wins alone picked moondream (1B, vision, no
     // tools) for the tier that drives tagging and quick-add enrichment.
     setInstalledModels([MOONDREAM, CODER_30B, QWEN25_7B]);
-    expect(autoSelectModel('small')).toBe(QWEN25_7B.name);
-    expect(autoSelectModel('medium')).toBe(CODER_30B.name);
+    expect(autoSelectModel('fast')).toBe(QWEN25_7B.name);
+    expect(autoSelectModel('quality')).toBe(CODER_30B.name);
   });
 
   it('still uses a no-tools model when it is genuinely the only option', () => {
     // Deprioritized, not banned — a bad model beats no model at all.
     setInstalledModels([MOONDREAM]);
-    expect(autoSelectModel('small')).toBe(MOONDREAM.name);
-    expect(autoSelectModel('medium')).toBe(MOONDREAM.name);
+    expect(autoSelectModel('fast')).toBe(MOONDREAM.name);
+    expect(autoSelectModel('quality')).toBe(MOONDREAM.name);
   });
 
   it('does not demote a vision model that also advertises tools', () => {
     // `vision` is not the signal — `tools` is. A multimodal instruct model is fine.
     const VISION_TOOLS = { name: 'gemma4:9b', capabilities: ['completion', 'vision', 'tools'], paramB: 9 };
     setInstalledModels([MOONDREAM, VISION_TOOLS]);
-    expect(autoSelectModel('small')).toBe(VISION_TOOLS.name); // 9B beats a preferred-band-less 1B
+    expect(autoSelectModel('fast')).toBe(VISION_TOOLS.name); // 9B beats a preferred-band-less 1B
   });
 
   it('prefers the size rule within the preferred band, not across bands', () => {
-    // A 1B no-tools model must not win the small tier just for being smallest.
+    // A 1B no-tools model must not win the fast tier just for being smallest.
     setInstalledModels([MOONDREAM, QWEN25_7B, CODER_30B]);
-    expect(autoSelectModel('small')).not.toBe(MOONDREAM.name);
+    expect(autoSelectModel('fast')).not.toBe(MOONDREAM.name);
   });
 });
 
 describe('selection reporting', () => {
   it('reports auto-selection distinctly from a pin, a default and an unknown set', () => {
     setInstalledModels(null);
-    expect(explainModelDefault('small').source).toBe('unknown');
+    expect(explainModelDefault('fast').source).toBe('unknown');
 
-    setInstalledModels([{ name: config.ollamaSmallModel, capabilities: ['completion', 'tools'], paramB: 0.5 }]);
-    expect(explainModelDefault('small').source).toBe('default');
+    setInstalledModels([{ name: config.ollamaFastModel, capabilities: ['completion', 'tools'], paramB: 0.5 }]);
+    expect(explainModelDefault('fast').source).toBe('default');
 
     setInstalledModels(REALISTIC); // configured default not installed → rescue
-    expect(explainModelDefault('small')).toEqual({ name: LLAMA_32.name, source: 'auto' });
+    expect(explainModelDefault('fast')).toEqual({ name: LLAMA_32.name, source: 'auto' });
 
     setInstalledModels([QWEN_THINK]); // nothing qualifies
-    expect(explainModelDefault('small')).toEqual({ name: config.ollamaSmallModel, source: 'unresolved' });
+    expect(explainModelDefault('fast')).toEqual({ name: config.ollamaFastModel, source: 'unresolved' });
   });
 
   it('reports an env pin as a pin, without consulting the installed set', () => {
     setInstalledModels(REALISTIC);
     const pinned = { ...config.ollamaPinned };
-    const saved = config.ollamaSmallModel;
+    const saved = config.ollamaFastModel;
     try {
-      (config as { ollamaSmallModel: string }).ollamaSmallModel = 'pinned-by-operator:9b';
-      config.ollamaPinned.small = true;
-      expect(explainModelDefault('small')).toEqual({ name: 'pinned-by-operator:9b', source: 'pin' });
+      (config as { ollamaFastModel: string }).ollamaFastModel = 'pinned-by-operator:9b';
+      config.ollamaPinned.fast = true;
+      expect(explainModelDefault('fast')).toEqual({ name: 'pinned-by-operator:9b', source: 'pin' });
     } finally {
-      (config as { ollamaSmallModel: string }).ollamaSmallModel = saved;
+      (config as { ollamaFastModel: string }).ollamaFastModel = saved;
       Object.assign(config.ollamaPinned, pinned);
     }
   });
@@ -173,7 +173,7 @@ describe('selection reporting', () => {
   it('warns when an auto-selected tier fell through to a model with no tool use', () => {
     setInstalledModels([MOONDREAM]);
     const warnings = generationSelectionWarnings([
-      { tier: 'small', model: { name: MOONDREAM.name, source: 'auto' } },
+      { tier: 'fast', model: { name: MOONDREAM.name, source: 'auto' } },
     ]);
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain('moondream:latest');
@@ -183,14 +183,14 @@ describe('selection reporting', () => {
   it('reports a per-owner Settings choice as an override, distinct from an env pin', async () => {
     setInstalledModels(REALISTIC);
     setPrefs({ fast_model: 'hand-picked:1b' });
-    expect(await explainModel('small', OWNER)).toEqual({ name: 'hand-picked:1b', source: 'override' });
+    expect(await explainModel('fast', OWNER)).toEqual({ name: 'hand-picked:1b', source: 'override' });
   });
 
   it('stays silent for a deliberate choice, however bad — pins are never second-guessed', () => {
     setInstalledModels([MOONDREAM]);
     for (const source of ['pin', 'override'] as const) {
       expect(
-        generationSelectionWarnings([{ tier: 'small', model: { name: MOONDREAM.name, source } }]),
+        generationSelectionWarnings([{ tier: 'fast', model: { name: MOONDREAM.name, source } }]),
       ).toEqual([]);
     }
   });
@@ -198,8 +198,49 @@ describe('selection reporting', () => {
   it('stays silent when the auto-selected model is tool-capable', () => {
     setInstalledModels([QWEN25_7B]);
     expect(
-      generationSelectionWarnings([{ tier: 'small', model: { name: QWEN25_7B.name, source: 'auto' } }]),
+      generationSelectionWarnings([{ tier: 'fast', model: { name: QWEN25_7B.name, source: 'auto' } }]),
     ).toEqual([]);
+  });
+});
+
+/**
+ * The tiers were renamed small/medium → fast/quality, but `OLLAMA_SMALL` / `OLLAMA_MEDIUM`
+ * are sitting in live `.env` files and in docker-compose.yml. Silently ignoring them would
+ * un-pin a tier on upgrade and hand the operator an auto-selected model instead of the one
+ * they chose — invisible until the answers got worse. These pin that.
+ */
+describe('env tier aliases', () => {
+  it('still treats a legacy OLLAMA_SMALL as a pin of the fast tier', () => {
+    const env = ollamaModelsFromEnv({ OLLAMA_SMALL: 'pinned-by-operator:9b' });
+    expect(env.fastModel).toBe('pinned-by-operator:9b');
+    expect(env.pinned.fast).toBe(true);
+
+    // Not just the name: the legacy hit must reach resolution as a `pin`, so it is used
+    // verbatim and auto-selection never overrides it.
+    setInstalledModels(REALISTIC);
+    const saved = config.ollamaFastModel;
+    const pinned = { ...config.ollamaPinned };
+    try {
+      (config as { ollamaFastModel: string }).ollamaFastModel = env.fastModel;
+      config.ollamaPinned.fast = env.pinned.fast;
+      expect(explainModelDefault('fast')).toEqual({ name: 'pinned-by-operator:9b', source: 'pin' });
+    } finally {
+      (config as { ollamaFastModel: string }).ollamaFastModel = saved;
+      Object.assign(config.ollamaPinned, pinned);
+    }
+  });
+
+  it('lets the new name win when both are set', () => {
+    expect(ollamaModelsFromEnv({ OLLAMA_FAST: 'new:1b', OLLAMA_SMALL: 'legacy:1b' }).fastModel).toBe('new:1b');
+    expect(ollamaModelsFromEnv({ OLLAMA_QUALITY: 'new:14b', OLLAMA_MEDIUM: 'legacy:14b' }).qualityModel).toBe('new:14b');
+
+    // The quality tier's alias behaves the same as the fast tier's, alone.
+    const legacyOnly = ollamaModelsFromEnv({ OLLAMA_MEDIUM: 'qwen2.5:14b' });
+    expect(legacyOnly.qualityModel).toBe('qwen2.5:14b');
+    expect(legacyOnly.pinned.quality).toBe(true);
+
+    // Nothing set ⇒ nothing pinned, and the built-in defaults stand.
+    expect(ollamaModelsFromEnv({}).pinned).toEqual({ fast: false, quality: false, embed: false });
   });
 });
 
@@ -222,20 +263,20 @@ describe('resolveModel precedence', () => {
     // The pre-probe / Ollama-offline path — and what keeps this suite deterministic on
     // machines that do or do not happen to be running Ollama.
     setInstalledModels(null);
-    expect(await resolveModel('small', OWNER)).toBe(config.ollamaSmallModel);
-    expect(await resolveModel('medium', OWNER)).toBe(config.ollamaMediumModel);
+    expect(await resolveModel('fast', OWNER)).toBe(config.ollamaFastModel);
+    expect(await resolveModel('quality', OWNER)).toBe(config.ollamaQualityModel);
     expect(await resolveEmbedModel(OWNER)).toBe(config.ollamaEmbedModel);
   });
 
   it('keeps the configured default when it IS installed', async () => {
-    setInstalledModels([{ name: config.ollamaSmallModel, capabilities: ['completion'], paramB: 0.5 }, LLAMA_31]);
-    expect(await resolveModel('small', OWNER)).toBe(config.ollamaSmallModel);
+    setInstalledModels([{ name: config.ollamaFastModel, capabilities: ['completion'], paramB: 0.5 }, LLAMA_31]);
+    expect(await resolveModel('fast', OWNER)).toBe(config.ollamaFastModel);
   });
 
   it('rescues an uninstalled default with a real installed model (the reported bug)', async () => {
     setInstalledModels(REALISTIC); // neither qwen2.5:0.5b nor gemma3n:e4b present
-    expect(await resolveModel('small', OWNER)).toBe(LLAMA_32.name);
-    expect(await resolveModel('medium', OWNER)).toBe(LLAMA_31.name);
+    expect(await resolveModel('fast', OWNER)).toBe(LLAMA_32.name);
+    expect(await resolveModel('quality', OWNER)).toBe(LLAMA_31.name);
     // The embed default needs no rescue: the untagged `nomic-embed-text` matches the
     // installed `nomic-embed-text:latest`, so it is kept verbatim (Ollama resolves the
     // tag itself). Only a genuinely absent model is replaced — see the next case.
@@ -251,31 +292,31 @@ describe('resolveModel precedence', () => {
     // An explicit user choice is never second-guessed; status() surfaces it as missing.
     setInstalledModels(REALISTIC);
     setPrefs({ fast_model: 'hand-picked:1b' });
-    expect(await resolveModel('small', OWNER)).toBe('hand-picked:1b');
+    expect(await resolveModel('fast', OWNER)).toBe('hand-picked:1b');
   });
 
   it('ignores a blank override', async () => {
     setInstalledModels(REALISTIC);
     setPrefs({ fast_model: '   ' });
-    expect(await resolveModel('small', OWNER)).toBe(LLAMA_32.name);
+    expect(await resolveModel('fast', OWNER)).toBe(LLAMA_32.name);
   });
 
   it('uses an env pin verbatim rather than auto-selecting', async () => {
     setInstalledModels(REALISTIC);
     const pinned = { ...config.ollamaPinned };
-    const saved = config.ollamaSmallModel;
+    const saved = config.ollamaFastModel;
     try {
-      (config as { ollamaSmallModel: string }).ollamaSmallModel = 'pinned-by-operator:9b';
-      config.ollamaPinned.small = true;
-      expect(await resolveModel('small', OWNER)).toBe('pinned-by-operator:9b');
+      (config as { ollamaFastModel: string }).ollamaFastModel = 'pinned-by-operator:9b';
+      config.ollamaPinned.fast = true;
+      expect(await resolveModel('fast', OWNER)).toBe('pinned-by-operator:9b');
     } finally {
-      (config as { ollamaSmallModel: string }).ollamaSmallModel = saved;
+      (config as { ollamaFastModel: string }).ollamaFastModel = saved;
       Object.assign(config.ollamaPinned, pinned);
     }
   });
 
   it('keeps the default (so the error names it) when nothing installed qualifies', async () => {
     setInstalledModels([QWEN_THINK]);
-    expect(await resolveModel('small', OWNER)).toBe(config.ollamaSmallModel);
+    expect(await resolveModel('fast', OWNER)).toBe(config.ollamaFastModel);
   });
 });

@@ -45,7 +45,7 @@ export async function suggestSubtasks(title: string, context = ''): Promise<stri
         `Task: "${title.trim()}"`,
       // Small tier: the boolean-gate refusal works at 3B (measured), and the 3B's steps
       // for genuinely complex tasks were as good as the 8B's — no reason to pay 8B latency.
-      { tier: 'small', temperature: 0.3, timeoutMs: 20_000 },
+      { tier: 'fast', temperature: 0.3, timeoutMs: 20_000 },
     );
     // The model judged a breakdown unhelpful — honor it. (Explicit !== true: a missing or
     // junk field from an older/looser model falls through to the array, which older

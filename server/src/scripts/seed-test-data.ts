@@ -41,7 +41,7 @@ function parseArgs(argv: string[]): Args {
   const get = (k: string) => argv.find((a) => a.startsWith(`--${k}=`))?.split('=')[1];
   return {
     target: Number(get('target') ?? 100),
-    tier: (get('tier') as ModelTier) ?? 'medium',
+    tier: (get('tier') as ModelTier) ?? 'quality',
     // OPT-IN, deliberately. This used to be `!argv.includes('--no-reset')`, i.e. a bare
     // `pnpm seed` — the exact command the README hands a new owner — silently ran
     // resetData(), which DELETEs every task, possible, block and tag in the database with

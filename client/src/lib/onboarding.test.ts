@@ -3,7 +3,7 @@ import { shouldShowConnectCTA, hasConnectedSource } from './onboarding.js';
 import type { Integrations } from './api.js';
 
 const base: Integrations = {
-  ollama: { available: false, models: [], smallModel: '', mediumModel: '', embedModel: '' },
+  ollama: { available: false, models: [], fastModel: '', qualityModel: '', embedModel: '' },
   google: { mode: 'off', liveEnabled: false, source: 'off', connections: [] },
 };
 
