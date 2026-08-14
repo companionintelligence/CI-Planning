@@ -10,6 +10,12 @@ import { prefs, tags, showToast } from '../stores/index.js';
  * treats a POSTed pin as "the explicit human confirmation that persists" — but
  * until this panel no owner could ever see or act on one.
  *
+ * PIN, sense 2 of 3 — a CALIBRATION COMBO PIN (`calibration_combo_pins`,
+ * server/src/services/calibration.ts): the owner confirming "keep learning a separate
+ * estimate bias for this tag combination". The other two pins in this codebase are an
+ * operator env pin (`config.pins`, server/src/lib/config.ts) and a plan PIN — a locked
+ * task start time (server/src/agents/plan.ts `PlanPin`). See ARCHITECTURE.md §Glossary.
+ *
  * Sits under the Calibration-nudge toggle in Settings; NOT bound to the prefs
  * `form()` machinery (that is for pref fields) — it reads its own resource,
  * gated the standard Time-Sense way (`ElementWizard`'s idiom): master flag on

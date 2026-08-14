@@ -16,8 +16,8 @@ import { logger } from '../lib/logger.js';
  * (AES-256-GCM, the same infrastructure as connection_tokens) when CP_KEK_B64 is available.
  *
  * Precedence: an explicit env keypair (both VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY) is
- * authoritative — hydration then never touches the singleton or the DB. This mirrors the
- * envPinned convention in google-config.
+ * authoritative — hydration then never touches the singleton or the DB. This is the same
+ * env-pin convention google-config follows; both read it from `config.pins`.
  *
  * KEK fallback: unlike the Google client (whose OAuth token storage HARD-requires a KEK),
  * a VAPID private key has no such downstream dependency, and staying dormant would defeat
@@ -35,7 +35,7 @@ const KEY_PUBLIC = 'vapid_public_key'; // plaintext — public by design
 const KEY_PRIVATE = 'vapid_private_key'; // self-describing JSON envelope (sealed or plaintext)
 
 // Captured at module load, mirroring google-config's ENV_* capture. A full env keypair
-// pins the config (config.vapidEnvPinned); a lone half of the pair is a misconfiguration we
+// pins the config (config.pins.vapid); a lone half of the pair is a misconfiguration we
 // refuse to auto-heal over (generating would clobber the operator's one deliberate key).
 const ENV_PUBLIC = process.env.VAPID_PUBLIC_KEY;
 const ENV_PRIVATE = process.env.VAPID_PRIVATE_KEY;
@@ -178,7 +178,7 @@ async function applyDerivedSubject(): Promise<void> {
  * env keypair pins the config. Idempotent — generates only when no usable pair exists.
  */
 export async function hydrateVapidConfig(): Promise<void> {
-  if (config.vapidEnvPinned) return; // env keypair already loaded into config.ts; authoritative.
+  if (config.pins.vapid) return; // env keypair already loaded into config.ts; authoritative.
 
   if (ENV_PUBLIC || ENV_PRIVATE) {
     // Exactly one half set — a deliberate-but-broken posture. Don't auto-generate over it;
@@ -244,12 +244,12 @@ export async function vapidConfigState(): Promise<VapidConfigState> {
   const priv = await readStoredPrivate();
   const configured = Boolean(config.vapidPublicKey && config.vapidPrivateKey);
   return {
-    source: config.vapidEnvPinned ? 'env' : configured ? 'generated' : 'dormant',
+    source: config.pins.vapid ? 'env' : configured ? 'generated' : 'dormant',
     configured,
     subject: config.vapidSubject,
     hasStoredPair: (await readValue(KEY_PUBLIC)) !== null && priv.status !== 'absent',
     sealed: priv.status === 'ok' ? priv.sealed : false,
     kekAvailable: await kekAvailable(),
-    envPinned: config.vapidEnvPinned,
+    envPinned: config.pins.vapid,
   };
 }

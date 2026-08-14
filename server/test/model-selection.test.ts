@@ -158,15 +158,15 @@ describe('selection reporting', () => {
 
   it('reports an env pin as a pin, without consulting the installed set', () => {
     setInstalledModels(REALISTIC);
-    const pinned = { ...config.ollamaPinned };
+    const pinned = { ...config.pins.ollama };
     const saved = config.ollamaFastModel;
     try {
       (config as { ollamaFastModel: string }).ollamaFastModel = 'pinned-by-operator:9b';
-      config.ollamaPinned.fast = true;
+      config.pins.ollama.fast = true;
       expect(explainModelDefault('fast')).toEqual({ name: 'pinned-by-operator:9b', source: 'pin' });
     } finally {
       (config as { ollamaFastModel: string }).ollamaFastModel = saved;
-      Object.assign(config.ollamaPinned, pinned);
+      Object.assign(config.pins.ollama, pinned);
     }
   });
 
@@ -219,14 +219,14 @@ describe('env tier aliases', () => {
     // verbatim and auto-selection never overrides it.
     setInstalledModels(REALISTIC);
     const saved = config.ollamaFastModel;
-    const pinned = { ...config.ollamaPinned };
+    const pinned = { ...config.pins.ollama };
     try {
       (config as { ollamaFastModel: string }).ollamaFastModel = env.fastModel;
-      config.ollamaPinned.fast = env.pinned.fast;
+      config.pins.ollama.fast = env.pinned.fast;
       expect(explainModelDefault('fast')).toEqual({ name: 'pinned-by-operator:9b', source: 'pin' });
     } finally {
       (config as { ollamaFastModel: string }).ollamaFastModel = saved;
-      Object.assign(config.ollamaPinned, pinned);
+      Object.assign(config.pins.ollama, pinned);
     }
   });
 
@@ -303,15 +303,15 @@ describe('resolveModel precedence', () => {
 
   it('uses an env pin verbatim rather than auto-selecting', async () => {
     setInstalledModels(REALISTIC);
-    const pinned = { ...config.ollamaPinned };
+    const pinned = { ...config.pins.ollama };
     const saved = config.ollamaFastModel;
     try {
       (config as { ollamaFastModel: string }).ollamaFastModel = 'pinned-by-operator:9b';
-      config.ollamaPinned.fast = true;
+      config.pins.ollama.fast = true;
       expect(await resolveModel('fast', OWNER)).toBe('pinned-by-operator:9b');
     } finally {
       (config as { ollamaFastModel: string }).ollamaFastModel = saved;
-      Object.assign(config.ollamaPinned, pinned);
+      Object.assign(config.pins.ollama, pinned);
     }
   });
 
