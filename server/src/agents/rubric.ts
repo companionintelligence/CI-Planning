@@ -143,7 +143,7 @@ export const COMPLEXITY_DEFINITION =
   'a single chore. ' +
   'Examples: "Plan a trip to Japan" → true; "Organize the team offsite" → true; ' +
   '"Research and launch the pricing page" → true; "Call the dentist" → false; ' +
-  '"Pay the electricity bill" → false.';
+  '"Pay the electricity bill" → false; "Send the invoice" → false.';
 
 /** Quick-add's field sentence + the shared definition. Byte-identical to the pre-split
  *  constant — `test/enrichment-rubric.test.ts` pins the old literal so it stays that way. */

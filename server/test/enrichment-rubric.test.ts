@@ -61,10 +61,20 @@ describe('rubric text', () => {
     expect(COMPLEXITY_RUBRIC).toMatch(/→ false/);
   });
 
-  // The split (llm-9) moved the FIELD NAME out of the shared text so the subtask
-  // suggester can name its own field. Quick-add's constant must be unchanged by that —
-  // the pre-split literal is pinned here so "byte-identical" is a test, not a claim.
-  const COMPLEXITY_RUBRIC_PRE_SPLIT =
+  // The text a model is actually shown, pinned as a literal.
+  //
+  // This started as the PRE-SPLIT literal, proving llm-9's field-name split was lossless.
+  // That job is done, and the pin now serves the longer-lived one: this text is model-facing
+  // behaviour at BOTH call sites, so an edit here must be a deliberate, measured retune —
+  // never an incidental tidy-up. Changing the constant without changing this literal fails,
+  // which is the point.
+  //
+  // Updated once since the split, deliberately: a sixth worked example ("Send the invoice")
+  // was added to fix a measured false positive — the subtask suggester answered
+  // isBreakdownUseful TTTTT with ~5 invented steps for it, 5/5 runs. After: FFFFF, 0 steps,
+  // with no change to any other case's verdict. Evidence:
+  // docs/complexity-rubric-measurement-2026-08.md.
+  const COMPLEXITY_RUBRIC_TEXT =
     'Set isComplex true when finishing the task takes several distinct steps that a person ' +
     'would want written out — planning a trip, organising an event, moving house, running ' +
     'a project, anything spanning days or involving several people. Verbs like plan, ' +
@@ -73,11 +83,11 @@ describe('rubric text', () => {
     'a single chore. ' +
     'Examples: "Plan a trip to Japan" → true; "Organize the team offsite" → true; ' +
     '"Research and launch the pricing page" → true; "Call the dentist" → false; ' +
-    '"Pay the electricity bill" → false.';
+    '"Pay the electricity bill" → false; "Send the invoice" → false.';
 
-  it('composes quick-add\'s rubric byte-identically to its pre-split value', () => {
+  it('composes quick-add\'s rubric from the shared definition, and matches the pinned text', () => {
     expect(COMPLEXITY_RUBRIC).toBe(`Set isComplex true when ${COMPLEXITY_DEFINITION}`);
-    expect(COMPLEXITY_RUBRIC).toBe(COMPLEXITY_RUBRIC_PRE_SPLIT);
+    expect(COMPLEXITY_RUBRIC).toBe(COMPLEXITY_RUBRIC_TEXT);
   });
 
   it('keeps the shared definition field-neutral', () => {
