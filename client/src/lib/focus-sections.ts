@@ -8,6 +8,14 @@
  *
  * Pure and structurally typed (no `Block`/`Entry` import) so the ordering, the
  * grouping, and the past/upcoming rule are unit-testable without jsdom or the stores.
+ *
+ * IDENTITY IS PART OF THE CONTRACT. Grouping deliberately takes no clock: the items
+ * it returns must stay referentially stable while the underlying rows are unchanged,
+ * because Solid's `<For>` keys by reference and re-creates any row whose object
+ * identity changed. Baking a `past` flag in here (computed from `now`) meant a fresh
+ * object every 30-second tick, which tore down and rebuilt every row in the view —
+ * wiping whatever the owner was typing into a section's add box. Pastness is a
+ * question you ask AT RENDER TIME (`itemPast`), not a field you allocate.
  */
 
 /** What grouping needs from a row: where it sits, whether it's finished, whose it is. */
@@ -30,19 +38,40 @@ export interface BuiltSection<M, C> {
   container: C;
   members: M[];
   sortMin: number;
-  /** Progress for the header — "2/5 done". */
+  /** Progress for the header — "2/5 done". Clock-independent, so it lives here. */
   doneCount: number;
   total: number;
-  past: boolean;
 }
 
 export type FocusItem<M, C> =
-  | { kind: 'loose'; sortMin: number; past: boolean; member: M }
-  | { kind: 'section'; sortMin: number; past: boolean; section: BuiltSection<M, C> };
+  | { kind: 'loose'; sortMin: number; member: M }
+  | { kind: 'section'; sortMin: number; section: BuiltSection<M, C> };
 
 /** A row is behind you when it's finished, or its slot has fully elapsed. */
 export function memberPast(m: SectionMember, nowMs: number): boolean {
   return m.done || (m.endMs != null && m.endMs <= nowMs);
+}
+
+/**
+ * A section is past when its span has fully elapsed, or when it has members and
+ * every one of them is done. An EMPTY container is past only once its time has
+ * passed — there is nothing in it to have finished, and 0-of-0 must not read as
+ * completion or a new empty Time Block would drop into "earlier" immediately.
+ */
+export function sectionPast<M extends SectionMember, C extends SectionContainer>(
+  s: BuiltSection<M, C>,
+  nowMs: number,
+): boolean {
+  const elapsed = s.container.endMs != null && s.container.endMs <= nowMs;
+  return elapsed || (s.total > 0 && s.doneCount === s.total);
+}
+
+/** Pastness of either kind of item. Members travel with their section. */
+export function itemPast<M extends SectionMember, C extends SectionContainer>(
+  it: FocusItem<M, C>,
+  nowMs: number,
+): boolean {
+  return it.kind === 'loose' ? memberPast(it.member, nowMs) : sectionPast(it.section, nowMs);
 }
 
 /**
@@ -52,16 +81,13 @@ export function memberPast(m: SectionMember, nowMs: number): boolean {
  * an orphan whose Time Block isn't here stays a loose row rather than vanishing,
  * the same rule the Calendar's containment split uses.
  *
- * A section is past when its span has fully elapsed, or when it has members and
- * every one of them is done. Members always travel WITH their section: splitting a
- * container's tasks across "earlier" and "upcoming" would show the same Time Block
- * twice and break the containment the section exists to express. An EMPTY container
- * is past only once its time has passed — there is nothing in it to have finished.
+ * Members always travel WITH their section (see `itemPast`): splitting a container's
+ * tasks across "earlier" and "upcoming" would show the same Time Block twice and
+ * break the containment the section exists to express.
  */
 export function buildFocusItems<M extends SectionMember, C extends SectionContainer>(
   members: M[],
   containers: C[],
-  nowMs: number,
 ): FocusItem<M, C>[] {
   const byContainer = new Map<string, M[]>();
   for (const c of containers) byContainer.set(c.id, []);
@@ -70,18 +96,21 @@ export function buildFocusItems<M extends SectionMember, C extends SectionContai
   for (const m of members) {
     const claimed = m.parentBlockId != null ? byContainer.get(m.parentBlockId) : undefined;
     if (claimed) claimed.push(m);
-    else items.push({ kind: 'loose', sortMin: m.sortMin, past: memberPast(m, nowMs), member: m });
+    else items.push({ kind: 'loose', sortMin: m.sortMin, member: m });
   }
 
   for (const c of containers) {
     const mem = (byContainer.get(c.id) ?? []).slice().sort((a, b) => a.sortMin - b.sortMin);
-    const doneCount = mem.filter((m) => m.done).length;
-    const elapsed = c.endMs != null && c.endMs <= nowMs;
     items.push({
       kind: 'section',
       sortMin: c.sortMin,
-      past: elapsed || (mem.length > 0 && doneCount === mem.length),
-      section: { container: c, members: mem, sortMin: c.sortMin, doneCount, total: mem.length, past: elapsed || (mem.length > 0 && doneCount === mem.length) },
+      section: {
+        container: c,
+        members: mem,
+        sortMin: c.sortMin,
+        doneCount: mem.filter((m) => m.done).length,
+        total: mem.length,
+      },
     });
   }
 
@@ -91,11 +120,12 @@ export function buildFocusItems<M extends SectionMember, C extends SectionContai
 /** How many rows sit behind the "N earlier" summary — members of past sections count. */
 export function countPastRows<M extends SectionMember, C extends SectionContainer>(
   items: FocusItem<M, C>[],
+  nowMs: number,
 ): { rows: number; done: number } {
   let rows = 0;
   let done = 0;
   for (const it of items) {
-    if (!it.past) continue;
+    if (!itemPast(it, nowMs)) continue;
     if (it.kind === 'loose') {
       rows += 1;
       if (it.member.done) done += 1;

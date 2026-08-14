@@ -13,8 +13,9 @@ import { localISODate } from '../lib/dates.js';
 import { focusState, formatRemaining } from '../lib/focus.js';
 import { directionColorForTask } from '../lib/pattern-meta.js';
 import { minutesIntoDay } from '../lib/grid.js';
-import { buildFocusItems, countPastRows, memberPast, type BuiltSection } from '../lib/focus-sections.js';
+import { buildFocusItems, countPastRows, memberPast, itemPast, sectionPast, type BuiltSection } from '../lib/focus-sections.js';
 import { LockToggle } from '../components/LockToggle.js';
+import { SectionAddTask } from '../components/SectionAddTask.js';
 import { blockColorVar } from '../lib/textures.js';
 import { categoryPrefs } from '../stores/index.js';
 
@@ -157,10 +158,14 @@ export function Focus() {
       })),
   );
 
-  const items = createMemo(() => buildFocusItems(entries(), containers(), now()));
-  const upcoming = () => items().filter((it) => !it.past);
-  const past = () => items().filter((it) => it.past);
-  const pastTally = () => countPastRows(items());
+  // The grouping memo deliberately does NOT read `now()`. It recomputes only when the
+  // day's rows change, so the item objects keep their identity across the 30-second
+  // tick — `<For>` keys by reference, and re-created rows would wipe whatever is being
+  // typed into a section's add box. Pastness is asked at render time instead.
+  const items = createMemo(() => buildFocusItems(entries(), containers()));
+  const upcoming = () => items().filter((it) => !itemPast(it, now()));
+  const past = () => items().filter((it) => itemPast(it, now()));
+  const pastTally = () => countPastRows(items(), now());
 
   const isPast = (e: Entry) => memberPast(e, now());
   const isNow = (e: Entry) => !e.done && e.startMs != null && e.endMs != null && e.startMs <= now() && e.endMs > now();
@@ -284,6 +289,10 @@ export function Focus() {
   const dotColor = (e: Entry): string =>
     e.task ? directionColorForTask({ tags: e.task.tags ?? [] }, tags() ?? [], patternPrefs()?.prefs ?? {}) : 'var(--border)';
 
+  /** The tasks already inside a section — so its add box never offers a duplicate. */
+  const memberTaskIds = (s: BuiltSection<Entry, Container>): ReadonlySet<string> =>
+    new Set(s.members.map((m) => m.taskId).filter((id): id is string => !!id));
+
   /**
    * A Time Block, as a section: its own header (title, span, progress, lock) with its
    * member rows nested underneath. The header is the collapse control; the lock is the
@@ -324,9 +333,19 @@ export function Focus() {
           </span>
           <LockToggle block={b()} class="flex-shrink-0" />
         </div>
-        <Show when={open() && props.section.total > 0}>
-          <div class="flex flex-col gap-1.5 px-2 pb-2 pl-6 animate-slide-down">
-            <For each={props.section.members}>{(e) => <Row entry={e} dim={props.dim} />}</For>
+        <Show when={open()}>
+          <div class="animate-slide-down">
+            <Show when={props.section.total > 0}>
+              <div class="flex flex-col gap-1.5 px-2 pb-2 pl-6">
+                <For each={props.section.members}>{(e) => <Row entry={e} dim={props.dim} />}</For>
+              </div>
+            </Show>
+            {/* Phase 3 — search the backlog or create, straight into this block. Not
+                offered on a section that is already behind you: adding work to a
+                finished or elapsed Time Block would place it in the past. */}
+            <Show when={!sectionPast(props.section, now())}>
+              <SectionAddTask block={b()} memberTaskIds={memberTaskIds(props.section)} />
+            </Show>
           </div>
         </Show>
       </div>
