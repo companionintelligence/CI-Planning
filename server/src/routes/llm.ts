@@ -45,7 +45,7 @@ export function llmRouter() {
       google: {
         mode: config.google.mode,
         liveEnabled: config.google.mode === 'live',
-        source: config.google.envPinned ? 'env' : config.google.mode === 'live' ? 'app' : 'off',
+        source: config.pins.google ? 'env' : config.google.mode === 'live' ? 'app' : 'off',
         connections: await connectionHealth(currentOwnerId()),
       },
       // Phase H: whether Web Push can actually deliver (VAPID keys present). In-app

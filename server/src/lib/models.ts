@@ -208,7 +208,14 @@ export function autoSelectEmbedModel(): string | null {
 export type ModelSource =
   /** This owner's explicit choice in Settings, used verbatim. */
   | 'override'
-  /** An operator env pin (OLLAMA_*), used verbatim. */
+  /**
+   * An operator env pin (OLLAMA_*, i.e. `config.pins.ollama`), used verbatim.
+   *
+   * PIN, sense 1 of 3 — the OPERATOR ENV PIN, and the only "pin" in the LLM path. The
+   * other two are `calibration_combo_pins` (a user-pinned tag-combo estimate scope,
+   * services/calibration.ts) and a plan PIN (a locked task start time, agents/plan.ts
+   * `PlanPin`). See the "pin" entry in ARCHITECTURE.md §Glossary.
+   */
   | 'pin'
   /** Installed set never probed (Ollama offline / pre-boot / tests) — configured name as-is. */
   | 'unknown'
@@ -248,13 +255,13 @@ function resolveConfigured(configured: string, pinned: boolean, auto: () => stri
  */
 export function resolveModelDefault(tier: 'fast' | 'quality'): string {
   return tier === 'quality'
-    ? resolveConfigured(config.ollamaQualityModel, config.ollamaPinned.quality, () => autoSelectModel('quality'))
-    : resolveConfigured(config.ollamaFastModel, config.ollamaPinned.fast, () => autoSelectModel('fast'));
+    ? resolveConfigured(config.ollamaQualityModel, config.pins.ollama.quality, () => autoSelectModel('quality'))
+    : resolveConfigured(config.ollamaFastModel, config.pins.ollama.fast, () => autoSelectModel('fast'));
 }
 
 /** Embedding equivalent of resolveModelDefault. */
 export function resolveEmbedModelDefault(): string {
-  return resolveConfigured(config.ollamaEmbedModel, config.ollamaPinned.embed, autoSelectEmbedModel);
+  return resolveConfigured(config.ollamaEmbedModel, config.pins.ollama.embed, autoSelectEmbedModel);
 }
 
 /** Model for a tier — see the resolution order in the file header. */
@@ -272,13 +279,13 @@ export async function resolveEmbedModel(owner: string = currentOwnerId()): Promi
 /** `resolveModel` plus the reason, without the per-owner override. */
 export function explainModelDefault(tier: 'fast' | 'quality'): ResolvedModel {
   return tier === 'quality'
-    ? resolveConfiguredDetailed(config.ollamaQualityModel, config.ollamaPinned.quality, () => autoSelectModel('quality'))
-    : resolveConfiguredDetailed(config.ollamaFastModel, config.ollamaPinned.fast, () => autoSelectModel('fast'));
+    ? resolveConfiguredDetailed(config.ollamaQualityModel, config.pins.ollama.quality, () => autoSelectModel('quality'))
+    : resolveConfiguredDetailed(config.ollamaFastModel, config.pins.ollama.fast, () => autoSelectModel('fast'));
 }
 
 /** Embedding equivalent of explainModelDefault. */
 export function explainEmbedModelDefault(): ResolvedModel {
-  return resolveConfiguredDetailed(config.ollamaEmbedModel, config.ollamaPinned.embed, autoSelectEmbedModel);
+  return resolveConfiguredDetailed(config.ollamaEmbedModel, config.pins.ollama.embed, autoSelectEmbedModel);
 }
 
 /** As `explainModelDefault`, but a per-owner Settings override wins and reports as such. */

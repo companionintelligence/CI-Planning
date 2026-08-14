@@ -11,7 +11,7 @@ import { logger } from '../lib/logger.js';
  * public by OAuth design); the client secret is KEK-sealed (AES-256-GCM, same
  * infrastructure as `connection_tokens`) and is never returned by any endpoint.
  *
- * Precedence: an explicit `GOOGLE_MODE` env (config.google.envPinned) is authoritative
+ * Precedence: an explicit `GOOGLE_MODE` env (config.pins.google) is authoritative
  * — hydration then never touches the singleton and the PUT route refuses with 409.
  * Otherwise a saved-and-enabled app config flips the live mode on at runtime by
  * mutating the config singleton (every consumer — oauth routes, connectors, ingest —
@@ -71,7 +71,7 @@ async function deleteValue(key: string): Promise<void> {
  * `google_mode='fixture'` row (e.g. copied/promoted from a non-production
  * environment where fixture mode was legitimately enabled) would silently reactivate
  * fixture ingest on every later production boot, since `hydrateGoogleConfig` only
- * ever checked `config.google.envPinned` — never `NODE_ENV`/`CP_ALLOW_FIXTURE`
+ * ever checked `config.pins.google` — never `NODE_ENV`/`CP_ALLOW_FIXTURE`
  * directly — before trusting whatever was already in the table.
  */
 function fixtureForbiddenInProduction(): boolean {
@@ -145,7 +145,7 @@ export async function saveGoogleConfig(input: {
   enabled: boolean;
   mode?: 'live' | 'fixture';
 }): Promise<SaveGoogleConfigResult> {
-  if (config.google.envPinned) return { ok: false, error: 'env_pinned' };
+  if (config.pins.google) return { ok: false, error: 'env_pinned' };
 
   if (input.enabled && input.mode === 'fixture') {
     if (fixtureForbiddenInProduction()) {
@@ -197,7 +197,7 @@ export async function saveGoogleConfig(input: {
  * merely missing `CP_ALLOW_FIXTURE` this one time isn't destructively "healed."
  */
 export async function hydrateGoogleConfig(): Promise<void> {
-  if (config.google.envPinned) return;
+  if (config.pins.google) return;
   const app = await readAppGoogleConfig();
   const wantsFixture = app.enabled && app.mode === 'fixture';
   const fixtureAllowed = wantsFixture && !fixtureForbiddenInProduction();
@@ -248,12 +248,12 @@ export async function googleConfigState(): Promise<GoogleConfigState> {
     // production boot with no CP_ALLOW_FIXTURE) correctly reports source:'off' instead
     // of the misleading 'app' a naive re-derivation from `app.mode === 'fixture'` would
     // give, even though config.google.mode itself already (correctly) says 'off'.
-    source: config.google.envPinned ? 'env' : config.google.mode !== 'off' ? 'app' : 'off',
+    source: config.pins.google ? 'env' : config.google.mode !== 'off' ? 'app' : 'off',
     mode: config.google.mode,
-    envPinned: config.google.envPinned,
+    envPinned: config.pins.google,
     kekAvailable: await kekAvailable(),
-    clientId: config.google.envPinned ? (config.google.clientId ?? null) : app.clientId,
-    hasClientSecret: config.google.envPinned ? Boolean(config.google.clientSecret) : app.hasClientSecret,
+    clientId: config.pins.google ? (config.google.clientId ?? null) : app.clientId,
+    hasClientSecret: config.pins.google ? Boolean(config.google.clientSecret) : app.hasClientSecret,
     enabled: app.enabled,
     redirectUri: config.google.redirectUri,
   };
