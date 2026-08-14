@@ -82,7 +82,10 @@ export async function promotePossibles(
   return { promoted, failed };
 }
 
-function cosine(a: number[], b: number[]): number {
+/** Cosine SIMILARITY in [-1,1] (1 = same direction, 0 = orthogonal). A zero-norm vector
+ *  yields 0 via the `|| 1` denominator guard, never NaN. This is NOT triality's
+ *  `squashedCosineDistance` — that one is a squashed DISTANCE and is not `1 − this`. */
+function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0;
   let na = 0;
   let nb = 0;
@@ -102,10 +105,10 @@ export function _setVecForTest(v: boolean | null): void { vecOverride = v; }
 /**
  * Phase M C3 — the greedy dedupe via a transient `vec0` KNN index. Reproduces the
  * cosine loop's semantics EXACTLY: tasks are processed id-ASC, a task is a duplicate
- * iff it is ≥ threshold (by the SAME `cosine()`) to an earlier *kept* task. vec0 only
- * accelerates "find the nearest kept vector"; the keep/drop decision still uses
- * `cosine()`, so results are identical to the fallback. Throws on any vec error (the
- * caller then falls back to cosine); always drops its temp table.
+ * iff it is ≥ threshold (by the SAME `cosineSimilarity()`) to an earlier *kept* task.
+ * vec0 only accelerates "find the nearest kept vector"; the keep/drop decision still
+ * uses `cosineSimilarity()`, so results are identical to the fallback. Throws on any vec
+ * error (the caller then falls back to cosine); always drops its temp table.
  */
 // DELIBERATELY still on the raw `sqlite` handle, and the only place left in this file
 // that is. This path is sqlite-vec specific — a `vec0` virtual table and a `MATCH` KNN
@@ -133,7 +136,7 @@ function dedupeIdsViaVec(vectors: { id: string; vec: number[] }[], threshold: nu
         if (near) {
           compared++;
           const otherIdx = Number(near.rowid); // rowid is the kept vector's index
-          if (cosine(v.vec, vectors[otherIdx].vec) >= threshold) { dupIds.push(v.id); continue; }
+          if (cosineSimilarity(v.vec, vectors[otherIdx].vec) >= threshold) { dupIds.push(v.id); continue; }
         }
       }
       ins.run(BigInt(i), f); // keep: rowid = this vector's index
@@ -207,7 +210,8 @@ export async function dedupePossibles(
   const markDup = store().prepare("UPDATE possible_tasks SET status = 'duplicate' WHERE id = ?");
 
   // C3: fast path — vec0 KNN when the extension is loaded. Identical decisions to the
-  // cosine loop (the keep/drop still uses cosine()); any vec error falls through below.
+  // cosine loop (the keep/drop still uses cosineSimilarity()); any vec error falls
+  // through below.
   if ((vecOverride ?? vecAvailable) && vectors.length >= 2) {
     try {
       const { dupIds, compared } = dedupeIdsViaVec(vectors, threshold);
@@ -228,7 +232,7 @@ export async function dedupePossibles(
     for (const k of kept) {
       compared++;
       const other = vectors.find((x) => x.id === k)!;
-      if (cosine(v.vec, other.vec) >= threshold) {
+      if (cosineSimilarity(v.vec, other.vec) >= threshold) {
         await markDup.run(v.id);
         duplicates++;
         isDup = true;
