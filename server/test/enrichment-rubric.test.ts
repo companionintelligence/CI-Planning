@@ -9,7 +9,11 @@ import {
 
 // Capture the prompt the subtask suggester actually composes, without a model.
 const { prompts } = vi.hoisted(() => ({ prompts: [] as string[] }));
-vi.mock('../src/mcp/ollama.js', () => ({
+// Partial mock, NOT a wholesale replacement: `suggestSubtasks` wraps its call in the real
+// `llmOrNull` (llm-3), so the module's other exports must survive or the wrapper is
+// undefined at call time. Only the model seam is stubbed.
+vi.mock('../src/mcp/ollama.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/mcp/ollama.js')>()),
   generateJson: async (prompt: string) => {
     prompts.push(prompt);
     return { isBreakdownUseful: false, subtasks: [] };
