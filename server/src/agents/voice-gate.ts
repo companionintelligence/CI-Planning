@@ -19,6 +19,24 @@ export const BANNED_PHRASES = [
   'empower', 'great job', 'keep it up', "you've got this", "let's", 'lets',
 ] as const;
 
+/**
+ * The banned list as prompt text, so the model is TOLD exactly what the gate ENFORCES.
+ * Derived from `BANNED_PHRASES` — there is no second, hand-typed list to drift from it,
+ * and adding a word above changes the prompt with no second edit.
+ *
+ * It lives HERE rather than beside the prompt because the gate is the enforcer and the
+ * enforcer must be the source: generator ≠ evaluator (see the module note above) means
+ * this module may never import from render-copy.ts, so the shared string comes this way.
+ *
+ * Multi-word entries and the apostrophe forms are quoted, so the run-on reads as discrete
+ * items rather than one clause. This is PROMPT TEXT: editing it — or the array it derives
+ * from — changes model behaviour, so treat edits as behaviour changes and re-test against
+ * a live model (same rule as agents/rubric.ts:13-17).
+ */
+export const BANNED_PHRASES_PROMPT: string = BANNED_PHRASES.map((p) =>
+  /[\s']/.test(p) ? `"${p}"` : p,
+).join(', ');
+
 const BANNED_RE = new RegExp(
   `\\b(?:${BANNED_PHRASES.map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\b`,
   'i',
