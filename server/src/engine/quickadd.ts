@@ -62,6 +62,27 @@ export function referenceNow(): Date {
 }
 
 /**
+ * True when a chrono match is the front half of a compound adjective — the matched
+ * span is immediately followed by `-` plus a word character ("a week|-long trip",
+ * "a day|-long offsite", "an hour|-long call").
+ *
+ * Such a phrase states the work's DURATION, not when it starts. Taking chrono at its
+ * word there does two wrongs at once: the title is gutted to "Plan -long trip to Japan"
+ * (the matched span is cut out of the middle, leaving the dangling hyphen), and a start
+ * date a week out is invented from words that never proposed one. Inventing it is the
+ * same lie the enrichment agent is forbidden to tell — "a small model inventing 'next
+ * Tuesday' from 'call mom' would be a lie, not an enrichment" (agents/quickadd.ts) —
+ * and the deterministic parser is held to the standard it sets. So the match is dropped:
+ * no date, title verbatim.
+ *
+ * chrono's OWN hyphenated forms are untouched, because it matches them whole and so
+ * nothing follows them but a space or the end: "monday-wednesday", "3pm-4pm",
+ * "2026-06-20". Only a hyphen chrono did not itself consume trips this.
+ */
+const isCompoundAdjective = (text: string, r: { index: number; text: string }): boolean =>
+  /^-\w/.test(text.slice(r.index + r.text.length));
+
+/**
  * Deterministic quick-add parse. `#tags` and the `~Nm` estimate are stripped
  * BEFORE chrono runs, so "~20m" isn't mistaken for a time. chrono (the only date
  * parser — reproducible against a fixed `refNow`) then reads the remainder: a
@@ -80,7 +101,12 @@ export function parseQuick(input: string, refNow: Date = referenceNow()): Parsed
     .replace(/\s{2,}/g, ' ')
     .trim();
 
-  const r = chrono.parse(cleaned, refNow, { forwardDate: true })[0];
+  // First match that is a real date mention — a compound adjective ("week-long") is
+  // skipped rather than ending the search, so "a week-long trip next friday" still
+  // lands on "next friday".
+  const r = chrono
+    .parse(cleaned, refNow, { forwardDate: true })
+    .find((c) => !isCompoundAdjective(cleaned, c));
   let dueAt: string | undefined;
   let scheduledFor: string | undefined;
   let taskTime: string | undefined;
