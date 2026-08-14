@@ -132,7 +132,7 @@ export function memoryRouter() {
     if (!ciportalConfigured()) {
       throw httpError(503, 'CI-Portal is not configured — set CIPORTAL_ISSUER + CIPORTAL_CLIENT_ID (see .env.example)');
     }
-    if (!process.env.CI_SERVER_URL) {
+    if (!config.memory.serverUrl) {
       throw httpError(503, 'Set CI_SERVER_URL to the CI-Server memory API base before connecting via CI-Portal');
     }
 
@@ -328,7 +328,7 @@ export function memoryRouter() {
       return;
     }
 
-    const url = process.env.CI_SERVER_URL;
+    const url = config.memory.serverUrl;
     if (!url) {
       ctx.redirect(settingsRedirect('memory=error&reason=ci_server_url_unset'));
       return;

@@ -2,7 +2,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { store } from '../db/store.js';
-import { config } from '../lib/config.js';
+import { config, type ConnectorMode } from '../lib/config.js';
 import { seal, open, loadKek } from '../lib/crypto/index.js';
 import { newId } from '../lib/ids.js';
 import { logger } from '../lib/logger.js';
@@ -21,9 +21,10 @@ import { logger } from '../lib/logger.js';
  * pair is a dev/single-tenant convenience fallback only — it is IGNORED under
  * multi-tenant SSO (AUTH_MODE=sso without DISABLE_OIDC), because CI-Server's
  * ApiKeyStrategy derives the user from the key, so a shared env key would silently
- * map every owner onto ONE CI-Server identity. Env is read at CALL time (not via
- * the config singleton) so tests can toggle it — same precedent as mcp/google.ts
- * fixturesDir().
+ * map every owner onto ONE CI-Server identity. Env is read at CALL time so tests can
+ * toggle it — same precedent as mcp/google.ts fixturesDir(). That per-call read now
+ * lives on the config singleton as a GETTER (`config.memory`), so the laziness is
+ * preserved exactly while MEMORY_MODE / CI_SERVER_URL are still resolved in one file.
  *
  * Transport modes (MEMORY_MODE, unset ⇒ 'off'): off disables the transport entirely
  * (memoryCreds reports unavailable, every transport call throws MemoryUnavailable);
@@ -124,14 +125,14 @@ export interface GraphDataFilters {
 }
 
 /**
- * Transport mode. Read per-call (tests flip it). Unset ⇒ 'off': no memory transport at
- * all. Fixture — a committed sample graph plus faked push success — must be an explicit
- * opt-in (MEMORY_MODE=fixture), never a default a real deployment hits by omission.
+ * Transport mode. Still read per-call (tests flip it) — `config.memory.mode` is a
+ * getter that re-reads MEMORY_MODE on every access, so this is a thin delegate rather
+ * than a second reader. Unset ⇒ 'off': no memory transport at all. Fixture — a
+ * committed sample graph plus faked push success — must be an explicit opt-in
+ * (MEMORY_MODE=fixture), never a default a real deployment hits by omission.
  */
-export function memoryMode(): 'live' | 'fixture' | 'off' {
-  if (process.env.MEMORY_MODE === 'live') return 'live';
-  if (process.env.MEMORY_MODE === 'fixture') return 'fixture';
-  return 'off';
+export function memoryMode(): ConnectorMode {
+  return config.memory.mode;
 }
 
 /**
@@ -183,7 +184,7 @@ export async function memoryCreds(owner: string): Promise<ResolvedMemoryCreds | 
   }
   // Multi-tenant SSO ⇒ no env fallback: creds must be connected per owner in Settings.
   if (config.auth.mode === 'sso' && !config.auth.disableOidc) return null;
-  const url = process.env.CI_SERVER_URL;
+  const url = config.memory.serverUrl;
   if (url) {
     return { url, apiKey: process.env.CI_SERVER_API_KEY || undefined, source: 'env', authKind: null };
   }

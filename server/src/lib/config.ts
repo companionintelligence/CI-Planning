@@ -22,19 +22,77 @@ function positiveIntOr(value: string | undefined, fallback: number): number {
  */
 export type AuthMode = 'test' | 'standalone' | 'sso';
 
+/**
+ * A connector whose transport is env-selected. `envPinned` = the env named the mode
+ * explicitly, so any in-app override is read-only.
+ *
+ * One shape for every such connector: Google and the CI-Server memory connector had
+ * identical value sets behind two different mechanisms (a boot-read field vs a
+ * per-call function in connectors/memory.ts), which is why MEMORY_MODE used to be
+ * read in two files. It is read here and only here now.
+ */
+export type ConnectorMode = 'live' | 'fixture' | 'off';
+export interface ModeConfig {
+  mode: ConnectorMode;
+  envPinned: boolean;
+}
+
+/**
+ * CI-Server memory connector (Phase AA). `mode` and `serverUrl` are GETTERS, not
+ * captured values: connectors/memory.ts re-reads the transport mode on every call
+ * (its header documents why — the suite toggles MEMORY_MODE / CI_SERVER_URL mid-run
+ * and expects the next call to observe it), so the lazy read moves here rather than
+ * justifying a second env-reading mechanism. Google is deliberately the opposite:
+ * boot-pinned, because services/google-config.ts hot-applies an in-app mode by
+ * mutating the singleton and a getter would silently overwrite that.
+ */
+export interface MemoryConfig extends ModeConfig {
+  /** CI_SERVER_URL — the memory API base. Serves double duty: the single-tenant
+   *  env-fallback creds base (connectors/memory.ts) and a hard requirement of the
+   *  CI-Portal connect flow (routes/memory.ts, 503 when unset). */
+  serverUrl?: string;
+}
+
+/**
+ * PIN, sense 1 of 3 — the OPERATOR ENV PIN: "what did the operator fix by hand,
+ * instead of letting the app decide?". One object, so that question has one answer.
+ * Replaced three shapes in three placements (`ollamaPinned`, `google.envPinned`,
+ * `vapidEnvPinned`) that all expressed this one idea.
+ *
+ * The two unrelated `pin` nouns in this codebase, for the reader who greps:
+ *  - `calibration_combo_pins` — a USER-pinned tag-combo estimate scope
+ *    (services/calibration.ts, client/src/components/CalibrationPins.tsx).
+ *  - a plan PIN — a task start time locked by an NL instruction (agents/plan.ts
+ *    `PlanPin`).
+ * See the "pin" entry in ARCHITECTURE.md §Glossary.
+ */
+export interface PinConfig {
+  /** Which model tiers env named explicitly (OLLAMA_FAST/QUALITY/EMBED, plus the
+   *  OLLAMA_SMALL/MEDIUM aliases). A pinned tier is used verbatim; an unpinned one
+   *  falls back to auto-selection from what's installed (lib/models.ts). */
+  ollama: { fast: boolean; quality: boolean; embed: boolean };
+  /** GOOGLE_MODE named the mode explicitly ⇒ the in-app Google setup is read-only.
+   *  A read-only mirror: `config.google.envPinned` is the storage, because
+   *  services/google-config.ts and its tests own that sub-config. */
+  readonly google: boolean;
+  /** BOTH VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are set ⇒ env pins the keypair and
+   *  the auto-generation in services/vapid-config.ts is a no-op. */
+  vapid: boolean;
+}
+
 // RETIRED (see the CIPORTAL_* set): AUTH_JWKS_URL, AUTH_ISSUER, AUTH_AUDIENCE and
 // AUTH_CONTRACT_VERSION were parsed into this object but read by NO code path — the JWKS
 // endpoint and the expected `iss` both come from CI-Portal discovery, and the live `aud`
 // check uses the OIDC client_id. Four config fields that look like security controls but
 // enforce nothing are worse than absent ones: they invite an operator to "harden" the
 // deployment by setting them and get no protection at all. Removed rather than wired up,
-// because each already has a real, consulted equivalent.
+// because each already has a real, consulted equivalent. `kekB64` (CP_KEK_B64) has now
+// gone the same way for the same reason: it was parsed here and read nowhere, because
+// lib/crypto (loadKek/rotateKek) reads process.env.CP_KEK_B64 directly — it must resolve
+// a key before this module exists. CP_KEK_B64 itself is unchanged.
 export interface AuthConfig {
   mode: AuthMode;
   autoProvision: boolean;  // first unknown SSO `sub` → provision owner row vs 403
-  kekB64?: string;         // DEPRECATED/unused — parsed from CP_KEK_B64 but never read; the KEK
-                           //   consumer (lib/crypto loadKek/rotateKek) reads process.env.CP_KEK_B64
-                           //   directly. Retained for parity with the sibling AUTH_* fields.
   rateLimit: { windowMs: number; max: number; issueMax: number };
   // U2 — local username/password mode (only when mode === 'sso' && disableOidc):
   disableOidc: boolean;    // true ⇒ local login instead of JWKS Bearer verification
@@ -67,8 +125,12 @@ export interface MailConfig {
  * do NOT re-derive these values from env. `mode: 'off'` (the default) means no Google
  * integration at all; `fixture` is an explicit dev/demo opt-in that serves committed
  * sample data; `live` is the real per-owner OAuth connector.
+ *
+ * `mode` + `envPinned` come from {@link ModeConfig} — the shape the memory connector
+ * shares. Unlike memory's, both are captured ONCE at boot: services/google-config.ts
+ * hot-applies an operator's in-app setup by mutating them at runtime.
  */
-export interface GoogleConfig {
+export interface GoogleConfig extends ModeConfig {
   clientId?: string;
   clientSecret?: string;
   authUri: string;
@@ -80,10 +142,6 @@ export interface GoogleConfig {
   /** When true, /start requests the Gmail scope in addition to Calendar. */
   enableGmail: boolean;
   mcp: { command: string; timeoutMs: number; retries: number };
-  mode: 'live' | 'fixture' | 'off';
-  /** True when GOOGLE_MODE was set explicitly in the environment — env is then
-   *  authoritative and the in-app (app_config) Google setup is read-only. */
-  envPinned: boolean;
 }
 
 /**
@@ -158,22 +216,19 @@ export interface Config {
   ollamaFastModel: string;
   ollamaQualityModel: string;
   ollamaEmbedModel: string;
-  /** Which model tiers an operator pinned via env. A pin is used verbatim; an unpinned
-   *  tier falls back to auto-selection from what's installed (lib/models.ts). */
-  ollamaPinned: { fast: boolean; quality: boolean; embed: boolean };
   staticDir: string;
   vapidPublicKey: string;
   vapidPrivateKey: string;
   vapidSubject: string;
-  /** True when BOTH VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are set — env pins the keypair
-   *  and the auto-generation in services/vapid-config.ts is a no-op. */
-  vapidEnvPinned: boolean;
   snapshotRetain: number;
+  /** Every env-pinned decision in the app, in one object. See {@link PinConfig}. */
+  pins: PinConfig;
   auth: AuthConfig;
   ciportal: CiPortalConfig;
   mail: MailConfig;
   graphql: GraphqlConfig;
   google: GoogleConfig;
+  memory: MemoryConfig;
   sync: SyncConfig;
   kek: KekConfig;
 }
@@ -249,10 +304,21 @@ const publicBaseUrl = process.env.PUBLIC_BASE_URL ?? 'http://localhost:3848';
 // services/google-config.ts) may flip the mode to 'live' at runtime; an explicit env
 // value pins the mode and makes the in-app setup read-only.
 const googleEnvPinned = process.env.GOOGLE_MODE === 'live' || process.env.GOOGLE_MODE === 'fixture';
-const googleMode: 'live' | 'fixture' | 'off' =
+const googleMode: ConnectorMode =
   process.env.GOOGLE_MODE === 'live' ? 'live'
   : process.env.GOOGLE_MODE === 'fixture' ? 'fixture'
   : 'off';
+
+/**
+ * The memory connector's mode, resolved from env on EVERY read (see {@link MemoryConfig}).
+ * Same fail-closed default as Google: unset — or unrecognized — means the transport is
+ * off, never a fixture a real deployment can hit by omission.
+ */
+function memoryModeFromEnv(): ConnectorMode {
+  if (process.env.MEMORY_MODE === 'live') return 'live';
+  if (process.env.MEMORY_MODE === 'fixture') return 'fixture';
+  return 'off';
+}
 
 /**
  * The three Ollama model tiers as env configures them.
@@ -301,7 +367,6 @@ export const config: Config = {
   ollamaFastModel: ollamaModels.fastModel,
   ollamaQualityModel: ollamaModels.qualityModel,
   ollamaEmbedModel: ollamaModels.embedModel,
-  ollamaPinned: ollamaModels.pinned,
   staticDir: join(packageRoot, 'public'),
   // Web Push (Phase H). Keys are AUTO-GENERATED on first boot and persisted to app_config
   // (services/vapid-config.ts hydrates them into this singleton after migrations), so push
@@ -310,12 +375,22 @@ export const config: Config = {
   vapidPublicKey: process.env.VAPID_PUBLIC_KEY ?? '',
   vapidPrivateKey: process.env.VAPID_PRIVATE_KEY ?? '',
   vapidSubject: process.env.VAPID_SUBJECT ?? 'mailto:admin@companion.local',
-  vapidEnvPinned: Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY),
   snapshotRetain: Number(process.env.SNAPSHOT_RETAIN ?? 7),
+  // Operator env pins — one shape, one place. See PinConfig for the three unrelated
+  // meanings of "pin" in this codebase.
+  pins: {
+    // Tier pins and the legacy OLLAMA_SMALL/MEDIUM aliases — see ollamaModelsFromEnv.
+    ollama: ollamaModels.pinned,
+    // Mirrors config.google.envPinned rather than copying it: google-config.ts flips
+    // that sub-config at runtime, and a copy here would go stale the moment it did.
+    get google(): boolean {
+      return config.google.envPinned;
+    },
+    vapid: Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY),
+  },
   auth: {
     mode: (process.env.AUTH_MODE as AuthMode) ?? 'test',
     autoProvision: process.env.AUTH_AUTO_PROVISION === 'true',
-    kekB64: process.env.CP_KEK_B64,
     rateLimit: {
       windowMs: Number(process.env.AUTH_RATE_WINDOW_MS ?? 60_000),
       max: Number(process.env.AUTH_RATE_MAX ?? 60),
@@ -401,6 +476,26 @@ export const config: Config = {
     },
     mode: googleMode,
     envPinned: googleEnvPinned,
+  },
+  // CI-Server memory connector — the same ModeConfig shape as google, but LAZY: every
+  // property re-reads env on access. connectors/memory.ts used to own this read; folding
+  // it in here as a getter keeps its documented per-call behavior byte for byte while
+  // leaving exactly one file that touches MEMORY_MODE / CI_SERVER_URL.
+  memory: {
+    get mode(): ConnectorMode {
+      return memoryModeFromEnv();
+    },
+    // Env is the ONLY way to set the memory mode — there is no in-app equivalent of the
+    // Google setup to be read-only against — so this is true exactly when the connector
+    // is on. It exists to satisfy ModeConfig, and is deliberately NOT in `config.pins`:
+    // pins answers "what did the operator fix by hand instead of letting the app
+    // decide?", and here the app never decides.
+    get envPinned(): boolean {
+      return memoryModeFromEnv() !== 'off';
+    },
+    get serverUrl(): string | undefined {
+      return process.env.CI_SERVER_URL;
+    },
   },
   sync: {
     // Outbound write-back is OFF by default — pull-only is the safe posture (Phase J).
@@ -497,36 +592,46 @@ if (
   );
 }
 
-// Fail closed: fixture mode serves committed sample emails/events as if they were the
-// user's own data. In production that is fake data leaking into a real task list, so
-// refuse to boot unless the operator explicitly accepts it (CP_ALLOW_FIXTURE=true).
-if (
-  config.google.mode === 'fixture' &&
-  process.env.NODE_ENV === 'production' &&
-  process.env.CP_ALLOW_FIXTURE !== 'true'
-) {
-  throw new Error(
-    'GOOGLE_MODE=fixture is forbidden in production — it ingests committed sample data as real tasks. ' +
-      'Set GOOGLE_MODE=live (with OAuth credentials), unset it to disable Google integration, ' +
-      'or set CP_ALLOW_FIXTURE=true to explicitly allow fixtures (demo appliances only).',
-  );
+/**
+ * Fail closed: a connector's fixture mode serves committed sample data as if it were the
+ * user's own. In production that is fake data leaking into a real task list, so refuse to
+ * boot unless the operator explicitly accepts it (CP_ALLOW_FIXTURE=true).
+ *
+ * One helper for every connector mode — the Google and memory guards were the same
+ * fourteen lines twice, and the next connector would have made it three.
+ *
+ * `whatItServes` carries the entire connector-specific middle of the message (what
+ * fixture data leaks into, and the two ways out). The two messages this replaced are
+ * reproduced BYTE FOR BYTE: they are good copy, and operators grep their logs for them.
+ */
+function refuseFixtureInProduction(envVar: string, whatItServes: string): void {
+  if (
+    process.env[envVar] === 'fixture' &&
+    process.env.NODE_ENV === 'production' &&
+    process.env.CP_ALLOW_FIXTURE !== 'true'
+  ) {
+    throw new Error(
+      `${envVar}=fixture is forbidden in production — ${whatItServes} ` +
+        'or set CP_ALLOW_FIXTURE=true to explicitly allow fixtures (demo appliances only).',
+    );
+  }
 }
 
-// Same fail-closed rule for the memory connector: MEMORY_MODE=fixture serves the
-// committed sample graph (server/fixtures/memory/) as the owner's real CI-Server
-// memory, and memory_suggest auto-promotes those canned events into real tasks.
-// Identical mistake class to GOOGLE_MODE=fixture, identical escape hatch.
-if (
-  process.env.MEMORY_MODE === 'fixture' &&
-  process.env.NODE_ENV === 'production' &&
-  process.env.CP_ALLOW_FIXTURE !== 'true'
-) {
-  throw new Error(
-    'MEMORY_MODE=fixture is forbidden in production — it serves committed sample memory data as real suggestions. ' +
-      'Set MEMORY_MODE=live (with a CI-Server connection), unset it to disable the memory connector, ' +
-      'or set CP_ALLOW_FIXTURE=true to explicitly allow fixtures (demo appliances only).',
-  );
-}
+// Google: fixture mode ingests committed sample emails/events as real tasks.
+refuseFixtureInProduction(
+  'GOOGLE_MODE',
+  'it ingests committed sample data as real tasks. ' +
+    'Set GOOGLE_MODE=live (with OAuth credentials), unset it to disable Google integration,',
+);
+
+// Memory: MEMORY_MODE=fixture serves the committed sample graph (server/fixtures/memory/)
+// as the owner's real CI-Server memory, and memory_suggest auto-promotes those canned
+// events into real tasks. Identical mistake class, identical escape hatch.
+refuseFixtureInProduction(
+  'MEMORY_MODE',
+  'it serves committed sample memory data as real suggestions. ' +
+    'Set MEMORY_MODE=live (with a CI-Server connection), unset it to disable the memory connector,',
+);
 
 // Fail closed (Wave 0): GOOGLE_MODE=live without OAuth credentials would silently fall
 // back to broken auth flows. Require the client id + redirect uri up front. These guards
