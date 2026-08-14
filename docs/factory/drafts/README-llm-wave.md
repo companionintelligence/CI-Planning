@@ -33,9 +33,10 @@ Windows-only failures, nothing new.
 |---|---|---|
 | ~~`GET /api/connections` can report `"connected"` for a token that cannot be decrypted~~ | found by end-to-end testing; introduced by #530 | ✅ **fixed** by [#536](https://github.com/companionintelligence/CI-Planning/pull/536) — the no-decrypt branch is gone; one KEK load per list, and an unopenable row reports `inactive`. Re-verified live against the original repro. |
 | ~~Quick-add corrupts `"week-long"`~~ | found by end-to-end testing; pre-existing | ✅ **fixed** by [#535](https://github.com/companionintelligence/CI-Planning/pull/535) |
-| `"Send the invoice"` is an unfixed subtask false positive (unreachable in practice — the `isComplex` gate never fires the second call) | measured in llm-9 | documented in `docs/complexity-rubric-measurement-2026-08.md` |
-| No `Settings.tsx` test file exists, so nothing pins the merged Ollama card's three states in CI | noted in llm-8 | open |
-| No in-flight dedupe: concurrent `status()` calls on a cold cache each fetch | noted in llm-8 | open, bounded by the TTL |
+| ~~`"Send the invoice"` subtask false positive~~ | measured in llm-9 | ✅ **fixed** — sixth worked example, measured `TTTTT → FFFFF` with no regressions. Round 2 in `docs/complexity-rubric-measurement-2026-08.md`. |
+| ~~Nothing pins the merged Ollama card's three states~~ | noted in llm-8 | ✅ **fixed** — decision extracted to `client/src/lib/ollama-health.ts`, 10 tests; all three states also exercised live in the preview. |
+| ~~No in-flight dedupe on a cold probe cache~~ | noted in llm-8 | ✅ **fixed** — concurrent callers join one `/api/tags` request; `fresh` deliberately does not join. |
+| `pnpm --filter server vitest run` in ticket templates needs `exec` | found in llm-10 | **out of scope** — factory-kit tooling, not the planner app. The planner's own docs use `pnpm test`, which is correct. |
 | Ticket template uses `pnpm --filter server vitest run`, which fails — needs `exec` | found in llm-10 | fix when next editing a ticket |
 
 ## Integration check — 8 + 9 + 10 (2026-08-14)
