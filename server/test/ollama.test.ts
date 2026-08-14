@@ -13,8 +13,8 @@ describe('ollama client', () => {
     expect(s).toHaveProperty('available');
     expect(s).toHaveProperty('url');
     expect(Array.isArray(s.models)).toBe(true);
-    expect(typeof s.smallModel).toBe('string');
-    expect(typeof s.mediumModel).toBe('string');
+    expect(typeof s.fastModel).toBe('string');
+    expect(typeof s.qualityModel).toBe('string');
   });
 
   it('parseJsonLoose handles fenced and prose-wrapped JSON', () => {
@@ -27,7 +27,7 @@ describe('ollama client', () => {
 
   it('generate() returns text when Ollama is available', async () => {
     if (!up) return; // skip gracefully when Ollama is down
-    const out = await generate('Reply with the single word: pong', { tier: 'small', temperature: 0 });
+    const out = await generate('Reply with the single word: pong', { tier: 'fast', temperature: 0 });
     expect(typeof out).toBe('string');
     expect(out.length).toBeGreaterThan(0);
   });

@@ -1565,7 +1565,7 @@ docker compose --profile pull run --rm ollama-pull     # pull default models onc
 ```
 
 The model pull sits behind the `pull` profile so a plain `docker compose up` never triggers
-multi-GB downloads — run it once (or skip it and set `OLLAMA_SMALL` / `OLLAMA_MEDIUM` /
+multi-GB downloads — run it once (or skip it and set `OLLAMA_FAST` / `OLLAMA_QUALITY` /
 `OLLAMA_EMBED` to models you already have). Until a reachable Ollama has the models, the app
 runs fine and simply hides the AI features. This file is for the self-host path only; the
 **CI-Hub marketplace install ignores it** (the Hub provides its own Ollama).
@@ -1579,8 +1579,8 @@ runs fine and simply hides the AI features. This file is for the self-host path 
 | `NODE_ENV` | (unset) | `production` enables fail-closed boot guards (e.g. forbids `AUTH_MODE=test`). |
 | `TRUST_PROXY` | `false` | Set when behind a trusted TLS-terminating reverse proxy (e.g. CI-Hub's tunnel): honors `X-Forwarded-Proto` (⇒ Secure session cookies over HTTPS) and `X-Forwarded-For` (⇒ real client IP for login rate-limiting). |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama endpoint. Unreachable ⇒ AI features degrade gracefully (template briefings, dedupe off). |
-| `OLLAMA_SMALL` | `qwen2.5:0.5b` | Fast model for extraction/triage. Must be pulled (`ollama pull`) or set to an installed model. |
-| `OLLAMA_MEDIUM` | `gemma3n:e4b` | Better model for briefings. Must be pulled (`ollama pull`) or set to an installed model. |
+| `OLLAMA_FAST` | `qwen2.5:0.5b` | Fast model for extraction/triage. Must be pulled (`ollama pull`) or set to an installed model. Legacy alias: `OLLAMA_SMALL` (still accepted; `OLLAMA_FAST` wins when both are set). |
+| `OLLAMA_QUALITY` | `gemma3n:e4b` | Quality model for briefings. Must be pulled (`ollama pull`) or set to an installed model. Legacy alias: `OLLAMA_MEDIUM` (still accepted; `OLLAMA_QUALITY` wins when both are set). |
 | `OLLAMA_EMBED` | `nomic-embed-text` | Embedding model for dedupe |
 | `TZ` | UTC | Container timezone — set it so "today" and cron schedules match your day. Safety net: if the stored scheduling timezone is still the un-chosen UTC default, the web app adopts the browser's timezone on first load (once per browser). |
 | `AUTH_MODE` | `test` | Auth mode: `test` (dev/CI — system owner injected, **forbidden in production**), `standalone` (hashed `x-api-key` stored in the `api_keys` table), `sso` (CI-Portal OIDC login or local username/password — mints a signed session cookie). |
@@ -1761,12 +1761,12 @@ enable them, start the Ollama server and pull the default models once:
 
 ```bash
 ollama serve                       # or launch the Ollama desktop app
-ollama pull qwen2.5:0.5b           # OLLAMA_SMALL  — extraction / triage
-ollama pull gemma3n:e4b            # OLLAMA_MEDIUM — briefings / planning
-ollama pull nomic-embed-text       # OLLAMA_EMBED  — dedupe embeddings
+ollama pull qwen2.5:0.5b           # OLLAMA_FAST    — extraction / triage
+ollama pull gemma3n:e4b            # OLLAMA_QUALITY — briefings / planning
+ollama pull nomic-embed-text       # OLLAMA_EMBED   — dedupe embeddings
 ```
 
-Already have other models? Skip the pulls and set `OLLAMA_SMALL` / `OLLAMA_MEDIUM` /
+Already have other models? Skip the pulls and set `OLLAMA_FAST` / `OLLAMA_QUALITY` /
 `OLLAMA_EMBED` in `server/.env` to any name from `ollama list`. Check health anytime
 at `GET /api/llm/status` (`available` + installed `models`). A model that's configured
 but not pulled fails with an actionable `ollama pull …` error.

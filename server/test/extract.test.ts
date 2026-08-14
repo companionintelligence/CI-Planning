@@ -23,7 +23,7 @@ describe('extract agent', () => {
     const email = emails.find((e) => e.id === 'email-001')!;
     const tasks = await extractTasks(
       { kind: 'gmail', ref: email.id, subject: email.subject, text: email.body, at: email.receivedAt },
-      { tier: 'medium' }
+      { tier: 'quality' }
     );
     expect(Array.isArray(tasks)).toBe(true);
     expect(tasks.length).toBeGreaterThanOrEqual(1);
@@ -42,7 +42,7 @@ describe('extract agent', () => {
     const newsletter = emails.find((e) => e.id === 'email-012')!;
     const tasks = await extractTasks(
       { kind: 'gmail', ref: newsletter.id, subject: newsletter.subject, text: newsletter.body },
-      { tier: 'medium' }
+      { tier: 'quality' }
     );
     expect(Array.isArray(tasks)).toBe(true);
     // A good model ignores newsletters; we don't hard-assert 0 to avoid flakiness.
@@ -53,7 +53,7 @@ describe('extract agent', () => {
     if (!up) return;
     const tasks = await extractTasks(
       { kind: 'text', ref: 'manual-1', text: 'Remember to renew the domain sometime.' },
-      { tier: 'small' }
+      { tier: 'fast' }
     );
     for (const t of tasks) {
       if (t.dueAt !== null && t.dueAt !== undefined) {

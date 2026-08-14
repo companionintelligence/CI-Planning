@@ -24,8 +24,8 @@ export function llmRouter() {
         available: ollama.available,
         ready: ollama.ready,
         models: ollama.models,
-        smallModel: ollama.smallModel,
-        mediumModel: ollama.mediumModel,
+        fastModel: ollama.fastModel,
+        qualityModel: ollama.qualityModel,
         embedModel: ollama.embedModel,
         missingModels: ollama.missingModels,
         // How each pick was chosen, plus cautions about the AUTO-selected ones. A model

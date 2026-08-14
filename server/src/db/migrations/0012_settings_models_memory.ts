@@ -6,7 +6,7 @@ export const id = '0012_settings_models_memory';
  * Settings additions: per-owner Ollama model overrides + Companion Memory sync
  * config, all on `scheduling_prefs`. Additive, idempotent (add-column-if-missing).
  *
- * Model columns are null = "use the env default" (`OLLAMA_SMALL`/`MEDIUM`/`EMBED`),
+ * Model columns are null = "use the env default" (`OLLAMA_FAST`/`QUALITY`/`EMBED`),
  * so existing installs behave exactly as before until a model is picked in Settings.
  * Memory sync is off by default (privacy-first); scope flags default on so enabling
  * sync covers everything unless narrowed.

@@ -587,7 +587,7 @@ async function generateRationales(tasks: PlanTask[], order: number[], themeTag?:
   try {
     const lines = order.map((idx, pos) => `${pos}: ${taskLine(tasks[idx], idx).replace(/^\d+:\s*/, '')}`);
     const raw = await generateJson<Record<string, unknown>>(rationalePrompt(lines, themeTag), {
-      tier: 'small',
+      tier: 'fast',
       system: rationaleSystem(),
       temperature: 0.3,
       timeoutMs: 25_000,
@@ -746,7 +746,7 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
         generate: async () => {
           // §C2: theme tag; §A4: NL-hint constraint line; AA3a: memory-context line
           const raw = await generateJson<unknown>(genPrompt(lines, capacityMin, themeTag, constraint, memoryLine), {
-            tier: 'small',
+            tier: 'fast',
             system: genSystem(),
             temperature: 0.2,
             timeoutMs: 25_000,
@@ -762,7 +762,7 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
 
         judge: async (order): Promise<JudgeScore> => {
           const raw = await generateJson<Record<string, unknown>>(judgePrompt(lines, order, staged), {
-            tier: 'medium',
+            tier: 'quality',
             system: judgeSystem(),
             temperature: 0.1,
             timeoutMs: 30_000,
@@ -778,7 +778,7 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
 
         revise: async (order, defects, critique) => {
           const raw = await generateJson<unknown>(revisePrompt(lines, order, defects, critique), {
-            tier: 'small',
+            tier: 'fast',
             system: reviseSystem(),
             temperature: 0.2,
             timeoutMs: 25_000,
@@ -943,7 +943,7 @@ export async function parseInstruction(owner: string, date: string, text: string
   let raw: unknown;
   try {
     raw = await generateJson(instructPrompt(text, date, prefs.workday_start, prefs.workday_end, [...tagSet]), {
-      tier: 'small',
+      tier: 'fast',
       system: instructSystem(),
       temperature: 0.1,
       timeoutMs: 25_000,
