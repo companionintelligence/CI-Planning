@@ -1,6 +1,6 @@
 import { DEFAULT_WEIGHTS, type ScoredPick, type Slot } from './triality.js';
 import { DIM_REGISTRY, type DimName, type SituationVector } from './triality-vector.js';
-import { generateJson, status } from '../mcp/ollama.js';
+import { generateJson, isReady } from '../mcp/ollama.js';
 import { logger } from '../lib/logger.js';
 
 /**
@@ -237,9 +237,10 @@ export async function attachRationales(
   const remaining = () => budget - (clock() - startedAt);
 
   try {
-    // Cheap gate before paying for inference: `ready`, not `available` — a
-    // reachable Ollama whose model isn't pulled fails every call.
-    const available = opts.availableFn ?? (async () => (await status()).ready);
+    // Cheap gate before paying for inference: `ready`, not `available` — a reachable
+    // Ollama whose model isn't pulled fails every call. This site had the right predicate
+    // hand-rolled before `isReady` existed; it now names the shared one.
+    const available = opts.availableFn ?? isReady;
     if (!(await available())) return out;
     const callBudget = remaining();
     if (callBudget < MIN_CALL_MS) {

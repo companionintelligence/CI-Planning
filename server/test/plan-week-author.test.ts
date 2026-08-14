@@ -8,7 +8,7 @@
  * ⚠️ One assertion deliberately DIFFERS from the ticket's own Tests section. The ticket's
  * "smart off" case says to assert `result.llm !== true` while ALSO asserting day 0's
  * `source === 'llm'` — those two can't both hold: day 0 has always authored via the
- * pre-existing smart gate (`planning_mode==='smart' && isAvailable()`) independent of the
+ * pre-existing smart gate (`planning_mode==='smart' && isReady()`) independent of the
  * NEW `smart` flag (T-SCHED-2, unchanged by this ticket), and the DoD's own definition of
  * `AutoResult.llm` is "true iff AT LEAST ONE authored day returned `'llm'`" — day 0 alone
  * satisfies that. Implemented per the DoD's literal (and only unambiguous) definition;
@@ -26,7 +26,7 @@ vi.mock('../src/mcp/ollama.js', async (importActual) => {
   const actual = await importActual<typeof import('../src/mcp/ollama.js')>();
   return {
     ...actual,
-    isAvailable: vi.fn(async () => ollamaUp),
+    isReady: vi.fn(async () => ollamaUp),
     generateJson: vi.fn(async (_prompt: string, opts?: { purpose?: string; system?: string }) => {
       if (opts?.system?.includes('explain a finished day plan')) return rationaleResp();
       // The judge names its purpose rather than its tier since llm-2 (`plan_judge` is the

@@ -1,7 +1,7 @@
 import { store } from '../db/store.js';
 import { extractTasks, type ExtractedTask, type ExtractSource } from './extract.js';
 import { createGoogleClient, type GoogleClient } from '../mcp/google.js';
-import { type ModelTier, OllamaUnavailable } from '../mcp/ollama.js';
+import { type ModelTier, llmOrNull } from '../mcp/ollama.js';
 import { inferDirection } from './direction.js';
 import { currentOwnerId } from '../lib/context.js';
 import { newId } from '../lib/ids.js';
@@ -315,16 +315,12 @@ async function runExtraction(
   result: IngestResult
 ): Promise<void> {
   result.itemsProcessed++;
-  let tasks: ExtractedTask[];
-  try {
-    tasks = await extractTasks(source, { tier });
-  } catch (err) {
-    // Deterministic fallback (global constraint): when Ollama is down, don't drop the
-    // item — stage it raw so it still arrives, source-tagged. Re-throw anything else.
-    if (!(err instanceof OllamaUnavailable)) throw err;
-    logger.warn('extract fallback (Ollama unavailable)', { kind: source.kind, ref: source.ref });
-    tasks = [fallbackTask(source)];
-  }
+  // Deterministic fallback (global constraint): when Ollama is down or answers with
+  // something unparseable, don't drop the item — stage it raw so it still arrives,
+  // source-tagged. Anything else re-throws (`llmOrNull`), which is the rule this site
+  // hand-rolled first and the whole codebase now shares.
+  const extracted = await llmOrNull(`extract:${source.kind}:${source.ref}`, () => extractTasks(source, { tier }));
+  const tasks: ExtractedTask[] = extracted ?? [fallbackTask(source)];
   // for-of, not forEach: forEach never awaits an async callback, so the counters below
   // would not run and a failed upsert would become an unhandled rejection.
   for (const [i, task] of tasks.entries()) {

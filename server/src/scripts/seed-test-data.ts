@@ -22,7 +22,7 @@ import { guessEstimateMinutes, guessPriority } from '../agents/fallback-shape.js
 import { upsertPossible } from '../agents/ingest.js';
 import { promotePossibles } from '../agents/groom.js';
 import { createFixtureGoogleClient, type EmailMessage, type CalendarEvent } from '../mcp/google.js';
-import { isAvailable, type ModelTier } from '../mcp/ollama.js';
+import { isReady, type ModelTier } from '../mcp/ollama.js';
 import { prepTaskTitle } from './prep-task-title.js';
 import { logger } from '../lib/logger.js';
 import { SYSTEM_OWNER, runWithOwner, ALL_SCOPES } from '../lib/context.js';
@@ -184,7 +184,8 @@ async function main() {
   if (args.reset) await resetData();
 
   const google = createFixtureGoogleClient();
-  const llmUp = args.useLlm && (await isAvailable());
+  // `isReady`: seeding wants a model it can actually call, not merely a reachable Ollama.
+  const llmUp = args.useLlm && (await isReady());
   if (args.useLlm && !llmUp) logger.warn('seed: Ollama unavailable — using deterministic fallback extraction');
 
   let possiblesCreated = 0;
