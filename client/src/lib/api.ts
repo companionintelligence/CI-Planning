@@ -599,7 +599,10 @@ export const api = {
     // AA0b — begin the CI-Portal SSO connect flow. Returns the authorize URL for a
     // top-level browser navigation (the callback stores an offline_access refresh token).
     ciportalStart: () => request<{ url: string }>('GET', '/memory/ciportal/start'),
-    disconnect: () => request<MemoryStatus>('POST', '/memory/disconnect', {}),
+    // (No `disconnect` wrapper: memory is dropped through the one provider-agnostic
+    // route, api.connections.disconnect('ci_memory', account). POST /memory/disconnect
+    // still exists server-side — it answers with the full MemoryStatus — but delegates
+    // to the same implementation, so the UI has no reason to prefer it.)
     // AA1 — manual "pull suggestions now" trigger.
     // Dead surface (zero callers — see #392) — the intended manual 'pull now' trigger
     // if ever surfaced; suggestions only arrive via the memory_suggest cron today.
@@ -864,16 +867,17 @@ export const api = {
   // shared contract like every other endpoint in this file, instead of a bespoke
   // fetch duplicated once for Settings and once for the onboarding wizard.
   oauth: {
+    // Connect only. Disconnecting is provider-agnostic — api.connections.disconnect
+    // (the server-side DELETE /api/oauth/google/accounts/:account duplicate is gone).
     googleStart: () => request<{ url: string }>('GET', '/oauth/google/start'),
-    googleDisconnect: (account: string) =>
-      request<{ disconnected: string }>('DELETE', `/oauth/google/accounts/${encodeURIComponent(account)}`),
   },
 
   // T13 (#349) — provider-agnostic connection surface for the Settings Connections tab.
-  // `list` returns only { provider, account, status, createdAt } (no token material);
-  // `disconnect` works for any stored provider (Google also revokes server-side).
+  // `list` returns ConnectionRecord[] — one shape for every provider (google, ci_memory,
+  // …), no token material and no raw status column; `disconnect` is THE disconnect route
+  // for any stored provider (Google also revokes server-side).
   connections: {
-    list: () => request<{ connections: ConnectionSummary[] }>('GET', '/connections'),
+    list: () => request<{ connections: ConnectionRecord[] }>('GET', '/connections'),
     disconnect: (provider: string, account: string) =>
       request<{ disconnected: { provider: string; account: string } }>(
         'DELETE',
@@ -1358,28 +1362,25 @@ export interface LLMStatus {
   fastModel: string; qualityModel: string; embedModel: string;
 }
 
-// ── Connections (WP7) — read-only Google connection health ─────────────────────
-// Mirrors the server's ConnectionHealth (server/src/lib/connections.ts) EXACTLY.
-// Token material (accessToken/refreshToken/ciphertext/iv/auth_tag/key_version) is
-// never present — by design.
-export interface ConnectionHealth {
+// ── Connections ────────────────────────────────────────────────────────────────
+// ONE shape for a stored connection, mirroring the server's ConnectionRecord
+// (server/src/lib/connections.ts) EXACTLY — it replaced the old ConnectionHealth
+// (google-only health) and ConnectionSummary (all-provider list) pair. Served by both
+// GET /api/connections (every provider) and GET /api/integrations → google.connections.
+// `status` is always the MAPPED status, never the raw connection_tokens.status column;
+// token material (accessToken/refreshToken/ciphertext/iv/auth_tag/key_version) is never
+// present — by design.
+export interface ConnectionRecord {
   provider: string;
   account: string;
   status: 'connected' | 'expired' | 'inactive';
+  createdAt: string;
+  /** Null unless the endpoint resolved it (only /api/integrations decrypts). */
   expiresAt: string | null;
-  mappedEventCount: number;
   lastSyncAt: string | null;
   lastError: string | null;
-}
-
-// T13 (#349) — provider-agnostic connection summary for the Connections tab. Mirrors
-// the server's ConnectionSummary (server/src/lib/connections.ts) EXACTLY. `status` is
-// the raw connection_tokens.status ('active' | 'revoked' | 'error'); no token material.
-export interface ConnectionSummary {
-  provider: string;
-  account: string;
-  status: string;
-  createdAt: string;
+  /** Google only — ABSENT, never 0, for other providers. */
+  mappedEventCount?: number;
 }
 
 /** A life-priority row (life_priorities, 0127). The wizard sends the four core fields;
@@ -1410,7 +1411,7 @@ export interface Integrations {
     /** Cautions about AUTO-SELECTED picks only (e.g. no tool-use capability). */
     modelWarnings?: string[];
   };
-  google: { mode: string; liveEnabled: boolean; source: 'env' | 'app' | 'off'; connections: ConnectionHealth[] };
+  google: { mode: string; liveEnabled: boolean; source: 'env' | 'app' | 'off'; connections: ConnectionRecord[] };
   push?: { configured: boolean }; // Phase H: VAPID keys present → Web Push can deliver
 }
 

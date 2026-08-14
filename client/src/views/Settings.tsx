@@ -643,10 +643,16 @@ export function Settings() {
       setMemBusy(false);
     }
   }
+  // Memory disconnects through the ONE provider-agnostic route, exactly like Google:
+  // DELETE /api/connections/ci_memory/:account (which also clears the stored account
+  // label, so the panel below re-renders as "Not connected"). The account is the
+  // CI-Server host the connection was stored under.
   async function disconnectMemory() {
+    const account = memStatus()?.account ?? memStatus()?.pull.host;
+    if (!account) return;
     try {
-      await api.memory.disconnect();
-      refetchPrefs(); refetchMem();
+      await api.connections.disconnect('ci_memory', account);
+      refetchPrefs(); refetchMem(); refetchConnections();
       showToast('Disconnected from Companion Memory', 'default');
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
@@ -1809,9 +1815,11 @@ export function Settings() {
 
           {/* Connected accounts (T13 #349) — the provider-agnostic connection surface.
               Backed by the `connections` resource (GET /api/connections): one row per
-              stored connection_tokens record, mode-blind so a user whose Google is `off`
-              still sees (and can drop) a stored token. Google rows are enriched with the
-              WP7 health sub-line by matching integrations().google.connections on account.
+              stored connection_tokens record in the one ConnectionRecord shape, whatever
+              the provider, mode-blind so a user whose Google is `off` still sees (and can
+              drop) a stored token. Google rows are enriched from
+              integrations().google.connections (same shape, but decrypted: a real expiry,
+              so 'expired' is distinguishable) matched on account.
               Google is currently the only provider with a connect flow, so the whole card
               is hidden with it (flags.ts GOOGLE_CONNECT_ENABLED — owner request 2026-07-23). */}
           <Show when={GOOGLE_CONNECT_ENABLED}>
@@ -1845,8 +1853,9 @@ export function Settings() {
               <div class="flex flex-col gap-2">
                 <For each={connections()}>
                   {(c) => {
-                    // Google rows carry richer WP7 health (status + last sync / mapped
-                    // events / errors); other providers show the raw status column only.
+                    // One shape for every provider now; the google entry from
+                    // /api/integrations adds only what a decrypt can tell us (a token
+                    // that is stored but EXPIRED) plus the sync/mapped-event sub-line.
                     const health = () =>
                       c.provider === 'google'
                         ? integrations()?.google.connections.find((h) => h.account === c.account)
@@ -1863,11 +1872,13 @@ export function Settings() {
                           <div class="flex items-center gap-2 shrink-0">
                             <span
                               class="text-[10px] px-1.5 py-0.5 rounded-full capitalize"
+                              // The three mapped states — the raw connection_tokens
+                              // status ('active'/'revoked'/'error') no longer reaches
+                              // the client, so there is nothing else to colour.
                               classList={{
-                                'bg-green-500/15 text-green-400': status() === 'connected' || status() === 'active',
+                                'bg-green-500/15 text-green-400': status() === 'connected',
                                 'bg-amber-500/15 text-amber-400': status() === 'expired',
                                 'bg-slate-500/15 text-slate-400': status() === 'inactive',
-                                'bg-red-500/15 text-red-400': status() === 'revoked' || status() === 'error',
                               }}
                             >
                               {status()}
@@ -1891,7 +1902,7 @@ export function Settings() {
                               <div class="flex items-center gap-3 text-[11px] text-slate-500">
                                 <span>{h().lastSyncAt ? `Last sync: ${new Date(h().lastSyncAt!).toLocaleString()}` : 'Never synced'}</span>
                                 <span>·</span>
-                                <span>{h().mappedEventCount} mapped event{h().mappedEventCount === 1 ? '' : 's'}</span>
+                                <span>{h().mappedEventCount ?? 0} mapped event{h().mappedEventCount === 1 ? '' : 's'}</span>
                               </div>
                               <Show when={h().lastError}>
                                 <div class="flex items-center gap-1.5 text-[11px] text-destructive">

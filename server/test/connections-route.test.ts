@@ -7,7 +7,7 @@ import { newId } from '../src/lib/ids.js';
 import { issueApiKey } from '../src/lib/auth/apiKey.js';
 import { SCOPE_READ, SCOPE_WRITE } from '../src/lib/auth/types.js';
 import { seal, loadKek } from '../src/lib/crypto/index.js';
-import { listConnections, disconnectConnection, type ConnectionSummary } from '../src/lib/connections.js';
+import { listConnections, disconnectConnection, type ConnectionRecord } from '../src/lib/connections.js';
 import { resetDb, startTestServer, type TestServer } from './helpers.js';
 
 /**
@@ -84,7 +84,7 @@ afterEach(() => {
 });
 
 describe('listConnections() — leak-safe list', () => {
-  it('returns { provider, account, status, createdAt } ordered by provider, account', async () => {
+  it('returns one ConnectionRecord per row, ordered by provider, account', async () => {
     // Insert out of order to prove the ORDER BY, across providers.
     await seedToken({ provider: 'google', account: 'b@x.io', status: 'active' });
     await seedToken({ provider: 'ci_memory', account: 'mem@x.io', status: 'error' });
@@ -96,12 +96,20 @@ describe('listConnections() — leak-safe list', () => {
       'google/a@x.io',
       'google/b@x.io',
     ]);
-    // Exactly the four safe keys, and status is the RAW column value.
+    // Only safe keys, and status is the MAPPED value — the raw connection_tokens.status
+    // ('active' | 'revoked' | 'error') no longer leaves the server (llm-7). google rows
+    // additionally carry mappedEventCount; ci_memory rows must NOT.
     for (const row of list) {
-      expect(Object.keys(row).sort()).toEqual(['account', 'createdAt', 'provider', 'status']);
+      const keys = Object.keys(row).sort();
+      expect(keys).toEqual(
+        (row.provider === 'google'
+          ? ['account', 'createdAt', 'expiresAt', 'lastError', 'lastSyncAt', 'mappedEventCount', 'provider', 'status']
+          : ['account', 'createdAt', 'expiresAt', 'lastError', 'lastSyncAt', 'provider', 'status']
+        ).sort(),
+      );
       expect(typeof row.createdAt).toBe('string');
     }
-    expect(list.find((c) => c.account === 'a@x.io')!.status).toBe('revoked');
+    expect(list.find((c) => c.account === 'a@x.io')!.status).toBe('inactive'); // was raw 'revoked'
   });
 
   it('returns [] (not null) for an owner with no connections', async () => {
@@ -137,14 +145,19 @@ describe('listConnections() — leak-safe list', () => {
 describe('GET /api/connections', () => {
   it('returns 200 { connections: [...] } for the seeded owner, leak-free', async () => {
     await seedToken({ provider: 'google', account: 'get@x.io' });
-    const { status, body } = await realApi<{ connections: ConnectionSummary[] }>('/api/connections', await authHeaders());
+    const { status, body } = await realApi<{ connections: ConnectionRecord[] }>('/api/connections', await authHeaders());
     expect(status).toBe(200);
     expect(body.connections).toHaveLength(1);
     expect(body.connections[0]).toEqual({
       provider: 'google',
       account: 'get@x.io',
-      status: 'active',
+      // Mapped, never the raw 'active'. expiresAt stays null: this route does not decrypt.
+      status: 'connected',
       createdAt: expect.any(String),
+      expiresAt: null,
+      lastSyncAt: null,
+      lastError: null,
+      mappedEventCount: 0,
     });
     const serialized = JSON.stringify(body);
     for (const key of ['ciphertext', 'auth_tag', 'iv', 'key_version', 'accessToken', 'refreshToken']) {
@@ -155,7 +168,7 @@ describe('GET /api/connections', () => {
   });
 
   it('returns { connections: [] } for an owner with none', async () => {
-    const { status, body } = await realApi<{ connections: ConnectionSummary[] }>('/api/connections', await authHeaders());
+    const { status, body } = await realApi<{ connections: ConnectionRecord[] }>('/api/connections', await authHeaders());
     expect(status).toBe(200);
     expect(body.connections).toEqual([]);
   });
@@ -163,7 +176,7 @@ describe('GET /api/connections', () => {
   it('never shows another owner\'s connections', async () => {
     sqlite.prepare(`INSERT INTO owners (id, name) VALUES ('owner-b', 'B')`).run();
     await seedToken({ provider: 'google', account: 'theirs@x.io', owner: 'owner-b' });
-    const { body } = await realApi<{ connections: ConnectionSummary[] }>('/api/connections', await authHeaders());
+    const { body } = await realApi<{ connections: ConnectionRecord[] }>('/api/connections', await authHeaders());
     expect(body.connections).toEqual([]); // the api key is SYSTEM_OWNER's
   });
 });
