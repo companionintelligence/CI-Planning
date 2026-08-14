@@ -12,6 +12,7 @@ import { CategorySettings } from '../components/CategorySettings.js';
 import { enablePush, disablePush, pushState } from '../lib/push.js';
 import { on } from '../lib/sse.js';
 import { GOOGLE_CONNECT_ENABLED } from '../lib/flags.js';
+import { ollamaHealth, ollamaHealthDescription } from '../lib/ollama-health.js';
 import { ConnectionAppearance } from '../components/ConnectionAppearance.js';
 
 const BROWSER_TZ = (() => {
@@ -605,6 +606,11 @@ export function Settings() {
 
   const ollamaModels = () => integrations()?.ollama.models ?? [];
   const ollamaUp = () => integrations()?.ollama.available ?? false;
+  // The three-state decision lives in lib/ollama-health.ts, not in this markup: the same
+  // choice drives an icon colour, a status glyph and a description string, and as three
+  // inline ternaries a change could update one and not the others. Unit-tested there.
+  const health = () => ollamaHealth(integrations());
+  const healthText = () => ollamaHealthDescription(integrations());
   /** Effective models that aren't pulled — the difference between "Ollama is up" and
    *  "AI actually works". Empty on older servers that don't report it. */
   const missingModels = () => integrations()?.ollama.missingModels ?? [];
@@ -1449,25 +1455,21 @@ export function Settings() {
                     green tick over completely dead AI features. Amber is that middle state. */}
                 <div class="flex items-center gap-3">
                   <Cpu size={16} classList={{
-                    'text-green-400': aiAvailable(),
-                    'text-amber-400': ollamaUp() && !aiAvailable(),
-                    'text-red-400': !ollamaUp(),
+                    'text-green-400': health() === 'ready',
+                    'text-amber-400': health() === 'unusable',
+                    'text-red-400': health() === 'down',
                   }} />
                   <div class="flex-1">
                     <div class="text-sm text-slate-200 font-medium flex items-center gap-2">
                       Ollama
-                      <Show when={ollamaUp()} fallback={<XCircle size={13} class="text-red-400" />}>
-                        <Show when={aiAvailable()} fallback={<AlertTriangle size={13} class="text-amber-400" />}>
+                      <Show when={health() !== 'down'} fallback={<XCircle size={13} class="text-red-400" />}>
+                        <Show when={health() === 'ready'} fallback={<AlertTriangle size={13} class="text-amber-400" />}>
                           <CheckCircle2 size={13} class="text-green-400" />
                         </Show>
                       </Show>
                     </div>
                     <div class="text-xs text-slate-500 mt-0.5">
-                      {!ollamaUp()
-                        ? 'Unavailable — start Ollama on localhost:11434'
-                        : !aiAvailable()
-                          ? `Running, but ${missingModels().join(', ')} not installed — AI features are off`
-                          : `${ollamaModels().length} models · fast: ${integrations()!.ollama.fastModel} · quality: ${integrations()!.ollama.qualityModel}`}
+                      {healthText()}
                     </div>
                   </div>
                 </div>
