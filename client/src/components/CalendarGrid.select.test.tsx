@@ -19,6 +19,8 @@ vi.mock('../stores/index.js', async () => {
   const [state] = createSignal({ topExpanded: false, bottomExpanded: false });
   return {
     setElementModal: vi.fn(),
+    // Chips colour via blockColorVar(block, categoryPrefs) — same source as the Planner.
+    categoryPrefs: () => ({ prefs: {} }),
     calendarAxisState: state, // collapse state now lives in the store (0111); default collapsed
     toggleCalendarTop: vi.fn(),
     toggleCalendarBottom: vi.fn(),

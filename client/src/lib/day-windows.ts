@@ -4,7 +4,7 @@
  * A day-type carries availability windows keyed by **direction tag id** → time
  * ranges. This module turns that map (plus the tag defs + per-pattern prefs) into
  * a flat `Band[]` with vertical geometry already resolved, so both the background
- * availability hatch (`PatternBlockOverlay`) and the left **Direction column**
+ * availability bands (`PatternBlockOverlay`) and the left **Direction column**
  * (`DirectionColumn`) render from the same source — no drift between them.
  *
  * Pure + DOM-free (only depends on `yOf` for the px mapping) so it's unit-testable
