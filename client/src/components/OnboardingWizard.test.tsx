@@ -113,7 +113,7 @@ vi.mock('../stores/index.js', () => ({
 }));
 
 const OFF_INTEGRATIONS: Integrations = {
-  ollama: { available: false, models: [], smallModel: '', mediumModel: '', embedModel: '' },
+  ollama: { available: false, models: [], fastModel: '', qualityModel: '', embedModel: '' },
   google: { mode: 'off', liveEnabled: false, source: 'off', connections: [] },
 };
 

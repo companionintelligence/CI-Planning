@@ -48,7 +48,7 @@ export type Payload = Record<string, string | number | boolean | null | undefine
 
 interface SurfaceConfig {
   /** Small for frequent microcopy; medium for the longer narratives (§2V.1). */
-  tier: 'small' | 'medium';
+  tier: 'fast' | 'quality';
   /** Length budget in characters (§2V.4 "brief"). */
   maxLen: number;
   /** Rolling-window size for the anti-repetition memory (§2V.3, per-surface K). */
@@ -77,7 +77,7 @@ const PARA_HINT = '3-5 sentences, no bullet lists, no preamble';
 
 export const SURFACES: Record<Surface, SurfaceConfig> = {
   timing_note: {
-    tier: 'small', maxLen: 140, historyK: 30, lengthHint: LINE_HINT,
+    tier: 'fast', maxLen: 140, historyK: 30, lengthHint: LINE_HINT,
     required: (p) => [str(p.planned_departure)],
     facts: (p) =>
       `planned_departure=${str(p.planned_departure)}${p.next ? `, next="${str(p.next)}"` : ''}` +
@@ -92,7 +92,7 @@ export const SURFACES: Record<Surface, SurfaceConfig> = {
   },
 
   t4_whats_next: {
-    tier: 'small', maxLen: 140, historyK: 30, lengthHint: LINE_HINT,
+    tier: 'fast', maxLen: 140, historyK: 30, lengthHint: LINE_HINT,
     required: (p) => (p.next_time ? [str(p.next_time)] : []),
     facts: (p) =>
       p.next ? `block ended, next="${str(p.next)}" at ${str(p.next_time)}` : 'block ended, nothing scheduled after it',
@@ -105,7 +105,7 @@ export const SURFACES: Record<Surface, SurfaceConfig> = {
   },
 
   departure_prompt: {
-    tier: 'small', maxLen: 160, historyK: 30, lengthHint: LINE_HINT,
+    tier: 'fast', maxLen: 160, historyK: 30, lengthHint: LINE_HINT,
     required: (p) => [str(p.minutes_over)],
     facts: (p) =>
       `keeping this block ${str(p.minutes_over)} more minutes${p.next ? ` runs into "${str(p.next)}" at ${str(p.next_time)}` : ''}`,
@@ -118,7 +118,7 @@ export const SURFACES: Record<Surface, SurfaceConfig> = {
   },
 
   calibration_chip: {
-    tier: 'small', maxLen: 120, historyK: 30, lengthHint: LINE_HINT,
+    tier: 'fast', maxLen: 120, historyK: 30, lengthHint: LINE_HINT,
     required: (p) => [str(p.suggested)],
     facts: (p) =>
       `${p.scope ? `"${str(p.scope)}" ` : ''}work tends to run ${p.direction === 'under' ? 'shorter' : 'longer'} than estimated; ` +
@@ -133,7 +133,7 @@ export const SURFACES: Record<Surface, SurfaceConfig> = {
   },
 
   nudge: {
-    tier: 'small', maxLen: 160, historyK: 30, lengthHint: LINE_HINT,
+    tier: 'fast', maxLen: 160, historyK: 30, lengthHint: LINE_HINT,
     required: (p) => (p.datum != null ? [str(p.datum)] : []),
     facts: (p) => `${str(p.fact)}${p.datum != null ? ` (datum=${str(p.datum)})` : ''}`,
     fallbacks: [
@@ -151,21 +151,21 @@ export const SURFACES: Record<Surface, SurfaceConfig> = {
   // fallbackEveningProse). The offline template emits that paragraph verbatim — a
   // hand-authored opener pool would be strictly worse than the real deterministic prose.
   daily_brief: {
-    tier: 'medium', maxLen: 800, historyK: 14, lengthHint: PARA_HINT,
+    tier: 'quality', maxLen: 800, historyK: 14, lengthHint: PARA_HINT,
     required: () => [],
     facts: (p) => str(p.facts),
     fallbacks: [(p) => str(p.fallback) || str(p.facts)],
   },
 
   eod_alignment: {
-    tier: 'medium', maxLen: 800, historyK: 14, lengthHint: PARA_HINT,
+    tier: 'quality', maxLen: 800, historyK: 14, lengthHint: PARA_HINT,
     required: () => [],
     facts: (p) => str(p.facts),
     fallbacks: [(p) => str(p.fallback) || str(p.facts)],
   },
 
   weekly_review: {
-    tier: 'medium', maxLen: 900, historyK: 4, lengthHint: PARA_HINT,
+    tier: 'quality', maxLen: 900, historyK: 4, lengthHint: PARA_HINT,
     required: () => [],
     facts: (p) => str(p.facts),
     fallbacks: [(p) => str(p.fallback) || str(p.facts)],
@@ -175,14 +175,14 @@ export const SURFACES: Record<Surface, SurfaceConfig> = {
   // caller-supplies-facts-and-fallback shape as the narrative surfaces above: the
   // branch's own fixed deterministic question/option IS the fallback, verbatim.
   plan_week_followup: {
-    tier: 'small', maxLen: 160, historyK: 8,
+    tier: 'fast', maxLen: 160, historyK: 8,
     lengthHint: 'one short question, warm and specific, ending with a question mark',
     required: () => [],
     facts: (p) => str(p.facts),
     fallbacks: [(p) => str(p.fallback) || str(p.facts)],
   },
   plan_week_option: {
-    tier: 'small', maxLen: 48, historyK: 12,
+    tier: 'fast', maxLen: 48, historyK: 12,
     lengthHint: 'a terse answer chip, 2-5 words, no trailing period',
     required: () => [],
     facts: (p) => str(p.facts),
@@ -312,13 +312,13 @@ export async function renderCopy(
       raw = await generate(buildPrompt(cfg, payload, recent, failure), {
         tier: cfg.tier,
         temperature: 0.7, // microcopy wants variety; the gate enforces the floor
-        timeoutMs: cfg.tier === 'small' ? 15_000 : 45_000,
+        timeoutMs: cfg.tier === 'fast' ? 15_000 : 45_000,
       });
     } catch (err) {
       logger.warn('renderCopy: model unavailable, using fallback pool', { surface, err: (err as Error).message });
       break; // Ollama down → straight to the rotation pool
     }
-    const text = cleanLine(raw, cfg.tier === 'medium');
+    const text = cleanLine(raw, cfg.tier === 'quality');
     const g = gateCopy(text, { required, recent, maxLen: cfg.maxLen });
     if (g.ok) {
       await record(ownerId, surface, g.signature, cfg.historyK);

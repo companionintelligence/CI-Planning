@@ -370,7 +370,7 @@ export async function ingestEmails(
     try {
       await runExtraction(
         { kind: 'gmail', ref: email.id, subject: email.subject, text: email.body, at: email.receivedAt },
-        opts.tier ?? 'medium',
+        opts.tier ?? 'quality',
         { from: email.from, subject: email.subject },
         result
       );
@@ -425,7 +425,7 @@ export async function ingestEvents(
     if (text) {
       await runExtraction(
         { kind: 'gcal', ref: event.id, subject: event.title, text, at: event.start },
-        opts.tier ?? 'medium',
+        opts.tier ?? 'quality',
         { title: event.title, start: event.start },
         result
       );
@@ -446,7 +446,7 @@ export async function ingestText(
   opts: { tier?: ModelTier } = {}
 ): Promise<IngestResult> {
   const result = emptyResult();
-  await runExtraction({ kind: 'text', ref, text }, opts.tier ?? 'medium', { ref }, result);
+  await runExtraction({ kind: 'text', ref, text }, opts.tier ?? 'quality', { ref }, result);
 
   // AF-3: auto-promote the batch (dedupe → promote ALL pending) before returning.
   await promoteBatch(result);

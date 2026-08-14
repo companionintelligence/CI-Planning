@@ -4,7 +4,7 @@
  * Resolution order (first hit wins):
  *   1. the per-owner override picked in Settings (scheduling_prefs.fast_model /
  *      quality_model / embed_model) — an explicit user choice is never second-guessed;
- *   2. an operator env pin (OLLAMA_SMALL / OLLAMA_MEDIUM / OLLAMA_EMBED) — likewise
+ *   2. an operator env pin (OLLAMA_FAST / OLLAMA_QUALITY / OLLAMA_EMBED) — likewise
  *      deliberate, so it is used verbatim even if it turns out not to be installed;
  *   3. the built-in default, WHEN it is actually installed;
  *   4. otherwise a model auto-selected from what this device actually has.
@@ -51,8 +51,8 @@
  *     that is a valid `completion` model and a poor triage one. Models with no capability
  *     metadata at all rank as preferred too (degrade open, see below); anything left
  *     (vision-only, no tools) is used only when nothing better is installed.
- *   - within a preference band, models are ranked by parameter count: the small/fast tier
- *     takes the smallest (latency dominates triage work), the medium/quality tier the
+ *   - within a preference band, models are ranked by parameter count: the fast tier
+ *     takes the smallest (latency dominates triage work), the quality tier the
  *     largest (headroom matters for briefings).
  *
  * Capability metadata only exists on newer Ollama releases. When it is missing the
@@ -181,8 +181,8 @@ export function isPreferredForGeneration(m: InstalledModel): boolean {
  * ranked for `tier`. Selection always drains the preferred band first, so a vision-only
  * model is reached only when nothing tool-capable is installed.
  */
-function rankedGenerationBands(tier: 'small' | 'medium'): InstalledModel[] {
-  const sort = bySize(tier === 'small' ? 'asc' : 'desc');
+function rankedGenerationBands(tier: 'fast' | 'quality'): InstalledModel[] {
+  const sort = bySize(tier === 'fast' ? 'asc' : 'desc');
   const all = generationCandidates();
   const preferred = all.filter(isPreferredForGeneration).sort(sort);
   const fallback = all.filter((m) => !isPreferredForGeneration(m)).sort(sort);
@@ -190,7 +190,7 @@ function rankedGenerationBands(tier: 'small' | 'medium'): InstalledModel[] {
 }
 
 /** Best installed generation model for a tier, or null when nothing qualifies. */
-export function autoSelectModel(tier: 'small' | 'medium'): string | null {
+export function autoSelectModel(tier: 'fast' | 'quality'): string | null {
   return rankedGenerationBands(tier)[0]?.name ?? null;
 }
 
@@ -246,10 +246,10 @@ function resolveConfigured(configured: string, pinned: boolean, auto: () => stri
  * there would report `qwen2.5:0.5b` as the effective model while requests correctly use
  * the auto-selected one — exactly the mismatch this file exists to remove.
  */
-export function resolveModelDefault(tier: 'small' | 'medium'): string {
-  return tier === 'medium'
-    ? resolveConfigured(config.ollamaMediumModel, config.ollamaPinned.medium, () => autoSelectModel('medium'))
-    : resolveConfigured(config.ollamaSmallModel, config.ollamaPinned.small, () => autoSelectModel('small'));
+export function resolveModelDefault(tier: 'fast' | 'quality'): string {
+  return tier === 'quality'
+    ? resolveConfigured(config.ollamaQualityModel, config.ollamaPinned.quality, () => autoSelectModel('quality'))
+    : resolveConfigured(config.ollamaFastModel, config.ollamaPinned.fast, () => autoSelectModel('fast'));
 }
 
 /** Embedding equivalent of resolveModelDefault. */
@@ -258,9 +258,9 @@ export function resolveEmbedModelDefault(): string {
 }
 
 /** Model for a tier — see the resolution order in the file header. */
-export async function resolveModel(tier: 'small' | 'medium', owner: string = currentOwnerId()): Promise<string> {
+export async function resolveModel(tier: 'fast' | 'quality', owner: string = currentOwnerId()): Promise<string> {
   const prefs = await modelPrefs(owner);
-  const override = (tier === 'medium' ? prefs?.quality_model : prefs?.fast_model)?.trim();
+  const override = (tier === 'quality' ? prefs?.quality_model : prefs?.fast_model)?.trim();
   return override || resolveModelDefault(tier);
 }
 
@@ -270,10 +270,10 @@ export async function resolveEmbedModel(owner: string = currentOwnerId()): Promi
 }
 
 /** `resolveModel` plus the reason, without the per-owner override. */
-export function explainModelDefault(tier: 'small' | 'medium'): ResolvedModel {
-  return tier === 'medium'
-    ? resolveConfiguredDetailed(config.ollamaMediumModel, config.ollamaPinned.medium, () => autoSelectModel('medium'))
-    : resolveConfiguredDetailed(config.ollamaSmallModel, config.ollamaPinned.small, () => autoSelectModel('small'));
+export function explainModelDefault(tier: 'fast' | 'quality'): ResolvedModel {
+  return tier === 'quality'
+    ? resolveConfiguredDetailed(config.ollamaQualityModel, config.ollamaPinned.quality, () => autoSelectModel('quality'))
+    : resolveConfiguredDetailed(config.ollamaFastModel, config.ollamaPinned.fast, () => autoSelectModel('fast'));
 }
 
 /** Embedding equivalent of explainModelDefault. */
@@ -282,9 +282,9 @@ export function explainEmbedModelDefault(): ResolvedModel {
 }
 
 /** As `explainModelDefault`, but a per-owner Settings override wins and reports as such. */
-export async function explainModel(tier: 'small' | 'medium', owner: string = currentOwnerId()): Promise<ResolvedModel> {
+export async function explainModel(tier: 'fast' | 'quality', owner: string = currentOwnerId()): Promise<ResolvedModel> {
   const prefs = await modelPrefs(owner);
-  const override = (tier === 'medium' ? prefs?.quality_model : prefs?.fast_model)?.trim();
+  const override = (tier === 'quality' ? prefs?.quality_model : prefs?.fast_model)?.trim();
   return override ? { name: override, source: 'override' } : explainModelDefault(tier);
 }
 
@@ -303,14 +303,16 @@ export async function explainEmbedModel(owner: string = currentOwnerId()): Promi
  * which is exactly the state that quietly handed a 1B vision model the fast tier.
  */
 export function generationSelectionWarnings(
-  resolved: { tier: 'small' | 'medium'; model: ResolvedModel }[],
+  resolved: { tier: 'fast' | 'quality'; model: ResolvedModel }[],
 ): string[] {
   const warnings: string[] = [];
   for (const { tier, model } of resolved) {
     if (model.source !== 'auto') continue;
     const entry = matchInstalled(model.name);
     if (entry && !isPreferredForGeneration(entry)) {
-      const label = tier === 'small' ? 'Fast' : 'Quality';
+      // Sentence-case for the start of the message — no longer a translation into a
+      // different word (`small` → "Fast"), just the tier's own name capitalized.
+      const label = tier[0].toUpperCase() + tier.slice(1);
       warnings.push(
         `${label} model auto-selected ${model.name}, which does not advertise tool use — ` +
           `it may handle structured-output prompts poorly. Pull an instruction-tuned model ` +

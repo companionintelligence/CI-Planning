@@ -29,7 +29,7 @@ vi.mock('../src/mcp/ollama.js', async (importActual) => {
     isAvailable: vi.fn(async () => ollamaUp),
     generateJson: vi.fn(async (_prompt: string, opts?: { tier?: string; system?: string }) => {
       if (opts?.system?.includes('explain a finished day plan')) return rationaleResp();
-      if (opts?.tier === 'medium') return { overall: judgeOverall, critique: 'looks coherent' };
+      if (opts?.tier === 'quality') return { overall: judgeOverall, critique: 'looks coherent' };
       return llmOrder();
     }),
   };

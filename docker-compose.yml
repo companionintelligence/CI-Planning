@@ -117,8 +117,9 @@ services:
   # One-shot helper to pull the default models (config.ts defaults). Behind the `pull`
   # profile so a plain `docker compose up` never triggers multi-GB downloads. Run once:
   #   docker compose --profile pull run --rm ollama-pull
-  # Bringing your own models? Skip this and set OLLAMA_SMALL / OLLAMA_MEDIUM / OLLAMA_EMBED
-  # on the app service to any name already in `ollama list`.
+  # Bringing your own models? Skip this and set OLLAMA_FAST / OLLAMA_QUALITY / OLLAMA_EMBED
+  # on the app service to any name already in `ollama list`. (OLLAMA_SMALL / OLLAMA_MEDIUM
+  # are the former names of those two and still work.)
   ollama-pull:
     image: ollama/ollama:latest
     profiles: ["pull"]

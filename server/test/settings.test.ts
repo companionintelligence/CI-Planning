@@ -39,7 +39,7 @@ describe('settings / prefs API', () => {
     expect(status).toBe(200);
     expect(body).toHaveProperty('available');
     expect(Array.isArray(body.models)).toBe(true);
-    expect(typeof body.smallModel).toBe('string');
+    expect(typeof body.fastModel).toBe('string');
   });
 
   it('GET /api/integrations reports Ollama + Google modes', async () => {

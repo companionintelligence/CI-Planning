@@ -250,7 +250,7 @@ export async function attachRationales(
     const generate =
       opts.generateFn ??
       ((prompt: string, timeoutMs: number) =>
-        generateJson<unknown>(prompt, { tier: 'small', temperature: 0.3, timeoutMs }));
+        generateJson<unknown>(prompt, { tier: 'fast', temperature: 0.3, timeoutMs }));
 
     const raw = await generate(buildPrompt(items), callBudget);
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;

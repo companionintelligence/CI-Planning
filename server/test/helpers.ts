@@ -165,8 +165,8 @@ export async function ollamaAvailable(): Promise<boolean> {
     const models = new Set(s.models);
     _ollamaUp =
       s.available &&
-      models.has(s.smallModel) &&
-      models.has(s.mediumModel) &&
+      models.has(s.fastModel) &&
+      models.has(s.qualityModel) &&
       models.has(s.embedModel);
   }
   return _ollamaUp;
