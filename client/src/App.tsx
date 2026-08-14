@@ -9,6 +9,7 @@ import { authGateActive } from './lib/api.js';
 import { BottomNav } from './components/BottomNav.js';
 import { ToastContainer } from './components/Toast.js';
 import { ConflictBanner } from './components/ConflictBanner.js';
+import { UpdateBanner } from './components/UpdateBanner.js';
 import { ElementWizard } from './components/ElementWizard.js';
 import { PlanWeekAssistant } from './components/PlanWeekAssistant.js';
 import { OnboardingWizard } from './components/OnboardingWizard.js';
@@ -186,6 +187,8 @@ function Shell(props: { children?: any }) {
 
         {/* Phase L: persistent conflict banner — shown when sync ops lost a LWW race */}
         <ConflictBanner />
+        {/* Shown when an SSE reconnect reveals the server redeployed under this tab */}
+        <UpdateBanner />
 
         {/* Bottom padding clears the mobile tab bar — and, where one is rendered, the
             floating Create button that sits above it. */}
