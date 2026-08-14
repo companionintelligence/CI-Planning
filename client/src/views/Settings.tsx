@@ -1,6 +1,6 @@
 import { createSignal, createEffect, Show, createResource, For, onMount } from 'solid-js';
 import { BellRing, Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, Database, AlertTriangle, Users, KeyRound, ScrollText, Eye, FileJson, FileText, Mail } from 'lucide-solid';
-import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast, texturesEnabled, setTexturesEnabled, plannerAxisState, setPlannerCollapseBounds, integrations, refetchIntegrations, aiAvailable, connections, refetchConnections } from '../stores/index.js';
+import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast, texturesEnabled, setTexturesEnabled, plannerAxisState, setPlannerCollapseBounds, integrations, refetchIntegrations, recheckIntegrations, aiAvailable, connections, refetchConnections } from '../stores/index.js';
 import { api, type PlanningSession } from '../lib/api.js';
 import { sessionToMarkdown, sessionToJson, exportFilename } from '../lib/plan-week-export.js';
 import { FTUE_RESUME_KEY } from '../lib/onboarding.js';
@@ -1422,31 +1422,62 @@ export function Settings() {
         {/* ── CONNECTIONS TAB ─────────────────────────────────────────────────── */}
         <Show when={activeTab() === 'connections'}>
 
-          {/* Models */}
+          {/* Models — Ollama health AND the model picker, in ONE card.
+              The health row used to live again in the Integrations card at the bottom of
+              this tab, wording the same reachable-vs-usable distinction a second time at a
+              different severity: a user who changed a model here had to scroll down there
+              to see whether it took. Same three states, same data, rendered once. */}
           <section class="card">
             <div class="flex items-center justify-between mb-3">
               <div class="section-label flex items-center gap-1.5"><Cpu size={12} /> Models</div>
-              <button type="button" onClick={doSave} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
+              <div class="flex items-center gap-3">
+                {/* Ollama can come up after the app — let an operator re-check without a
+                    reload. The server caches its probe for 30s, so this asks for a FRESH
+                    one (see recheckIntegrations); a plain refetch would return the stale
+                    answer and read as broken. */}
+                <button type="button" onClick={() => recheckIntegrations()} disabled={integrations.loading}
+                  class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors">
+                  <RefreshCw size={11} class={integrations.loading ? 'animate-spin' : undefined} /> Re-check
+                </button>
+                <button type="button" onClick={doSave} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
+              </div>
             </div>
             <Show when={integrations()} fallback={<div class="text-xs text-muted-foreground animate-pulse2">Checking Ollama…</div>}>
-              <Show
-                when={ollamaUp()}
-                fallback={
-                  <div class="flex items-center gap-2 text-xs text-destructive">
-                    <XCircle size={13} /> Ollama unavailable — start it on localhost:11434 to choose models.
+              <div class="flex flex-col gap-4">
+                {/* Three states, not two. "Reachable" and "usable" are different: Ollama
+                    answering while the selected model isn't pulled used to render a plain
+                    green tick over completely dead AI features. Amber is that middle state. */}
+                <div class="flex items-center gap-3">
+                  <Cpu size={16} classList={{
+                    'text-green-400': aiAvailable(),
+                    'text-amber-400': ollamaUp() && !aiAvailable(),
+                    'text-red-400': !ollamaUp(),
+                  }} />
+                  <div class="flex-1">
+                    <div class="text-sm text-slate-200 font-medium flex items-center gap-2">
+                      Ollama
+                      <Show when={ollamaUp()} fallback={<XCircle size={13} class="text-red-400" />}>
+                        <Show when={aiAvailable()} fallback={<AlertTriangle size={13} class="text-amber-400" />}>
+                          <CheckCircle2 size={13} class="text-green-400" />
+                        </Show>
+                      </Show>
+                    </div>
+                    <div class="text-xs text-slate-500 mt-0.5">
+                      {!ollamaUp()
+                        ? 'Unavailable — start Ollama on localhost:11434'
+                        : !aiAvailable()
+                          ? `Running, but ${missingModels().join(', ')} not installed — AI features are off`
+                          : `${ollamaModels().length} models · fast: ${integrations()!.ollama.fastModel} · quality: ${integrations()!.ollama.qualityModel}`}
+                    </div>
                   </div>
-                }
-              >
-                <div class="flex flex-col gap-4">
-                  {/* Ollama running but the selected model isn't pulled: the old UI showed a
-                      plain green "available" here while every AI call failed with
-                      `model '…' not found`. Name the missing model and what to do. */}
+                </div>
+                <Show when={ollamaUp()}>
+                  {/* The remedy for the amber state above, next to the selects it points at.
+                      The state itself is named once, by the health row. */}
                   <Show when={missingModels().length > 0}>
                     <div class="flex items-start gap-2 text-[11px] text-amber-400">
                       <AlertTriangle size={12} class="mt-0.5 flex-shrink-0" />
                       <span>
-                        Ollama is running, but {missingModels().join(', ')}{' '}
-                        {missingModels().length === 1 ? 'is' : 'are'} not installed — AI features stay off.
                         Pull {missingModels().length === 1 ? 'it' : 'them'} with <span class="font-mono">ollama pull</span>, or pick an
                         installed model below.
                       </span>
@@ -1468,9 +1499,9 @@ export function Settings() {
                   <ModelSelect label="Fast model" hint="extraction & triage" field="fast_model" fallback={integrations()!.ollama.fastModel} />
                   <ModelSelect label="Quality model" hint="briefings" field="quality_model" fallback={integrations()!.ollama.qualityModel} />
                   <ModelSelect label="Embedding model" hint="dedupe" field="embed_model" fallback={integrations()!.ollama.embedModel} />
-                  <p class="text-[11px] text-muted-foreground">{ollamaModels().length} models installed · changes apply on Save.</p>
-                </div>
-              </Show>
+                  <p class="text-[11px] text-muted-foreground">Changes apply on Save.</p>
+                </Show>
+              </div>
             </Show>
           </section>
 
@@ -1688,46 +1719,17 @@ export function Settings() {
             </section>
           </Show>
 
-          {/* Integrations */}
+          {/* Integrations — Google only. The Ollama row that used to lead this card now
+              lives in the Models card above, beside the selects it describes; with Google
+              hidden the whole card has nothing to say, so it hides with it. */}
+          <Show when={GOOGLE_CONNECT_ENABLED}>
           <section class="card">
             <div class="flex items-center justify-between mb-3">
               <div class="section-label">Integrations</div>
-              {/* Ollama can come up after the app — let an operator re-check without a reload. */}
-              <button type="button" onClick={() => refetchIntegrations()} disabled={integrations.loading}
-                class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors">
-                <RefreshCw size={11} class={integrations.loading ? 'animate-spin' : undefined} /> Re-check
-              </button>
             </div>
             <Show when={integrations()} fallback={<div class="text-xs text-slate-500 animate-pulse2">Checking…</div>}>
               {(i) => (
                 <div class="flex flex-col gap-3">
-                  {/* Three states, not two. "Reachable" and "usable" are different: Ollama
-                      answering while the selected model isn't pulled used to render a plain
-                      green tick over completely dead AI features. Amber is that middle state. */}
-                  <div class="flex items-center gap-3">
-                    <Cpu size={16} classList={{
-                      'text-green-400': aiAvailable(),
-                      'text-amber-400': ollamaUp() && !aiAvailable(),
-                      'text-red-400': !ollamaUp(),
-                    }} />
-                    <div class="flex-1">
-                      <div class="text-sm text-slate-200 font-medium flex items-center gap-2">
-                        Ollama
-                        <Show when={ollamaUp()} fallback={<XCircle size={13} class="text-red-400" />}>
-                          <Show when={aiAvailable()} fallback={<AlertTriangle size={13} class="text-amber-400" />}>
-                            <CheckCircle2 size={13} class="text-green-400" />
-                          </Show>
-                        </Show>
-                      </div>
-                      <div class="text-xs text-slate-500 mt-0.5">
-                        {!ollamaUp()
-                          ? 'Unavailable — start Ollama on localhost:11434'
-                          : !aiAvailable()
-                            ? `Running, but ${missingModels().join(', ')} not installed — AI features are off`
-                            : `${i().ollama.models.length} models · fast: ${i().ollama.fastModel} · quality: ${i().ollama.qualityModel}`}
-                      </div>
-                    </div>
-                  </div>
                   {/* Google connection — hidden from the live app for now (flags.ts
                       GOOGLE_CONNECT_ENABLED); Companion Memory is the only connectable
                       source at launch. Server-side Google config/routes are untouched. */}
@@ -1812,6 +1814,7 @@ export function Settings() {
               )}
             </Show>
           </section>
+          </Show>
 
           {/* Connected accounts (T13 #349) — the provider-agnostic connection surface.
               Backed by the `connections` resource (GET /api/connections): one row per

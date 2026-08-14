@@ -661,7 +661,12 @@ export const api = {
   },
 
   llm: {
-    status: () => request<LLMStatus>('GET', '/llm/status'),
+    // Force a live Ollama probe, bypassing the server's PROBE_TTL_MS cache, then throw
+    // the payload away — the caller re-reads the richer integrations() right after.
+    // This replaced a zero-caller `status()` wrapper over the same route: the route is a
+    // real diagnostic endpoint and stays, but the only thing the UI needs from it is the
+    // cache bust behind Settings → "Re-check", so the wrapper says that instead.
+    recheck: () => request<unknown>('GET', '/llm/status?fresh=1'),
     integrations: () => request<Integrations>('GET', '/integrations'),
   },
 
@@ -1356,11 +1361,6 @@ export interface WeekReview {
 export type Calibration =
   | { calibrated: false; sample_count: number }
   | { calibrated: true; sample_count: number; bias_ratio: number; p25: number; p50: number; p75: number; computed_at: string; label: string };
-
-export interface LLMStatus {
-  available: boolean; url: string; models: string[];
-  fastModel: string; qualityModel: string; embedModel: string;
-}
 
 // ── Connections ────────────────────────────────────────────────────────────────
 // ONE shape for a stored connection, mirroring the server's ConnectionRecord
