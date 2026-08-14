@@ -62,6 +62,39 @@ function loadFixture<T>(name: string): T[] {
   }
 }
 
+const DAY_MS = 86_400_000;
+
+/**
+ * Shift the committed email fixtures forward by a whole number of days, so the newest
+ * always lands inside the last 24 hours.
+ *
+ * emails.json carries fixed dates, but the Gmail ingest window is relative to now: 0147
+ * floors it at now − `email_lookback_days`, and the API caps that at 90. Left alone the
+ * fixtures age past every legal setting and fixture mode silently ingests nothing — no
+ * error, no suggestions, just a demo that quietly stopped working. These passed 90 days
+ * old in August 2026, so this is not hypothetical.
+ *
+ * Whole days rather than an exact offset, so the result holds still for a day at a time:
+ * each message keeps its time-of-day and the spacing between them, the gmail_since
+ * watermark advances normally within a run instead of being outrun by a cursor that
+ * creeps on every poll, and the set refreshes once daily. Ids are untouched, so the
+ * dedupe key (source_ref) survives the shift — a refreshed message updates its existing
+ * possible rather than duplicating it.
+ *
+ * Calendar fixtures are deliberately NOT rebased: ingestEvents passes no from/to, so
+ * nothing filters them by date and they never expire this way.
+ */
+function rebaseEmailsToRecent(emails: EmailMessage[]): EmailMessage[] {
+  const times = emails.map((e) => Date.parse(e.receivedAt)).filter((t) => Number.isFinite(t));
+  if (!times.length) return emails;
+  const shift = Math.floor((Date.now() - Math.max(...times)) / DAY_MS) * DAY_MS;
+  if (shift <= 0) return emails; // already current, or dated ahead — leave them be
+  return emails.map((e) => {
+    const t = Date.parse(e.receivedAt);
+    return Number.isFinite(t) ? { ...e, receivedAt: new Date(t + shift).toISOString() } : e;
+  });
+}
+
 /**
  * Fixture-backed Google client. Reads emails.json / calendar.json from the fixtures dir.
  * This is the default in dev and test so the whole ingestion pipeline runs without OAuth.
@@ -70,7 +103,7 @@ export function createFixtureGoogleClient(): GoogleClient {
   return {
     mode: 'fixture',
     async listEmails(opts = {}) {
-      let emails = loadFixture<EmailMessage>('emails.json');
+      let emails = rebaseEmailsToRecent(loadFixture<EmailMessage>('emails.json'));
       if (opts.since) emails = emails.filter((e) => e.receivedAt >= opts.since!);
       return opts.limit ? emails.slice(0, opts.limit) : emails;
     },

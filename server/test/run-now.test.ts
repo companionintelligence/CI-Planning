@@ -5,7 +5,14 @@ import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { issueApiKey } from '../src/lib/auth/apiKey.js';
 import { SCOPE_READ } from '../src/lib/auth/types.js';
 import { RUN_NOW_KINDS, type JobRunResult } from '../src/jobs/index.js';
-import { startTestServer, resetDb, api, ollamaAvailable, type TestServer } from './helpers.js';
+import {
+  startTestServer,
+  resetDb,
+  api,
+  ollamaAvailable,
+  boundEmailLookbackToOneDay,
+  type TestServer,
+} from './helpers.js';
 
 /**
  * FTUE · T12 (#348) — POST /api/jobs/run-now: the "Run my first sync now" trigger.
@@ -35,13 +42,17 @@ function lastRun(kind: string) {
     .get(kind) as { status: string } | undefined;
 }
 
-// Timeout raised above the 120s global. `run-now` awaits every RUN_NOW_KIND
-// inline before it answers, so on a machine where the configured Ollama models
-// are installed each of the two posting tests performs real inference: measured
-// at 48s and 50s respectively on an otherwise idle box. That is inside the
-// global budget with no headroom, and it breached 120s the moment the machine
-// had anything else running — a failure that says nothing about the code.
-// Anywhere Ollama is unreachable (CI) these same tests take about a second.
+// Timeout raised above the 120s global. `run-now` awaits every RUN_NOW_KIND inline before
+// it answers, so on a machine where the configured Ollama models are installed each posting
+// test performs real inference. 3648674 measured 48s and 50s on an idle box — inside the
+// global budget with no headroom, and it breached 120s the moment the machine had anything
+// else running, a failure that says nothing about the code.
+//
+// Since then ingest_gmail stopped being a no-op here: the fixture emails are rebased into
+// the ingest window (rebaseEmailsToRecent), so all three posting tests now do genuine email
+// extraction as well, measured at ~70s each. Contention still dominates — with an unrelated
+// 27B model resident in VRAM the same bodies ran past 300s. Anywhere Ollama is unreachable
+// (CI) these same tests take about a second.
 describe('POST /api/jobs/run-now', { timeout: 300_000 }, () => {
   let server: TestServer;
   let ollamaUp = false;
@@ -50,7 +61,10 @@ describe('POST /api/jobs/run-now', { timeout: 300_000 }, () => {
     ollamaUp = await ollamaAvailable();
   });
   afterAll(() => server.close());
-  beforeEach(() => resetDb());
+  // run-now awaits every RUN_NOW_KIND inline, ingest_gmail among them. The fixture emails
+  // are rebased into the last few days, so without this each of the three posting tests
+  // would put all 24 through the extraction LLM.
+  beforeEach(() => { resetDb(); boundEmailLookbackToOneDay(); });
   afterEach(() => { config.auth.mode = 'test'; sqlite.exec('DELETE FROM api_keys'); });
 
   const post = (headers?: Record<string, string>) =>

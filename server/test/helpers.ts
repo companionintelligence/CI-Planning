@@ -4,6 +4,7 @@ import { buildApp } from '../src/app.js';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { status } from '../src/mcp/ollama.js';
+import { setInstalledModels } from '../src/lib/models.js';
 // NOTE: the data facade's SQLite backend is installed by src/db/index.ts on import, so
 // it is live for every test — including the many that never import this harness. Doing
 // it here as well was not enough: a test that imports a service directly would still
@@ -157,17 +158,79 @@ export async function api<T = any>(
   return { status: res.status, body: text ? JSON.parse(text) : (undefined as T) };
 }
 
+/**
+ * Prime the installed-model cache from the live probe, so `isReady()` — and the production
+ * gates built on it — answer truthfully for the duration of one test. Returns a restore fn.
+ *
+ * status() deliberately skips setInstalledModels() under NODE_ENV=test, which is what keeps
+ * the rest of the suite on its deterministic degrade path. The side effect is that
+ * isInstalled() is false for every model here, so `status().ready` and isReady() are
+ * structurally false — and a test named for an LLM path silently gets the fallback instead.
+ * plan.ts's authorPlanOrder gates on isReady() (2e713fa, which replaced the old
+ * `available` predicate), so it returned 'deterministic' every time. ollama.ts names
+ * setInstalledModels() as the sanctioned way in for tests that need the real answer.
+ *
+ * Capabilities are left empty, which is safe rather than merely convenient: callers gate on
+ * ollamaAvailable() first, so every configured model is installed, and resolveConfiguredDetailed
+ * returns a configured-and-installed model as 'default' before it ever consults the
+ * capability-based auto-selector (models.ts:238). Priming therefore cannot change WHICH model
+ * runs — only whether isReady() tells the truth about it. Were that order to change, an empty
+ * capability list would stop generationCandidates() excluding 'thinking' models, which return
+ * "" under format:json.
+ *
+ * ALWAYS restore in a finally — a leaked cache turns auto-selection on for whatever runs next.
+ */
+export async function primeInstalledModels(): Promise<() => void> {
+  const s = await status();
+  setInstalledModels(s.models.map((name) => ({ name, capabilities: [], paramB: null })));
+  return () => setInstalledModels(null);
+}
+
+/**
+ * Bound how many fixture emails a single Gmail ingest processes, for the tests that run
+ * one for real against Ollama.
+ *
+ * The fixture client rebases emails.json into the last few days (rebaseEmailsToRecent),
+ * so the baseline's 7-day window now takes in all 24 — each one a real generation at
+ * tier 'quality', which runs past even a 300s budget. One day always holds at least the
+ * newest message, since the rebase lands it inside 24h by construction, so this bounds
+ * the cost without making the assertion vacuous.
+ *
+ * Deliberately not folded into resetDb(): ingest-windows.test.ts asserts the baseline
+ * still reports the shipped 7-day default.
+ */
+export function boundEmailLookbackToOneDay(): void {
+  sqlite.prepare(`UPDATE scheduling_prefs SET email_lookback_days = 1`).run();
+}
+
+/**
+ * Is `want` present in `installed`, tolerating a missing tag — `nomic-embed-text`
+ * matches installed `nomic-embed-text:latest`. Same rule as matchInstalled() in
+ * src/lib/models.ts, reimplemented against the raw name list on purpose: status()
+ * deliberately skips setInstalledModels() under NODE_ENV=test (see its "Never
+ * auto-select during tests" note), so the shared cache is null and isInstalled() /
+ * s.missingModels report false-negative for everything here.
+ */
+function hasModel(installed: string[], want: string | null | undefined): boolean {
+  if (!want) return false;
+  const w = want.trim().toLowerCase();
+  if (!w) return false;
+  return installed.some((m) => {
+    const n = m.toLowerCase();
+    return n === w || n.split(':')[0] === w;
+  });
+}
+
 let _ollamaUp: boolean | null = null;
 /** Cached Ollama readiness so LLM-dependent tests can skip when service/models are unavailable. */
 export async function ollamaAvailable(): Promise<boolean> {
   if (_ollamaUp === null) {
     const s = await status();
-    const models = new Set(s.models);
     _ollamaUp =
       s.available &&
-      models.has(s.fastModel) &&
-      models.has(s.qualityModel) &&
-      models.has(s.embedModel);
+      hasModel(s.models, s.fastModel) &&
+      hasModel(s.models, s.qualityModel) &&
+      hasModel(s.models, s.embedModel);
   }
   return _ollamaUp;
 }
