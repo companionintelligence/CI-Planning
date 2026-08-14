@@ -145,6 +145,96 @@ describe('SectionAddTask — keyboard', () => {
   });
 });
 
+describe('SectionAddTask — racing the backlog fetch', () => {
+  // Regression: Enter read an empty `matches()` as "no such task exists", but it is
+  // also empty while the backlog request is in flight — so a fast typist created a
+  // DUPLICATE instead of picking the task the fetch was about to surface. Typing fast
+  // is the normal case for the keyboard flow this box exists to serve.
+  it('Enter before the backlog lands still picks the existing task, not a new one', async () => {
+    let release!: (v: { tasks: unknown[] }) => void;
+    listTasks.mockReturnValue(new Promise((r) => { release = r; }));
+
+    const { container } = render(() => <SectionAddTask block={BLOCK} memberTaskIds={new Set()} />);
+    const input = boxOf(container);
+    typeInto(input, 'draft');
+    // No pause: Enter goes in while the request is still outstanding.
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    release({ tasks: [{ id: 't1', title: 'Draft the spec', status: 'open' }] });
+
+    await waitFor(() => expect(addTasks).toHaveBeenCalledWith('tb1', ['t1']));
+    expect(createTask).not.toHaveBeenCalled();
+  });
+
+  it('still creates when the resolved backlog genuinely has no match', async () => {
+    let release!: (v: { tasks: unknown[] }) => void;
+    listTasks.mockReturnValue(new Promise((r) => { release = r; }));
+
+    const { container } = render(() => <SectionAddTask block={BLOCK} memberTaskIds={new Set()} />);
+    const input = boxOf(container);
+    typeInto(input, 'Brand new task');
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    release({ tasks: [{ id: 't1', title: 'Something else', status: 'open' }] });
+
+    await waitFor(() => expect(createTask).toHaveBeenCalledWith({ title: 'Brand new task' }));
+    await waitFor(() => expect(addTasks).toHaveBeenCalledWith('tb1', ['new1']));
+  });
+});
+
+describe('SectionAddTask — the input keeps focus', () => {
+  // Regression: the input was `disabled` while the add was in flight. Disabling a
+  // focused element blurs it and re-enabling does not give focus back, so adding a
+  // second task needed the mouse — on a feature whose bar is "keyboard alone".
+  it('is never disabled mid-flight (readOnly instead, which does not blur)', async () => {
+    let release!: (v: unknown) => void;
+    addTasks.mockReturnValue(new Promise((r) => { release = r; }));
+
+    const { container } = render(() => <SectionAddTask block={BLOCK} memberTaskIds={new Set()} />);
+    const input = boxOf(container);
+    input.focus();
+    typeInto(input, 'draft');
+    await waitFor(() => expect(container.textContent).toContain('Draft the spec'));
+
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(input.readOnly).toBe(true)); // in flight
+    expect(input.disabled).toBe(false);
+    expect(document.activeElement).toBe(input);
+
+    release({ placed: 1, unplaced: 0, skipped: 0, blocksCreated: 1 });
+    await waitFor(() => expect(input.readOnly).toBe(false));
+  });
+
+  it('a REMOUNTED section claims the focus its predecessor lost', async () => {
+    // The real app remounts the section when the add's refetches land (twice — blocks
+    // and tasks are separate resources), so the element that finishes the add is not
+    // the one the caret must end up in. jsdom never remounts on its own, so drive it:
+    // add, unmount, mount again, and assert the fresh input takes focus.
+    const first = render(() => <SectionAddTask block={BLOCK} memberTaskIds={new Set()} />);
+    const input = boxOf(first.container);
+    input.focus();
+    typeInto(input, 'draft');
+    await waitFor(() => expect(first.container.textContent).toContain('Draft the spec'));
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(addTasks).toHaveBeenCalled());
+
+    first.unmount();
+    const second = render(() => <SectionAddTask block={BLOCK} memberTaskIds={new Set()} />);
+    await waitFor(() => expect(document.activeElement).toBe(boxOf(second.container)));
+  });
+
+  it('holds focus after the add completes, so the next task can be typed straight away', async () => {
+    const { container } = render(() => <SectionAddTask block={BLOCK} memberTaskIds={new Set()} />);
+    const input = boxOf(container);
+    input.focus();
+    typeInto(input, 'draft');
+    await waitFor(() => expect(container.textContent).toContain('Draft the spec'));
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(input.value).toBe(''));
+    expect(document.activeElement).toBe(input);
+  });
+});
+
 describe('SectionAddTask — outcomes', () => {
   it('a full Time Block is reported honestly instead of reading as success', async () => {
     addTasks.mockResolvedValue({ placed: 0, unplaced: 1, skipped: 0, blocksCreated: 0 });

@@ -13,7 +13,7 @@ import { localISODate } from '../lib/dates.js';
 import { focusState, formatRemaining } from '../lib/focus.js';
 import { directionColorForTask } from '../lib/pattern-meta.js';
 import { minutesIntoDay } from '../lib/grid.js';
-import { buildFocusItems, countPastRows, memberPast, type BuiltSection } from '../lib/focus-sections.js';
+import { buildFocusItems, countPastRows, memberPast, itemPast, sectionPast, type BuiltSection } from '../lib/focus-sections.js';
 import { LockToggle } from '../components/LockToggle.js';
 import { SectionAddTask } from '../components/SectionAddTask.js';
 import { blockColorVar } from '../lib/textures.js';
@@ -158,10 +158,14 @@ export function Focus() {
       })),
   );
 
-  const items = createMemo(() => buildFocusItems(entries(), containers(), now()));
-  const upcoming = () => items().filter((it) => !it.past);
-  const past = () => items().filter((it) => it.past);
-  const pastTally = () => countPastRows(items());
+  // The grouping memo deliberately does NOT read `now()`. It recomputes only when the
+  // day's rows change, so the item objects keep their identity across the 30-second
+  // tick — `<For>` keys by reference, and re-created rows would wipe whatever is being
+  // typed into a section's add box. Pastness is asked at render time instead.
+  const items = createMemo(() => buildFocusItems(entries(), containers()));
+  const upcoming = () => items().filter((it) => !itemPast(it, now()));
+  const past = () => items().filter((it) => itemPast(it, now()));
+  const pastTally = () => countPastRows(items(), now());
 
   const isPast = (e: Entry) => memberPast(e, now());
   const isNow = (e: Entry) => !e.done && e.startMs != null && e.endMs != null && e.startMs <= now() && e.endMs > now();
@@ -339,7 +343,7 @@ export function Focus() {
             {/* Phase 3 — search the backlog or create, straight into this block. Not
                 offered on a section that is already behind you: adding work to a
                 finished or elapsed Time Block would place it in the past. */}
-            <Show when={!props.section.past}>
+            <Show when={!sectionPast(props.section, now())}>
               <SectionAddTask block={b()} memberTaskIds={memberTaskIds(props.section)} />
             </Show>
           </div>
