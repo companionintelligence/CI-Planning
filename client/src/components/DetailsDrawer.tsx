@@ -1,4 +1,4 @@
-import { Show, For, Switch, Match, createSignal, createEffect, createResource, onCleanup } from 'solid-js';
+import { Show, For, Switch, Match, createSignal, createEffect, createResource, on, onCleanup } from 'solid-js';
 import { useLocation } from '@solidjs/router';
 import { Planner } from './Planner.js';
 import { X, PanelRight, Inbox } from 'lucide-solid';
@@ -404,6 +404,15 @@ export function DetailsDrawer() {
     '/tags': 'a tag or a direction',
     '/jobs': 'a scheduled job',
   } as Record<string, string>)[location.pathname] ?? 'an item';
+
+  // On Today, the drawer's default tab follows the selection: nothing selected →
+  // the Planner (the day grid is the useful resting surface), something selected →
+  // its Details. Keyed on the selection signals only, so a manual tab click is
+  // never fought — the tab moves when the SELECTION changes, not on render.
+  createEffect(on([activeTask, activeBlock, activeEntity], () => {
+    if (!hasPlannerTab()) return;
+    setDrawerTab(!activeTask() && !activeBlock() && !activeEntity() ? 'planner' : 'details');
+  }));
 
   // Per-view selection memory (mockup contract): each route remembers what was
   // selected in it, so Jobs → Today → Jobs restores the job you were reading

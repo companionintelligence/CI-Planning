@@ -282,7 +282,7 @@ export function Focus() {
   );
 
   return (
-    <div class="flex-1 overflow-auto p-6 page-enter max-w-2xl mx-auto w-full">
+    <div class="view-container page-enter max-w-2xl mx-auto">
       {/* Header — the Today-style card container (backlog-3 parity, 2026-07-21): same
           rounded card + right-column button cluster (Brief · Focus goals · day note).
           No day-stepper on purpose: FOCUS is today-only by design (see the view doc
@@ -291,7 +291,7 @@ export function Focus() {
       <div class="rounded-xl border border-border bg-card p-4 mb-5">
         <div class="flex items-start justify-between gap-3">
           <div class="flex items-baseline gap-2">
-            <h1 class="text-xl font-semibold text-foreground flex items-center gap-2">
+            <h1 class="view-title flex items-center gap-2">
               <Crosshair size={18} class="text-accent-hi" /> Focus
             </h1>
             <span class="text-sm text-muted-foreground">

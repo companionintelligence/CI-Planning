@@ -1,4 +1,5 @@
 import { For, Show, createSignal } from 'solid-js';
+import { ViewHeader } from '../components/ViewHeader.js';
 import { setActiveEntity } from '../stores/selection.js';
 import { revealDetails } from '../stores/ui.js';
 import { A } from '@solidjs/router';
@@ -64,32 +65,22 @@ export function Balance() {
       .sort((a, b) => (b.p.importance - b.p.satisfaction) - (a.p.importance - a.p.satisfaction));
 
   return (
-    <div class="flex-1 overflow-auto p-6 page-enter max-w-5xl mx-auto w-full">
-      {/* Header */}
-      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-        <div>
-          <h1 class="text-3xl font-extrabold text-foreground tracking-wide mb-1">Life Balance</h1>
-          <p class="text-xs text-muted-foreground">
-            How your current satisfaction lines up with what you say matters most, and your target weekly focus.
-          </p>
-        </div>
-        <A href="/priorities" class="btn-secondary self-start"><Edit class="w-4 h-4 mr-1.5" /> Priorities Wizard</A>
-      </div>
+    <div class="view-container page-enter">
+      <ViewHeader
+        title="Life Balance"
+        sub="How your current satisfaction lines up with what you say matters most, and your target weekly focus."
+      >
+        <A href="/priorities" class="btn-secondary"><Edit class="w-4 h-4 mr-1.5" /> Priorities Wizard</A>
+      </ViewHeader>
 
       {/* Tabs — Balance is what you SAY matters (satisfaction vs importance); Metrics is
           what actually happened (completions, tracked time, mood, estimation drift). */}
-      <div class="flex items-center gap-1 mb-6 border-b border-border">
+      <div class="view-tabs" role="tablist">
         <For each={[{ k: 'balance' as const, label: 'Balance' }, { k: 'metrics' as const, label: 'Metrics' }]}>
           {(t) => (
-            <button
-              type="button"
-              onClick={() => setTab(t.k)}
-              class="px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors"
-              classList={{
-                'border-accent text-foreground': tab() === t.k,
-                'border-transparent text-muted-foreground hover:text-foreground': tab() !== t.k,
-              }}
-            >{t.label}</button>
+            <button type="button" role="tab" class="view-tab" aria-selected={tab() === t.k} onClick={() => setTab(t.k)}>
+              {t.label}
+            </button>
           )}
         </For>
       </div>

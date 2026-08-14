@@ -283,7 +283,7 @@ export function Calendar() {
   return (
     <div class="flex-1 overflow-hidden flex flex-col p-3 md:p-6 page-enter w-full">
       <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
-        <h1 class="text-2xl font-bold text-slate-100">Calendar</h1>
+        <h1 class="view-title">Calendar</h1>
         {/* flex-wrap: five controls totalling ~430px in a 336px content box ran Review,
             Plan my week and Schedule Day clean off the right edge at 360px. */}
         <div class="flex items-center gap-2 flex-wrap">
