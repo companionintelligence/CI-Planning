@@ -17,7 +17,6 @@ Opened 2026-08-13.
 | 5 | [prompt single owner](llm-5-prompt-single-owner.md) | ✅ merged 2026-08-14 (re-scoped) | [#521](https://github.com/companionintelligence/CI-Planning/pull/521) | — |
 | 6 | [config modes and pins](llm-6-config-modes-and-pins.md) | ✅ merged 2026-08-14 | [#524](https://github.com/companionintelligence/CI-Planning/pull/524) | 1 ✅ |
 | 7 | [connections one surface](llm-7-connections-one-surface.md) | ✅ merged 2026-08-14 | [#530](https://github.com/companionintelligence/CI-Planning/pull/530) | 6 ✅ |
-| 8 | [status single read](llm-8-status-single-read.md) | 🟢 ready after 3 + 7 — re-verified, 1 correction | — | 3, 7 |
 | 8 | [status single read](llm-8-status-single-read.md) | ✅ merged 2026-08-14 — Settings merge verified in the preview | [#532](https://github.com/companionintelligence/CI-Planning/pull/532) | 3 ✅, 7 ✅ |
 | 9 | [rubric consolidation retune](llm-9-rubric-consolidation-retune.md) | ✅ merged 2026-08-14 — **"Pay the electricity bill" defect FIXED** | [#533](https://github.com/companionintelligence/CI-Planning/pull/533) | 1 ✅, 5 ✅ |
 | 10 | [suggestTags casing test](llm-10-suggesttags-casing-test.md) | ✅ merged 2026-08-14 | [#534](https://github.com/companionintelligence/CI-Planning/pull/534) | 4 ✅ |
