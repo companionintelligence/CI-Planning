@@ -4,39 +4,56 @@
 //   vitest's `expect`.
 // - cleanup() unmounts anything rendered by @solidjs/testing-library after each
 //   test so DOM + reactive roots don't leak between cases.
-// - the localStorage/sessionStorage fixup below repoints two globals vitest's own
-//   jsdom environment leaves pointed at a dead Node stub — see the comment there.
 import '@testing-library/jest-dom/vitest';
 import { afterEach } from 'vitest';
 import { cleanup } from '@solidjs/testing-library';
 
+// GOTCHA 4 — Web Storage is missing under jsdom on Node ≥ 23.
+//
+// vitest's jsdom environment copies the jsdom window's properties onto
+// `globalThis`, but it SKIPS every name the Node global object already owns.
+// Node now owns `localStorage`/`sessionStorage` itself (its Web Storage API),
+// and without `--localstorage-file` those read as `undefined` and warn. So the
+// jsdom implementations never get copied across, and the Node ones are inert:
+// `globalThis.localStorage` ends up undefined.
+//
+// On the version this repo pins (.nvmrc 26.3.0) that failed 56 tests across
+// TrialityBanner (dismissal key) and OnboardingWizard (FTUE resume key) with
+// "Cannot read properties of undefined (reading 'clear')". The suite passed on
+// Node 22, which is the only reason CI (node-version: '22') stayed green — and
+// nothing ran the client suite anyway.
+//
+// Note `window === globalThis` here: vitest populates one object and aliases
+// `window` to it, so reading through `window` is not a way around this.
+// jsdom's own `Storage` is not constructible from user code, so install a
+// minimal spec-shaped implementation instead. The app only ever calls
+// getItem/setItem/removeItem (tests add clear), but `length`/`key` are cheap
+// and keep the object honest to the interface it claims to be.
+function createStorage(): Storage {
+  const map = new Map<string, string>();
+  return {
+    get length() {
+      return map.size;
+    },
+    key: (i: number) => [...map.keys()][i] ?? null,
+    getItem: (k: string) => map.get(String(k)) ?? null,
+    // Web Storage coerces both halves to strings; tests that round-trip a
+    // number would otherwise pass here and fail in a browser.
+    setItem: (k: string, v: string) => void map.set(String(k), String(v)),
+    removeItem: (k: string) => void map.delete(String(k)),
+    clear: () => map.clear(),
+  } as Storage;
+}
+
+for (const key of ['localStorage', 'sessionStorage'] as const) {
+  // Guarded: on a Node/vitest combination that does populate these, leave the
+  // real one alone rather than shadowing it with a second, divergent store.
+  if (globalThis[key] === undefined) {
+    const storage = createStorage();
+    Object.defineProperty(globalThis, key, { configurable: true, get: () => storage });
+  }
+}
+
 afterEach(() => {
   cleanup();
 });
-
-// Node ≥22 ships its own `localStorage`/`sessionStorage` globals — present as real
-// properties on `globalThis`, but inert (reading them warns "not available" and
-// yields undefined) unless the process is started with `--localstorage-file`, which
-// nothing here does. vitest's jsdom environment only copies a name from jsdom's
-// window onto `globalThis` when that name does NOT already exist there
-// (`getWindowKeys` in vitest's jsdom-environment source) — a rule written before
-// Node shipped these two, and neither is in vitest's hardcoded copy-allowlist. Net
-// effect: `localStorage` in every jsdom test resolves to Node's dead stub, not
-// jsdom's real, working Storage — `localStorage.clear()` throws
-// "Cannot read properties of undefined". vitest's jsdom environment itself keeps the
-// real JSDOM instance reachable at `globalThis.jsdom` precisely as an escape hatch
-// for gaps like this one; repoint the two globals at its real implementation rather
-// than hand-rolling a second Storage.
-const jsdomInstance = (globalThis as { jsdom?: { window?: Window } }).jsdom;
-if (jsdomInstance?.window?.localStorage) {
-  Object.defineProperty(globalThis, 'localStorage', {
-    value: jsdomInstance.window.localStorage,
-    configurable: true,
-    writable: true,
-  });
-  Object.defineProperty(globalThis, 'sessionStorage', {
-    value: jsdomInstance.window.sessionStorage,
-    configurable: true,
-    writable: true,
-  });
-}
