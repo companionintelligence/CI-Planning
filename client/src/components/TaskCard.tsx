@@ -1,4 +1,6 @@
 import { createSignal, Show, For, createResource } from 'solid-js';
+import { setActiveTask } from '../stores/selection.js';
+import { revealDetails } from '../stores/ui.js';
 import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward, CalendarDays, Rocket, X, Shapes, Target, Check, Sparkles } from 'lucide-solid';
 import { type Task, type RecurringScope, api } from '../lib/api.js';
 import { tasks, refetchTasks, showToast, setElementModal, tags, patternPrefs, patterns, patternTypes, refetchPatterns, patternForTask, isRoutineTask, flightPlanTaskIds, scheduledByTaskId, texturesEnabled, categoryPrefs, setCloseRitualTask, askRecurringScope, isRecurringOccurrence } from '../stores/index.js';
@@ -484,6 +486,13 @@ export function TaskCard(props: Props) {
       {depth() > 0 && <div class="absolute left-4 top-0 bottom-0 w-px bg-surface-600/60" />}
 
       <div
+        // Drawer layout: a plain click on the card expands the task into the
+        // details drawer. Guarded so the card's own controls keep their meaning.
+        onClick={(e) => {
+          if ((e.target as HTMLElement).closest('button,a,input,select,textarea,[role="group"]')) return;
+          setActiveTask(props.task.id);
+          revealDetails();
+        }}
         // Balanced layout (chips redesign): a vertical stack — title row, description,
         // full-width tags, then a single compact footer that collapses the former
         // left sorting-rail and right priority/date rail into one hairline-topped row.

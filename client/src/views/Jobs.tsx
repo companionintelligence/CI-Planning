@@ -1,4 +1,7 @@
 import { For, createSignal, Show } from 'solid-js';
+import { ViewHeader } from '../components/ViewHeader.js';
+import { setActiveEntity } from '../stores/selection.js';
+import { revealDetails } from '../stores/ui.js';
 import { Play, CheckCircle2, XCircle, Clock, RefreshCw } from 'lucide-solid';
 import { jobs, refetchJobs, showToast } from '../stores/index.js';
 import { api } from '../lib/api.js';
@@ -53,14 +56,13 @@ export function Jobs() {
   }
 
   return (
-    <div class="flex-1 overflow-auto p-6 page-enter max-w-3xl mx-auto w-full">
-      <div class="flex items-center gap-3 mb-5">
-        <h1 class="text-2xl font-bold text-foreground">Scheduled Jobs</h1>
+    <div class="view-container page-enter">
+      <ViewHeader title="Scheduled Jobs" sub="Each row runs for your account; the scheduled cron runs every account.">
         <Show when={!jobs.error}>
           <button
             onClick={runAll}
             disabled={runningAll() || triggering() !== null}
-            class="btn-secondary text-xs gap-1.5 ml-auto flex-shrink-0"
+            class="btn-secondary text-xs gap-1.5 flex-shrink-0"
             title="Runs every job once — for YOUR account only, like each row's button. The scheduled cron runs every account."
           >
             <Show when={runningAll()} fallback={<Play size={13} />}>
@@ -69,7 +71,7 @@ export function Jobs() {
             {runningAll() ? 'Running…' : 'Run all'}
           </button>
         </Show>
-      </div>
+      </ViewHeader>
 
       {/* The jobs resource is error-guarded BEFORE jobs() is read: Solid re-throws the
           fetch error on access, and this inline guard explains a non-operator's 403 in
@@ -82,7 +84,14 @@ export function Jobs() {
       <div class="flex flex-col gap-3">
         <For each={jobs.error ? [] : jobs()}>
           {(job) => (
-            <div class="card flex items-center gap-4">
+            <div
+              class="card flex items-center gap-4 cursor-pointer hover:border-ring/60 transition-colors"
+              onClick={(e) => {
+                if ((e.target as HTMLElement).closest('button,a')) return;
+                setActiveEntity('job', job.id);
+                revealDetails();
+              }}
+            >
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2 flex-wrap">
                   <span class="text-sm font-semibold text-foreground">{job.name}</span>
