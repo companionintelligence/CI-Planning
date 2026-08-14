@@ -37,7 +37,7 @@ export async function suggestTags(
       `Choose the tags from this list that best describe the task. ONLY choose from ` +
         `the list — never invent a tag. Reply with JSON {"tags": ["..."]}.${guide} ` +
         `List: ${JSON.stringify(vocabulary)}. Task: "${title.trim()}"`,
-      { tier: 'fast', temperature: 0.1, timeoutMs: 15_000 },
+      { purpose: 'classify' },
     );
     // The allow-list IS the shared never-invent rule (agents/constrain.ts) — same
     // function the quick-add overlay and the memory pass use, so "what stops the model

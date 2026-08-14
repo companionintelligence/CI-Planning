@@ -158,7 +158,7 @@ export async function enrichQuick(
       `"tags": up to 2 from ${JSON.stringify(vocab.others.slice(0, 60))}, else [].\n` +
       `Choose direction/categories/tags ONLY from the given lists — never invent.\n` +
       `Entry: "${text}"`,
-    { tier: 'fast', temperature: 0.1, timeoutMs: 15_000 }
+    { purpose: 'classify' }
   );
 
   let merged = mergeEnrichment(parsed, out, vocab);
@@ -173,7 +173,7 @@ export async function enrichQuick(
       `Which area of life does this task belong to? Answer with JSON ` +
         `{"direction": <exactly one of ${JSON.stringify(vocab.directions)}>}.${directionGuide(vocab.directions)} ` +
         `Task: "${text}"`,
-      { tier: 'fast', temperature: 0.1, timeoutMs: 15_000 }
+      { purpose: 'classify' }
     );
     merged = mergeEnrichment(merged, { direction: retry.direction }, vocab);
   }

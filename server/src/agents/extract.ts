@@ -105,11 +105,15 @@ export async function extractTasks(
   source: ExtractSource,
   opts: { tier?: ModelTier; timeoutMs?: number } = {}
 ): Promise<ExtractedTask[]> {
+  // The `extract` policy names the tier/temperature/timeout. A caller may still override
+  // the tier or hand in its own budget — an explicitly passed value wins over the purpose,
+  // and omitting the key (rather than passing undefined) is what defers to the policy.
+  const { tier, timeoutMs } = opts;
   const result = await generateJson<RawResult>(buildPrompt(source), {
-    tier: opts.tier ?? 'quality',
+    purpose: 'extract',
     system: SYSTEM,
-    temperature: 0.1,
-    timeoutMs: opts.timeoutMs ?? 60_000,
+    ...(tier !== undefined ? { tier } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
   });
 
   const tasks = (result.tasks ?? [])

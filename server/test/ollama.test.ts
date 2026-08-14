@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { status, generate, embed, parseJsonLoose } from '../src/mcp/ollama.js';
+import { status, generate, embed, parseJsonLoose, resolveCall, CALL_POLICY } from '../src/mcp/ollama.js';
 import { ollamaAvailable } from './helpers.js';
 
 describe('ollama client', () => {
@@ -38,6 +38,17 @@ describe('ollama client', () => {
     expect(Array.isArray(vec)).toBe(true);
     expect(vec.length).toBeGreaterThan(0);
     expect(typeof vec[0]).toBe('number');
+  });
+
+  it('an explicit temperature/timeoutMs still overrides the named purpose', () => {
+    // The purpose supplies defaults; a call site that states a value keeps winning, which
+    // is what lets render-copy carry a per-surface tier and timeout with no new machinery.
+    expect(CALL_POLICY.classify).toEqual({ tier: 'fast', temperature: 0.1, timeoutMs: 15_000 });
+    expect(resolveCall({ purpose: 'classify', temperature: 0.55, timeoutMs: 7_000 })).toEqual({
+      tier: 'fast',
+      temperature: 0.55,
+      timeoutMs: 7_000,
+    });
   });
 
   it('reports installed models including the configured small model', async () => {
