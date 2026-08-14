@@ -74,7 +74,8 @@ describe('requireAuth — standalone mode, no credential', () => {
     config.auth.mode = 'standalone';
     const { status, body } = await api(srv.url, '/api/health');
     expect(status).toBe(200);
-    expect(body).toEqual({ ok: true });
+    // release is null here: the test env sets no SENTRY_RELEASE/CI_PLANNING_VERSION.
+    expect(body).toEqual({ ok: true, release: null });
   });
 
   it('rejects an unknown / malformed key', async () => {
