@@ -3,6 +3,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { store } from '../db/store.js';
 import { config, type ConnectorMode } from '../lib/config.js';
+import { ConnectorUnavailable } from '../lib/connector-error.js';
 import { seal, open, loadKek } from '../lib/crypto/index.js';
 import { newId } from '../lib/ids.js';
 import { logger } from '../lib/logger.js';
@@ -34,13 +35,16 @@ import { logger } from '../lib/logger.js';
  * stays creds-driven in live/fixture, so flag-off/no-creds behavior is identical.
  *
  * Every transport/4xx/5xx failure surfaces as MemoryUnavailable so callers degrade
- * deterministically (the McpUnavailable / OllamaUnavailable contract).
+ * deterministically — one shared contract with McpUnavailable / OllamaUnavailable, now
+ * expressed by their common base (lib/connector-error.ts).
  */
 
-/** Thrown when CI-Server is unreachable / rejects the call. Callers catch and degrade. */
-export class MemoryUnavailable extends Error {
+/** Thrown when CI-Server is unreachable / rejects the call. Callers catch and degrade.
+ *  A {@link ConnectorUnavailable} subclass — the name and `.name` are unchanged, so every
+ *  `instanceof MemoryUnavailable` and log key still behaves exactly as before. */
+export class MemoryUnavailable extends ConnectorUnavailable {
   constructor(message: string) {
-    super(message);
+    super('memory', message);
     this.name = 'MemoryUnavailable';
   }
 }
