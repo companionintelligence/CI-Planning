@@ -19,6 +19,8 @@ vi.mock('../stores/index.js', async () => {
   const [state, setState] = createSignal({ ...DEFAULT });
   return {
     setElementModal: vi.fn(),
+    // Chips colour via blockColorVar(block, categoryPrefs) — same source as the Planner.
+    categoryPrefs: () => ({ prefs: {} }),
     calendarAxisState: state,
     __resetCalendarAxisState: () => setState({ ...DEFAULT }),
     toggleCalendarTop: () => setState((s: typeof DEFAULT) => ({ ...s, topExpanded: !s.topExpanded })),

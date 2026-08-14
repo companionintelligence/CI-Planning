@@ -1,4 +1,5 @@
 import { createSignal, createResource, createMemo, onCleanup, Show, For } from 'solid-js';
+import { ViewHeader } from '../components/ViewHeader.js';
 import { useSearchParams } from '@solidjs/router';
 import { SlidersHorizontal, Search, Archive, ChevronDown, ChevronRight, X, CalendarRange } from 'lucide-solid';
 import { tasks, tags, taskFilter, setTaskFilter, refetchTasks, showToast, isRoutineTask, scheduledByTaskId, patternForTask, setPlanWeekModal } from '../stores/index.js';
@@ -180,46 +181,33 @@ export function AllTasks() {
   );
 
   return (
-    <div class="flex-1 overflow-auto p-6 page-enter max-w-3xl mx-auto w-full">
-      {/* Header */}
-      {/* Wraps at narrow widths. The three action buttons are all whitespace-nowrap and
-          total ~380px, so on a 360px viewport they used to run straight off the right
-          edge — "Archive" was half off-frame and the row collided with the H1. */}
-      <div class="flex items-center justify-between gap-x-3 gap-y-2 mb-5 flex-wrap">
-        <div>
-          <h1 class="text-2xl font-bold text-slate-100">Tasks</h1>
-          <p class="text-slate-500 text-sm mt-0.5">{activeTaskCount()} open</p>
-        </div>
+    <div class="view-container page-enter">
+      <ViewHeader title="Tasks" sub={`${activeTaskCount()} open`}>
         <Show when={isTaskTab()}>
-          <div class="flex items-center gap-2 flex-wrap">
-            {/* Planning entry point. Lives here rather than in FOCUS (which is
-                today-only) — the Tasks view is where the week's backlog actually is. */}
-            <button
-              onClick={() => setPlanWeekModal({ open: true })}
-              class="btn-secondary gap-2 whitespace-nowrap"
-              title="Plan your week with the assistant"
-            >
-              <CalendarRange size={14} /> Plan my week
-            </button>
-            <button onClick={() => setShowFilters((v) => !v)} disabled={showArchive()} class="btn-secondary gap-2 whitespace-nowrap" classList={{ 'opacity-40 pointer-events-none': showArchive() }}>
-              <SlidersHorizontal size={14} /> Filters
-            </button>
-            {/* Archive — toggle to the done + thrown-away view. */}
-            <button
-              onClick={() => setShowArchive((v) => !v)}
-              class="btn-secondary gap-2 whitespace-nowrap"
-              classList={{ 'border-primary text-primary': showArchive() }}
-              title="View completed and thrown-away tasks"
-            >
-              <Archive size={14} /> Archive
-            </button>
-          </div>
+          <button
+            onClick={() => setPlanWeekModal({ open: true })}
+            class="btn-secondary gap-2 whitespace-nowrap"
+            title="Plan your week with the assistant"
+          >
+            <CalendarRange size={14} /> Plan my week
+          </button>
+          <button onClick={() => setShowFilters((v) => !v)} disabled={showArchive()} class="btn-secondary gap-2 whitespace-nowrap" classList={{ 'opacity-40 pointer-events-none': showArchive() }}>
+            <SlidersHorizontal size={14} /> Filters
+          </button>
+          <button
+            onClick={() => setShowArchive((v) => !v)}
+            class="btn-secondary gap-2 whitespace-nowrap"
+            classList={{ 'border-primary text-primary': showArchive() }}
+            title="View completed and thrown-away tasks"
+          >
+            <Archive size={14} /> Archive
+          </button>
         </Show>
-      </div>
+      </ViewHeader>
 
       {/* Tabs — always visible; sort sits to the right on the Task/Habit tabs. */}
-      <div class="flex items-center justify-between gap-2 mb-3 flex-wrap">
-        <div class="flex gap-2 flex-wrap">
+      <div class="view-tabs justify-between" role="tablist">
+        <div class="flex flex-wrap">
           {/* AF-1 order: Tasks · Objectives · Habits · Routines · Timeblock; only the
               backlog tabs (tasks/habits) carry a count badge. */}
           <For each={[
@@ -230,14 +218,10 @@ export function AllTasks() {
             ['timeblocks', 'Timeblock'],
           ] as const}>
             {([v, label]) => (
-              <button
-                onClick={() => selectTab(v)}
-                class="px-3 py-1 text-sm rounded-md transition-colors"
-                classList={{ 'bg-primary text-primary-foreground': view() === v, 'text-muted-foreground hover:text-foreground': view() !== v }}
-              >
+              <button role="tab" class="view-tab" aria-selected={view() === v} onClick={() => selectTab(v)}>
                 {label}
                 <Show when={v === 'tasks' || v === 'habits'}>
-                  {' '}<span class="opacity-60 tabular-nums">{tabCount(v as 'tasks' | 'habits')}</span>
+                  <span class="count">{tabCount(v as 'tasks' | 'habits')}</span>
                 </Show>
               </button>
             )}

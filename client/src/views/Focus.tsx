@@ -1,4 +1,6 @@
 import { createSignal, createMemo, createResource, Show, For, onCleanup } from 'solid-js';
+import { setActiveTask } from '../stores/selection.js';
+import { revealDetails } from '../stores/ui.js';
 import { ChevronDown, ChevronRight, Crosshair, Play, Check, RotateCcw, NotebookPen } from 'lucide-solid';
 import { FocusRitual } from '../components/FocusRitual.js';
 import { FocusReminders } from '../components/FocusReminders.js';
@@ -255,7 +257,11 @@ export function Focus() {
       >
         <Show when={props.entry.done}><Check size={10} class="text-white" /></Show>
       </button>
-      <span class="flex-1 min-w-0 text-sm truncate" classList={{ 'line-through text-muted-foreground': props.entry.done, 'text-foreground': !props.entry.done }}>
+      <span
+        class="flex-1 min-w-0 text-sm truncate"
+        classList={{ 'line-through text-muted-foreground': props.entry.done, 'text-foreground': !props.entry.done, 'cursor-pointer hover:text-primary': !!props.entry.taskId }}
+        onClick={() => { if (props.entry.taskId) { setActiveTask(props.entry.taskId); revealDetails(); } }}
+      >
         {props.entry.title}
       </span>
       <Show when={isNow(props.entry)}>
@@ -276,7 +282,7 @@ export function Focus() {
   );
 
   return (
-    <div class="flex-1 overflow-auto p-6 page-enter max-w-2xl mx-auto w-full">
+    <div class="view-container page-enter max-w-2xl mx-auto">
       {/* Header — the Today-style card container (backlog-3 parity, 2026-07-21): same
           rounded card + right-column button cluster (Brief · Focus goals · day note).
           No day-stepper on purpose: FOCUS is today-only by design (see the view doc
@@ -285,7 +291,7 @@ export function Focus() {
       <div class="rounded-xl border border-border bg-card p-4 mb-5">
         <div class="flex items-start justify-between gap-3">
           <div class="flex items-baseline gap-2">
-            <h1 class="text-xl font-semibold text-foreground flex items-center gap-2">
+            <h1 class="view-title flex items-center gap-2">
               <Crosshair size={18} class="text-accent-hi" /> Focus
             </h1>
             <span class="text-sm text-muted-foreground">
