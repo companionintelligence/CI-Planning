@@ -842,6 +842,24 @@ loop against installs that could not serve a single call. `status().available` s
 only on the status object, for the Settings card that legitimately shows reachable and
 usable as distinct states.
 
+**The probe under that predicate is cached; the model resolution above it is not.** Making
+`isReady()` the one predicate put a live `/api/tags` fetch on the day-authoring and
+NL-instruct hot paths as well as the Settings poll, so `status()` now caches the probe
+(reachability + installed set) for `PROBE_TTL_MS` = 30s — a code constant, not
+configuration. Everything else `status()` returns is recomputed on every call, and that
+split is load-bearing: a model chosen in Settings is a DB write that must take effect on
+the very **next** request, so caching the resolved names would make a saved choice look
+like it never applied (`ollama.test.ts` pins this with an override written *between* two
+cached calls). Two bypasses: `NODE_ENV === 'test'` disables the cache outright, for the
+same reason the auto-select guard beside it does — no suite may depend on which test
+probed first — and `status(owner, { fresh: true })` forces a live read, reached by
+`GET /api/llm/status?fresh=1`. That endpoint is otherwise diagnostic-only (the UI reads
+the richer `GET /api/integrations`, which takes the cached read); its one live caller is
+Settings → "Re-check", the escape hatch for an Ollama that came up after the app, which a
+TTL alone cannot cover. Settings renders Ollama health in exactly one place — the Models
+card, beside the selects — with the same three states (unavailable / reachable-but-unusable
+/ ready) it always had.
+
 ### 7.1 Scheduled jobs (current)
 
 | Kind | Cron | Purpose |
