@@ -157,17 +157,34 @@ export async function api<T = any>(
   return { status: res.status, body: text ? JSON.parse(text) : (undefined as T) };
 }
 
+/**
+ * Is `want` present in `installed`, tolerating a missing tag — `nomic-embed-text`
+ * matches installed `nomic-embed-text:latest`. Same rule as matchInstalled() in
+ * src/lib/models.ts, reimplemented against the raw name list on purpose: status()
+ * deliberately skips setInstalledModels() under NODE_ENV=test (see its "Never
+ * auto-select during tests" note), so the shared cache is null and isInstalled() /
+ * s.missingModels report false-negative for everything here.
+ */
+function hasModel(installed: string[], want: string | null | undefined): boolean {
+  if (!want) return false;
+  const w = want.trim().toLowerCase();
+  if (!w) return false;
+  return installed.some((m) => {
+    const n = m.toLowerCase();
+    return n === w || n.split(':')[0] === w;
+  });
+}
+
 let _ollamaUp: boolean | null = null;
 /** Cached Ollama readiness so LLM-dependent tests can skip when service/models are unavailable. */
 export async function ollamaAvailable(): Promise<boolean> {
   if (_ollamaUp === null) {
     const s = await status();
-    const models = new Set(s.models);
     _ollamaUp =
       s.available &&
-      models.has(s.fastModel) &&
-      models.has(s.qualityModel) &&
-      models.has(s.embedModel);
+      hasModel(s.models, s.fastModel) &&
+      hasModel(s.models, s.qualityModel) &&
+      hasModel(s.models, s.embedModel);
   }
   return _ollamaUp;
 }

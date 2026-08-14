@@ -1,9 +1,38 @@
 import { describe, it, expect, beforeEach, beforeAll } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { config } from '../src/lib/config.js';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER, runWithOwner, ALL_SCOPES } from '../src/lib/context.js';
 import { runJob } from '../src/jobs/index.js';
 import { resetDb, ollamaAvailable, createOwner, SECOND_OWNER_ID } from './helpers.js';
+
+/**
+ * Open the Gmail ingest window back to the START of the newest fixture email's UTC day —
+ * the final day of emails.json, six messages, rather than all 24.
+ *
+ * Derived from the file rather than hard-coded because emails.json carries STATIC dates
+ * while the window is relative to now: a literal expires the moment the fixtures age past
+ * it, which is how the assertion below came to be dead code in the first place.
+ *
+ * Only the last day, because the job ingests at tier 'quality' and each message is a real
+ * generation — all 24 runs past even a 300s budget, and one day is already several
+ * actionable emails, which is all `> 0` needs. Integer days give day-granularity, so the
+ * floor can land up to 24h early and take in the previous day too; 12 messages is the
+ * worst case and still bounded.
+ *
+ * Deliberately exceeds EMAIL_LOOKBACK_DAYS_RANGE.max (90) — that bound guards the API
+ * surface, gmailLookbackFloor() honours any positive value, and this writes the row direct.
+ */
+function widenEmailLookbackPastFixtures(): void {
+  const emails = JSON.parse(
+    readFileSync(join(import.meta.dirname, 'fixtures', 'emails.json'), 'utf8')
+  ) as { receivedAt: string }[];
+  const newest = Math.max(...emails.map((e) => new Date(e.receivedAt).getTime()));
+  const startOfNewestDay = new Date(newest).setUTCHours(0, 0, 0, 0);
+  const days = Math.ceil((Date.now() - startOfNewestDay) / 86_400_000);
+  sqlite.prepare(`UPDATE scheduling_prefs SET email_lookback_days = ?`).run(days);
+}
 
 function lastRun(kind: string) {
   return sqlite
@@ -184,7 +213,14 @@ describe('jobs', () => {
   });
 });
 
-describe('ingestion jobs (require Ollama)', () => {
+// Timeout raised above the 120s global, same reasoning as run-now's in 3648674: these
+// bodies only ever ran where Ollama is unreachable, so nothing had ever measured them
+// against real inference. Both ingest at tier 'quality', one generation per item, and
+// measured ~46s (gcal) and ~90s (gmail, bounded to the last fixture day) on an idle box.
+// Treat that as a floor, not a budget: an unrelated model resident in VRAM evicts these
+// and the same gcal body ran past 300s. Where Ollama is unreachable (CI) both return
+// in ~1ms. See widenEmailLookbackPastFixtures for why gmail is bounded to one day.
+describe('ingestion jobs (require Ollama)', { timeout: 300_000 }, () => {
   let up = false;
   beforeAll(async () => {
     up = await ollamaAvailable();
@@ -206,10 +242,19 @@ describe('ingestion jobs (require Ollama)', () => {
 
   it('ingest_gmail produces possible_tasks from email fixtures', async () => {
     if (!up) return;
+    // 0147 floors the ingest window at now − email_lookback_days, and the fixture client
+    // filters `receivedAt >= since` with no rebasing (mcp/google.ts). The baseline's 7 days
+    // therefore excludes every fixture — as does the 90-day product maximum, the file being
+    // older than that. This test asserts the job reaches the ingest, not the window, so open
+    // the window first; without it the job is a legitimate no-op and the assertion is vacuous.
+    widenEmailLookbackPastFixtures();
     await runJob('ingest_gmail');
     const run = lastRun('ingest_gmail');
     expect(run?.status).toBe('done');
-    const possibles = sqlite.prepare("SELECT COUNT(*) AS n FROM possible_tasks WHERE source_kind='gcal'").get() as { n: number };
+    // 'gmail', not 'gcal' — ingest_gmail stamps the kind it was handed (ingest.ts:372).
+    // The 'gcal' filter here was a copy-paste from the test above and could only ever
+    // count 0, but the ollamaAvailable() tag bug meant this body had never once run.
+    const possibles = sqlite.prepare("SELECT COUNT(*) AS n FROM possible_tasks WHERE source_kind='gmail'").get() as { n: number };
     expect(possibles.n).toBeGreaterThan(0);
   });
 
