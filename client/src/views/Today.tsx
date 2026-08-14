@@ -11,6 +11,8 @@ import { splitTagNames } from '../lib/multi-tag.js';
 import { localISODate, addDays, durationLabel } from '../lib/dates.js';
 import { dueItems } from '../lib/task-buckets.js';
 import { Planner } from '../components/Planner.js';
+import { OpenTimeSummary } from '../components/OpenTimeSummary.js';
+import { detailsOpen } from '../stores/ui.js';
 import { FlightPlan } from '../components/FlightPlan.js';
 import { DayStarsRow } from '../components/DayStarsRow.js';
 import { ReplanBanner } from '../components/ReplanBanner.js';
@@ -248,6 +250,14 @@ export function Today() {
           </div>
         </Show>
 
+        {/* Open time — what is left of the day's work/community windows once the
+            schedule is subtracted. Replaces re-listing the blocks here: the Planner
+            drawer tab and the Calendar already show those, and the question this
+            header answers is where something new could go. */}
+        <div class="mt-3">
+          <OpenTimeSummary date={selectedDay()} />
+        </div>
+
         {/* Phase O · O1 — inline day-note editor (matches the card inline-edit idiom) */}
         <Show when={editingNote()}>
           <div class="mt-3 flex flex-col gap-2">
@@ -314,9 +324,15 @@ export function Today() {
           then see the day the Schedule run fills in below). Someday Time Blocks render
           on their goal day in the Planner header lane (the ConceptLane is retired —
           CON-2d). */}
+      {/* The Planner moved into the details drawer's Planner tab, so it sits beside
+          the flight-plan it schedules from instead of below it — on a laptop the plan
+          used to push the grid past the fold. It stays inline whenever the drawer is
+          closed, so hiding the drawer never costs you the grid. */}
       <div class="flex flex-col gap-4">
         <FlightPlan />
-        <Planner />
+        <Show when={!detailsOpen()}>
+          <Planner />
+        </Show>
       </div>
 
       {/* Multi-select indicator (Phase F) — appears when items are picked. */}

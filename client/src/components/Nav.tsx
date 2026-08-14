@@ -7,6 +7,7 @@ import {
 import { showToast } from '../stores/index.js';
 import { api, authGateActive } from '../lib/api.js';
 import { ThemeToggle } from './ThemeToggle.js';
+import { navCollapsed } from '../stores/ui.js';
 
 const links = [
   { href: '/focus',      label: 'Focus',      Icon: Crosshair },
@@ -44,26 +45,33 @@ export function Nav() {
   }
 
   return (
-    <nav class="hidden md:flex w-52 flex-shrink-0 border-r border-surface-700/50 flex-col py-5 px-3 gap-0.5 bg-surface-900">
+    <nav
+      class="hidden md:flex flex-shrink-0 border-r border-surface-700/50 flex-col py-5 px-3 gap-0.5 bg-surface-900 overflow-hidden transition-[width] duration-150"
+      classList={{ 'w-52': !navCollapsed(), 'nav-rail-collapsed': navCollapsed() }}
+    >
       {/* CI logo mark */}
-      <div class="flex items-center gap-2.5 px-3 mb-5">
+      <div class="flex items-center gap-2.5 px-3 mb-5" classList={{ 'justify-center px-0': navCollapsed() }}>
         <div
           class="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 text-surface-950 font-bold text-xs"
           style={{ background: 'linear-gradient(135deg, #58ebbf, #409b9b)' }}
         >
           <Cpu size={15} />
         </div>
-        <div>
-          <div class="text-[10px] font-medium tracking-[0.2em] uppercase leading-none" style={{ color: '#409b9b' }}>
-            Companion
+        <Show when={!navCollapsed()}>
+          <div>
+            <div class="text-[10px] font-medium tracking-[0.2em] uppercase leading-none" style={{ color: '#409b9b' }}>
+              Companion
+            </div>
+            <div class="font-heading text-base text-slate-100 leading-tight mt-0.5 tracking-wide">
+              Planning
+            </div>
           </div>
-          <div class="font-heading text-base text-slate-100 leading-tight mt-0.5 tracking-wide">
-            Planning
-          </div>
-        </div>
+        </Show>
       </div>
 
-      <div class="section-label">Navigation</div>
+      <Show when={!navCollapsed()}>
+        <div class="section-label">Navigation</div>
+      </Show>
 
       {links.map((l) => (
         <>
@@ -73,9 +81,11 @@ export function Nav() {
               end={l.href === '/'}
               class="nav-item"
               activeClass="nav-item-active"
+              title={l.label}
+              aria-label={l.label}
             >
               <l.Icon size={15} class="flex-shrink-0" />
-              <span class="flex-1">{l.label}</span>
+              <Show when={!navCollapsed()}><span class="flex-1">{l.label}</span></Show>
             </A>
           </Show>
           {/* Stroke line under Calendar — separates capture (Today/Calendar) from
@@ -94,7 +104,7 @@ export function Nav() {
           title="Sign out"
         >
           <LogOut size={15} class="flex-shrink-0" />
-          Sign out
+          <Show when={!navCollapsed()}>Sign out</Show>
         </button>
       </Show>
       <ThemeToggle />
