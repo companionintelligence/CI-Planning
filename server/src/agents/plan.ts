@@ -587,10 +587,8 @@ async function generateRationales(tasks: PlanTask[], order: number[], themeTag?:
   try {
     const lines = order.map((idx, pos) => `${pos}: ${taskLine(tasks[idx], idx).replace(/^\d+:\s*/, '')}`);
     const raw = await generateJson<Record<string, unknown>>(rationalePrompt(lines, themeTag), {
-      tier: 'fast',
+      purpose: 'plan_narrate',
       system: rationaleSystem(),
-      temperature: 0.3,
-      timeoutMs: 25_000,
     });
     if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
       for (let pos = 0; pos < order.length; pos++) {
@@ -746,10 +744,8 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
         generate: async () => {
           // §C2: theme tag; §A4: NL-hint constraint line; AA3a: memory-context line
           const raw = await generateJson<unknown>(genPrompt(lines, capacityMin, themeTag, constraint, memoryLine), {
-            tier: 'fast',
+            purpose: 'plan_generate',
             system: genSystem(),
-            temperature: 0.2,
-            timeoutMs: 25_000,
           });
           return safeOrder(raw, staged);
         },
@@ -761,11 +757,11 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
         },
 
         judge: async (order): Promise<JudgeScore> => {
+          // `plan_judge` is the quality tier while `plan_generate` is fast: the loop's
+          // generator ≠ evaluator guarantee IS that tier split. Keep them separate.
           const raw = await generateJson<Record<string, unknown>>(judgePrompt(lines, order, staged), {
-            tier: 'quality',
+            purpose: 'plan_judge',
             system: judgeSystem(),
-            temperature: 0.1,
-            timeoutMs: 30_000,
           });
           return {
             overall: typeof raw.overall === 'number' ? raw.overall : 0,
@@ -778,10 +774,8 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
 
         revise: async (order, defects, critique) => {
           const raw = await generateJson<unknown>(revisePrompt(lines, order, defects, critique), {
-            tier: 'fast',
+            purpose: 'plan_generate',
             system: reviseSystem(),
-            temperature: 0.2,
-            timeoutMs: 25_000,
           });
           return safeOrder(raw, staged);
         },
@@ -943,10 +937,8 @@ export async function parseInstruction(owner: string, date: string, text: string
   let raw: unknown;
   try {
     raw = await generateJson(instructPrompt(text, date, prefs.workday_start, prefs.workday_end, [...tagSet]), {
-      tier: 'fast',
+      purpose: 'plan_instruct',
       system: instructSystem(),
-      temperature: 0.1,
-      timeoutMs: 25_000,
     });
   } catch {
     throw new InstructError('unavailable', 'AI request failed');

@@ -392,7 +392,7 @@ export async function summarizeDay(date: string, opts: { refresh?: boolean } = {
   } else {
     // Flag OFF → byte-identical Phase N/O: the brief is core, not a Time-Sense surface.
     try {
-      const out = await generate(buildPrompt(date, g, memoryExcerpt), { tier: 'quality', temperature: 0.4, timeoutMs: 60_000 });
+      const out = await generate(buildPrompt(date, g, memoryExcerpt), { purpose: 'narrate' });
       prose = out.trim();
       if (!prose) throw new Error('empty summary');
       llm = true;

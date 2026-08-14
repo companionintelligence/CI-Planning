@@ -250,7 +250,9 @@ export async function attachRationales(
     const generate =
       opts.generateFn ??
       ((prompt: string, timeoutMs: number) =>
-        generateJson<unknown>(prompt, { tier: 'fast', temperature: 0.3, timeoutMs }));
+        // `plan_narrate` names the tier/temperature; the timeout is the caller's remaining
+        // budget, not a constant, so it stays explicit and overrides the policy's.
+        generateJson<unknown>(prompt, { purpose: 'plan_narrate', timeoutMs }));
 
     const raw = await generate(buildPrompt(items), callBudget);
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;

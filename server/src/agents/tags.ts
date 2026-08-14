@@ -36,7 +36,7 @@ export async function suggestTags(
       `Choose the tags from this list that best describe the task. ONLY choose from ` +
         `the list — never invent a tag. Reply with JSON {"tags": ["..."]}.${guide} ` +
         `List: ${JSON.stringify(vocabulary)}. Task: "${title.trim()}"`,
-      { tier: 'fast', temperature: 0.1, timeoutMs: 15_000 },
+      { purpose: 'classify' },
     );
     const allow = new Set(vocabulary);
     return Array.isArray(out.tags)
