@@ -5,7 +5,14 @@ import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { issueApiKey } from '../src/lib/auth/apiKey.js';
 import { SCOPE_READ } from '../src/lib/auth/types.js';
 import { RUN_NOW_KINDS, type JobRunResult } from '../src/jobs/index.js';
-import { startTestServer, resetDb, api, ollamaAvailable, type TestServer } from './helpers.js';
+import {
+  startTestServer,
+  resetDb,
+  api,
+  ollamaAvailable,
+  boundEmailLookbackToOneDay,
+  type TestServer,
+} from './helpers.js';
 
 /**
  * FTUE · T12 (#348) — POST /api/jobs/run-now: the "Run my first sync now" trigger.
@@ -35,7 +42,15 @@ function lastRun(kind: string) {
     .get(kind) as { status: string } | undefined;
 }
 
-describe('POST /api/jobs/run-now', () => {
+// Timeout raised above the 120s global. run-now awaits every RUN_NOW_KIND inline before it
+// answers, so on a box with the configured Ollama models installed each posting test runs a
+// real ingest+extraction: measured at 46s and 51s even while ingest_gmail was still a no-op,
+// and it does genuine email extraction now that the fixtures are rebased into the window.
+// Anywhere Ollama is unreachable (CI) these same tests take about a second.
+//
+// 3648674 on fix/ship-readiness-docs-and-gates raises this same describe to the same 300s
+// for the same reason; expect a trivial conflict when the two meet, and keep either side.
+describe('POST /api/jobs/run-now', { timeout: 300_000 }, () => {
   let server: TestServer;
   let ollamaUp = false;
   beforeAll(async () => {
@@ -43,7 +58,10 @@ describe('POST /api/jobs/run-now', () => {
     ollamaUp = await ollamaAvailable();
   });
   afterAll(() => server.close());
-  beforeEach(() => resetDb());
+  // run-now awaits every RUN_NOW_KIND inline, ingest_gmail among them. The fixture emails
+  // are rebased into the last few days, so without this each of the three posting tests
+  // would put all 24 through the extraction LLM.
+  beforeEach(() => { resetDb(); boundEmailLookbackToOneDay(); });
   afterEach(() => { config.auth.mode = 'test'; sqlite.exec('DELETE FROM api_keys'); });
 
   const post = (headers?: Record<string, string>) =>

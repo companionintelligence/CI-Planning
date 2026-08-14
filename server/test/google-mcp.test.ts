@@ -32,10 +32,27 @@ describe('Google MCP client (fixture-backed)', () => {
 
   it('filters emails by since', async () => {
     const all = await client.listEmails();
-    const cutoff = '2026-05-28T00:00:00.000Z';
+    // Cutoff taken from the data, not written as a literal: the client rebases the
+    // fixtures to the last few days (rebaseEmailsToRecent), so any fixed ISO date either
+    // drifts out of the set or stops excluding anything. The median timestamp always
+    // splits it.
+    const times = all.map((e) => Date.parse(e.receivedAt)).sort((a, b) => a - b);
+    const cutoff = new Date(times[Math.floor(times.length / 2)]).toISOString();
     const recent = await client.listEmails({ since: cutoff });
     expect(recent.length).toBeLessThan(all.length);
     expect(recent.every((e) => e.receivedAt >= cutoff)).toBe(true);
+  });
+
+  it('rebases email fixtures so they never age out of the ingest window', async () => {
+    // Regression guard for the expiry this rebase exists to prevent: the committed dates
+    // are fixed but `email_lookback_days` is relative to now and capped at 90, so a static
+    // file eventually falls outside every legal window and fixture mode silently ingests
+    // nothing. The newest message must stay inside a one-day lookback, the tightest the
+    // API allows.
+    const all = await client.listEmails();
+    const newest = Math.max(...all.map((e) => Date.parse(e.receivedAt)));
+    expect(Date.now() - newest).toBeLessThan(86_400_000);
+    expect(newest).toBeLessThanOrEqual(Date.now()); // never dated into the future
   });
 
   it('filters events by from/to window', async () => {
