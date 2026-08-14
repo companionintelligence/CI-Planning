@@ -38,6 +38,25 @@ export function registerFlushHook(hook: FlushHook): void {
   flushHook = hook;
 }
 
+// ── Reconnect signal ─────────────────────────────────────────────────────────
+
+type ReconnectHandler = () => void;
+const reconnectHandlers = new Set<ReconnectHandler>();
+// Flips true after the FIRST successful open; only opens after that one are real
+// reconnects (a dropped connection coming back), never the initial page-load connect.
+let hasConnectedOnce = false;
+
+/**
+ * Register a callback fired every time the EventSource re-opens after a drop — NOT
+ * on the initial connect. A container restart under an open tab produces exactly one
+ * of these, so it's the natural place to notice "the server might be a new build now"
+ * (stores/updateAvailable.ts) without a separate polling loop.
+ */
+export function onReconnect(handler: ReconnectHandler): () => void {
+  reconnectHandlers.add(handler);
+  return () => { reconnectHandlers.delete(handler); };
+}
+
 // ── EventSource wiring ─────────────────────────────────────────────────────────
 
 // Attach exactly one EventSource listener per event type. It dispatches to every
@@ -68,6 +87,11 @@ function connect(): void {
     ? `/api/events?lastEventId=${encodeURIComponent(lastEventId)}`
     : '/api/events';
   es = new EventSource(url);
+
+  es.addEventListener('open', () => {
+    if (hasConnectedOnce) reconnectHandlers.forEach((h) => h());
+    hasConnectedOnce = true;
+  });
 
   es.addEventListener('error', () => {
     es?.close();
