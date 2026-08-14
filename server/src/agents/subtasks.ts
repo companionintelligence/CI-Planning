@@ -1,4 +1,5 @@
 import { generateJson, llmOrNull } from '../mcp/ollama.js';
+import { COMPLEXITY_DEFINITION } from './rubric.js';
 
 /**
  * Brainstorm subtasks for a task the classifier flagged complex (handoff D5).
@@ -27,17 +28,21 @@ export async function suggestSubtasks(title: string, context = ''): Promise<stri
   // alike — under format:json with an array in the schema, a model fills the array. Give
   // it a boolean that licenses saying no and it uses it: with `isBreakdownUseful` +
   // worked examples, the 3B refuses "Call the dentist" and still breaks down the real
-  // projects (residual false-positive: "Pay the electricity bill" pads steps — caught
-  // in practice by the caller's isComplex gate, which stays the FIRST protection).
+  // projects. The caller's isComplex gate stays the FIRST protection.
+  //
+  // The definition after the field name is COMPLEXITY_DEFINITION — the SAME string
+  // quick-add's `isComplex` rubric is built from, so a retune moves both at once instead
+  // of leaving two copies to drift (they already had: this prompt used to carry its own
+  // reworded restatement with four of the five worked examples). The FIELD NAME stays
+  // here on purpose: llama3.2-3B ignores instructions no schema field backs, so a
+  // borrowed "Set isComplex true when…" sentence would disarm the refusal gate above.
+  // Adopting the richer shared list fixed the residual "Pay the electricity bill" false
+  // positive; measured before/after in docs/complexity-rubric-measurement-2026-08.md.
   const out = await llmOrNull('suggestSubtasks', () =>
     generateJson<{ isBreakdownUseful?: unknown; subtasks?: unknown }>(
       `Break this task into the steps someone would actually do, in order. ` +
         `Reply with JSON {"isBreakdownUseful": <true|false>, "subtasks": ["...", "..."]}. ` +
-        `isBreakdownUseful is true when finishing the task takes several distinct steps a ` +
-        `person would want written out — planning a trip, organising an event, running a ` +
-        `project. It is false only for a single action done in one sitting — a call, an ` +
-        `email, an errand, a payment. Examples: "Plan a trip to Japan" → true; ` +
-        `"Organize the team offsite" → true; "Call the dentist" → false; "Pay a bill" → false. ` +
+        `isBreakdownUseful is true when ${COMPLEXITY_DEFINITION} ` +
         `When true, subtasks has 3 to ${MAX_SUBTASKS} steps. Each step must be a short ` +
         `imperative phrase (start with a verb), be doable on its own, and be a real part ` +
         `of finishing the task — do not pad the list, and do not restate the task itself ` +
