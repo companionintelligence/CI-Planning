@@ -13,6 +13,10 @@ import { localISODate } from '../lib/dates.js';
 import { focusState, formatRemaining } from '../lib/focus.js';
 import { directionColorForTask } from '../lib/pattern-meta.js';
 import { minutesIntoDay } from '../lib/grid.js';
+import { buildFocusItems, countPastRows, memberPast, type BuiltSection } from '../lib/focus-sections.js';
+import { LockToggle } from '../components/LockToggle.js';
+import { blockColorVar } from '../lib/textures.js';
+import { categoryPrefs } from '../stores/index.js';
 
 /**
  * FOCUS — the pre-Today view: "what am I doing right now, and what's left today?"
@@ -27,7 +31,18 @@ import { minutesIntoDay } from '../lib/grid.js';
  * mount — FOCUS is today-only by design; other days live in Today/Calendar.
  */
 
+// Doable kinds. A `timeblock` is deliberately absent: it is a CONTAINER, so Phase 2
+// renders it as a section rather than a row, and it never becomes the Time-Sense hero.
+// `meeting` stays out too — Focus answers "what am I doing", not "what is on my calendar".
 const FOCUS_KINDS = new Set(['task', 'focus', 'habit']);
+
+/** A Time Block prepared for grouping — the row shape `buildFocusItems` needs. */
+interface Container {
+  block: Block;
+  id: string;
+  sortMin: number;
+  endMs: number | null;
+}
 
 function fmtTime(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
@@ -42,6 +57,8 @@ interface Entry {
   startMs: number | null;
   endMs: number | null;
   done: boolean;
+  /** Phase 2 — the Time Block this row nests under, if any. */
+  parentBlockId: string | null;
   task?: Task;
   block?: Block;
 }
@@ -97,6 +114,7 @@ export function Focus() {
         sortMin: minutesIntoDay(b.start_at, today),
         startMs, endMs,
         done: t?.status === 'done' || b.status === 'completed' || b.status === 'done',
+        parentBlockId: b.parent_block_id ?? null,
         task: t, block: b,
       });
     }
@@ -119,16 +137,46 @@ export function Focus() {
           timeLabel = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
         }
       }
-      out.push({ key: `t:${t.id}`, taskId: t.id, title: t.title, timeLabel, sortMin, startMs, endMs, done: t.status === 'done', task: t });
+      out.push({ key: `t:${t.id}`, taskId: t.id, title: t.title, timeLabel, sortMin, startMs, endMs, done: t.status === 'done', parentBlockId: null, task: t });
     }
     return out.sort((a, b) => a.sortMin - b.sortMin);
   });
 
-  // Past = done, or its slot has fully elapsed. Upcoming = everything else.
-  const isPast = (e: Entry) => e.done || (e.endMs != null && e.endMs <= now());
-  const upcoming = () => entries().filter((e) => !isPast(e));
-  const past = () => entries().filter(isPast);
+  // ── Phase 2: Time Blocks are SECTIONS, not rows ───────────────────────────────
+  // A Time Block is a container, not a doing, so it never enters `entries` (and so
+  // never becomes the Time-Sense hero — see `currentBlock`, which still filters on
+  // FOCUS_KINDS). Its member task blocks nest under it instead of sitting beside it.
+  const containers = createMemo(() =>
+    (blocks() ?? [])
+      .filter((b) => b.block_kind === 'timeblock' && !b.all_day)
+      .map((b) => ({
+        block: b,
+        id: b.id,
+        sortMin: minutesIntoDay(b.start_at, today),
+        endMs: Date.parse(b.end_at),
+      })),
+  );
+
+  const items = createMemo(() => buildFocusItems(entries(), containers(), now()));
+  const upcoming = () => items().filter((it) => !it.past);
+  const past = () => items().filter((it) => it.past);
+  const pastTally = () => countPastRows(items());
+
+  const isPast = (e: Entry) => memberPast(e, now());
   const isNow = (e: Entry) => !e.done && e.startMs != null && e.endMs != null && e.startMs <= now() && e.endMs > now();
+
+  // Collapse state per Time Block, for this mount — Focus is today-only, so "per-day"
+  // and "per-mount" are the same thing. Matches the `pastOpen` idiom above. Sections
+  // start EXPANDED: the view's job is "what am I doing", and a collapsed container
+  // hides exactly that.
+  const [collapsed, setCollapsed] = createSignal<ReadonlySet<string>>(new Set());
+  const isCollapsed = (id: string) => collapsed().has(id);
+  const toggleSection = (id: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
 
   // ── Time-Sense integration (Phase Z) — mirrors Today's gating exactly ──────────
   const timeSenseOn = () => !!prefs()?.time_sense_enabled && prefs()?.focus_ritual_enabled !== false;
@@ -235,6 +283,55 @@ export function Focus() {
 
   const dotColor = (e: Entry): string =>
     e.task ? directionColorForTask({ tags: e.task.tags ?? [] }, tags() ?? [], patternPrefs()?.prefs ?? {}) : 'var(--border)';
+
+  /**
+   * A Time Block, as a section: its own header (title, span, progress, lock) with its
+   * member rows nested underneath. The header is the collapse control; the lock is the
+   * same `LockToggle` the drawer and the Planner card use, so a Time Block's mobility
+   * reads identically wherever you meet it (Phase 1).
+   */
+  const Section = (props: { section: BuiltSection<Entry, Container>; dim?: boolean }) => {
+    const b = () => props.section.container.block;
+    const open = () => !isCollapsed(b().id);
+    return (
+      <div
+        class="rounded-xl border transition-colors"
+        classList={{ 'opacity-50': !!props.dim, 'border-border/60': true }}
+      >
+        <div class="flex items-center gap-3 px-3 py-2.5">
+          <button
+            onClick={() => toggleSection(b().id)}
+            aria-expanded={open()}
+            class="flex items-center gap-2 min-w-0 flex-1 text-left"
+            title={open() ? 'Collapse this Time Block' : 'Expand this Time Block'}
+          >
+            <Show when={open()} fallback={<ChevronRight size={13} class="flex-shrink-0 text-muted-foreground" />}>
+              <ChevronDown size={13} class="flex-shrink-0 text-muted-foreground" />
+            </Show>
+            <span
+              class="w-1.5 h-4 rounded-full flex-shrink-0"
+              style={{ 'background-color': blockColorVar(b(), categoryPrefs()?.prefs) }}
+            />
+            <span class="text-sm font-medium text-foreground truncate">{b().title}</span>
+            <span class="text-[11px] font-mono tabular-nums text-muted-foreground flex-shrink-0">
+              {fmtTime(b().start_at)} – {fmtTime(b().end_at)}
+            </span>
+          </button>
+          <span class="text-[11px] text-muted-foreground flex-shrink-0 tabular-nums">
+            <Show when={props.section.total > 0} fallback="empty">
+              {props.section.doneCount}/{props.section.total} done
+            </Show>
+          </span>
+          <LockToggle block={b()} class="flex-shrink-0" />
+        </div>
+        <Show when={open() && props.section.total > 0}>
+          <div class="flex flex-col gap-1.5 px-2 pb-2 pl-6 animate-slide-down">
+            <For each={props.section.members}>{(e) => <Row entry={e} dim={props.dim} />}</For>
+          </div>
+        </Show>
+      </div>
+    );
+  };
 
   const Row = (props: { entry: Entry; dim?: boolean }) => (
     <div
@@ -399,19 +496,33 @@ export function Focus() {
           aria-expanded={pastOpen()}
         >
           <Show when={pastOpen()} fallback={<ChevronRight size={12} />}><ChevronDown size={12} /></Show>
-          {past().length} earlier task{past().length === 1 ? '' : 's'}
-          <span class="ml-auto">{past().filter((e) => e.done).length} done</span>
+          {/* Counts ROWS, not items: a past Time Block contributes its members, so the
+              number still answers "how many tasks are behind me". */}
+          {pastTally().rows} earlier task{pastTally().rows === 1 ? '' : 's'}
+          <span class="ml-auto">{pastTally().done} done</span>
         </button>
         <Show when={pastOpen()}>
           <div class="flex flex-col gap-1.5 mb-4 animate-slide-down">
-            <For each={past()}>{(e) => <Row entry={e} dim />}</For>
+            <For each={past()}>
+              {(it) => (
+                <Show when={it.kind === 'section'} fallback={<Row entry={(it as { member: Entry }).member} dim />}>
+                  <Section section={(it as { section: BuiltSection<Entry, Container> }).section} dim />
+                </Show>
+              )}
+            </For>
           </div>
         </Show>
       </Show>
 
-      {/* Upcoming — the simple list. */}
+      {/* Upcoming — the simple list, with Time Blocks as sections in time order. */}
       <div class="flex flex-col gap-1.5">
-        <For each={upcoming()}>{(e) => <Row entry={e} />}</For>
+        <For each={upcoming()}>
+          {(it) => (
+            <Show when={it.kind === 'section'} fallback={<Row entry={(it as { member: Entry }).member} />}>
+              <Section section={(it as { section: BuiltSection<Entry, Container> }).section} />
+            </Show>
+          )}
+        </For>
         <Show when={upcoming().length === 0}>
           <div class="text-sm text-muted-foreground text-center py-10 flex flex-col items-center gap-3">
             <Show when={entries().length === 0} fallback={<span>All done for today. 🎉</span>}>
