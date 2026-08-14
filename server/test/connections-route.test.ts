@@ -151,10 +151,11 @@ describe('GET /api/connections', () => {
     expect(body.connections[0]).toEqual({
       provider: 'google',
       account: 'get@x.io',
-      // Mapped, never the raw 'active'. expiresAt stays null: this route does not decrypt.
+      // Mapped, never the raw 'active' — and 'connected' now means the token was OPENED,
+      // which is also where expiresAt comes from (seedToken seals one an hour out).
       status: 'connected',
       createdAt: expect.any(String),
-      expiresAt: null,
+      expiresAt: expect.any(String),
       lastSyncAt: null,
       lastError: null,
       mappedEventCount: 0,
