@@ -35,7 +35,14 @@ function lastRun(kind: string) {
     .get(kind) as { status: string } | undefined;
 }
 
-describe('POST /api/jobs/run-now', () => {
+// Timeout raised above the 120s global. `run-now` awaits every RUN_NOW_KIND
+// inline before it answers, so on a machine where the configured Ollama models
+// are installed each of the two posting tests performs real inference: measured
+// at 48s and 50s respectively on an otherwise idle box. That is inside the
+// global budget with no headroom, and it breached 120s the moment the machine
+// had anything else running — a failure that says nothing about the code.
+// Anywhere Ollama is unreachable (CI) these same tests take about a second.
+describe('POST /api/jobs/run-now', { timeout: 300_000 }, () => {
   let server: TestServer;
   let ollamaUp = false;
   beforeAll(async () => {
