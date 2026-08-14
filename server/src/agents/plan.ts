@@ -847,6 +847,11 @@ function signalPlanNeedsReview(owner: string, date: string, score: number): void
 // hard-enforces tag_before/tag_after clock windows in placement, and `constraintLine`
 // below folds every hint (incl. `batch`; contiguity itself is §A2's post-pass) into
 // the smart-mode ordering prompt.
+//
+// PIN, sense 3 of 3 — a PLAN PIN: a task start time the owner locked in free text
+// ("gym at 7"), placed as an immovable obstacle block. Unrelated to the other two:
+// an operator env pin (`config.pins`, lib/config.ts) and a calibration combo pin
+// (`calibration_combo_pins`, services/calibration.ts). See ARCHITECTURE.md §Glossary.
 
 export interface PlanPin { title: string; start_at: string; end_at: string }
 export interface PlanHint { kind: 'tag_before' | 'tag_after' | 'batch'; tag: string; time?: string }

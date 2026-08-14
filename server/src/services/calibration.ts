@@ -137,6 +137,12 @@ async function gatherSamples(ownerId: string): Promise<TaskSample[]> {
  * scope they belong to — global always; subtype/tag/category/objective by
  * membership; tag_combo ONLY for user-pinned refs (calibration_combo_pins) —
  * and returns robust stats per scope. The caller persists.
+ *
+ * PIN, sense 2 of 3 — a CALIBRATION COMBO PIN: the OWNER confirming "keep learning a
+ * separate estimate bias for this tag combination" (§2.3 hybrid confirm; the UI is
+ * client/src/components/CalibrationPins.tsx). Nothing to do with the other two pins:
+ * an operator env pin (`config.pins`, lib/config.ts) or a plan PIN, a locked task
+ * start time (agents/plan.ts `PlanPin`). See ARCHITECTURE.md §Glossary.
  */
 export async function computeScopedCalibration(ownerId: string): Promise<ScopeStats[]> {
   const samples = await gatherSamples(ownerId);

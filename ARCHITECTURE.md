@@ -1046,3 +1046,40 @@ Companion Planning occupies the gap between open-source tools (no auto-schedulin
 | Licensing | Commercial (CI-Commercial-1.0), source-available | ✅ open source | ❌ closed SaaS |
 
 The differentiator: **local-first + AI-assisted day planning + life-planning layer**, all on your own hardware — commercially licensed (CI-Commercial-1.0) with the source available to licensees.
+
+---
+
+## 16. Glossary
+
+Terms whose plain-English reading is ambiguous, or that mean different things in
+different parts of the tree. Grep-facing: each entry names the code that owns it.
+
+### "pin" — three unrelated nouns
+
+The word is load-bearing in three separate domains. Nothing is shared between them, and
+a grep for `pin` hits all three — so each site carries a comment saying which it is.
+
+| Sense | What it is | Owned by |
+|---|---|---|
+| **Operator env pin** | An operator fixed a value by hand in the environment, so the app must not choose it for them: a model tier (`OLLAMA_FAST`/`OLLAMA_QUALITY`/`OLLAMA_EMBED`), the Google connector mode (`GOOGLE_MODE`), or the Web Push keypair (`VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY`). Every one of them lives in `config.pins`. Surfaces to Settings as `ModelSource = 'pin'`. | `server/src/lib/config.ts` (`PinConfig`), `server/src/lib/models.ts` |
+| **Calibration combo pin** | The OWNER confirming "keep learning a separate estimate bias for this tag combination" — the §2.3 hybrid confirm workflow. Rows in `calibration_combo_pins`; an unpinned combo is only ever a suggestion. | `server/src/services/calibration.ts`, `client/src/components/CalibrationPins.tsx` |
+| **Plan pin** | A task start time the owner locked in free text ("gym at 7"), parsed by `POST /api/plan/instruct` and placed as an immovable obstacle block. Contrast a *hint*, which only biases ordering. | `server/src/agents/plan.ts` (`PlanPin`) |
+
+### Connector mode
+
+`live` / `fixture` / `off` — the transport selector shared by the Google and CI-Server
+memory connectors (`ConnectorMode` / `ModeConfig` in `server/src/lib/config.ts`).
+`fixture` serves committed sample data and is always an explicit opt-in: it is refused
+under `NODE_ENV=production` unless `CP_ALLOW_FIXTURE=true`.
+
+The two connectors differ in ONE way, and the asymmetry is deliberate:
+
+- **`config.google.mode` is boot-pinned.** `services/google-config.ts` hot-applies an
+  operator's in-app setup by mutating the singleton; a lazy re-read from env would
+  silently undo that.
+- **`config.memory.mode` (and `config.memory.serverUrl`) are getters** that re-read
+  `MEMORY_MODE` / `CI_SERVER_URL` on every access, because `connectors/memory.ts`
+  resolves its transport per call and the suite toggles those vars mid-run.
+
+Both are still resolved in `lib/config.ts` and nowhere else — `connectors/memory.ts`'s
+`memoryMode()` is a thin delegate to `config.memory.mode`.

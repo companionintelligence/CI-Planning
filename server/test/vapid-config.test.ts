@@ -7,7 +7,7 @@ import { hydrateVapidConfig, vapidConfigState } from '../src/services/vapid-conf
 /**
  * Automatic Web Push (VAPID) provisioning — services/vapid-config.ts.
  *
- * The test env sets no VAPID_* and no CP_KEK_B64, so config.vapidEnvPinned starts false
+ * The test env sets no VAPID_* and no CP_KEK_B64, so config.pins.vapid starts false
  * and these tests drive the config singleton + app_config directly (the pattern
  * google-config.test.ts uses), restoring env + singleton state after each case.
  */
@@ -18,7 +18,7 @@ const SAVED = {
   publicKey: config.vapidPublicKey,
   privateKey: config.vapidPrivateKey,
   subject: config.vapidSubject,
-  envPinned: config.vapidEnvPinned,
+  envPinned: config.pins.vapid,
 };
 
 function readRow(key: string): string | null {
@@ -32,7 +32,7 @@ function reset(): void {
   sqlite.prepare(`DELETE FROM app_config WHERE key LIKE 'vapid_%'`).run();
   config.vapidPublicKey = '';
   config.vapidPrivateKey = '';
-  config.vapidEnvPinned = false;
+  config.pins.vapid = false;
 }
 
 beforeEach(() => {
@@ -47,7 +47,7 @@ afterEach(() => {
   config.vapidPublicKey = SAVED.publicKey;
   config.vapidPrivateKey = SAVED.privateKey;
   config.vapidSubject = SAVED.subject;
-  config.vapidEnvPinned = SAVED.envPinned;
+  config.pins.vapid = SAVED.envPinned;
 });
 
 describe('first boot — auto-generation', () => {
@@ -105,7 +105,7 @@ describe('no KEK — plaintext fallback', () => {
 
 describe('env-pinned', () => {
   it('is a no-op when both env keys are set — never touches the DB or singleton', async () => {
-    config.vapidEnvPinned = true;
+    config.pins.vapid = true;
     config.vapidPublicKey = 'ENV_PUB';
     config.vapidPrivateKey = 'ENV_PRIV';
 
