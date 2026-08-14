@@ -1369,13 +1369,14 @@ export type Calibration =
 // GET /api/connections (every provider) and GET /api/integrations → google.connections.
 // `status` is always the MAPPED status, never the raw connection_tokens.status column;
 // token material (accessToken/refreshToken/ciphertext/iv/auth_tag/key_version) is never
-// present — by design.
+// present — by design. 'connected' means the server OPENED the stored token, so both
+// endpoints answer identically; a token it can no longer decrypt reads 'inactive'.
 export interface ConnectionRecord {
   provider: string;
   account: string;
   status: 'connected' | 'expired' | 'inactive';
   createdAt: string;
-  /** Null unless the endpoint resolved it (only /api/integrations decrypts). */
+  /** Null when the connection is inactive or its token carries no usable expiry. */
   expiresAt: string | null;
   lastSyncAt: string | null;
   lastError: string | null;

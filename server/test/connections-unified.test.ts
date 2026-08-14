@@ -16,8 +16,10 @@ import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
  *
  * Consolidates what used to be asserted in two places over two shapes: the google-only
  * decrypting `connectionHealth` (connections.test.ts) and the all-provider,
- * raw-status `listConnections` (connections-route.test.ts). Both are now
- * `listConnections(owner, { withExpiry? })` returning `ConnectionRecord[]`.
+ * raw-status `listConnections` (connections-route.test.ts). Both are now the one
+ * `listConnections(owner)` returning `ConnectionRecord[]`. The `withExpiry` opt-out that
+ * shipped with llm-7 is gone: it was a second status path that could call an unopenable
+ * token 'connected', which is asserted against below.
  *
  * The no-leak assertions below are carried over VERBATIM from connections.test.ts — they
  * are the reason this refactor is safe, so they were not allowed to soften. What is NEW:
@@ -102,7 +104,7 @@ describe('listConnections — one shape', () => {
     seedEvent('a@x.io');
     seedEvent('a@x.io');
 
-    const result = await listConnections(SYSTEM_OWNER, { withExpiry: true });
+    const result = await listConnections(SYSTEM_OWNER);
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({
       provider: 'google',
@@ -121,7 +123,7 @@ describe('listConnections — one shape', () => {
     const past = new Date(Date.now() - 3_600_000).toISOString();
     seedToken({ account: 'old@x.io', expiresAt: past });
 
-    const result = await listConnections(SYSTEM_OWNER, { withExpiry: true });
+    const result = await listConnections(SYSTEM_OWNER);
     expect(result[0].status).toBe('expired');
     expect(result[0].expiresAt).toBe(past);
   });
@@ -129,7 +131,7 @@ describe('listConnections — one shape', () => {
   it("status='revoked' → inactive, expiresAt null (never decrypts)", async () => {
     seedToken({ account: 'gone@x.io', status: 'revoked', expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
 
-    const result = await listConnections(SYSTEM_OWNER, { withExpiry: true });
+    const result = await listConnections(SYSTEM_OWNER);
     expect(result[0].status).toBe('inactive');
     expect(result[0].expiresAt).toBeNull();
   });
@@ -138,17 +140,21 @@ describe('listConnections — one shape', () => {
     seedToken({ account: 'bad@x.io', expiresAt: new Date(Date.now() + 3_600_000).toISOString(), corrupt: true });
 
     // A rejected promise fails the test, which is the async form of "does NOT throw".
-    const result = await listConnections(SYSTEM_OWNER, { withExpiry: true });
+    const result = await listConnections(SYSTEM_OWNER);
     expect(result[0].status).toBe('inactive');
     expect(result[0].expiresAt).toBeNull();
   });
 
-  it('without withExpiry: no decrypt at all — an unreadable token still reads connected', async () => {
-    // Same corrupt row as above. The opt-out path never opens it, so it cannot degrade
-    // to 'inactive' — proof that the default list really does skip the decrypt.
-    seedToken({ account: 'bad@x.io', expiresAt: new Date(Date.now() + 3_600_000).toISOString(), corrupt: true });
+  it('missing KEK → inactive, not connected (no second, weaker status path)', async () => {
+    // The whole reason `withExpiry` is gone. This row is intact and `active`; only the KEK
+    // is missing — exactly what an operator sees after a key rotation. The plain list used
+    // to skip the decrypt and call it 'connected' while /api/integrations called the SAME
+    // row 'inactive'. One row, one answer.
+    seedToken({ account: 'nokek@x.io', expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
+    delete process.env.CP_KEK_B64;
+
     const result = await listConnections(SYSTEM_OWNER);
-    expect(result[0].status).toBe('connected');
+    expect(result[0].status).toBe('inactive');
     expect(result[0].expiresAt).toBeNull();
   });
 
@@ -158,14 +164,14 @@ describe('listConnections — one shape', () => {
     // Errored run.
     seedToken({ account: 'err@x.io', expiresAt: future });
     seedRun({ startedAt: new Date(Date.now() - 1000).toISOString(), finishedAt: new Date().toISOString(), status: 'error', log: 'token refresh failed' });
-    let result = await listConnections(SYSTEM_OWNER, { withExpiry: true });
+    let result = await listConnections(SYSTEM_OWNER);
     expect(result[0].lastError).toBe('token refresh failed');
     expect(result[0].lastSyncAt).not.toBeNull();
 
     // Replace with a 'done' run → lastError clears (most recent wins).
     sqlite.exec('DELETE FROM job_runs');
     seedRun({ startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), status: 'done', log: 'ok' });
-    result = await listConnections(SYSTEM_OWNER, { withExpiry: true });
+    result = await listConnections(SYSTEM_OWNER);
     expect(result[0].lastError).toBeNull();
     expect(result[0].lastSyncAt).not.toBeNull();
   });
@@ -175,7 +181,7 @@ describe('listConnections — one shape', () => {
     seedToken({ account: 'run@x.io', expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
     seedRun({ startedAt: started, finishedAt: null, status: 'running' });
 
-    const result = await listConnections(SYSTEM_OWNER, { withExpiry: true });
+    const result = await listConnections(SYSTEM_OWNER);
     expect(result[0].lastSyncAt).toBe(started);
     expect(result[0].lastError).toBeNull();
   });
@@ -227,7 +233,7 @@ describe('listConnections — one shape', () => {
     seedToken({ account: 'revoked@x.io', status: 'revoked' });
     seedEvent('leak-check@x.io');
 
-    const json = JSON.stringify(await listConnections(SYSTEM_OWNER, { withExpiry: true }));
+    const json = JSON.stringify(await listConnections(SYSTEM_OWNER));
     for (const forbidden of ['ciphertext', 'authTag', 'auth_tag', 'accessToken', 'refreshToken']) {
       expect(json).not.toContain(forbidden);
     }
@@ -244,12 +250,12 @@ describe('listConnections — one shape', () => {
     seedToken({ provider: 'google', account: 'revoked@x.io', status: 'revoked' });
     seedToken({ provider: 'ci_memory', account: 'errored@x.io', status: 'error' });
 
-    for (const opts of [{}, { withExpiry: true }]) {
-      const json = JSON.stringify(await listConnections(SYSTEM_OWNER, opts));
-      expect(json).not.toContain('"active"');
-      expect(json).not.toContain('"revoked"');
-      expect(json).not.toContain('"error"');
-    }
+    // There is one path now (the list always opens its rows), so what used to be a loop
+    // over `{}` / `{ withExpiry: true }` is a single call. The assertions are unchanged.
+    const json = JSON.stringify(await listConnections(SYSTEM_OWNER));
+    expect(json).not.toContain('"active"');
+    expect(json).not.toContain('"revoked"');
+    expect(json).not.toContain('"error"');
   });
 });
 
@@ -318,6 +324,29 @@ describe('GET /api/connections — every provider, one shape', () => {
     const mem = await api<{ connected: boolean; account: string | null }>(srv.url, '/api/memory/status');
     expect(mem.body.connected).toBe(false);
     expect(mem.body.account).toBeNull();
+  });
+
+  it('a token that cannot be opened is NEVER reported connected — and both surfaces agree', async () => {
+    // The reported bug, end to end: the rows are intact and `active`, but the KEK they were
+    // sealed under is gone (a rotation, or an unset CP_KEK_B64). GET /api/connections used
+    // to answer 'connected' — a green badge in Settings over a connection every call fails
+    // on — while GET /api/integrations called the SAME google row 'inactive'.
+    seedToken({ provider: 'google', account: 'g@x.io' });
+    seedToken({ provider: 'ci_memory', account: 'ci.example.com' });
+    delete process.env.CP_KEK_B64;
+
+    const { status, body } = await api<{ connections: ConnectionRecord[] }>(srv.url, '/api/connections');
+    expect(status).toBe(200); // a row that won't open degrades; it never 500s the endpoint
+    expect(body.connections).toHaveLength(2); // both rows are still LISTED, just not usable
+    for (const c of body.connections) {
+      expect(c.status).not.toBe('connected');
+      expect(c).toMatchObject({ status: 'inactive', expiresAt: null });
+    }
+
+    // The decrypting surface, on the same row, must say exactly the same thing.
+    const integrations = await api<{ google: { connections: ConnectionRecord[] } }>(srv.url, '/api/integrations');
+    const google = body.connections.find((c) => c.provider === 'google')!;
+    expect(integrations.body.google.connections).toEqual([google]);
   });
 
   it('a ci_memory row makes GET /api/memory/status report connected, from listConnections', async () => {
