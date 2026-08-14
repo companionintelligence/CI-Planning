@@ -344,6 +344,19 @@ export const [integrations, { refetch: refetchIntegrations }] = createResource((
 );
 
 /**
+ * The "Re-check" affordance. `/api/integrations` reads a probe the server caches for 30s,
+ * which is right for polling and wrong for exactly this: an operator who just started
+ * Ollama and wants to know NOW. So bust the cache first (`/api/llm/status?fresh=1`), then
+ * re-read. A plain refetch would faithfully return the stale probe and read as broken.
+ *
+ * The bust is best-effort — if it fails we still refetch, and the poll heals it within
+ * the TTL. Returns the refetch so the button can await the whole round trip.
+ */
+export function recheckIntegrations() {
+  return api.llm.recheck().catch(() => undefined).then(() => refetchIntegrations());
+}
+
+/**
  * True when AI features can actually run. Everything AI gates on this.
  *
  * Keys on `ready`, not `available`: `available` only means Ollama answered, and the

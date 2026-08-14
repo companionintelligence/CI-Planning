@@ -42,6 +42,15 @@ describe('settings / prefs API', () => {
     expect(typeof body.fastModel).toBe('string');
   });
 
+  // The "Re-check" path: same payload, but it forces a live probe past the 30s cache in
+  // mcp/ollama.ts. This route exists FOR this — the UI otherwise reads /api/integrations.
+  it('GET /api/llm/status?fresh=1 answers the same shape', async () => {
+    const { status, body } = await api(server.url, '/api/llm/status?fresh=1');
+    expect(status).toBe(200);
+    expect(body).toHaveProperty('available');
+    expect(typeof body.fastModel).toBe('string');
+  });
+
   it('GET /api/integrations reports Ollama + Google modes', async () => {
     const { status, body } = await api(server.url, '/api/integrations');
     expect(status).toBe(200);
