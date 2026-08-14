@@ -14,7 +14,7 @@ vi.mock('../src/mcp/ollama.js', async (importActual) => {
   const actual = await importActual<typeof import('../src/mcp/ollama.js')>();
   return {
     ...actual,
-    isAvailable: vi.fn(async () => ollamaUp),
+    isReady: vi.fn(async () => ollamaUp),
     generateJson: vi.fn(async () => parseResp()),
   };
 });

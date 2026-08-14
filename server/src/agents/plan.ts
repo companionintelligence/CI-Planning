@@ -25,7 +25,7 @@
  *     before a future-due same-priority task).
  */
 import { store } from '../db/store.js';
-import { generateJson, isAvailable } from '../mcp/ollama.js';
+import { generateJson, isReady, llmOrNull } from '../mcp/ollama.js';
 import { entityTagLevels } from '../services/tags.js';
 import { runLoop, type Defect, type JudgeScore } from './loop.js';
 import { logger } from '../lib/logger.js';
@@ -578,26 +578,29 @@ function sanitizeRationale(v: unknown): string | null {
 
 /**
  * §A3 — generate one "why now" line per task for an LLM-authored order. ONE batch
- * call (small tier), keyed by the task's position. Best-effort: any failure (Ollama
- * down, bad JSON) yields an empty map → those tasks keep a null rationale, so the UI
- * degrades silently. Never throws.
+ * call (small tier), keyed by the task's position. Best-effort: a degradable failure
+ * (Ollama down, bad JSON) yields an empty map → those tasks keep a null rationale, so
+ * the UI degrades silently. A genuine bug propagates to `authorPlanOrder`'s own catch,
+ * which still lands a valid deterministic order — this is never allowed to throw at a
+ * caller.
  */
 async function generateRationales(tasks: PlanTask[], order: number[], themeTag?: string | null): Promise<Map<string, string>> {
   const out = new Map<string, string>();
-  try {
-    const lines = order.map((idx, pos) => `${pos}: ${taskLine(tasks[idx], idx).replace(/^\d+:\s*/, '')}`);
-    const raw = await generateJson<Record<string, unknown>>(rationalePrompt(lines, themeTag), {
+  const lines = order.map((idx, pos) => `${pos}: ${taskLine(tasks[idx], idx).replace(/^\d+:\s*/, '')}`);
+  // Garnish, NOT a loop stage — so `llmOrNull` is right here and banned in the callbacks
+  // handed to `runLoop` below. A missing rationale just renders nothing on the block; the
+  // old bare `catch {}` made that degrade invisible, which `llmOrNull`'s one warn fixes.
+  const raw = await llmOrNull('generateRationales', () =>
+    generateJson<Record<string, unknown>>(rationalePrompt(lines, themeTag), {
       purpose: 'plan_narrate',
       system: rationaleSystem(),
-    });
-    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-      for (let pos = 0; pos < order.length; pos++) {
-        const r = sanitizeRationale((raw as Record<string, unknown>)[String(pos)]);
-        if (r) out.set(tasks[order[pos]].task_id, r);
-      }
+    }),
+  );
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (let pos = 0; pos < order.length; pos++) {
+      const r = sanitizeRationale((raw as Record<string, unknown>)[String(pos)]);
+      if (r) out.set(tasks[order[pos]].task_id, r);
     }
-  } catch {
-    // best-effort — a missing rationale just renders nothing on the block.
   }
   return out;
 }
@@ -717,7 +720,12 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
   };
 
   const aiEnabled = !opts.deterministic && prefs.planning_mode === 'smart';
-  if (!aiEnabled || !(await isAvailable())) {
+  // `ready`, not `available`: "Ollama answered /api/tags" is a green light with nothing
+  // behind it. On an install whose fast/quality model isn't pulled, the old predicate let
+  // the whole generate→judge→revise loop run against an Ollama that could not serve a
+  // single call — burning the loop's budget on failures to land on exactly the
+  // deterministic order below.
+  if (!aiEnabled || !(await isReady())) {
     await persistDeterministic();
     return 'deterministic';
   }
@@ -730,7 +738,7 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
   const memoryLine = memoryOrderLine(staged, memoryRelated);
 
   // B4 invariant (docs/M-ai-scheduler.md:270,303): an LLM failure MID-loop — Ollama dies
-  // AFTER the pre-flight isAvailable() check (timeout, OOM, dropped connection) — must
+  // AFTER the pre-flight isReady() check (timeout, OOM, dropped connection) — must
   // degrade to the deterministic order, never throw. `runLoop` re-throws a genuine
   // generator/judge error (loop.ts) and `generateRationales` also calls the model, so the
   // whole LLM tail is guarded. (The sibling A4 parseInstruction already wraps its call;
@@ -935,19 +943,23 @@ export function validateInstruction(raw: unknown, date: string, tz: string, tagS
  * a clean parse, so there are never partial writes.
  */
 export async function parseInstruction(owner: string, date: string, text: string): Promise<InstructResult> {
-  if (!(await isAvailable())) throw new InstructError('unavailable', 'AI is unavailable');
+  // `ready`, not `available`: a reachable-but-unpulled Ollama used to pass this gate and
+  // then fail deeper with a confusing model-not-found error. It now 503s cleanly with
+  // "AI is unavailable" — the same answer the client's own readiness gate already gives.
+  if (!(await isReady())) throw new InstructError('unavailable', 'AI is unavailable');
   const prefs = await loadPlanningPrefs(owner);
   const tz = await ownerTimezone(owner);
   const tagSet = await allTagNames(owner);
-  let raw: unknown;
-  try {
-    raw = await generateJson(instructPrompt(text, date, prefs.workday_start, prefs.workday_end, [...tagSet]), {
+  // This surface owes the user a REASON, so it keeps its own branch — but on `llmOrNull`,
+  // not a bare catch: a transport failure or unparseable reply is the 503, while a genuine
+  // bug propagates instead of being dressed up as "AI is unavailable".
+  const raw = await llmOrNull('parseInstruction', () =>
+    generateJson(instructPrompt(text, date, prefs.workday_start, prefs.workday_end, [...tagSet]), {
       purpose: 'plan_instruct',
       system: instructSystem(),
-    });
-  } catch {
-    throw new InstructError('unavailable', 'AI request failed');
-  }
+    }),
+  );
+  if (raw === null) throw new InstructError('unavailable', 'AI request failed');
   return validateInstruction(raw, date, tz, tagSet);
 }
 

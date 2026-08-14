@@ -1,5 +1,5 @@
 import { store } from '../db/store.js';
-import { generateJson } from '../mcp/ollama.js';
+import { generateJson, llmOrNull } from '../mcp/ollama.js';
 import { graphSearch, memoryMode, type MemoryNode } from '../connectors/memory.js';
 import { directionGuide, isMotivation, MOTIVATION_RUBRIC } from '../agents/rubric.js';
 import { constrainToVocabulary, constrainOne, type EnrichOut } from '../agents/constrain.js';
@@ -148,9 +148,12 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
   if (nodes.length === 0) return { enriched: false, reason: 'No related memory found' };
 
   const directions = vocab.directions;
-  let out: EnrichOut;
-  try {
-    out = await generateJson<EnrichOut>(
+  // This surface owes the user a REASON, so it keeps a branch of its own — but on
+  // `llmOrNull`'s null, not a hand-rolled catch. The specific transport/parse message now
+  // lands in the one warn `llmOrNull` logs (it was never logged before), while the caller
+  // contract `{ enriched: false, reason }` is unchanged.
+  const out = await llmOrNull('enrichTaskFromMemory', () =>
+    generateJson<EnrichOut>(
       `Here is a task and related items from the user's own knowledge graph.\n` +
         `Related items:\n${describeNodes(nodes)}\n\n` +
         `Task: "${task.title}"\n\n` +
@@ -172,10 +175,9 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
           : '') +
         (needsMotivation ? ` For "motivation": ${MOTIVATION_RUBRIC}` : ''),
       { purpose: 'classify_wide' },
-    );
-  } catch (err) {
-    return { enriched: false, reason: `AI unavailable: ${(err as Error).message}` };
-  }
+    ),
+  );
+  if (out === null) return { enriched: false, reason: 'AI unavailable' };
 
   const result: EnrichTaskResult = { enriched: false };
 

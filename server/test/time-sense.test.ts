@@ -16,8 +16,11 @@ vi.mock('../src/mcp/ollama.js', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../src/mcp/ollama.js')>();
   return {
     ...mod,
+    // OllamaUnavailable, not a bare Error: that is what the real `generate` seam throws
+    // for every transport failure, and it is the class `llmOrNull` degrades on. A bare
+    // Error means "a bug in our code" and is deliberately NOT degraded away.
     generate: vi.fn(async () => {
-      throw new Error('ollama down (mocked in time-sense.test.ts)');
+      throw new mod.OllamaUnavailable('ollama down (mocked in time-sense.test.ts)');
     }),
   };
 });

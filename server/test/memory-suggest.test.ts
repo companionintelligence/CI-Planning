@@ -3,6 +3,7 @@ import { sqlite } from '../src/db/index.js';
 import { ALL_SCOPES, SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
 import { suggestFromMemory, MEMORY_PENDING_CAP } from '../src/agents/memory-suggest.js';
 import { upsertPossible } from '../src/agents/ingest.js';
+import { OllamaUnavailable, LlmParseError } from '../src/mcp/ollama.js';
 import { runScheduledJob } from '../src/jobs/index.js';
 import { resetDb, startTestServer, api, createOwner, type TestServer } from './helpers.js';
 
@@ -224,10 +225,12 @@ describe('staging from the fixture graph', () => {
   });
 
   it('polish failure degrades to templates (never blocks staging)', async () => {
+    // OllamaUnavailable is what the real polish path throws when the model can't be
+    // reached — the degradable half of the `llmOrNull` contract.
     const r = await run(() =>
       suggestFromMemory({
         polish: async () => {
-          throw new Error('boom — polish exploded');
+          throw new OllamaUnavailable('boom — polish exploded');
         },
       }),
     );
@@ -237,6 +240,36 @@ describe('staging from the fixture graph', () => {
       'Dinner with Maya',
       'Quarterly planning review',
     ]);
+  });
+
+  it('an unparseable polish reply also degrades to templates', async () => {
+    const r = await run(() =>
+      suggestFromMemory({
+        polish: async () => {
+          throw new LlmParseError('Could not parse JSON from model output: <html>');
+        },
+      }),
+    );
+    expect(r.created).toBe(2);
+    expect(memoryPossibles('promoted').map((x) => x.raw_title).sort()).toEqual([
+      'Dinner with Maya',
+      'Quarterly planning review',
+    ]);
+  });
+
+  it('a genuine bug in polish propagates — it is not degraded away', async () => {
+    // The other half of the contract: a TypeError is a defect in our code, not a model
+    // outage. Swallowing it into "the model had nothing to say" is how such bugs used to
+    // ship silently. Nothing is staged, because the throw precedes staging.
+    await expect(
+      run(() =>
+        suggestFromMemory({
+          polish: async () => {
+            throw new TypeError("Cannot read properties of undefined (reading 'node')");
+          },
+        }),
+      ),
+    ).rejects.toThrow(TypeError);
   });
 
   it('a working polish refines the drafts', async () => {
