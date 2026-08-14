@@ -8,13 +8,21 @@ import { currentOwnerId } from '../lib/context.js';
 export function llmRouter() {
   const router = new Router();
 
-  // GET /api/llm/status — Ollama health + installed models
+  // GET /api/llm/status — Ollama health + installed models.
+  //
+  // Diagnostic endpoint: the UI reads the richer /api/integrations, not this. It stays
+  // because it is the ONE caller that can force a live probe — `?fresh=1` bypasses the
+  // PROBE_TTL_MS cache in mcp/ollama.ts, which is what Settings → "Re-check" needs when
+  // Ollama came up after the app did. A TTL alone cannot cover that case.
   router.get('/api/llm/status', async (ctx) => {
-    ctx.body = await status();
+    ctx.body = await status(undefined, { fresh: ctx.query.fresh === '1' });
   });
 
   // GET /api/integrations — connection status for Ollama + Google MCP
   router.get('/api/integrations', async (ctx) => {
+    // The cached read: this is polled, and the probe underneath is a network fetch.
+    // Model resolution is NOT cached, so a model saved in Settings shows up here on the
+    // very next poll with no re-check.
     const ollama = await status();
     ctx.body = {
       ollama: {

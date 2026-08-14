@@ -330,18 +330,104 @@ export interface OllamaStatus {
 }
 
 /**
+ * The `/api/tags` half of a status read: did Ollama answer, and with what.
+ *
+ * Deliberately NOT the resolved models — see {@link status} for why those are never
+ * cached alongside this.
+ */
+interface TagsProbe {
+  ok: boolean;
+  rows: InstalledModel[];
+  error?: string;
+}
+
+/**
+ * How long one `/api/tags` probe stands in for the next.
+ *
+ * A CODE constant, not configuration — there is nothing here an operator tunes. It only
+ * has to be shorter than the Settings poll and longer than a plan render, and the one
+ * case a TTL cannot cover (an Ollama that came up seconds ago) has an explicit escape
+ * hatch: "Re-check" → `/api/llm/status?fresh=1` → `status(owner, { fresh: true })`.
+ */
+const PROBE_TTL_MS = 30_000;
+
+let probeCache: { at: number; probe: TagsProbe } | null = null;
+
+/** Drop the cached probe. For tests — production bypasses with `{ fresh: true }`. */
+export function resetProbeCache(): void {
+  probeCache = null;
+}
+
+/** Feed a probe result to the installed-model cache `lib/models.ts` auto-selects from. */
+function applyInstalled(probe: TagsProbe): void {
+  // A failed read is "unknown", not "none" — don't auto-select off a bad read.
+  if (!probe.ok) return setInstalledModels(null);
+  // Never auto-select during tests. Otherwise the suite's behavior depends on whether
+  // the developer happens to be running Ollama: with it up, auto-selection hands every
+  // agent a REAL model, so jobs/enrichment stop failing fast on "model not found" and
+  // instead perform genuine inference — run-now alone went from ~1s to 124s, and the
+  // parallel suite then times out. Tests that exercise selection set the cache directly
+  // via setInstalledModels(); leaving it unknown here keeps every other suite on the
+  // deterministic degrade path it was written against.
+  if (process.env.NODE_ENV !== 'test') setInstalledModels(probe.rows);
+}
+
+/** One live `/api/tags` read. Never throws — a failure IS a result (`ok: false`). */
+async function fetchTags(): Promise<TagsProbe> {
+  try {
+    const res = await fetchWithTimeout(`${config.ollamaUrl}/api/tags`, {}, 5_000);
+    if (!res.ok) return { ok: false, rows: [], error: `HTTP ${res.status}` };
+    const data = (await res.json()) as {
+      models?: { name: string; capabilities?: string[]; details?: { parameter_size?: string } }[];
+    };
+    return {
+      ok: true,
+      rows: (data.models ?? []).map((m) => ({
+        name: m.name,
+        capabilities: m.capabilities ?? [],
+        paramB: parseParamB(m.details?.parameter_size),
+      })),
+    };
+  } catch (err) {
+    return { ok: false, rows: [], error: (err as Error).message };
+  }
+}
+
+/** The probe, from cache when it is fresh enough and not bypassed. */
+async function tagsProbe(fresh: boolean): Promise<TagsProbe> {
+  // The cache is OFF under test, for the same reason as the auto-select guard in
+  // applyInstalled(): no suite's behavior may depend on which test probed first.
+  const cacheable = process.env.NODE_ENV !== 'test';
+  if (cacheable && !fresh && probeCache && Date.now() - probeCache.at < PROBE_TTL_MS) {
+    applyInstalled(probeCache.probe); // keep lib/models in step even on a hit
+    return probeCache.probe;
+  }
+  const probe = await fetchTags();
+  applyInstalled(probe);
+  probeCache = cacheable ? { at: Date.now(), probe } : null;
+  return probe;
+}
+
+/**
  * Health check + installed model list. Never throws.
  *
  * Also the single place that refreshes the installed-model cache `lib/models.ts` uses to
  * auto-select a real model — `resolveModel` is synchronous and on the inference hot path,
  * so it can't fetch `/api/tags` itself. Called at boot, by the Settings/integrations poll,
- * and by "Re-check".
+ * by "Re-check", and — via `isReady()` — on the day-authoring and NL-instruct paths.
+ *
+ * ONLY the `/api/tags` probe is cached (`PROBE_TTL_MS`); model resolution is redone on
+ * every call. That split is load-bearing, not an optimization detail: a Settings model
+ * override is a DB write that must take effect on the very NEXT request, so caching the
+ * resolved names would make a saved model choice look like it did not apply.
  *
  * `owner` is optional because this runs outside a request too (boot, tests), where
  * `currentOwnerId()` throws by design; without one, per-owner Settings overrides are
  * skipped and the env/auto-selected models are reported.
+ *
+ * `fresh` bypasses the probe cache and refills it — the "Re-check" path.
  */
-export async function status(owner?: string): Promise<OllamaStatus> {
+export async function status(owner?: string, opts?: { fresh?: boolean }): Promise<OllamaStatus> {
   /** Effective models — resolved AFTER the cache refresh so auto-selection is applied. */
   const effective = async () => {
     // No owner context (boot health logging): drop only the per-owner override and still
@@ -370,45 +456,24 @@ export async function status(owner?: string): Promise<OllamaStatus> {
     };
   };
 
-  try {
-    const res = await fetchWithTimeout(`${config.ollamaUrl}/api/tags`, {}, 5_000);
-    if (!res.ok) {
-      setInstalledModels(null); // unknown, not "none" — don't auto-select off a bad read
-      return { ...(await effective()), url: config.ollamaUrl, available: false, ready: false, models: [], missingModels: [], error: `HTTP ${res.status}` };
-    }
-    const data = (await res.json()) as {
-      models?: { name: string; capabilities?: string[]; details?: { parameter_size?: string } }[];
-    };
-    const rows: InstalledModel[] = (data.models ?? []).map((m) => ({
-      name: m.name,
-      capabilities: m.capabilities ?? [],
-      paramB: parseParamB(m.details?.parameter_size),
-    }));
-    // Never auto-select during tests. Otherwise the suite's behavior depends on whether
-    // the developer happens to be running Ollama: with it up, auto-selection hands every
-    // agent a REAL model, so jobs/enrichment stop failing fast on "model not found" and
-    // instead perform genuine inference — run-now alone went from ~1s to 124s, and the
-    // parallel suite then times out. Tests that exercise selection set the cache directly
-    // via setInstalledModels(); leaving it unknown here keeps every other suite on the
-    // deterministic degrade path it was written against.
-    if (process.env.NODE_ENV !== 'test') setInstalledModels(rows);
-
-    const eff = await effective();
-    // The embed tier is only exercised by dedupe/memory, so a missing embedder is
-    // reported but does not by itself make the app "not ready" for AI features.
-    const missingModels = [eff.fastModel, eff.qualityModel, eff.embedModel].filter((m) => !isInstalled(m));
-    return {
-      ...eff,
-      url: config.ollamaUrl,
-      available: true,
-      ready: isInstalled(eff.fastModel) && isInstalled(eff.qualityModel),
-      models: rows.map((m) => m.name),
-      missingModels,
-    };
-  } catch (err) {
-    setInstalledModels(null);
-    return { ...(await effective()), url: config.ollamaUrl, available: false, ready: false, models: [], missingModels: [], error: (err as Error).message };
+  const probe = await tagsProbe(opts?.fresh === true);
+  // Resolved AFTER the probe was applied (so auto-selection sees the installed set) and
+  // on EVERY call, cache hit or not — this is the per-owner override read.
+  const eff = await effective();
+  if (!probe.ok) {
+    return { ...eff, url: config.ollamaUrl, available: false, ready: false, models: [], missingModels: [], error: probe.error };
   }
+  // The embed tier is only exercised by dedupe/memory, so a missing embedder is
+  // reported but does not by itself make the app "not ready" for AI features.
+  const missingModels = [eff.fastModel, eff.qualityModel, eff.embedModel].filter((m) => !isInstalled(m));
+  return {
+    ...eff,
+    url: config.ollamaUrl,
+    available: true,
+    ready: isInstalled(eff.fastModel) && isInstalled(eff.qualityModel),
+    models: probe.rows.map((m) => m.name),
+    missingModels,
+  };
 }
 
 /**
