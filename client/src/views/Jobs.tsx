@@ -1,4 +1,6 @@
 import { For, createSignal, Show } from 'solid-js';
+import { setActiveEntity } from '../stores/selection.js';
+import { revealDetails } from '../stores/ui.js';
 import { Play, CheckCircle2, XCircle, Clock, RefreshCw } from 'lucide-solid';
 import { jobs, refetchJobs, showToast } from '../stores/index.js';
 import { api } from '../lib/api.js';
@@ -82,7 +84,14 @@ export function Jobs() {
       <div class="flex flex-col gap-3">
         <For each={jobs.error ? [] : jobs()}>
           {(job) => (
-            <div class="card flex items-center gap-4">
+            <div
+              class="card flex items-center gap-4 cursor-pointer hover:border-ring/60 transition-colors"
+              onClick={(e) => {
+                if ((e.target as HTMLElement).closest('button,a')) return;
+                setActiveEntity('job', job.id);
+                revealDetails();
+              }}
+            >
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2 flex-wrap">
                   <span class="text-sm font-semibold text-foreground">{job.name}</span>

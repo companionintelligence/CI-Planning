@@ -17,6 +17,8 @@ import {
   visibleExtent,
 } from '../lib/day-axis.js';
 import { setElementModal, calendarAxisState, toggleCalendarTop, toggleCalendarBottom, connectionPrefs, categoryPrefs } from '../stores/index.js';
+import { setActiveBlock, setActiveEntity } from '../stores/selection.js';
+import { revealDetails } from '../stores/ui.js';
 import { isAllDay, isTimed, isTaskBlock, showsBlockLabel } from '../lib/overlay.js';
 import { blockColorVar, connectionTextureStyle, type TextureStyle } from '../lib/textures.js';
 import { snapToSlot, minuteToHHMM, isSlotOccupied } from '../lib/create-click.js';
@@ -160,18 +162,19 @@ function BlockChip(props: { placed: Placed; day: string; state: () => AxisState 
   };
 
   // Task chips open the task editor; the block links to its task via task_id.
-  function openTaskEditor(e: MouseEvent | KeyboardEvent) {
-    if (!isTask()) return;
-    const tid = b().task_id;
-    if (!tid) return;
+  // Drawer layout: clicking a chip SELECTS it — the details drawer describes it
+  // (and links to the task); the editor stays reachable from the drawer/Planner.
+  // Every chip is selectable, not just task chips: a meeting has details too.
+  function selectBlock(e: MouseEvent | KeyboardEvent) {
     e.preventDefault();
     e.stopPropagation();
-    setElementModal({ open: true, mode: 'edit', kind: 'task', editTarget: { kind: 'task', id: tid } });
+    setActiveBlock(b().id);
+    revealDetails();
   }
 
   function handleKeyDown(e: KeyboardEvent) {
     if (e.key === 'Enter' || e.key === ' ') {
-      openTaskEditor(e);
+      selectBlock(e);
     }
   }
 
@@ -182,8 +185,7 @@ function BlockChip(props: { placed: Placed; day: string; state: () => AxisState 
       classList={{
         'opacity-40': done(),
         'ring-1 ring-amber-400/70': conflict(),
-        'cursor-pointer': isTask(),
-        'cursor-default': !isTask(),
+        'cursor-pointer': true,
       }}
       style={{
         top: `${topPx()}px`,
@@ -210,7 +212,7 @@ function BlockChip(props: { placed: Placed; day: string; state: () => AxisState 
       // the empty-space `clickToCreate` handler (which arms on the day column's
       // pointerdown). Tasks additionally open their editor on click or Enter/Space.
       onPointerDown={(e) => e.stopPropagation()}
-      onClick={openTaskEditor}
+      onClick={selectBlock}
       onKeyDown={handleKeyDown}
     >
       {/* Per-connection stripe texture, under the label. Absolutely positioned so it
@@ -486,7 +488,13 @@ export function CalendarGrid(props: Props) {
                   'cursor-pointer hover:bg-surface-700/60': !!props.onSelectDate,
                   'ring-1 ring-accent bg-accent/10': props.selectedDate?.() === day,
                 }}
-                onClick={() => props.onSelectDate?.(day)}
+                onClick={() => {
+                  props.onSelectDate?.(day);
+                  // Additive: the drawer's Day panel opens alongside the existing
+                  // day-type flow, matching the mockup's day-header selection.
+                  setActiveEntity('day', day);
+                  revealDetails();
+                }}
               >
                 <div class="text-[10px] uppercase tracking-wide text-slate-500">
                   {dayLabel(day, { weekday: 'short' })}

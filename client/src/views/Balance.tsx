@@ -1,4 +1,6 @@
 import { For, Show, createSignal } from 'solid-js';
+import { setActiveEntity } from '../stores/selection.js';
+import { revealDetails } from '../stores/ui.js';
 import { A } from '@solidjs/router';
 import { Heart, Briefcase, Users, Brain, Smile, DollarSign, Edit, Sparkles, AlertCircle, Target, ListTodo, X, BarChart3, Lightbulb } from 'lucide-solid';
 import { priorities, prefs, tasks, setElementModal } from '../stores/index.js';
@@ -153,7 +155,14 @@ export function Balance() {
                   const gap = () => p().importance - p().satisfaction;
                   const Icon = cat.icon;
                   return (
-                    <div class="card p-5">
+                    <div
+                      class="card p-5 cursor-pointer hover:border-ring/60 transition-colors"
+                      onClick={(e) => {
+                        if ((e.target as HTMLElement).closest('button,a,input')) return;
+                        setActiveEntity('dimension', cat.key);
+                        revealDetails();
+                      }}
+                    >
                       <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
                         <div class="flex items-center gap-3">
                           <div class={`p-2 rounded-xl bg-muted ${cat.colorClass}`}><Icon class="w-5 h-5" /></div>
