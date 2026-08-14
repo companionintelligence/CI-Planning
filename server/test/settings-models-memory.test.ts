@@ -21,6 +21,17 @@ function setPrefs(fields: Record<string, unknown>) {
   sqlite.prepare(`UPDATE scheduling_prefs SET ${set} WHERE owner_id = ?`).run(...keys.map((k) => fields[k]), OWNER);
 }
 
+/** A stored ci_memory connection, as POST /api/memory/connect would leave one. The blob
+ *  is never opened here (GET /api/memory/status does not decrypt), so it can be dummy. */
+function seedMemoryConnection(account: string) {
+  sqlite
+    .prepare(
+      `INSERT INTO connection_tokens (id, owner_id, provider, account, iv, auth_tag, ciphertext, key_version, status)
+       VALUES (?, ?, 'ci_memory', ?, 'aa', 'bb', 'cc', 1, 'active')`,
+    )
+    .run(`conn-${account}`, OWNER, account);
+}
+
 // AA0 made `available` real (creds resolution incl. the CI_SERVER_URL env fallback), so
 // pin a creds-less environment for the "unavailable" assertions below.
 const SAVED_CI_URL = process.env.CI_SERVER_URL;
@@ -71,6 +82,10 @@ describe('memory service', () => {
   });
 
   it('reflects enabled + account + a narrowed scope', async () => {
+    // llm-7: `connected` / `account` are sourced from the one connection surface
+    // (a ci_memory connection_tokens row), not from the prefs label — so seed the row a
+    // real connect would have written. The label is stamped too, as connect does.
+    seedMemoryConnection('liam@x.io');
     setPrefs({ memory_sync_enabled: 1, memory_account: 'liam@x.io', memory_sync_reflections: 0 });
     const s = await memoryStatus(OWNER);
     expect(s).toMatchObject({ enabled: true, connected: true, account: 'liam@x.io' });

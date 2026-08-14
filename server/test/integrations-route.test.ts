@@ -36,7 +36,7 @@ describe('GET /api/integrations — WP7 google connections', () => {
     expect(typeof r.body.google.mode).toBe('string');
   });
 
-  it('surfaces a seeded connection with the locked ConnectionHealth shape', async () => {
+  it('surfaces a seeded connection with the locked ConnectionRecord shape', async () => {
     const future = new Date(Date.now() + 3_600_000).toISOString();
     const sealed = seal(JSON.stringify({ accessToken: 'ya29.SECRET', refreshToken: '1//SECRET', expiresAt: future }), Buffer.from(KEY_B64, 'base64'));
     sqlite
@@ -49,8 +49,10 @@ describe('GET /api/integrations — WP7 google connections', () => {
     const r = await api(srv.url, '/api/integrations');
     expect(r.body.google.connections).toHaveLength(1);
     const c = r.body.google.connections[0];
+    // llm-7: one shape for every connection, so `createdAt` (from the old
+    // ConnectionSummary) joins the google health fields here.
     expect(Object.keys(c).sort()).toEqual(
-      ['account', 'expiresAt', 'lastError', 'lastSyncAt', 'mappedEventCount', 'provider', 'status'].sort(),
+      ['account', 'createdAt', 'expiresAt', 'lastError', 'lastSyncAt', 'mappedEventCount', 'provider', 'status'].sort(),
     );
     expect(c).toMatchObject({ provider: 'google', account: 'me@x.io', status: 'connected', expiresAt: future });
   });

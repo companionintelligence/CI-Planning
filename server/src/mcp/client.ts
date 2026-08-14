@@ -6,6 +6,7 @@ import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { logger } from '../lib/logger.js';
 import { config } from '../lib/config.js';
+import { ConnectorUnavailable } from '../lib/connector-error.js';
 import { BaseOAuth2Client } from '../connectors/base.js';
 import { GoogleCalendarConnector } from '../connectors/google.js';
 import type { RemoteEvent, RemoteEventInput } from '../connectors/base.js';
@@ -13,10 +14,11 @@ import type { RemoteEvent, RemoteEventInput } from '../connectors/base.js';
 /**
  * Thrown when the Google MCP transport is unreachable, a required tool is missing, a
  * call times out / exhausts retries, auth cannot be recovered (second 401), or the
- * circuit breaker is open. Mirrors OllamaUnavailable so ingest/sync callers degrade
- * the same way (catch by name, fall back / skip rather than crash).
+ * circuit breaker is open. Shares one contract with OllamaUnavailable / MemoryUnavailable
+ * — their common base (lib/connector-error.ts) — so ingest/sync callers degrade the same
+ * way (catch, fall back / skip rather than crash). The name and `.name` are unchanged.
  */
-export class McpUnavailable extends Error {
+export class McpUnavailable extends ConnectorUnavailable {
   /** Upstream HTTP-ish status when one could be determined (0/undefined when not). */
   readonly status?: number;
   /**
@@ -31,7 +33,7 @@ export class McpUnavailable extends Error {
   readonly freshEtag?: string | null;
 
   constructor(message: string, opts: { status?: number; freshEtag?: string | null } = {}) {
-    super(message);
+    super('mcp', message);
     this.name = 'McpUnavailable';
     if (opts.status !== undefined) this.status = opts.status;
     if (opts.freshEtag !== undefined) this.freshEtag = opts.freshEtag;
