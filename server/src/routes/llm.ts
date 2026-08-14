@@ -44,9 +44,9 @@ export function llmRouter() {
       },
       // WP7: widen the google block with the live toggle + read-only connection
       // health (one entry per connected account; [] when none). This is the ONE
-      // connection shape (lib/connections.ts), filtered to google and asked for the
-      // expiry — the only caller that pays for the decrypt. listConnections never
-      // throws on a bad token row, so this can't 500 the endpoint.
+      // connection shape (lib/connections.ts), filtered to google — the same records
+      // GET /api/connections serves, so the two cannot disagree about a status.
+      // listConnections never throws on a bad token row, so this can't 500 the endpoint.
       // Mode comes from config, not a client instance — createGoogleClient() throws in
       // 'off' mode (fixture must never be handed out silently), and this endpoint must
       // keep reporting status even when the integration is off. `source` says where the
@@ -56,9 +56,7 @@ export function llmRouter() {
         mode: config.google.mode,
         liveEnabled: config.google.mode === 'live',
         source: config.pins.google ? 'env' : config.google.mode === 'live' ? 'app' : 'off',
-        connections: (await listConnections(currentOwnerId(), { withExpiry: true })).filter(
-          (c) => c.provider === 'google',
-        ),
+        connections: (await listConnections(currentOwnerId())).filter((c) => c.provider === 'google'),
       },
       // Phase H: whether Web Push can actually deliver (VAPID keys present). In-app
       // SSE reminders work regardless; this lets the client/diagnostics show push status.

@@ -1856,14 +1856,15 @@ export function Settings() {
               <div class="flex flex-col gap-2">
                 <For each={connections()}>
                   {(c) => {
-                    // One shape for every provider now; the google entry from
-                    // /api/integrations adds only what a decrypt can tell us (a token
-                    // that is stored but EXPIRED) plus the sync/mapped-event sub-line.
+                    // One shape for every provider now, and BOTH endpoints resolve status
+                    // the same way (the list no longer skips the decrypt), so the badge
+                    // reads straight off this row. The google entry from /api/integrations
+                    // survives only to gate the sync / mapped-event sub-line.
                     const health = () =>
                       c.provider === 'google'
                         ? integrations()?.google.connections.find((h) => h.account === c.account)
                         : undefined;
-                    const status = () => health()?.status ?? c.status;
+                    const status = () => c.status;
                     return (
                       <div class="flex flex-col gap-1 rounded-md border border-border px-3 py-2">
                         <div class="flex items-center justify-between gap-2">

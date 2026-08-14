@@ -11,8 +11,9 @@ import { listConnections, disconnectConnection } from '../lib/connections.js';
  *
  * Both routes are leak-safe: GET returns ConnectionRecord[] — the one connection shape,
  * every provider, with the MAPPED status ('connected' | 'expired' | 'inactive'), never
- * the raw connection_tokens.status column and never token material. It calls
- * listConnections WITHOUT `withExpiry`, so this route still performs no decrypt at all.
+ * the raw connection_tokens.status column and never token material. 'connected' here
+ * means the stored token was actually opened, the same as on GET /api/integrations —
+ * this route used to skip the decrypt and call an unopenable token 'connected'.
  * DELETE is the ONE disconnect route: it delegates to the shared disconnectConnection()
  * (best-effort Google revoke + hard-delete of the token row and its outbound_queue rows),
  * for every provider — including ci_memory, which used to have its own.
@@ -22,7 +23,7 @@ export function connectionsRouter(): Router {
 
   // ── GET /api/connections ────────────────────────────────────────────────────
   // Every connection the current owner holds, across providers (google, ci_memory, …).
-  // Never any secrets, and no decrypt — expiry is opt-in and this route doesn't opt in.
+  // Never any secrets — the decrypt reads the expiry and nothing else leaves this server.
   router.get('/', async (ctx) => {
     ctx.body = { connections: await listConnections(currentOwnerId()) };
   });
