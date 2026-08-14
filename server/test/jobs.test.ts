@@ -3,7 +3,13 @@ import { config } from '../src/lib/config.js';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER, runWithOwner, ALL_SCOPES } from '../src/lib/context.js';
 import { runJob } from '../src/jobs/index.js';
-import { resetDb, ollamaAvailable, createOwner, SECOND_OWNER_ID } from './helpers.js';
+import {
+  resetDb,
+  ollamaAvailable,
+  createOwner,
+  SECOND_OWNER_ID,
+  boundEmailLookbackToOneDay,
+} from './helpers.js';
 
 function lastRun(kind: string) {
   return sqlite
@@ -184,7 +190,14 @@ describe('jobs', () => {
   });
 });
 
-describe('ingestion jobs (require Ollama)', () => {
+// Timeout raised above the 120s global, same reasoning as run-now's in 3648674: these
+// bodies only ever ran where Ollama is unreachable, so nothing had ever measured them
+// against real inference. Both ingest at tier 'quality', one generation per item, and
+// measured 47.6s (gcal) and 21.5s (gmail, bounded to a one-day lookback) on an idle box.
+// Treat those as a floor, not a budget — they are wholly at the mercy of what else holds
+// the GPU. With an unrelated 27B model resident in VRAM the same gmail body took 241s and
+// gcal ran past 300s outright. Where Ollama is unreachable (CI) both return in ~1ms.
+describe('ingestion jobs (require Ollama)', { timeout: 300_000 }, () => {
   let up = false;
   beforeAll(async () => {
     up = await ollamaAvailable();
@@ -206,10 +219,16 @@ describe('ingestion jobs (require Ollama)', () => {
 
   it('ingest_gmail produces possible_tasks from email fixtures', async () => {
     if (!up) return;
+    // Cost bound, not a behavioural one: the rebased fixtures all sit inside the baseline's
+    // 7-day window, and 24 real generations at tier 'quality' outrun any sane budget.
+    boundEmailLookbackToOneDay();
     await runJob('ingest_gmail');
     const run = lastRun('ingest_gmail');
     expect(run?.status).toBe('done');
-    const possibles = sqlite.prepare("SELECT COUNT(*) AS n FROM possible_tasks WHERE source_kind='gcal'").get() as { n: number };
+    // 'gmail', not 'gcal' — ingest_gmail stamps the kind it was handed (ingest.ts:372).
+    // The 'gcal' filter here was a copy-paste from the test above and could only ever
+    // count 0, but the ollamaAvailable() tag bug meant this body had never once run.
+    const possibles = sqlite.prepare("SELECT COUNT(*) AS n FROM possible_tasks WHERE source_kind='gmail'").get() as { n: number };
     expect(possibles.n).toBeGreaterThan(0);
   });
 

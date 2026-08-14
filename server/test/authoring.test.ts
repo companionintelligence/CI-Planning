@@ -11,7 +11,13 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { resetDb, startTestServer, ollamaAvailable, type TestServer } from './helpers.js';
+import {
+  resetDb,
+  startTestServer,
+  ollamaAvailable,
+  primeInstalledModels,
+  type TestServer,
+} from './helpers.js';
 import { authorPlanOrder } from '../src/agents/plan.js';
 import { placeFlightPlan } from '../src/engine/autoplan.js';
 
@@ -293,7 +299,18 @@ describe('authorPlanOrder — LLM path (planning_mode = smart)', () => {
     stage(p3, 2);
 
     sqlite.prepare(`UPDATE scheduling_prefs SET planning_mode = 'smart' WHERE owner_id = ?`).run(OWNER);
-    await authorPlanOrder(OWNER, DATE);
+
+    // Without this the body below never reaches the path it is named for. authorPlanOrder
+    // gates on isReady() (2e713fa), which is structurally false under NODE_ENV=test because
+    // status() leaves the installed-model cache unset — so it took the deterministic branch
+    // every time and the assertion below passed on the fallback it is meant to contrast
+    // with. Runtime is the tell: this test dropped from ~22s to 74ms when that gate landed.
+    const restoreModels = await primeInstalledModels();
+    try {
+      await authorPlanOrder(OWNER, DATE);
+    } finally {
+      restoreModels();
+    }
 
     const rows = dailyPlanRows();
     expect(rows).toHaveLength(3);
