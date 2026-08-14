@@ -1860,7 +1860,7 @@ All from the repo root:
 | GET/PUT | `/api/google-config` | Read/save the in-app Google OAuth client (admin; flips connector to live at runtime, mig 0124) |
 | GET/POST/PATCH/DELETE | `/api/day-types` · `/resolve/:date` · `/week-map` · `/assignments/:date` | Day-type CRUD + per-date resolution |
 | GET/PUT | `/api/category-prefs` | Base **category** tag prefs — the six Balance dimensions (health/career/relationships/growth/leisure/finance, mig 0134) |
-| GET | `/api/health` | Liveness probe (`{"ok":true}`) |
+| GET | `/api/health` | Liveness probe (`{"ok":true,"release":string\|null}`) — `release` backs the client's update-available banner |
 | GET | `/api/events` | SSE stream (task / block / job / possible / reminder events) |
 | POST | `/api/graphql` | GraphQL endpoint (Apollo, alongside REST; introspection on); gated by the same `requireAuth` as REST (session cookie in `sso` mode, `x-api-key` in `standalone`) (Phase W, done) |
 
