@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "db:check-drift": "tsx src/scripts/check-schema-drift.ts",
     "migrate": "tsx --env-file-if-exists=.env src/scripts/migrate.ts",
     "snapshot": "tsx --env-file-if-exists=.env src/scripts/snapshot.ts",
     "restore": "tsx --env-file-if-exists=.env src/scripts/restore.ts",
