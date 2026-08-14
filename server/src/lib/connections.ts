@@ -26,12 +26,19 @@ export interface ConnectionRecord {
   /** 'google' | 'ci_memory' | … — whatever the row says. */
   provider: string;
   account: string;
-  /** Mapped, never the raw column: revoked/error/undecryptable ⇒ 'inactive'. */
+  /**
+   * Mapped, never the raw column: revoked/error/undecryptable ⇒ 'inactive'.
+   *
+   * 'connected' means the stored token was OPENED — not merely that a row exists. Every
+   * caller gets that same guarantee, because there is only one code path (see
+   * listConnections). It used to be weaker on the no-decrypt path, where an active row
+   * reported 'connected' while every call using it failed.
+   */
   status: 'connected' | 'expired' | 'inactive';
   /** ISO-8601 (connection_tokens.created_at). */
   createdAt: string;
-  /** Access-token expiry (ISO). Null when inactive/unknown, and always null unless the
-   *  caller asked for it (`withExpiry`) — resolving it costs a decrypt. */
+  /** Access-token expiry (ISO), read out of the opened token. Null when the row is
+   *  inactive, when it could not be opened, or when the payload carries no usable expiry. */
   expiresAt: string | null;
   /** finished_at ?? started_at of the most recent sync_calendar run (google only). */
   lastSyncAt: string | null;
@@ -41,17 +48,6 @@ export interface ConnectionRecord {
    *  never 0, for other providers, so "no events" and "not an event source" stay
    *  distinguishable. */
   mappedEventCount?: number;
-}
-
-export interface ListConnectionsOptions {
-  /**
-   * Decrypt each active token just far enough to read its expiry, so `status` can be
-   * 'expired' and `expiresAt` is populated. OPT-IN because it costs a KEK load + one
-   * AES-GCM open per row: GET /api/connections (a plain list) leaves it off, GET
-   * /api/integrations (the health card) turns it on. Same cost profile as the two
-   * separate functions this replaced.
-   */
-  withExpiry?: boolean;
 }
 
 interface SafeRow {
@@ -82,20 +78,25 @@ interface SyncRunRow {
  * whose Google integration is `off` must still see (and be able to drop) the stored token
  * — visibility of stored connections is exactly what this surface is for.
  *
- * status resolution:
- *  - row.status <> 'active'                    → 'inactive' (expiresAt null; never decrypts)
- *  - active, without `withExpiry`               → 'connected' (expiresAt null — not read)
- *  - active, with `withExpiry`, decoded expiry <= now → 'expired'
- *  - active, with `withExpiry`, otherwise       → 'connected'
- *  - decrypt throws (tamper / rotated KEK)      → 'inactive', expiresAt null, plus a
- *    REDACTED warning (never the ciphertext). A bad row must NOT 500 the endpoint.
+ * status resolution — ONE path, so the answer never depends on which endpoint asked:
+ *  - row.status <> 'active'                     → 'inactive' (expiresAt null; never decrypts)
+ *  - active, opened, decoded expiry <= now      → 'expired'
+ *  - active, opened, otherwise                  → 'connected'
+ *  - active, cannot be opened (tamper / missing or rotated KEK) → 'inactive', expiresAt
+ *    null, plus a REDACTED warning (never the ciphertext). A bad row must NOT 500 the
+ *    endpoint.
+ *
+ * Every active row is OPENED, deliberately. This used to be opt-in (`withExpiry`), and the
+ * opt-out path mapped an active row straight to 'connected' — so a token the app could no
+ * longer decrypt read 'connected' from GET /api/connections and 'inactive' from GET
+ * /api/integrations, and an operator whose KEK had rotated saw a green badge over a
+ * connection that failed on every call. The saving was measured before it was dropped:
+ * opening a row costs ~9µs, i.e. ~60µs added to a one-connection list and ~0.45ms to a
+ * (wildly unrealistic) fifty-connection one. That is not worth a status that can lie.
  */
-export async function listConnections(
-  ownerId: string,
-  opts: ListConnectionsOptions = {},
-): Promise<ConnectionRecord[]> {
+export async function listConnections(ownerId: string): Promise<ConnectionRecord[]> {
   // The list SELECT names only safe columns — no iv / auth_tag / ciphertext / key_version.
-  // The sealed columns are fetched separately, and only when a decrypt was asked for.
+  // The sealed columns are fetched separately, by the one helper that needs them.
   const rows = await store()
     .prepare(
       `SELECT provider, account, status, created_at
@@ -106,13 +107,29 @@ export async function listConnections(
     .all<SafeRow>(ownerId);
   if (rows.length === 0) return [];
 
-  const sealed = opts.withExpiry ? await sealedByAccount(ownerId) : null;
+  // Nothing to open when every row is already revoked/errored — those never decrypt.
+  const hasActive = rows.some((r) => r.status === 'active');
+  const sealed = hasActive ? await sealedByAccount(ownerId) : new Map<string, SealedRow>();
   const counts = rows.some((r) => r.provider === 'google') ? await mappedEventCounts(ownerId) : null;
   // One sync_calendar lookup for the whole list: the query is keyed by job kind, not by
   // account (job_runs is not owner-scoped — a system actor runs the shared nightly cron),
   // so it returned the same row for every account when it ran per row.
   const sync = counts ? await latestSyncRun() : null;
   const now = Date.now();
+
+  // ONE KEK load for the whole list (an env decode, not per-row work). A missing or
+  // malformed KEK is a deployment fault, not N row faults, so it warns once here and the
+  // per-row catch below is left for genuinely per-row failures (tamper, wrong key).
+  let kek: Buffer | null = null;
+  if (hasActive) {
+    try {
+      kek = await loadKek();
+    } catch (err) {
+      logger.warn('listConnections: no usable KEK; every active connection reports inactive', {
+        err: (err as Error).message,
+      });
+    }
+  }
 
   const out: ConnectionRecord[] = [];
   for (const row of rows) {
@@ -122,23 +139,24 @@ export async function listConnections(
     if (row.status !== 'active') {
       // Revoked / error rows are inactive — no decrypt, no expiry.
       status = 'inactive';
-    } else if (!sealed) {
-      // No decrypt requested: an active row is 'connected'; we cannot prove it expired.
-      status = 'connected';
+    } else if (!kek) {
+      // Warned once above. An unopenable row is never reported as usable.
+      status = 'inactive';
     } else {
       const tok = sealed.get(`${row.provider}\u0000${row.account}`);
       try {
         if (!tok) throw new Error('sealed token row disappeared');
         const exp = extractExpiresAt(
-          open({ iv: tok.iv, authTag: tok.auth_tag, ciphertext: tok.ciphertext }, await loadKek()),
+          open({ iv: tok.iv, authTag: tok.auth_tag, ciphertext: tok.ciphertext }, kek),
         );
         expiresAt = exp;
         const expMs = exp ? Date.parse(exp) : NaN;
         // No / unparseable expiry → treat as connected (can't prove it's expired).
         status = Number.isFinite(expMs) && expMs <= now ? 'expired' : 'connected';
       } catch (err) {
-        // Decrypt failed (tamper, missing/rotated KEK). Degrade to inactive; never
-        // surface or log the ciphertext. logger.redact masks token-shaped fields too.
+        // This row would not open (tamper, or a KEK that loaded but is the wrong one).
+        // Degrade to inactive; never surface or log the ciphertext. logger.redact masks
+        // token-shaped fields too.
         logger.warn('listConnections: failed to open token; treating as inactive', {
           account: row.account,
           err: (err as Error).message,
