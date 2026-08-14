@@ -13,7 +13,11 @@ vi.mock('../src/mcp/ollama.js', async (importOriginal) => {
 });
 
 import { sqlite } from '../src/db/index.js';
-import { generate } from '../src/mcp/ollama.js';
+// OllamaUnavailable, not a bare Error, is what the real `generate` seam throws for every
+// transport failure (fetchWithTimeout / ollamaError wrap them all). The doubles below
+// throw it too, so "Ollama is down" here means what it means in production — `llmOrNull`
+// degrades on it, while a bare Error is a genuine bug and is deliberately NOT degraded.
+import { generate, OllamaUnavailable } from '../src/mcp/ollama.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { resetDb } from './helpers.js';
 import { renderCopy, SURFACES, VOICE_RULES } from '../src/agents/render-copy.js';
@@ -162,7 +166,7 @@ describe('renderCopy', () => {
   });
 
   it('never throws when Ollama is down — straight to the fallback pool', async () => {
-    mockGenerate.mockRejectedValue(new Error('ollama unreachable'));
+    mockGenerate.mockRejectedValue(new OllamaUnavailable('ollama unreachable'));
     const r = await renderCopy('timing_note', payload, { ownerId: OWNER });
     expect(r.source).toBe('fallback');
     expect(r.text).toContain('12:00');
@@ -170,7 +174,7 @@ describe('renderCopy', () => {
   });
 
   it('the fallback pool does not repeat within the pool size (datum-slotting + rotation)', async () => {
-    mockGenerate.mockRejectedValue(new Error('down'));
+    mockGenerate.mockRejectedValue(new OllamaUnavailable('down'));
     const poolSize = SURFACES.calibration_chip.fallbacks.length;
     const seen: string[] = [];
     for (let i = 0; i < poolSize; i++) {
@@ -192,7 +196,7 @@ describe('renderCopy', () => {
   });
 
   it('narrative surfaces emit the caller-supplied deterministic paragraph when the model is down', async () => {
-    mockGenerate.mockRejectedValue(new Error('down'));
+    mockGenerate.mockRejectedValue(new OllamaUnavailable('down'));
     const prose = 'Plan for the day:\n• 2 due today.\n• 1 block scheduled.';
     const r = await renderCopy('daily_brief', { facts: 'raw facts for the model', fallback: prose }, { ownerId: OWNER });
     expect(r.source).toBe('fallback');
@@ -200,7 +204,7 @@ describe('renderCopy', () => {
   });
 
   it('prunes the anti-repetition window back to the surface K', async () => {
-    mockGenerate.mockRejectedValue(new Error('down'));
+    mockGenerate.mockRejectedValue(new OllamaUnavailable('down'));
     const k = SURFACES.weekly_review.historyK; // 4
     for (let i = 0; i < k + 3; i++) {
       await renderCopy('weekly_review', { facts: `week ${i} recap` }, { ownerId: OWNER });

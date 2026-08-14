@@ -6,7 +6,9 @@ vi.mock('../src/mcp/ollama.js', async (importOriginal) => {
 });
 
 import { sqlite } from '../src/db/index.js';
-import { generate } from '../src/mcp/ollama.js';
+// OllamaUnavailable is what the real `generate` seam throws for a transport failure —
+// the doubles below throw it so "Ollama down" means here what it means in production.
+import { generate, OllamaUnavailable } from '../src/mcp/ollama.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { startTestServer, resetDb, api, type TestServer } from './helpers.js';
 import { planWeekNextStep, type PlanWeekNextStepResult } from '../src/services/plan-week.js';
@@ -61,7 +63,7 @@ describe('planWeekNextStep (service)', () => {
   });
 
   it('Ollama down ⇒ short-circuits to the fallback with zero option-level calls', async () => {
-    mockGenerate.mockRejectedValue(new Error('ECONNREFUSED'));
+    mockGenerate.mockRejectedValue(new OllamaUnavailable('ECONNREFUSED'));
 
     const res = await planWeekNextStep(INPUT);
 
@@ -111,7 +113,7 @@ describe('POST /api/plan-week/next-step (route)', () => {
   });
 
   it('never 503s — Ollama down still returns 200 with source: fallback', async () => {
-    mockGenerate.mockRejectedValue(new Error('ECONNREFUSED'));
+    mockGenerate.mockRejectedValue(new OllamaUnavailable('ECONNREFUSED'));
 
     const r = await post(INPUT);
 

@@ -1,12 +1,13 @@
-import { generateJson } from '../mcp/ollama.js';
+import { generateJson, llmOrNull } from '../mcp/ollama.js';
 import { directionGuide } from './rubric.js';
 import { constrainToVocabulary } from './constrain.js';
 
 /**
  * Best-effort LLM tag suggestion for the New Task wizard and the Tasks Auto-tag sweep,
  * CONSTRAINED to the user's existing tag vocabulary — it never invents new tags. Returns
- * `[]` on any failure (Ollama unavailable, bad JSON, empty input), so callers degrade to
- * the deterministic heuristic with no error surfaced. Keeps task creation reproducible:
+ * `[]` on the degradable failures (Ollama unavailable, bad JSON, empty input), so callers
+ * fall back to the deterministic heuristic with no error surfaced — one `warn` is logged
+ * so the degrade is visible. Keeps task creation reproducible:
  * this only ever *adds* suggestions the user can toggle off.
  *
  * The prompt is GROUNDED (2026-07-27): it used to hand the model a bare list of names and
@@ -32,20 +33,21 @@ export async function suggestTags(
   const guide = pickable.length
     ? ` One of these is the task's life area — choose the single best fit for it, plus any other tags that genuinely apply.${directionGuide(pickable)}`
     : '';
-  try {
-    const out = await generateJson<{ tags?: unknown }>(
+  // Ollama down / unparseable → null → `[]`, and ONE warn naming the op (the old bare
+  // `catch {}` degraded invisibly). A genuine bug still throws — see `llmOrNull`.
+  const out = await llmOrNull('suggestTags', () =>
+    generateJson<{ tags?: unknown }>(
       `Choose the tags from this list that best describe the task. ONLY choose from ` +
         `the list — never invent a tag. Reply with JSON {"tags": ["..."]}.${guide} ` +
         `List: ${JSON.stringify(vocabulary)}. Task: "${title.trim()}"`,
       { purpose: 'classify' },
-    );
-    // The allow-list IS the shared never-invent rule (agents/constrain.ts) — same
-    // function the quick-add overlay and the memory pass use, so "what stops the model
-    // inventing a tag" has exactly one answer. This surface caps nothing of its own:
-    // after the case-insensitive dedupe an answer cannot exceed the vocabulary's own
-    // size, so `vocabulary.length` is the no-op ceiling it has always had.
-    return constrainToVocabulary(out.tags, vocabulary, vocabulary.length);
-  } catch {
-    return []; // Ollama down / unparseable → no suggestions, never throws
-  }
+    ),
+  );
+  if (out === null) return [];
+  // The allow-list IS the shared never-invent rule (agents/constrain.ts) — same
+  // function the quick-add overlay and the memory pass use, so "what stops the model
+  // inventing a tag" has exactly one answer. This surface caps nothing of its own:
+  // after the case-insensitive dedupe an answer cannot exceed the vocabulary's own
+  // size, so `vocabulary.length` is the no-op ceiling it has always had.
+  return constrainToVocabulary(out.tags, vocabulary, vocabulary.length);
 }
