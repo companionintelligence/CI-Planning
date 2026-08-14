@@ -358,6 +358,10 @@ export function resetProbeCache(): void {
   probeCache = null;
   // Drop any joined probe too, or a test could inherit the previous one's in-flight request.
   probeInFlight = null;
+  // …and the issue-order counters, or a test's first probe could be judged "late" against a
+  // sequence left behind by the previous one and silently decline to write the cache.
+  probeSeq = 0;
+  lastAppliedSeq = 0;
 }
 
 /** Feed a probe result to the installed-model cache `lib/models.ts` auto-selects from. */
@@ -400,9 +404,27 @@ async function fetchTags(): Promise<TagsProbe> {
  * racing to issue their own. The TTL alone does not cover this: it only helps once a probe has
  * COMPLETED, and the window before that is exactly when callers pile up — boot, the Settings
  * poll, and `isReady()` on the day-authoring and NL-instruct paths can all land on a cold
- * cache together. Cleared in a `finally` so a failed probe is retried rather than remembered.
+ * cache together.
+ *
+ * Clearing this in a `finally` only ends the JOIN — it does NOT make a failed reading
+ * transient. `fetchTags()` never throws; an unreachable Ollama comes back as `{ ok: false }`
+ * and is cached like any other reading, deliberately, so a down Ollama is not re-probed once
+ * per authoring call. `fresh: true` is the bypass for that (see `resetProbeCache` and the
+ * "failed probe is cached like any other" case in `ollama.test.ts`).
  */
 let probeInFlight: Promise<TagsProbe> | null = null;
+
+/**
+ * Issue order for probes, so a slower EARLIER probe cannot overwrite a faster LATER one.
+ *
+ * Without this, `fresh` defeats itself: a non-fresh probe already in flight and a concurrent
+ * `fresh: true` probe both write the cache unconditionally, so if the older request lands
+ * second it replaces the Re-check reading with a staler one — under a NEWER timestamp, which
+ * then serves every caller for the rest of the TTL. Only the highest-numbered probe to
+ * complete may write `probeCache` or touch the installed-model cache.
+ */
+let probeSeq = 0;
+let lastAppliedSeq = 0;
 
 /** The probe, from cache when it is fresh enough and not bypassed. */
 async function tagsProbe(fresh: boolean): Promise<TagsProbe> {
@@ -418,10 +440,16 @@ async function tagsProbe(fresh: boolean): Promise<TagsProbe> {
   // already in flight may have been issued before.
   if (cacheable && !fresh && probeInFlight) return probeInFlight;
 
+  const seq = ++probeSeq;
   const run = (async () => {
     const probe = await fetchTags();
-    applyInstalled(probe);
-    probeCache = cacheable ? { at: Date.now(), probe } : null;
+    // Late arrival from an earlier request: hand this caller its own answer, but do not let
+    // it clobber a newer reading that already landed.
+    if (seq >= lastAppliedSeq) {
+      lastAppliedSeq = seq;
+      applyInstalled(probe);
+      probeCache = cacheable ? { at: Date.now(), probe } : null;
+    }
     return probe;
   })();
   if (cacheable && !fresh) probeInFlight = run;
