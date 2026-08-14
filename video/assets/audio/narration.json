@@ -26,8 +26,8 @@
       "adopted": true
     },
     "today-cockpit": {
-      "text": "Approve the suggestion, then see scheduled work and the flexible backlog together.",
-      "seconds": 5.268,
+      "text": "Today is the cockpit. Twenty-four things staged, and it tells you they don't fit.",
+      "seconds": 5.584,
       "prosody": {
         "rate": "-3%",
         "pitch": "+0Hz",
@@ -74,8 +74,8 @@
       "adopted": true
     },
     "close": {
-      "text": "Plan on your terms with Companion Planning. Visit ci dot computer. UnCloud your life.",
-      "seconds": 7.145,
+      "text": "Plan on your terms with Companion Planning, at ci dot computer slash download. UnCloud your life.",
+      "seconds": 7.545,
       "prosody": {
         "rate": "-8%",
         "pitch": "-2Hz",
@@ -101,8 +101,8 @@
       }
     },
     "the-long-game": {
-      "text": "Objectives keep long-term goals tied to the projects and tasks beneath them.",
-      "seconds": 4.924,
+      "text": "Above the day sit goals, projects and objectives, so a Tuesday has something to be for.",
+      "seconds": 6.178,
       "prosody": {
         "rate": "-3%",
         "pitch": "+0Hz",
@@ -115,6 +115,69 @@
       "prosody": {
         "rate": "-5%",
         "pitch": "-1Hz",
+        "volume": "+0%"
+      }
+    },
+    "what-it-knows": {
+      "text": "A planner knows when you sleep, which doctor you see, and who you met on Tuesday.",
+      "seconds": 5.295,
+      "prosody": {
+        "rate": "-5%",
+        "pitch": "-1Hz",
+        "volume": "+0%"
+      }
+    },
+    "someone-elses-product": {
+      "text": "And it runs on their computer. Atlassian defaults Jira and Confluence customers into using their content to train its AI.",
+      "seconds": 8.575,
+      "prosody": {
+        "rate": "-5%",
+        "pitch": "-1Hz",
+        "volume": "+0%"
+      }
+    },
+    "most-people-quit": {
+      "text": "Moving means moving all of it at once, into another company's database. Most people quit right about here.",
+      "seconds": 7.452,
+      "prosody": {
+        "rate": "-5%",
+        "pitch": "-1Hz",
+        "volume": "+0%"
+      }
+    },
+    "title-card": {
+      "text": "Companion Planning is the other way round. Your whole plan is one SQLite file you can copy and keep.",
+      "seconds": 7.088,
+      "prosody": {
+        "rate": "-6%",
+        "pitch": "-2Hz",
+        "volume": "+0%"
+      }
+    },
+    "the-week": {
+      "text": "It places your work around the meetings you already have.",
+      "seconds": 3.685,
+      "prosody": {
+        "rate": "-3%",
+        "pitch": "+0Hz",
+        "volume": "+0%"
+      }
+    },
+    "the-arithmetic": {
+      "text": "A week is a hundred and sixty-eight hours. Sleep takes sixty-three. You spend the rest on purpose.",
+      "seconds": 6.99,
+      "prosody": {
+        "rate": "-3%",
+        "pitch": "+0Hz",
+        "volume": "+0%"
+      }
+    },
+    "the-dial": {
+      "text": "How much it does without asking is a dial you hold.",
+      "seconds": 3.751,
+      "prosody": {
+        "rate": "-3%",
+        "pitch": "+0Hz",
         "volume": "+0%"
       }
     }
