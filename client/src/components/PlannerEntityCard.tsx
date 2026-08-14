@@ -6,6 +6,7 @@ import {
   askRecurringScope, isRecurringOccurrence,
 } from '../stores/index.js';
 import { activeTask, activeBlock, clearActiveEntity } from '../stores/selection.js';
+import { detailsOpen } from '../stores/ui.js';
 import { api, type Block, type Task, type RecurringScope } from '../lib/api.js';
 import { directionColorForTask, BASE_TAG_DEFAULTS } from '../lib/pattern-meta.js';
 import { isPromotableToObjective } from '../lib/objective-promote.js';
@@ -57,7 +58,14 @@ export function PlannerEntityCard(props: {
     if (!id) return undefined;
     return (blocks() ?? []).find((b) => b.id === id);
   };
-  const open = () => !!activeTask() || !!activeBlock();
+  /**
+   * The expanded entity now has two possible homes: this overlay card, anchored to the
+   * grid, and the app-level details drawer. Showing both at once puts the same entity
+   * on screen twice, so the drawer wins when it is open — it is the shell-level
+   * surface and does not occlude the timeline. Close the drawer and this card takes
+   * over again, keeping the Planner usable on its own.
+   */
+  const open = () => (!!activeTask() || !!activeBlock()) && !detailsOpen();
 
   // The block to position against + act on: the focused block, or the focused task's
   // block on the viewed day (absent when the task isn't scheduled today).
