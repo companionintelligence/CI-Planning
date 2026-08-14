@@ -42,8 +42,12 @@ describe('settings / prefs API', () => {
     expect(typeof body.fastModel).toBe('string');
   });
 
-  // The "Re-check" path: same payload, but it forces a live probe past the 30s cache in
-  // mcp/ollama.ts. This route exists FOR this — the UI otherwise reads /api/integrations.
+  // The "Re-check" path. This asserts the ROUTE contract only: `?fresh=1` is accepted and
+  // answers the same shape as the plain call. It deliberately does NOT prove cache-busting —
+  // the probe cache is disabled under NODE_ENV=test (`cacheable` in mcp/ollama.ts), so every
+  // call here probes regardless of the flag. The cache semantics are proven where they can
+  // be: ollama.test.ts stubs fetch and counts /api/tags hits under a production NODE_ENV
+  // ("two calls inside the TTL issue ONE /api/tags fetch; fresh:true issues a second").
   it('GET /api/llm/status?fresh=1 answers the same shape', async () => {
     const { status, body } = await api(server.url, '/api/llm/status?fresh=1');
     expect(status).toBe(200);
