@@ -794,6 +794,23 @@ sequenceDiagram
     Cron->>DB: advance_objectives (Mon 05:00) — stage objective tasks
 ```
 
+**Call parameters live in one table.** Every agent above reaches Ollama through
+`generate` / `generateJson` / `embed` in `server/src/mcp/ollama.ts`, and none of them
+states a tier, temperature, or timeout of its own: each names a *purpose* from
+`CALL_POLICY` in that same file (`classify`, `classify_wide`, `brainstorm`, `extract`,
+`plan_generate`, `plan_judge`, `plan_narrate`, `plan_instruct`, `suggest`, `narrate`,
+`voice`), and the table supplies the three numbers with a comment saying why they are
+what they are. Raising every classifier's timeout is therefore one edit, not a grep.
+An explicitly passed `tier` / `temperature` / `timeoutMs` still overrides the purpose,
+which is how the two genuinely computed sites work — `agents/render-copy.ts` picks a
+per-surface tier and a longer ceiling for quality surfaces, and
+`services/triality-rationale.ts` passes the caller's remaining stage budget. The four
+`plan_*` purposes stay separate entries even where values coincide: the §A0 loop's
+"the generator is never the evaluator" guarantee is expressed as a tier split, with the
+generator on `fast` and `plan_judge` on `quality`. These are code constants, not
+configuration — they were measured against a live model, so they change under a measured
+retune, never through an env var.
+
 ### 7.1 Scheduled jobs (current)
 
 | Kind | Cron | Purpose |

@@ -234,7 +234,7 @@ Respond ONLY with JSON in exactly this shape:
 {"tasks":[{"ref":"...","title":"...","summary":"...","priority":3,"confidence":0.7}]}`;
   const raw = await generateJson<{ tasks?: { ref?: string; title?: string; summary?: string; priority?: number; confidence?: number }[] }>(
     prompt,
-    { tier: 'fast', timeoutMs: 30_000 },
+    { purpose: 'suggest' },
   );
   const out = new Map<string, Partial<ExtractedTask>>();
   for (const t of raw.tasks ?? []) {

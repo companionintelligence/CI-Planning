@@ -6,8 +6,9 @@
  *   • "Ollama-down ⇒ deterministic fallback, no throw" → isAvailable()=false falls
  *     back to source='deterministic'.
  *
- * The mock branches on the generate tier: 'quality' = judge (score object),
- * 'fast' = generate/revise (index permutation).
+ * The mock branches on the call's named purpose: 'plan_judge' = judge (score object),
+ * 'plan_generate' = generate/revise (index permutation). Those two purposes carry the
+ * quality and fast tiers respectively — the tier split IS the generator ≠ evaluator rule.
  */
 import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from 'vitest';
 import { flushAudits } from '../src/lib/audit.js';
@@ -23,10 +24,13 @@ vi.mock('../src/mcp/ollama.js', async (importActual) => {
   return {
     ...actual,
     isAvailable: vi.fn(async () => ollamaUp),
-    generateJson: vi.fn(async (_prompt: string, opts?: { tier?: string; system?: string }) => {
+    generateJson: vi.fn(async (_prompt: string, opts?: { purpose?: string; system?: string }) => {
       if (genThrows) throw new Error('ollama died mid-call'); // b4-1: timeout/OOM/dropped connection
       if (opts?.system?.includes('explain a finished day plan')) return rationaleResp(); // §A3 rationale call
-      if (opts?.tier === 'quality') return { overall: judgeOverall, critique: 'looks coherent' };
+      // The judge names its purpose rather than its tier since llm-2; `plan_judge` IS the
+      // quality tier and `plan_generate` the fast one, which is how the loop expresses
+      // generator ≠ evaluator (that split is asserted in llm-call-policy.test.ts).
+      if (opts?.purpose === 'plan_judge') return { overall: judgeOverall, critique: 'looks coherent' };
       return llmOrder();
     }),
   };

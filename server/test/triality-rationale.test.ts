@@ -25,13 +25,13 @@ let genThrows: Error | null = null;
 /** Counts the DEFAULT availability probe. The probe is a network fetch with a
  *  multi-second abort, so "was it called at all" is itself an invariant. */
 let statusCalls = 0;
-const genCalls: { prompt: string; opts: { tier?: string; timeoutMs?: number } }[] = [];
+const genCalls: { prompt: string; opts: { purpose?: CallPurpose; tier?: ModelTier; timeoutMs?: number } }[] = [];
 
 vi.mock('../src/mcp/ollama.js', async (importActual) => {
   const actual = await importActual<typeof import('../src/mcp/ollama.js')>();
   return {
     ...actual,
-    generateJson: vi.fn(async (prompt: string, opts: { tier?: string; timeoutMs?: number } = {}) => {
+    generateJson: vi.fn(async (prompt: string, opts: { purpose?: CallPurpose; tier?: ModelTier; timeoutMs?: number } = {}) => {
       genCalls.push({ prompt, opts });
       if (genThrows) throw genThrows;
       return genResponse;
@@ -61,6 +61,8 @@ vi.mock('../src/mcp/ollama.js', async (importActual) => {
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
+// Passed through by the mock's `...actual` spread — the real purpose→numbers resolver.
+import { resolveCall, type CallPurpose, type ModelTier } from '../src/mcp/ollama.js';
 import { trialityNext, type ScoredPick, type Slot } from '../src/services/triality.js';
 import { DIM_REGISTRY, type DimName, type SituationVector, type Ternary } from '../src/services/triality-vector.js';
 import { attachRationales, templateRationale } from '../src/services/triality-rationale.js';
@@ -193,7 +195,9 @@ describe('one model call, hard budget', () => {
     // Output shape first (the measured 3B rule), all three keys in it, data last.
     expect(genCalls[0].prompt.startsWith('Reply with JSON only, exactly these keys:')).toBe(true);
     for (const slot of ['habitual', 'contextual', 'novel']) expect(genCalls[0].prompt).toContain(`"${slot}"`);
-    expect(genCalls[0].opts.tier).toBe('fast');
+    // The garnish stays on the cheap tier. It names a purpose rather than a tier since
+    // llm-2, so resolve the options the way `generate()` would before asserting.
+    expect(resolveCall(genCalls[0].opts).tier).toBe('fast');
   });
 
   it('the call carries the remaining budget as its timeout, never above 5s', async () => {
