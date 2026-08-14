@@ -118,8 +118,24 @@ export function isTimeOfDay(v: unknown): v is TimeOfDay {
 // left the subtask feature permanently dark. Concrete rules helped; worked EXAMPLES help
 // more (a 3B model imitates far better than it deduces), so both are here. The rubric is
 // still only half the protection — see titleSuggestsComplex below.
-export const COMPLEXITY_RUBRIC =
-  'Set isComplex true when finishing the task takes several distinct steps that a person ' +
+/**
+ * The complexity DEFINITION, deliberately FIELD-NEUTRAL: it never names the JSON key, so
+ * each caller supplies its own leading sentence naming the field it actually asks for.
+ *
+ * That split is not cosmetic. `agents/subtasks.ts` asks for `isBreakdownUseful`, not
+ * `isComplex`, and (measured, see `subtasks.ts:25-31`) llama3.2-3B ignores an instruction
+ * that no schema field backs — so pasting an "isComplex" sentence into that prompt would
+ * quietly disarm the boolean gate that makes the model refuse to pad "Call the dentist"
+ * into fake steps. Everything after the field sentence is shared, because the definition
+ * and its worked examples are the same question at both sites; the "Set it false…"
+ * sentence reads back to whichever field the caller just named.
+ *
+ * ⚠️ Changing this text changes model behaviour at BOTH call sites at once — that is the
+ * point of it being one string, and the reason a change here needs the live before/after
+ * protocol in `docs/complexity-rubric-measurement-2026-08.md`, not a code review.
+ */
+export const COMPLEXITY_DEFINITION =
+  'finishing the task takes several distinct steps that a person ' +
   'would want written out — planning a trip, organising an event, moving house, running ' +
   'a project, anything spanning days or involving several people. Verbs like plan, ' +
   'organise, launch, prepare, research, or build usually mean true. ' +
@@ -129,6 +145,10 @@ export const COMPLEXITY_RUBRIC =
   '"Research and launch the pricing page" → true; "Call the dentist" → false; ' +
   '"Pay the electricity bill" → false.';
 
+/** Quick-add's field sentence + the shared definition. Byte-identical to the pre-split
+ *  constant — `test/enrichment-rubric.test.ts` pins the old literal so it stays that way. */
+export const COMPLEXITY_RUBRIC = `Set isComplex true when ${COMPLEXITY_DEFINITION}`;
+
 // The rubric's verb rule, enforced in code. Measured: llama3.2 applies its own verb rule
 // about 4 times in 6 — it missed "Organize the team offsite" and "Research and launch the
 // new pricing page" even with the rule in the prompt. Since the rule is mechanical
@@ -137,8 +157,11 @@ export const COMPLEXITY_RUBRIC =
 // the verb list misses ("Move house", "Team offsite prep"), never lose these.
 // Kept to STRONG planning verbs on purpose — a false positive costs a background LLM call
 // and possibly silly chips; a broad list ("make", "get", "do") would fire constantly.
-// Every verb the RUBRIC names must be here — the code twin drifting from the prompt's
-// own list is how "Prepare the annual budget review" got missed on first measurement.
+// Every verb COMPLEXITY_DEFINITION names must be here — the code twin drifting from the
+// prompt's own list is how "Prepare the annual budget review" got missed on first
+// measurement. The verb sentence now reaches BOTH prompts via the shared definition, so
+// this invariant covers the subtask suggester too; it is asserted in
+// test/enrichment-rubric.test.ts rather than left to a reader.
 const COMPLEX_LEAD_VERBS = new Set([
   'plan', 'organize', 'organise', 'launch', 'prepare', 'research', 'build',
   'coordinate', 'arrange', 'develop', 'migrate', 'renovate', 'host',
