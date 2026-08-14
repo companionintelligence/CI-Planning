@@ -36,8 +36,7 @@ Windows-only failures, nothing new.
 | ~~`"Send the invoice"` subtask false positive~~ | measured in llm-9 | ✅ **fixed** — sixth worked example, measured `TTTTT → FFFFF` with no regressions. Round 2 in `docs/complexity-rubric-measurement-2026-08.md`. |
 | ~~Nothing pins the merged Ollama card's three states~~ | noted in llm-8 | ✅ **fixed** — decision extracted to `client/src/lib/ollama-health.ts`, 10 tests; all three states also exercised live in the preview. |
 | ~~No in-flight dedupe on a cold probe cache~~ | noted in llm-8 | ✅ **fixed** — concurrent callers join one `/api/tags` request; `fresh` deliberately does not join. |
-| `pnpm --filter server vitest run` in ticket templates needs `exec` | found in llm-10 | **out of scope** — factory-kit tooling, not the planner app. The planner's own docs use `pnpm test`, which is correct. |
-| Ticket template uses `pnpm --filter server vitest run`, which fails — needs `exec` | found in llm-10 | fix when next editing a ticket |
+| Ticket templates use `pnpm --filter server vitest run`, which fails with `ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT` — the working form is `pnpm --filter server exec vitest run` | found in llm-10 | **out of scope (owner ruling 2026-08-14): factory-kit tooling, not the planner app.** It appears only under `docs/factory/drafts/`; the planner's own docs already use `pnpm test`, which is correct. Fix when next editing the factory kit. |
 
 ## Integration check — 8 + 9 + 10 (2026-08-14)
 
