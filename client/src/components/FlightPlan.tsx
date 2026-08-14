@@ -8,7 +8,8 @@ import {
   flightPlan, refetchFlightPlan, refetchBlocks, prefs, refetchPrefs, showToast, selectedDay,
   blockTemplates, refetchBlockTemplates, flightPlanTaskIds, patterns, canUndoAuto,
 } from '../stores/index.js';
-import { isSelected, toggleSelection } from '../stores/selection.js';
+import { isSelected, toggleSelection, setActiveTask, activeTask } from '../stores/selection.js';
+import { revealDetails } from '../stores/ui.js';
 import { useDraggable } from '../lib/draggable.js';
 import { splitTagNames } from '../lib/multi-tag.js';
 import {
@@ -221,8 +222,21 @@ export function FlightPlan() {
       <li
         onPointerDown={drag.onPointerDown}
         class="flex items-center gap-2.5 px-3 py-2 group rounded-md cursor-grab select-none touch-none"
-        classList={{ 'pl-7': props.inGroup, 'ring-2 ring-chart-1 bg-chart-1/5': selected() }}
-        onClick={(e) => { if (e.metaKey || e.ctrlKey) { e.stopPropagation(); toggleSelection({ kind: 'flight-plan-task', id: props.it.task_id }); } }}
+        classList={{
+          'pl-7': props.inGroup,
+          'ring-2 ring-chart-1 bg-chart-1/5': selected(),
+          // Expanded-in-drawer marker. Distinct from the multi-select ring above so a
+          // row that is both selected and expanded still reads as both.
+          'bg-sidebar-accent': activeTask() === props.it.task_id,
+        }}
+        onClick={(e) => {
+          // Cmd/Ctrl-click keeps its existing meaning (multi-select for "Create
+          // Routine from selection"); a plain click expands the row into the
+          // details drawer, which previously did nothing at all.
+          if (e.metaKey || e.ctrlKey) { e.stopPropagation(); toggleSelection({ kind: 'flight-plan-task', id: props.it.task_id }); return; }
+          setActiveTask(props.it.task_id);
+          revealDetails();
+        }}
       >
         <button onClick={(e) => { if (e.metaKey || e.ctrlKey) return; toggle(props.it.task_id, !props.it.selected); }} class="checkbox flex-shrink-0" classList={{ 'checkbox-checked': props.it.selected }} title={props.it.selected ? 'Deselect to exclude from Schedule' : 'Include in Schedule'}>
           <Check on={props.it.selected} />
