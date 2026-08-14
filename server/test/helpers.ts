@@ -158,6 +158,23 @@ export async function api<T = any>(
 }
 
 /**
+ * Bound how many fixture emails a single Gmail ingest processes, for the tests that run
+ * one for real against Ollama.
+ *
+ * The fixture client rebases emails.json into the last few days (rebaseEmailsToRecent),
+ * so the baseline's 7-day window now takes in all 24 — each one a real generation at
+ * tier 'quality', which runs past even a 300s budget. One day always holds at least the
+ * newest message, since the rebase lands it inside 24h by construction, so this bounds
+ * the cost without making the assertion vacuous.
+ *
+ * Deliberately not folded into resetDb(): ingest-windows.test.ts asserts the baseline
+ * still reports the shipped 7-day default.
+ */
+export function boundEmailLookbackToOneDay(): void {
+  sqlite.prepare(`UPDATE scheduling_prefs SET email_lookback_days = 1`).run();
+}
+
+/**
  * Is `want` present in `installed`, tolerating a missing tag — `nomic-embed-text`
  * matches installed `nomic-embed-text:latest`. Same rule as matchInstalled() in
  * src/lib/models.ts, reimplemented against the raw name list on purpose: status()
