@@ -157,4 +157,83 @@ describe('status() probe cache', () => {
     // …and the probe underneath was still served from the cache.
     expect(tagFetches).toBe(1);
   });
+
+  // The TTL only helps once a probe has COMPLETED. The window before that is exactly when
+  // callers pile up — boot, the Settings poll and isReady() on the authoring paths can all
+  // land on a cold cache together — so concurrent callers must JOIN one request.
+  it('concurrent callers on a cold cache share ONE /api/tags fetch', async () => {
+    process.env.NODE_ENV = 'production';
+
+    // Gate the stub so all three callers are provably in flight before any can finish.
+    // With an immediately-resolving stub this would pass on internal await ordering rather
+    // than on the dedupe actually working.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    vi.stubGlobal('fetch', async (url: string | URL) => {
+      if (!String(url).endsWith('/api/tags')) throw new Error(`unexpected fetch: ${url}`);
+      tagFetches++;
+      await gate;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ name: 'probe-fast:latest', capabilities: ['completion', 'tools'], details: { parameter_size: '3.2B' } }] }),
+      } as unknown as Response;
+    });
+
+    const all = Promise.all([status(), status(), status()]);
+    release();
+    const [a, b, c] = await all;
+
+    expect(tagFetches).toBe(1);
+    // Every joiner gets a real answer, not a placeholder.
+    for (const s of [a, b, c]) expect(s.available).toBe(true);
+  });
+
+  // "Re-check" means "read it AFTER I asked". A probe already in flight may have been issued
+  // before the user clicked, so fresh must not join one — it would answer a stale question.
+  it('fresh:true does NOT join an in-flight probe', async () => {
+    process.env.NODE_ENV = 'production';
+
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    vi.stubGlobal('fetch', async (url: string | URL) => {
+      if (!String(url).endsWith('/api/tags')) throw new Error(`unexpected fetch: ${url}`);
+      tagFetches++;
+      await gate;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ name: 'probe-fast:latest', capabilities: ['completion', 'tools'], details: { parameter_size: '3.2B' } }] }),
+      } as unknown as Response;
+    });
+
+    const joined = Promise.all([status(), status()]);          // these two share one
+    const forced = status(undefined, { fresh: true });          // this one must not
+    release();
+    await Promise.all([joined, forced]);
+
+    expect(tagFetches).toBe(2);
+  });
+
+  // An unreachable Ollama is cached like any other reading — deliberately, so a down Ollama
+  // is not hammered once per authoring call. The cost is up to PROBE_TTL_MS of staleness once
+  // it comes back, which is precisely what "Re-check" (fresh) exists to cover. Pinned because
+  // "failures are cached too" is the non-obvious half, and the in-flight join must not make a
+  // failure sticky beyond its TTL.
+  it('a failed probe is cached like any other, and fresh still retries it', async () => {
+    process.env.NODE_ENV = 'production';
+
+    vi.stubGlobal('fetch', async () => { tagFetches++; throw new Error('connection refused'); });
+
+    const first = await status();
+    expect(first.available).toBe(false);
+
+    const second = await status();
+    expect(tagFetches).toBe(1);        // served from cache — the down Ollama is not re-probed
+    expect(second.available).toBe(false);
+
+    const rechecked = await status(undefined, { fresh: true });
+    expect(tagFetches).toBe(2);        // …and Re-check gets through, so nothing is stuck
+    expect(rechecked.available).toBe(false);
+  });
 });
