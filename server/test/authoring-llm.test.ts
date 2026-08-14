@@ -6,8 +6,8 @@
  *   • "Ollama-down ⇒ deterministic fallback, no throw" → isAvailable()=false falls
  *     back to source='deterministic'.
  *
- * The mock branches on the generate tier: 'medium' = judge (score object),
- * 'small' = generate/revise (index permutation).
+ * The mock branches on the generate tier: 'quality' = judge (score object),
+ * 'fast' = generate/revise (index permutation).
  */
 import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from 'vitest';
 import { flushAudits } from '../src/lib/audit.js';
@@ -26,7 +26,7 @@ vi.mock('../src/mcp/ollama.js', async (importActual) => {
     generateJson: vi.fn(async (_prompt: string, opts?: { tier?: string; system?: string }) => {
       if (genThrows) throw new Error('ollama died mid-call'); // b4-1: timeout/OOM/dropped connection
       if (opts?.system?.includes('explain a finished day plan')) return rationaleResp(); // §A3 rationale call
-      if (opts?.tier === 'medium') return { overall: judgeOverall, critique: 'looks coherent' };
+      if (opts?.tier === 'quality') return { overall: judgeOverall, critique: 'looks coherent' };
       return llmOrder();
     }),
   };

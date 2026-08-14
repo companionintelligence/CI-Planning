@@ -60,8 +60,8 @@ describe('GET /api/integrations — WP7 google connections', () => {
     // ollama
     expect(typeof r.body.ollama.available).toBe('boolean');
     expect(Array.isArray(r.body.ollama.models)).toBe(true);
-    expect(typeof r.body.ollama.smallModel).toBe('string');
-    expect(typeof r.body.ollama.mediumModel).toBe('string');
+    expect(typeof r.body.ollama.fastModel).toBe('string');
+    expect(typeof r.body.ollama.qualityModel).toBe('string');
     expect(typeof r.body.ollama.embedModel).toBe('string');
     // push (Phase H) — VAPID keys now auto-provisioned on boot, so push reports configured
     expect(typeof r.body.push.configured).toBe('boolean');

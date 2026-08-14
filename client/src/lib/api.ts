@@ -1355,7 +1355,7 @@ export type Calibration =
 
 export interface LLMStatus {
   available: boolean; url: string; models: string[];
-  smallModel: string; mediumModel: string; embedModel: string;
+  fastModel: string; qualityModel: string; embedModel: string;
 }
 
 // ── Connections (WP7) — read-only Google connection health ─────────────────────
@@ -1393,7 +1393,7 @@ export interface Priority {
 
 export interface Integrations {
   // `available` = Ollama answered; `ready` = the models that will actually be used are
-  // pulled (gate AI surfaces on `ready` — see aiAvailable). `smallModel`/`mediumModel`/
+  // pulled (gate AI surfaces on `ready` — see aiAvailable). `fastModel`/`qualityModel`/
   // `embedModel` are the EFFECTIVE picks (Settings override → env pin → auto-selected),
   // and `missingModels` lists any of them that aren't installed. `ready`/`missingModels`
   // are optional so a client can talk to a server that predates them.
@@ -1401,12 +1401,12 @@ export interface Integrations {
     available: boolean;
     ready?: boolean;
     models: string[];
-    smallModel: string;
-    mediumModel: string;
+    fastModel: string;
+    qualityModel: string;
     embedModel: string;
     missingModels?: string[];
     /** How each pick was chosen — `auto` means the server guessed from what is installed. */
-    modelSources?: { small: string; medium: string; embed: string };
+    modelSources?: { fast: string; quality: string; embed: string };
     /** Cautions about AUTO-SELECTED picks only (e.g. no tool-use capability). */
     modelWarnings?: string[];
   };

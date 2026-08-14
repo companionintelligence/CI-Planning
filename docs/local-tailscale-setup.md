@@ -170,7 +170,7 @@ be thinking models, and selection falls through to whatever non-thinking model r
 possibly a small vision model. Audit what you actually got:
 
 ```bash
-curl -s localhost:3848/api/integrations | python3 -m json.tool   # smallModel/mediumModel
+curl -s localhost:3848/api/integrations | python3 -m json.tool   # fastModel/qualityModel
 curl -s localhost:11434/api/show -d '{"model":"<name>"}' | python3 -c \
   'import json,sys; print(json.load(sys.stdin)["capabilities"])'
 ```
@@ -178,8 +178,8 @@ curl -s localhost:11434/api/show -d '{"model":"<name>"}' | python3 -c \
 Pin explicitly once you know, using non-thinking instruct models:
 
 ```bash
-OLLAMA_SMALL=qwen2.5:7b      # latency-sensitive: tagging, quick-add enrichment
-OLLAMA_MEDIUM=qwen2.5:14b    # quality: briefings, grooming
+OLLAMA_FAST=qwen2.5:7b       # latency-sensitive: tagging, quick-add enrichment
+OLLAMA_QUALITY=qwen2.5:14b   # quality: briefings, grooming
 OLLAMA_EMBED=mxbai-embed-large:latest
 ```
 

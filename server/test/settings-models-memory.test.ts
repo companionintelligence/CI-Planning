@@ -45,21 +45,21 @@ beforeEach(() => {
 
 describe('model resolution', () => {
   it('falls back to env defaults when no override is set', async () => {
-    expect(await resolveModel('small', OWNER)).toBe(config.ollamaSmallModel);
-    expect(await resolveModel('medium', OWNER)).toBe(config.ollamaMediumModel);
+    expect(await resolveModel('fast', OWNER)).toBe(config.ollamaFastModel);
+    expect(await resolveModel('quality', OWNER)).toBe(config.ollamaQualityModel);
     expect(await resolveEmbedModel(OWNER)).toBe(config.ollamaEmbedModel);
   });
 
   it('uses the per-owner override when set', async () => {
     setPrefs({ fast_model: 'fast-x', quality_model: 'quality-y', embed_model: 'embed-z' });
-    expect(await resolveModel('small', OWNER)).toBe('fast-x');
-    expect(await resolveModel('medium', OWNER)).toBe('quality-y');
+    expect(await resolveModel('fast', OWNER)).toBe('fast-x');
+    expect(await resolveModel('quality', OWNER)).toBe('quality-y');
     expect(await resolveEmbedModel(OWNER)).toBe('embed-z');
   });
 
   it('treats a blank override as "use the default"', async () => {
     setPrefs({ fast_model: '   ' });
-    expect(await resolveModel('small', OWNER)).toBe(config.ollamaSmallModel);
+    expect(await resolveModel('fast', OWNER)).toBe(config.ollamaFastModel);
   });
 });
 

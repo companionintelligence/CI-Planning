@@ -1459,8 +1459,8 @@ export function Settings() {
                       </div>
                     )}
                   </For>
-                  <ModelSelect label="Fast model" hint="extraction & triage" field="fast_model" fallback={integrations()!.ollama.smallModel} />
-                  <ModelSelect label="Quality model" hint="briefings" field="quality_model" fallback={integrations()!.ollama.mediumModel} />
+                  <ModelSelect label="Fast model" hint="extraction & triage" field="fast_model" fallback={integrations()!.ollama.fastModel} />
+                  <ModelSelect label="Quality model" hint="briefings" field="quality_model" fallback={integrations()!.ollama.qualityModel} />
                   <ModelSelect label="Embedding model" hint="dedupe" field="embed_model" fallback={integrations()!.ollama.embedModel} />
                   <p class="text-[11px] text-muted-foreground">{ollamaModels().length} models installed · changes apply on Save.</p>
                 </div>
@@ -1718,7 +1718,7 @@ export function Settings() {
                           ? 'Unavailable — start Ollama on localhost:11434'
                           : !aiAvailable()
                             ? `Running, but ${missingModels().join(', ')} not installed — AI features are off`
-                            : `${i().ollama.models.length} models · small: ${i().ollama.smallModel} · medium: ${i().ollama.mediumModel}`}
+                            : `${i().ollama.models.length} models · fast: ${i().ollama.fastModel} · quality: ${i().ollama.qualityModel}`}
                       </div>
                     </div>
                   </div>

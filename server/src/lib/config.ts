@@ -155,12 +155,12 @@ export interface Config {
    *  silently serving a store the data is not in. */
   storeBackend: 'sqlite' | 'postgres';
   ollamaUrl: string;
-  ollamaSmallModel: string;
-  ollamaMediumModel: string;
+  ollamaFastModel: string;
+  ollamaQualityModel: string;
   ollamaEmbedModel: string;
   /** Which model tiers an operator pinned via env. A pin is used verbatim; an unpinned
    *  tier falls back to auto-selection from what's installed (lib/models.ts). */
-  ollamaPinned: { small: boolean; medium: boolean; embed: boolean };
+  ollamaPinned: { fast: boolean; quality: boolean; embed: boolean };
   staticDir: string;
   vapidPublicKey: string;
   vapidPrivateKey: string;
@@ -254,6 +254,41 @@ const googleMode: 'live' | 'fixture' | 'off' =
   : process.env.GOOGLE_MODE === 'fixture' ? 'fixture'
   : 'off';
 
+/**
+ * The three Ollama model tiers as env configures them.
+ *
+ * The names below are last-resort defaults only. These tags are NOT installed on most
+ * machines, so when a tier is unpinned lib/models.ts auto-selects from what the device
+ * actually has and these are reached only while the installed set is still unknown
+ * (pre-probe/offline). Set OLLAMA_FAST/QUALITY/EMBED to pin a tier to a specific
+ * `ollama list` entry — a pin is used verbatim, and generate/embed then throw an
+ * actionable error if it turns out not to be pulled.
+ *
+ * `OLLAMA_SMALL` / `OLLAMA_MEDIUM` are the tiers' former names and stay accepted as
+ * aliases: operators have them in live `.env` files and in docker-compose.yml. The new
+ * name wins when both are set, and either one counts as a pin.
+ *
+ * Takes `env` so the alias rule is testable without re-evaluating this module.
+ */
+export function ollamaModelsFromEnv(env: NodeJS.ProcessEnv = process.env): {
+  fastModel: string;
+  qualityModel: string;
+  embedModel: string;
+  pinned: { fast: boolean; quality: boolean; embed: boolean };
+} {
+  const fast = env.OLLAMA_FAST ?? env.OLLAMA_SMALL;
+  const quality = env.OLLAMA_QUALITY ?? env.OLLAMA_MEDIUM;
+  const embed = env.OLLAMA_EMBED;
+  return {
+    fastModel: fast ?? 'qwen2.5:0.5b',
+    qualityModel: quality ?? 'gemma3n:e4b',
+    embedModel: embed ?? 'nomic-embed-text',
+    pinned: { fast: !!fast, quality: !!quality, embed: !!embed },
+  };
+}
+
+const ollamaModels = ollamaModelsFromEnv();
+
 export const config: Config = {
   port: Number(process.env.PORT ?? 3848),
   trustProxy: process.env.TRUST_PROXY === 'true',
@@ -261,20 +296,12 @@ export const config: Config = {
   databaseUrl,
   storeBackend,
   ollamaUrl: process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434',
-  // Last-resort names only. These tags are NOT installed on most machines, so when a
-  // tier is unpinned lib/models.ts auto-selects from what the device actually has and
-  // these are reached only while the installed set is still unknown (pre-probe/offline).
-  // Set OLLAMA_SMALL/MEDIUM/EMBED to pin a tier to a specific `ollama list` entry —
-  // a pin is used verbatim, and generate/embed then throw an actionable error if it
-  // turns out not to be pulled.
-  ollamaSmallModel: process.env.OLLAMA_SMALL ?? 'qwen2.5:0.5b',
-  ollamaMediumModel: process.env.OLLAMA_MEDIUM ?? 'gemma3n:e4b',
-  ollamaEmbedModel: process.env.OLLAMA_EMBED ?? 'nomic-embed-text',
-  ollamaPinned: {
-    small: !!process.env.OLLAMA_SMALL,
-    medium: !!process.env.OLLAMA_MEDIUM,
-    embed: !!process.env.OLLAMA_EMBED,
-  },
+  // Tier defaults, env pins and the legacy OLLAMA_SMALL/MEDIUM aliases — see
+  // ollamaModelsFromEnv above.
+  ollamaFastModel: ollamaModels.fastModel,
+  ollamaQualityModel: ollamaModels.qualityModel,
+  ollamaEmbedModel: ollamaModels.embedModel,
+  ollamaPinned: ollamaModels.pinned,
   staticDir: join(packageRoot, 'public'),
   // Web Push (Phase H). Keys are AUTO-GENERATED on first boot and persisted to app_config
   // (services/vapid-config.ts hydrates them into this singleton after migrations), so push

@@ -196,7 +196,7 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
           ? ` Choose categories ONLY from the given list — never invent; [] when none fit.`
           : '') +
         (needsMotivation ? ` For "motivation": ${MOTIVATION_RUBRIC}` : ''),
-      { tier: 'small', temperature: 0.2, timeoutMs: 20_000 },
+      { tier: 'fast', temperature: 0.2, timeoutMs: 20_000 },
     );
   } catch (err) {
     return { enriched: false, reason: `AI unavailable: ${(err as Error).message}` };

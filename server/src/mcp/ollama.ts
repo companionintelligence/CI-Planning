@@ -23,7 +23,7 @@ export class OllamaUnavailable extends Error {
   }
 }
 
-export type ModelTier = 'small' | 'medium';
+export type ModelTier = 'fast' | 'quality';
 
 async function modelFor(tier: ModelTier): Promise<string> {
   return await resolveModel(tier); // per-owner Settings override, else env default
@@ -55,7 +55,7 @@ async function ollamaError(op: string, res: Response, model: string): Promise<Ol
   if (res.status === 404 && /model\s+['"].+['"]\s+not\s+found/i.test(bodyTrimmed)) {
     return new OllamaUnavailable(
       `Model '${model}' is not installed in Ollama. Run \`ollama pull ${model}\`, or set ` +
-        `OLLAMA_SMALL / OLLAMA_MEDIUM / OLLAMA_EMBED in server/.env to a model from \`ollama list\`.`,
+        `OLLAMA_FAST / OLLAMA_QUALITY / OLLAMA_EMBED in server/.env to a model from \`ollama list\`.`,
     );
   }
   // Name the endpoint so a wrong OLLAMA_URL / proxy 404 is diagnosable from the message.
@@ -81,7 +81,7 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
 
 /** Low-level text generation. Returns the raw completion string. */
 export async function generate(prompt: string, opts: GenerateOpts = {}): Promise<string> {
-  const model = opts.model ?? (await modelFor(opts.tier ?? 'small'));
+  const model = opts.model ?? (await modelFor(opts.tier ?? 'fast'));
   const body = {
     model,
     prompt,
@@ -162,8 +162,8 @@ export interface OllamaStatus {
   models: string[];
   /** The EFFECTIVE models for this owner (Settings override → env pin → auto-selected),
    *  not the raw built-in defaults — those were what made the old display misleading. */
-  smallModel: string;
-  mediumModel: string;
+  fastModel: string;
+  qualityModel: string;
   embedModel: string;
   /** Effective models that are NOT installed, so the UI can name them. */
   missingModels: string[];
@@ -172,7 +172,7 @@ export interface OllamaStatus {
    * the app guessed from what is installed — worth showing, because an auto-selected name
    * otherwise looks identical to a deliberate one in the UI.
    */
-  modelSources: { small: ModelSource; medium: ModelSource; embed: ModelSource };
+  modelSources: { fast: ModelSource; quality: ModelSource; embed: ModelSource };
   /** Cautions about auto-selected picks (e.g. no tool-use capability). Empty when fine. */
   modelWarnings: string[];
   error?: string;
@@ -197,24 +197,24 @@ export async function status(owner?: string): Promise<OllamaStatus> {
     // apply env-pin → installed-default → auto-selection. Returning the raw configured
     // names here would report `qwen2.5:0.5b` as effective while every request actually
     // used the auto-selected model.
-    let small, medium, embed;
+    let fast, quality, embed;
     try {
-      small = await explainModel('small', owner);
-      medium = await explainModel('medium', owner);
+      fast = await explainModel('fast', owner);
+      quality = await explainModel('quality', owner);
       embed = await explainEmbedModel(owner);
     } catch {
-      small = explainModelDefault('small');
-      medium = explainModelDefault('medium');
+      fast = explainModelDefault('fast');
+      quality = explainModelDefault('quality');
       embed = explainEmbedModelDefault();
     }
     return {
-      smallModel: small.name,
-      mediumModel: medium.name,
+      fastModel: fast.name,
+      qualityModel: quality.name,
       embedModel: embed.name,
-      modelSources: { small: small.source, medium: medium.source, embed: embed.source },
+      modelSources: { fast: fast.source, quality: quality.source, embed: embed.source },
       modelWarnings: generationSelectionWarnings([
-        { tier: 'small' as const, model: small },
-        { tier: 'medium' as const, model: medium },
+        { tier: 'fast' as const, model: fast },
+        { tier: 'quality' as const, model: quality },
       ]),
     };
   };
@@ -245,12 +245,12 @@ export async function status(owner?: string): Promise<OllamaStatus> {
     const eff = await effective();
     // The embed tier is only exercised by dedupe/memory, so a missing embedder is
     // reported but does not by itself make the app "not ready" for AI features.
-    const missingModels = [eff.smallModel, eff.mediumModel, eff.embedModel].filter((m) => !isInstalled(m));
+    const missingModels = [eff.fastModel, eff.qualityModel, eff.embedModel].filter((m) => !isInstalled(m));
     return {
       ...eff,
       url: config.ollamaUrl,
       available: true,
-      ready: isInstalled(eff.smallModel) && isInstalled(eff.mediumModel),
+      ready: isInstalled(eff.fastModel) && isInstalled(eff.qualityModel),
       models: rows.map((m) => m.name),
       missingModels,
     };

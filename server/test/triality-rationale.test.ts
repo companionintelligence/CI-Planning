@@ -43,8 +43,8 @@ vi.mock('../src/mcp/ollama.js', async (importActual) => {
         ready: ollamaReady,
         url: 'http://mock',
         models: [],
-        smallModel: 'mock-small',
-        mediumModel: 'mock-medium',
+        fastModel: 'mock-fast',
+        qualityModel: 'mock-quality',
         embedModel: 'mock-embed',
         missingModels: [],
       };
@@ -193,7 +193,7 @@ describe('one model call, hard budget', () => {
     // Output shape first (the measured 3B rule), all three keys in it, data last.
     expect(genCalls[0].prompt.startsWith('Reply with JSON only, exactly these keys:')).toBe(true);
     for (const slot of ['habitual', 'contextual', 'novel']) expect(genCalls[0].prompt).toContain(`"${slot}"`);
-    expect(genCalls[0].opts.tier).toBe('small');
+    expect(genCalls[0].opts.tier).toBe('fast');
   });
 
   it('the call carries the remaining budget as its timeout, never above 5s', async () => {
