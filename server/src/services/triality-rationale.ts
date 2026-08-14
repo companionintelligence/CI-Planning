@@ -1,6 +1,6 @@
 import { DEFAULT_WEIGHTS, type ScoredPick, type Slot } from './triality.js';
 import { DIM_REGISTRY, type DimName, type SituationVector } from './triality-vector.js';
-import { generateJson, status } from '../mcp/ollama.js';
+import { generateJson, isReady } from '../mcp/ollama.js';
 import { logger } from '../lib/logger.js';
 
 /**
@@ -221,11 +221,11 @@ export async function attachRationales(
   );
   if (opts.generateFn === null) return out;
 
-  // NOTHING TO GARNISH ⇒ RETURN BEFORE THE PROBE. The default availability gate
-  // is a network fetch with a multi-second abort, so ordering is not cosmetic:
-  // probing first made three empty slots cost up to the whole BUDGET_MS to
-  // produce three nulls. No picks ⇒ no prompt is constructible ⇒ nothing the
-  // probe's answer could change.
+  // NOTHING TO GARNISH ⇒ RETURN BEFORE THE PROBE. The availability gate is cached
+  // now (PROBE_TTL_MS in mcp/ollama.ts), but the first read in each window is still
+  // a network fetch with a multi-second abort, so ordering is not cosmetic: probing
+  // first made three empty slots cost up to the whole BUDGET_MS to produce three
+  // nulls. No picks ⇒ no prompt is constructible ⇒ nothing the probe could change.
   const items = picks.flatMap((p, i) =>
     p ? [{ slot: p.slot, title: p.title, facts: out[i]!.text, index: i }] : [],
   );
@@ -237,13 +237,17 @@ export async function attachRationales(
   const remaining = () => budget - (clock() - startedAt);
 
   try {
-    // Cheap gate before paying for inference: `ready`, not `available` — a
-    // reachable Ollama whose model isn't pulled fails every call.
-    const available = opts.availableFn ?? (async () => (await status()).ready);
+    // Cheap gate before paying for inference: `ready`, not `available` — a reachable
+    // Ollama whose model isn't pulled fails every call. This site had the right predicate
+    // hand-rolled before `isReady` existed; it now names the shared one.
+    const available = opts.availableFn ?? isReady;
     if (!(await available())) return out;
+    // The budget stays: whatever the gate cost, there must be enough left to be worth
+    // starting a call. It is no longer the availability probe that eats it — that read
+    // is cached now — so the floor is about the caller's own remaining budget.
     const callBudget = remaining();
     if (callBudget < MIN_CALL_MS) {
-      logger.info('triality: rationale budget spent on the availability probe — templates only');
+      logger.info('triality: too little budget left to start a rationale call — templates only');
       return out;
     }
 

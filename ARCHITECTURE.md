@@ -1,10 +1,10 @@
 # Companion Planning — Architecture Reference
 
-**Status:** Living document · last updated 2026-08-01 · migration head `0146` in `main`; `0147` is **unreleased** on the current branch (§1.3) (authoritative list: `server/src/db/migrations/index.ts`)
+**Status:** Living document · last updated 2026-08-13 · migration head `0147` in `main` (authoritative list: `server/src/db/migrations/index.ts`)
 
 > This document describes the **as-built** system — what is actually running, not what was planned. For future phases, see [docs/ROADMAP.md](docs/ROADMAP.md).
 >
-> Anything that is finished but **not yet merged to `main`** is collected in **§1.3** and cross-referenced from the section it changes, so "as-built" keeps meaning `main`.
+> Anything finished but **not yet merged to `main`** gets its own numbered section, cross-referenced from every section it changes, so "as-built" keeps meaning `main`. There is currently no such section — §1.3 describes 0147, which has merged.
 
 ---
 
@@ -98,10 +98,10 @@ drives an optional per-element striped background. Full session record + owner d
   palette toggle. Tags view: a per-chip Category `<select>` on both tabs (writes
   `tag_categories`), alongside the existing drag-to-refile.
 
-## 1.3 UNRELEASED — ingestion windows, New Today precedence, New Today fill order (mig 0147)
+## 1.3 Ingestion windows, New Today precedence, New Today fill order (mig 0147)
 
-> **Not in `main`.** Everything in this section is complete and tested on the current
-> branch but has not merged. Sections §5.2, §6, §7, §7.1 and §8 carry a pointer back here.
+> **In `main`.** Sections §5.2, §6, §7, §7.1 and §8 carry a pointer back here for the
+> full narrative.
 
 Three related changes to *how work arrives and gets ordered*, plus one real bug found on
 the way. The through-line is arrival time: two settings bound how much of each source a
@@ -123,7 +123,7 @@ already happened; an inbox is only ever read backwards.
 - The memory half is a **no-op upgrade** — default 2 is exactly the 48h that
   `agents/memory-suggest.ts` (`MEMORY_WINDOW_HOURS`, now deleted) and
   `agents/summarize.ts` (`memoryBriefExcerpt`) each hardcoded separately.
-  `memoryWindowMs(owner)` in `services/memory.ts` becomes the single authority both read,
+  `memoryWindowMs(owner)` in `services/memory.ts` is the single authority both read,
   so one setting moves the suggestion agent and the daily brief together. A non-positive
   stored value is treated as unset, so a bad row can never collapse the window to zero and
   silently stop all suggestions.
@@ -145,7 +145,7 @@ already happened; an inbox is only ever read backwards.
   backlog. That is the plain meaning of "look back N days", but it is a deliberate skip in
   a pipeline otherwise engineered never to skip.
 
-**Tasks-tab precedence.** Membership order becomes **Routine › Scheduled › New Today ›
+**Tasks-tab precedence.** Membership order is **Routine › Scheduled › New Today ›
 Open** (was Routine › New Today › Scheduled › Open) in `client/src/lib/task-sections.ts`
 `partitionTaskSections`. Scheduling a task the same day it was created now moves its card
 to Scheduled *immediately*; previously it sat in New Today until local midnight, so the
@@ -156,7 +156,7 @@ derivation — no column, no job. `headerOpenCount`'s `isScheduled` parameter is
 it existed only to strip scheduled tasks back out of New Today under the old order, and the
 partition now drains them first — the header NUMBER is unchanged by the swap.
 
-**New Today fill order.** `fill_order` gains a third value, `new_today`, alongside Priority
+**New Today fill order.** `fill_order` carries a third value, `new_today`, alongside Priority
 and Due Date in the flight-plan toggle. Today's arrivals take the earliest slots and each
 half stays deadline-first, so it **layers on** `overdue` rather than replacing it. Keyed on
 the owner's **real today**, not the date being placed — otherwise planning ahead would make
@@ -169,7 +169,7 @@ Wired into **both** ordering paths, which is necessary rather than thorough:
 `placeFlightPlan` skips its own `fill_order` branch whenever a `daily_plan` exists for the
 day (`engine/autoplan.ts` `orderByNewToday`), so a value only the engine understood would
 be inert on exactly the days the owner planned deliberately; `deterministicIndices`
-(`agents/plan.ts`) gains a matching band — after theme/memory, before deadline/priority —
+(`agents/plan.ts`) carries a matching band — after theme/memory, before deadline/priority —
 which is the same parity the existing two values already have.
 
 **Bug: `CURRENT_TIMESTAMP` parsed as local time.** `tasks.created_at` is defaulted by
@@ -396,7 +396,7 @@ class diagram in §5.3.
 
 | Table | Purpose | ORM | Added |
 |---|---|---|---|
-| `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (default 7), `time_sense_enabled` (0106) + per-cue focus prefs `focus_ritual_enabled`/`haptic_cues_enabled`/`ambient_color_enabled`/`calibration_loop_enabled`/`z_experiment_arm` (0108), `view_prefs` cross-device calendar view-state (0111), `memory_pull_enabled` master flag for the CI-Server memory layer (default 0, 0113), `sleep_hours_per_week` (0128, default 63 = 9h × 7 — reserved as unschedulable; the Priorities Wizard's pool is `168 −` this), `triality_enabled` master flag (default 0, 0139), **UNRELEASED (§1.3, 0147):** the ingestion windows `memory_window_days` (1–30, default 2 — how far AHEAD the memory pull reads) and `email_lookback_days` (1–90, default 7 — how far BACK a Gmail ingest may reach) | ✓ | 0001, 0091, 0106, 0108, 0111, 0113, 0128, 0139, *0147* |
+| `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (default 7), `time_sense_enabled` (0106) + per-cue focus prefs `focus_ritual_enabled`/`haptic_cues_enabled`/`ambient_color_enabled`/`calibration_loop_enabled`/`z_experiment_arm` (0108), `view_prefs` cross-device calendar view-state (0111), `memory_pull_enabled` master flag for the CI-Server memory layer (default 0, 0113), `sleep_hours_per_week` (0128, default 63 = 9h × 7 — reserved as unschedulable; the Priorities Wizard's pool is `168 −` this), `triality_enabled` master flag (default 0, 0139), and (§1.3, 0147) the ingestion windows `memory_window_days` (1–30, default 2 — how far AHEAD the memory pull reads) and `email_lookback_days` (1–90, default 7 — how far BACK a Gmail ingest may reach) | ✓ | 0001, 0091, 0106, 0108, 0111, 0113, 0128, 0139, *0147* |
 | `day_types` | Custom day types + per-date assignment (T-SCHED-3); `workday`/`weekend` builtins, rename-only | ✓ | 0068 |
 | `day_of_week_map` | Recurring weekly default: dow (0=Sun…6=Sat, UTC noon) → day-type key | ✓ | 0068 |
 | `day_assignments` | Per-date override: a specific `YYYY-MM-DD` → day-type key (beats the weekly map) | ✓ | 0068 |
@@ -724,7 +724,7 @@ Two clocks drive the day:
 
 **Anti-thrash rules:** never move an in-progress block, never move user-locked or recently-moved blocks (`last_moved_at`), debounce bursts into one pass. On a big disruption the fast clock surfaces a single "Re-plan with AI?" nudge — never auto-calls the LLM.
 
-**Leftover fill order** (`scheduling_prefs.fill_order`). Applies to Pass 2b — the workday fallback fill — and **only when the day has no authored `daily_plan`**, since an authored day already encodes its sequence. `'priority'` places P1 first then by deadline; `'overdue'` (the authoring default) places soonest-due first then by priority. **UNRELEASED (§1.3):** a third value `'new_today'` gives the Tasks tab's New Today set the earliest slots with each half still deadline-first, wired into both `engine/autoplan.ts` (`orderByNewToday`) and `agents/plan.ts` (`deterministicIndices`) so it is not inert on deliberately-planned days.
+**Leftover fill order** (`scheduling_prefs.fill_order`). Applies to Pass 2b — the workday fallback fill — and **only when the day has no authored `daily_plan`**, since an authored day already encodes its sequence. `'priority'` places P1 first then by deadline; `'overdue'` (the authoring default) places soonest-due first then by priority. A third value `'new_today'` (§1.3) gives the Tasks tab's New Today set the earliest slots with each half still deadline-first, wired into both `engine/autoplan.ts` (`orderByNewToday`) and `agents/plan.ts` (`deterministicIndices`) so it is not inert on deliberately-planned days.
 
 **Review job** (`review_day`, nightly 01:00): scans for planned task-blocks whose end time passed un-started (locked pins excluded — a deliberate pin is not "missed work"). **Every priority now auto-defers** with a +1/3/7-day backoff by prior `defer_count` — `scheduled_for` moves out, `status` returns to `open`, and the stale block is consumed. The old hybrid that parked `priority ≤ 2` tasks as `status='missed'` for manual review was **retired by owner ruling on 2026-07-20** (the Missed review surface only arrived in #409, so years of P1/P2 tasks silently starved Fill/Auto in a black hole); the same run also sweeps any still-stuck `status='missed'` one-offs back to `open`. The **`daily_plan.outcome` stamp keeps the priority split** (`'missed'` for P≤2, `'deferred'` for P≥3) before the stale block is dropped, so the nightly aggregates can still distinguish an important miss from a routine slip (the N4 lossy-slip fix). Owners on `trust_mode='hands_off'` get each deferred/revived task booked into its new day via `placeStartAnchoredTask` (best-effort — a placement failure never fails the sweep); Suggest-mode owners get it back as `open` with a dated `scheduled_for` and nothing placed. Same engine behind the top-bar sweep button (`POST /api/review/sweep`).
 
@@ -760,7 +760,7 @@ sequenceDiagram
 
     Cron->>Ing: ingest_gcal (every 30m) / ingest_gmail (every 15m)
     Ing->>DB: read (owner, google, account) sync cursor
-    Note over Ing,DB: UNRELEASED §1.3 — floor the Gmail cursor:<br/>since = max(watermark, now − email_lookback_days)
+    Note over Ing,DB: §1.3 — the Gmail cursor is floored:<br/>since = max(watermark, now − email_lookback_days)
     Ing->>MCP: fetch deltas since that instant
     MCP-->>Ing: events / messages
     loop each item
@@ -771,7 +771,7 @@ sequenceDiagram
 
     Note over Cron,Mem: Memory layer (memory_pull_enabled) ─────────
     Cron->>Ing: memory_suggest (every 6h)
-    Note over Ing,Mem: window = now .. now + 48h<br/>UNRELEASED §1.3 — now + memory_window_days,<br/>via the shared memoryWindowMs(owner)
+    Note over Ing,Mem: window = now .. now + memory_window_days<br/>(§1.3, default 2) via the shared memoryWindowMs(owner)
     Ing->>Mem: pull upcoming graph (read-only)
     Mem-->>Ing: events + participants
     Ing->>DB: stage possible_tasks (idempotent on source_ref)
@@ -811,15 +811,64 @@ generator on `fast` and `plan_judge` on `quality`. These are code constants, not
 configuration — they were measured against a live model, so they change under a measured
 retune, never through an env var.
 
+**Failure handling lives in one helper, and availability in one predicate.** "Ollama
+might be down, degrade gracefully" is the most-repeated rule in the codebase, and it used
+to have six implementations — four of them a bare `catch {}`. It now has one:
+`llmOrNull(op, fn)` in `server/src/mcp/ollama.ts` returns `null` for the two failures a
+caller can do nothing about — `OllamaUnavailable` (unreachable, timed out, model not
+pulled) and `LlmParseError` (the reply is not JSON) — logs exactly one `warn` naming the
+op, and **re-throws everything else**. That last clause is the point: a `TypeError` in our
+own callback is a bug, and the old `catch {}` blocks turned it into an empty result
+indistinguishable from a model that had nothing to say. Each caller still owns its own
+fallback — `suggestTags` returns `[]`, `enrichTaskFromMemory` returns
+`{ enriched: false, reason }`, `renderCopy` drops to its rotation pool, ingest stages a
+raw `fallbackTask` — only the plumbing converges.
+
+Two paths are deliberately outside it. The `runLoop` stage callbacks (`generate` /
+`judge` / `revise` in `agents/plan.ts`) must keep THROWING: the §A0 loop's error contract
+(`agents/loop.ts`) is that a transport failure propagates out to the authoring caller,
+which falls back to the deterministic baseline. A `null` returned *into* the loop would
+flow through `check()`/`judge()` as a candidate and silently break the stall→baseline
+escape hatch and the call-budget accounting — the loop and its caller ARE the handler
+there. And in `agents/render-copy.ts` the two exits stay distinct: transport failure
+breaks straight to the pool, while a gate rejection regenerates once with the reason fed
+back.
+
+"Can we call a model?" is answered only by `isReady()` — `status().ready`, meaning
+reachable **and** the effective fast/quality models are actually pulled. The predicate it
+replaced, `isAvailable()` (`status().available`, "Ollama answered `/api/tags`"), is a
+green light with nothing behind it, and gating on it ran the full generate→judge→revise
+loop against installs that could not serve a single call. `status().available` survives
+only on the status object, for the Settings card that legitimately shows reachable and
+usable as distinct states.
+
+**The probe under that predicate is cached; the model resolution above it is not.** Making
+`isReady()` the one predicate put a live `/api/tags` fetch on the day-authoring and
+NL-instruct hot paths as well as the Settings poll, so `status()` now caches the probe
+(reachability + installed set) for `PROBE_TTL_MS` = 30s — a code constant, not
+configuration. Everything else `status()` returns is recomputed on every call, and that
+split is load-bearing: a model chosen in Settings is a DB write that must take effect on
+the very **next** request, so caching the resolved names would make a saved choice look
+like it never applied (`ollama.test.ts` pins this with an override written *between* two
+cached calls). Two bypasses: `NODE_ENV === 'test'` disables the cache outright, for the
+same reason the auto-select guard beside it does — no suite may depend on which test
+probed first — and `status(owner, { fresh: true })` forces a live read, reached by
+`GET /api/llm/status?fresh=1`. That endpoint is otherwise diagnostic-only (the UI reads
+the richer `GET /api/integrations`, which takes the cached read); its one live caller is
+Settings → "Re-check", the escape hatch for an Ollama that came up after the app, which a
+TTL alone cannot cover. Settings renders Ollama health in exactly one place — the Models
+card, beside the selects — with the same three states (unavailable / reachable-but-unusable
+/ ready) it always had.
+
 ### 7.1 Scheduled jobs (current)
 
 | Kind | Cron | Purpose |
 |---|---|---|
 | `fire_reminders` | every 1m | Fire due reminders exactly once (SSE + Web Push) |
 | `sync_calendar` | every 15m | Two-way Google Calendar sync — meeting mirror + placement (Phase J) |
-| `ingest_gmail` | every 15m | Extract possible-task candidates from Gmail messages (review-gated — they wait for approval, see services/review-gate.ts). **UNRELEASED (§1.3):** the `since` watermark is floored at `now − email_lookback_days`, so a first ingest or a post-outage run can't replay months of mail through the extraction LLM |
+| `ingest_gmail` | every 15m | Extract possible-task candidates from Gmail messages (review-gated — they wait for approval, see services/review-gate.ts). The `since` watermark is floored at `now − email_lookback_days` (§1.3), so a first ingest or a post-outage run can't replay months of mail through the extraction LLM |
 | `ingest_gcal` | every 30m | Extract possible-task candidates from Calendar events |
-| `memory_suggest` | every 6h | Pull the upcoming CI-Server memory graph, stage events as suggestions (AA1; no-op unless `memory_pull_enabled` + connector creds). Window is a hardcoded 48h — **UNRELEASED (§1.3):** becomes `memory_window_days`, shared with the daily brief via `memoryWindowMs(owner)` |
+| `memory_suggest` | every 6h | Pull the upcoming CI-Server memory graph, stage events as suggestions (AA1; no-op unless `memory_pull_enabled` + connector creds). Window is `memory_window_days` (§1.3, default 2), shared with the daily brief via `memoryWindowMs(owner)` |
 | `tag_tasks` | hourly | Auto-tag every untagged open task for the owner |
 | `purge_objectives` | hourly | Reap archived objectives past their `purge_after` deadline — the ONLY path to permanent removal (0130). **Global, not per-owner** — deliberately absent from `OWNER_SCOPED_KINDS`, since a purge deadline is an absolute wall-clock instant, not an owner-local one |
 | `reset_routines` | daily 00:00 | Reopen completed Routine checklist tasks for the new day (AC) |
@@ -846,11 +895,11 @@ retune, never through an env var.
 | **Today** | `/` | Single header row (Today's Brief · Focus bullseye · Note, each a popover) + FAB · collapsible DUE card · day-stars tally · PLANNER (8h/expand, drag-reorder; Alt-drag = free placement) · Flight-plan staging · ElementWizard drawer (AC/AD) |
 | **Focus** | `/focus` | Today-only single-column list (upcoming / collapsed past); Time-Sense hero + Focus Ritual launcher; header mirrors Today's card (Brief · Focus goals · day note) + FAB; reminders card offers only today's tasks |
 | **Calendar** | `/calendar` | Day / week / month grid · five-star heatmap + note dots · Weekly Review panel (week toggle) · overlay filter (Direction + **Category**, brand ↔ colourful palette toggle — §1.2) · "Schedule Day" (fill-then-place intake) |
-| **Tasks** | `/tasks` | Filterable backlog with priorities, tags, notes, subtasks, dependencies; task-chip merged direction-icon/done toggle; Routine tasks grouped by routine with end-of-day archive (AC). Hosts the **Objectives** tree (Goal › Project › Objective) and **Routines** as URL-synced **tabs** (`?focus`, AF), plus a date-derived **New Today** section for auto-promoted suggestions. Section membership is pure derivation (`lib/task-sections.ts`), precedence Routine › New Today › Scheduled › Open — **UNRELEASED (§1.3):** Scheduled moves ahead of New Today, so placing a task retires its New Today card on placement rather than at midnight |
+| **Tasks** | `/tasks` | Filterable backlog with priorities, tags, notes, subtasks, dependencies; task-chip merged direction-icon/done toggle; Routine tasks grouped by routine with end-of-day archive (AC). Hosts the **Objectives** tree (Goal › Project › Objective) and **Routines** as URL-synced **tabs** (`?focus`, AF), plus a date-derived **New Today** section for auto-promoted suggestions. Section membership is pure derivation (`lib/task-sections.ts`), precedence Routine › Scheduled › New Today › Open (§1.3) — Scheduled sits ahead of New Today, so placing a task retires its New Today card on placement rather than at midnight |
 | **Balance** | `/balance` | Core-Dimension satisfaction/importance bars + Balance Index; each dimension's "N open" button opens a client-joined modal of its related open tasks (§1.2) |
 | **Tags** | `/tags` | direction / intention / category taxonomy; weighted cloud; mute / delete; per-chip **Category** select on both tabs (§1.2) |
 | **Jobs** | `/jobs` | Scheduled job registry; run any job on demand, or **Run all**; execution log |
-| **Settings** | `/settings` | Work hours · model picker · Web Push opt-in · MCP connections · Google/CI-memory connections · Profile · Accounts (operator-only, AG) · export/import · recurrence duration · Clear Date Range. **UNRELEASED (§1.3):** Connections also carries the two ingestion windows — a **Look ahead** field under the memory-pull toggle, and an **Email suggestions** card with **Look back** (Google-visibility-gated like the rest of that surface) |
+| **Settings** | `/settings` | Work hours · model picker · Web Push opt-in · MCP connections · Google/CI-memory connections · Profile · Accounts (operator-only, AG) · export/import · recurrence duration · Clear Date Range. Connections also carries the two ingestion windows (§1.3) — a **Look ahead** field under the memory-pull toggle, and an **Email suggestions** card with **Look back** (Google-visibility-gated like the rest of that surface) |
 
 The nine routed views are `/`, `/focus`, `/calendar`, `/tasks`, `/tags`, `/priorities`, `/balance`, `/settings`, `/jobs` (`client/src/App.tsx`), plus the unauthenticated `/login` and `/reset-password`. Legacy paths `/inbox`, `/objectives`, `/patterns` **redirect** into their host tab — the Inbox surface was retired in Phase AF (ingested `possible_tasks` auto-promote, no manual triage), and Objectives/Routines became Tasks-view tabs. (`/routines` is **not** a route and never redirected — it 404s.) `/priorities` (wizard) and `/balance` (dashboard) are the life-priorities layer, §1.1.
 
@@ -926,6 +975,16 @@ flowchart LR
 ```
 
 **Consumers of the pull:** AA1 stages next-48h events as Inbox suggestions (idempotent on `source_ref`, capped, dismissed-is-terminal); AA2 folds a `graphContext` excerpt into the Daily Brief / EOD alignment; AA3a biases autoplan ordering toward memory-related tasks; AA3b seeds a better default estimate for memory-drafted tasks from the owner's own history. **Push (AA4)** is separate and one-way — completed tasks / habit occurrences / reflections as capture envelopes, gated by `memory_sync_enabled` + per-entity scope toggles, watermarked by `memory_last_synced_at`.
+
+---
+
+## 10b. One connection surface
+
+Every provider's credentials live in **one** table (`connection_tokens`: `google`, `ci_memory`, fixture), and they are read through **one shape** — `ConnectionRecord` in `lib/connections.ts` — served by both `GET /api/connections` (all providers) and `GET /api/integrations` → `google.connections`. It replaced a `ConnectionHealth` / `ConnectionSummary` pair that each called itself "the locked contract" over the same rows. `status` is always the mapped `connected | expired | inactive`; the raw `connection_tokens.status` column never leaves the server. Decryption is opt-in (`listConnections(owner, { withExpiry })`) because resolving a token expiry costs a KEK load plus an AES-GCM open per row: the plain list does not decrypt at all, only the integrations card does. `mappedEventCount` is Google-only and **absent, not 0**, elsewhere. The SELECT behind the plain list names only safe columns — never `iv` / `auth_tag` / `ciphertext` / `key_version` — which the no-leak guards in `connections-unified.test.ts` and `connections-route.test.ts` assert on the serialized response.
+
+There is **one disconnect**: `DELETE /api/connections/:provider/:account` → `disconnectConnection()` (best-effort Google revoke, then hard-delete of the token row and its `outbound_queue` rows; for `ci_memory` it also clears the `scheduling_prefs.memory_account` label). The Google-specific duplicate route is gone, and `POST /api/memory/disconnect` delegates to the same function. Connecting stays provider-specific by nature — Google OAuth, CI-Portal SSO, and memory's pasted URL + key have nothing in common — so only **list / status / disconnect** unify. `GET /api/memory/status` remains for the pull/sync flags and creds source, which are not connection facts, but its connection block is sourced from `listConnections` so the two endpoints cannot disagree.
+
+Connector failures share **one error contract** as well: `ConnectorUnavailable` (`lib/connector-error.ts`) is the base of `OllamaUnavailable`, `McpUnavailable` and `MemoryUnavailable`, which keep their exact names and `.name` values. One `catch (err instanceof ConnectorUnavailable)` covers "a connector is down"; each specific class still narrows for callers that care which.
 
 ---
 

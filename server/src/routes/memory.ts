@@ -13,9 +13,9 @@ import { verifyOidcIdToken } from '../lib/auth/verifyOidcIdToken.js';
 import type { OidcDiscoveryDoc } from '../lib/auth/oidcDiscovery.js';
 import { ciportalConfigured, ssoLoginEnabled, ciportalEndpoints } from './auth.js';
 import { memoryStatus, syncToMemory } from '../services/memory.js';
+import { listConnections, disconnectConnection } from '../lib/connections.js';
 import {
   storeMemoryConnection,
-  deleteMemoryConnection,
   storeMemoryOidcConnection,
   memoryOidcSubject,
   MEMORY_PROVIDER,
@@ -59,6 +59,10 @@ export function memoryRouter() {
 
   // GET /api/memory/status — connection + sync state for the Settings panel.
   // AA0: `pull` reports the CI-Server pull connector (flag / availability / source).
+  // The CONNECTION block (`connected` / `account`) is sourced from listConnections —
+  // the one connection surface — so this endpoint and GET /api/connections can never
+  // disagree about whether memory is connected. The rest (pull/sync flags, scopes, creds
+  // source) are not connection facts, which is why this endpoint still exists.
   router.get('/api/memory/status', async (ctx) => {
     ctx.body = await memoryStatus(currentOwnerId());
   });
@@ -104,13 +108,20 @@ export function memoryRouter() {
     ctx.body = await memoryStatus(owner);
   });
 
-  // POST /api/memory/disconnect — drop the stored connection + clear the account
-  // label. Env-fallback creds (CI_SERVER_URL) are deployment config, not per-owner
-  // state, so `pull.available` may remain true afterwards — `source` says why.
+  // POST /api/memory/disconnect — drop the stored connection. Env-fallback creds
+  // (CI_SERVER_URL) are deployment config, not per-owner state, so `pull.available` may
+  // remain true afterwards — `source` says why.
+  //
+  // NOT a second disconnect implementation: it delegates to the same
+  // disconnectConnection() the generic DELETE /api/connections/:provider/:account route
+  // uses (which also clears scheduling_prefs.memory_account). It survives only because it
+  // answers with the full MemoryStatus the Settings panel re-renders from; the Settings
+  // card itself now drops the connection through the generic route.
   router.post('/api/memory/disconnect', async (ctx) => {
     const owner = currentOwnerId();
-    await deleteMemoryConnection(owner);
-    await store().prepare(`UPDATE scheduling_prefs SET memory_account = NULL WHERE owner_id = ?`).run(owner);
+    for (const c of await listConnections(owner)) {
+      if (c.provider === MEMORY_PROVIDER) await disconnectConnection(owner, c.provider, c.account);
+    }
     writeAudit({ ownerId: owner, actor: 'owner', action: 'disconnect', entity: 'memory:ci_server' });
     ctx.body = await memoryStatus(owner);
   });

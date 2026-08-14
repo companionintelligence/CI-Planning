@@ -42,14 +42,17 @@ function lastRun(kind: string) {
     .get(kind) as { status: string } | undefined;
 }
 
-// Timeout raised above the 120s global. run-now awaits every RUN_NOW_KIND inline before it
-// answers, so on a box with the configured Ollama models installed each posting test runs a
-// real ingest+extraction: measured at 46s and 51s even while ingest_gmail was still a no-op,
-// and it does genuine email extraction now that the fixtures are rebased into the window.
-// Anywhere Ollama is unreachable (CI) these same tests take about a second.
+// Timeout raised above the 120s global. `run-now` awaits every RUN_NOW_KIND inline before
+// it answers, so on a machine where the configured Ollama models are installed each posting
+// test performs real inference. 3648674 measured 48s and 50s on an idle box — inside the
+// global budget with no headroom, and it breached 120s the moment the machine had anything
+// else running, a failure that says nothing about the code.
 //
-// 3648674 on fix/ship-readiness-docs-and-gates raises this same describe to the same 300s
-// for the same reason; expect a trivial conflict when the two meet, and keep either side.
+// Since then ingest_gmail stopped being a no-op here: the fixture emails are rebased into
+// the ingest window (rebaseEmailsToRecent), so all three posting tests now do genuine email
+// extraction as well, measured at ~70s each. Contention still dominates — with an unrelated
+// 27B model resident in VRAM the same bodies ran past 300s. Anywhere Ollama is unreachable
+// (CI) these same tests take about a second.
 describe('POST /api/jobs/run-now', { timeout: 300_000 }, () => {
   let server: TestServer;
   let ollamaUp = false;

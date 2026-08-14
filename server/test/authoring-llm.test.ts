@@ -3,7 +3,7 @@
  * runs in CI (where Ollama is absent). Covers the spec's §0 test-list items:
  *   • "daily_plan written by LLM order"  → a passing loop persists source='llm'
  *     in the LLM's permutation, not the deterministic order.
- *   • "Ollama-down ⇒ deterministic fallback, no throw" → isAvailable()=false falls
+ *   • "Ollama-down ⇒ deterministic fallback, no throw" → isReady()=false falls
  *     back to source='deterministic'.
  *
  * The mock branches on the call's named purpose: 'plan_judge' = judge (score object),
@@ -16,14 +16,14 @@ import { flushAudits } from '../src/lib/audit.js';
 const llmOrder = vi.fn<() => number[]>(() => [2, 0, 1]); // C, A, B — a non-deterministic permutation
 const rationaleResp = vi.fn<() => Record<string, string>>(() => ({ '0': 'Reason zero', '1': 'Reason one', '2': 'Reason two' }));
 let ollamaUp = true;
-let genThrows = false; // simulate Ollama failing MID-loop (after the pre-flight isAvailable() check)
+let genThrows = false; // simulate Ollama failing MID-loop (after the pre-flight isReady() check)
 let judgeOverall = 0.9; // lower this below the 0.8 pass threshold to force a loop stall (escape hatch)
 
 vi.mock('../src/mcp/ollama.js', async (importActual) => {
   const actual = await importActual<typeof import('../src/mcp/ollama.js')>();
   return {
     ...actual,
-    isAvailable: vi.fn(async () => ollamaUp),
+    isReady: vi.fn(async () => ollamaUp),
     generateJson: vi.fn(async (_prompt: string, opts?: { purpose?: string; system?: string }) => {
       if (genThrows) throw new Error('ollama died mid-call'); // b4-1: timeout/OOM/dropped connection
       if (opts?.system?.includes('explain a finished day plan')) return rationaleResp(); // §A3 rationale call
@@ -87,7 +87,7 @@ const auditCount = (action: string) =>
 
 describe('authorPlanOrder — robustness (b4-1, a0-1, a02-1)', () => {
   it('b4-1: an Ollama failure MID-loop degrades to deterministic, never throws', async () => {
-    genThrows = true; // isAvailable() still true, but the first generate() call throws
+    genThrows = true; // isReady() still true, but the first generate() call throws
     const a = insertTask('A'); const b = insertTask('B');
     stage(a, 0); stage(b, 1);
 

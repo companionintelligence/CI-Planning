@@ -428,52 +428,12 @@ describe('accounts listing + disconnect', () => {
       .run(newId(), SYSTEM_OWNER, account, sealed.iv, sealed.authTag, sealed.ciphertext, status);
   }
 
-  // (The dead GET /accounts list route was removed in T13 (#349) — the account list is
-  // now sourced from GET /api/connections + /api/integrations; see connections-route.test.ts.)
-
-  it('DELETE removes connection_tokens AND outbound_queue rows and calls revoke (I12)', async () => {
-    config.auth.mode = 'standalone';
-    const account = 'disc@example.com';
-    await seedToken(account);
-    // A pending outbound_queue row for the same (owner, provider, account).
-    // outbound_queue.block_id FKs time_blocks (FK pragma is ON), so seed a real block.
-    const blockId = newId();
-    sqlite
-      .prepare(
-        `INSERT INTO time_blocks (id, title, start_at, end_at, all_day, owner_id)
-         VALUES (?, 'b', ?, ?, 0, ?)`,
-      )
-      .run(blockId, new Date().toISOString(), new Date(Date.now() + 3600_000).toISOString(), SYSTEM_OWNER);
-    sqlite
-      .prepare(
-        `INSERT INTO outbound_queue (id, owner_id, block_id, provider, account)
-         VALUES (?, ?, ?, 'google', ?)`,
-      )
-      .run(newId(), SYSTEM_OWNER, blockId, account);
-
-    let revokeCalled = false;
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-      if (String(input).includes('revoke')) revokeCalled = true;
-      return new Response('', { status: 200 });
-    }));
-
-    const { status, body } = await realApi(
-      `/api/oauth/google/accounts/${encodeURIComponent(account)}`,
-      { method: 'DELETE', ...await authHeaders() },
-    );
-    expect(status).toBe(200);
-    expect(body).toEqual({ disconnected: account });
-    expect(revokeCalled).toBe(true);
-
-    const tokN = sqlite.prepare('SELECT COUNT(*) AS n FROM connection_tokens WHERE account = ?').get(account) as { n: number };
-    const oqN = sqlite.prepare('SELECT COUNT(*) AS n FROM outbound_queue WHERE account = ?').get(account) as { n: number };
-    expect(tokN.n).toBe(0);
-    expect(oqN.n).toBe(0);
-
-    // getConnectors() now returns nothing for this owner.
-    const connectors = await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => getConnectors());
-    expect(connectors).toHaveLength(0);
-  });
+  // (This file no longer tests listing or disconnecting: both were duplicates of the
+  // provider-agnostic surface and are gone from routes/oauth.ts — the dead GET /accounts
+  // in T13 (#349), DELETE /accounts/:account in llm-7. The revoke + token/outbound_queue
+  // cleanup they delegated to is exercised through DELETE /api/connections/:provider/
+  // :account in connections-route.test.ts and connections-unified.test.ts. What stays
+  // here is the OAuth flow itself, plus the getConnectors() consequences below.)
 
   it('getConnectors() skips a status<>active row', async () => {
     await seedToken('revoked@example.com', 'revoked');
