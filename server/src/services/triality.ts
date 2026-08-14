@@ -669,8 +669,11 @@ function sequenceFits(cands: Candidate[], history: CompletionRow[]): number[] {
   });
 }
 
-/** Cosine distance in [0,1] (1 = maximally novel). */
-function cosineDistance(a: number[], b: number[]): number {
+/** Cosine distance, SQUASHED (`/2 + 0.25`) and clamped into [0.25, 1] — higher = more
+ *  novel, and deliberately never saturating at 0 so no candidate gets a free extreme.
+ *  A zero-norm vector yields 1 (maximally novel). NOT `1 − groom's cosineSimilarity()`:
+ *  the squash means this is not the complement of any plain cosine. */
+function squashedCosineDistance(a: number[], b: number[]): number {
   let dot = 0, na = 0, nb = 0;
   for (let i = 0; i < Math.min(a.length, b.length); i++) {
     dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i];
@@ -748,7 +751,7 @@ async function noveltyScores(
         const cvecs = await Promise.all(cands.map((c) => embed(c.title)));
         if (cvecs.some((v) => v.length !== dim)) return null;
         return cvecs.map(
-          (v, i) => EMBED_BLEND * categorical[i] + (1 - EMBED_BLEND) * cosineDistance(v, centroid),
+          (v, i) => EMBED_BLEND * categorical[i] + (1 - EMBED_BLEND) * squashedCosineDistance(v, centroid),
         );
       })(),
       new Promise<null>((resolve) => {
