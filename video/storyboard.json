@@ -20,54 +20,47 @@
     "yours": "What stays yours"
   },
   "media": {
-    "music": "assets/media/ci-campaign-bed.mp3",
+    "music": "assets/media/ci-campaign-bed-110.mp3",
     "musicLufs": -22
   },
   "master": [
+    "what-it-knows",
+    "someone-elses-product",
+    "most-people-quit",
+    "title-card",
     {
       "ref": "one-line-in",
-      "caption": "Type one line. Review the proposed time and tag.",
-      "narration": "Type one line. Companion Planning proposes the time and tag before anything is saved.",
-      "minSeconds": 7
+      "narration": "Type one line. Companion Planning proposes the time and tag before anything is saved."
     },
-    {
-      "ref": "today-cockpit",
-      "caption": "Approve it, then see the day in one place.",
-      "narration": "Approve the suggestion, then see scheduled work and the flexible backlog together.",
-      "minSeconds": 7
-    },
+    "today-cockpit",
     {
       "ref": "focus-now",
-      "caption": "Focus mode keeps the next task visible.",
-      "narration": "Focus mode keeps the next task and its time box in view.",
-      "minSeconds": 6
+      "narration": "Focus mode keeps the next task and its time box in view."
     },
     {
       "ref": "plan-the-week",
-      "caption": "Plan the week around real capacity.",
-      "narration": "Plan the week around the hours and priorities you actually have.",
-      "minSeconds": 6.5
+      "narration": "Plan the week around the hours and priorities you actually have."
+    },
+    "the-week",
+    {
+      "ref": "the-arithmetic",
+      "transition": "hold"
     },
     {
       "ref": "the-long-game",
-      "caption": "Goals stay tied to the work beneath them.",
-      "narration": "Objectives keep long-term goals tied to the projects and tasks beneath them.",
-      "minSeconds": 6.5
+      "transition": "cut"
     },
+    "the-dial",
     {
       "ref": "what-stays-yours",
-      "caption": "One plan file on the machine you choose.",
-      "narration": "Your plan lives in one SQLite file on the machine you choose.",
-      "minSeconds": 6
+      "narration": "Your plan lives in one SQLite file on the machine you choose."
     },
     {
       "ref": "close",
-      "caption": "ci.computer",
       "cta": "Plan on your terms",
       "tagline": "UnCloud your life.",
-      "url": "ci.computer",
-      "narration": "Plan on your terms with Companion Planning. Visit ci dot computer. UnCloud your life.",
-      "minSeconds": 7
+      "narration": "Plan on your terms with Companion Planning, at ci dot computer slash download. UnCloud your life.",
+      "url": "ci.computer/download"
     }
   ],
   "scenes": [
@@ -341,7 +334,7 @@
       "chapter": "week",
       "seconds": 5,
       "transition": "cut",
-      "caption": "Three ways to plan the week. None of them need a model.",
+      "caption": "However you plan the week, none of it needs a model.",
       "narration": "Planning the week is three choices. None of them need a model.",
       "shots": [
         {
@@ -571,10 +564,10 @@
           "motion": "push-in",
           "focus": {
             "landscape": {
-              "x": 0.131,
-              "y": 0.131,
-              "w": 0.538,
-              "h": 0.538
+              "x": 0.28,
+              "y": 0.268,
+              "w": 0.44,
+              "h": 0.5
             },
             "portrait": {
               "x": 0,
