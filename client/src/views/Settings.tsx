@@ -1,4 +1,5 @@
 import { createSignal, createEffect, Show, createResource, For, onMount } from 'solid-js';
+import { ViewHeader } from '../components/ViewHeader.js';
 import { BellRing, Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, Database, AlertTriangle, Users, KeyRound, ScrollText, Eye, FileJson, FileText, Mail } from 'lucide-solid';
 import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast, texturesEnabled, setTexturesEnabled, plannerAxisState, setPlannerCollapseBounds, integrations, refetchIntegrations, recheckIntegrations, aiAvailable, connections, refetchConnections } from '../stores/index.js';
 import { api, type PlanningSession } from '../lib/api.js';
@@ -686,52 +687,40 @@ export function Settings() {
   );
 
   return (
-    <div class="flex-1 overflow-auto p-6 page-enter max-w-2xl mx-auto w-full">
-      <h1 class="text-2xl font-bold text-slate-100 mb-4">Settings</h1>
+    <div class="view-container page-enter max-w-2xl mx-auto">
+      <ViewHeader title="Settings" />
 
       {/* Tab bar */}
-      <div class="flex gap-1 mb-5 border-b border-border">
+      <div class="view-tabs" role="tablist">
         <button
           type="button"
           onClick={() => setActiveTab('profile')}
-          class="px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px"
-          classList={{
-            'border-primary text-foreground': activeTab() === 'profile',
-            'border-transparent text-muted-foreground hover:text-foreground': activeTab() !== 'profile',
-          }}
+          role="tab" class="view-tab"
+          aria-selected={activeTab() === 'profile'}
         >
           Profile
         </button>
         <button
           type="button"
           onClick={() => setActiveTab('preferences')}
-          class="px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px"
-          classList={{
-            'border-primary text-foreground': activeTab() === 'preferences',
-            'border-transparent text-muted-foreground hover:text-foreground': activeTab() !== 'preferences',
-          }}
+          role="tab" class="view-tab"
+          aria-selected={activeTab() === 'preferences'}
         >
           Preferences
         </button>
         <button
           type="button"
           onClick={() => setActiveTab('connections')}
-          class="px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px"
-          classList={{
-            'border-primary text-foreground': activeTab() === 'connections',
-            'border-transparent text-muted-foreground hover:text-foreground': activeTab() !== 'connections',
-          }}
+          role="tab" class="view-tab"
+          aria-selected={activeTab() === 'connections'}
         >
           Connections
         </button>
         <button
           type="button"
           onClick={() => setActiveTab('logs')}
-          class="px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-1.5"
-          classList={{
-            'border-primary text-foreground': activeTab() === 'logs',
-            'border-transparent text-muted-foreground hover:text-foreground': activeTab() !== 'logs',
-          }}
+          role="tab" class="view-tab flex items-center gap-1.5"
+          aria-selected={activeTab() === 'logs'}
         >
           <ScrollText size={13} /> Logs
         </button>

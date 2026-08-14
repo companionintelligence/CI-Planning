@@ -1,4 +1,5 @@
 import { createSignal, Show, For, type JSX } from 'solid-js';
+import { ViewHeader } from '../components/ViewHeader.js';
 import { setActiveEntity } from '../stores/selection.js';
 import { revealDetails } from '../stores/ui.js';
 import { Lock, Trash2, VolumeX, Volume2, ChevronRight, ChevronDown } from 'lucide-solid';
@@ -48,23 +49,20 @@ export function Tags() {
       `${displayTag(dir.name)} ${enabled ? 'on' : 'off'} for ${displayTag(cat.name)}`);
 
   return (
-    <div class="flex-1 overflow-auto p-6 page-enter max-w-5xl mx-auto w-full">
-      <h1 class="text-2xl font-bold text-foreground mb-1">Tags</h1>
-      <p class="text-sm text-muted-foreground mb-4">
-        <Show when={view() === 'patterns'} fallback="Time Block Categories group your intention tags and scope which directions they pull from. Drag a tag between cards to re-file it.">
-          Directions group your intention tags. Drag a tag between cards to re-file it.
-        </Show>
-      </p>
+    <div class="view-container page-enter">
+      <ViewHeader
+        title="Tags"
+        sub={
+          <Show when={view() === 'patterns'} fallback="Time Block Categories group your intention tags and scope which directions they pull from. Drag a tag between cards to re-file it.">
+            Directions group your intention tags. Drag a tag between cards to re-file it.
+          </Show>
+        }
+      />
 
-      {/* Tabs (AllTasks idiom) */}
-      <div class="flex gap-2 mb-5">
+      <div class="view-tabs" role="tablist">
         <For each={[['patterns', 'Directions'], ['categories', 'Time Block Categories']] as const}>
           {([v, label]) => (
-            <button
-              onClick={() => setView(v)}
-              class="px-3 py-1 text-sm rounded-md transition-colors"
-              classList={{ 'bg-primary text-primary-foreground': view() === v, 'text-muted-foreground hover:text-foreground': view() !== v }}
-            >
+            <button role="tab" class="view-tab" aria-selected={view() === v} onClick={() => setView(v)}>
               {label}
             </button>
           )}
