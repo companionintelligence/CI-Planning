@@ -1,10 +1,20 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mergeEnrichment } from '../src/agents/quickadd.js';
+import { suggestSubtasks } from '../src/agents/subtasks.js';
 import type { ParsedQuick } from '../src/engine/quickadd.js';
 import {
   directionGuide, isTimeOfDay, titleSuggestsComplex,
-  PRIORITY_RUBRIC, DURATION_RUBRIC, TIME_OF_DAY_RUBRIC, COMPLEXITY_RUBRIC,
+  PRIORITY_RUBRIC, DURATION_RUBRIC, TIME_OF_DAY_RUBRIC, COMPLEXITY_RUBRIC, COMPLEXITY_DEFINITION,
 } from '../src/agents/rubric.js';
+
+// Capture the prompt the subtask suggester actually composes, without a model.
+const { prompts } = vi.hoisted(() => ({ prompts: [] as string[] }));
+vi.mock('../src/mcp/ollama.js', () => ({
+  generateJson: async (prompt: string) => {
+    prompts.push(prompt);
+    return { isBreakdownUseful: false, subtasks: [] };
+  },
+}));
 
 const VOCAB = { directions: ['work', 'home', 'community'], others: ['email', 'errands'], categories: ['health'] };
 const base = (over: Partial<ParsedQuick> = {}): ParsedQuick => ({ title: 'x', tags: [], ...over });
@@ -45,6 +55,32 @@ describe('rubric text', () => {
     expect(COMPLEXITY_RUBRIC).toMatch(/Examples:/);
     expect(COMPLEXITY_RUBRIC).toMatch(/→ true/);
     expect(COMPLEXITY_RUBRIC).toMatch(/→ false/);
+  });
+
+  // The split (llm-9) moved the FIELD NAME out of the shared text so the subtask
+  // suggester can name its own field. Quick-add's constant must be unchanged by that —
+  // the pre-split literal is pinned here so "byte-identical" is a test, not a claim.
+  const COMPLEXITY_RUBRIC_PRE_SPLIT =
+    'Set isComplex true when finishing the task takes several distinct steps that a person ' +
+    'would want written out — planning a trip, organising an event, moving house, running ' +
+    'a project, anything spanning days or involving several people. Verbs like plan, ' +
+    'organise, launch, prepare, research, or build usually mean true. ' +
+    'Set it false for anything done in one sitting: a call, an email, an errand, a payment, ' +
+    'a single chore. ' +
+    'Examples: "Plan a trip to Japan" → true; "Organize the team offsite" → true; ' +
+    '"Research and launch the pricing page" → true; "Call the dentist" → false; ' +
+    '"Pay the electricity bill" → false.';
+
+  it('composes quick-add\'s rubric byte-identically to its pre-split value', () => {
+    expect(COMPLEXITY_RUBRIC).toBe(`Set isComplex true when ${COMPLEXITY_DEFINITION}`);
+    expect(COMPLEXITY_RUBRIC).toBe(COMPLEXITY_RUBRIC_PRE_SPLIT);
+  });
+
+  it('keeps the shared definition field-neutral', () => {
+    // A field name in here would be pasted into a prompt whose schema has no such key —
+    // and a 3B model ignores instructions no schema field backs (agents/subtasks.ts).
+    expect(COMPLEXITY_DEFINITION).not.toMatch(/isComplex|isBreakdownUseful/);
+    expect(COMPLEXITY_DEFINITION.startsWith('finishing the task')).toBe(true);
   });
 
   it('defines each direction the owner actually has', () => {
@@ -147,6 +183,42 @@ describe('titleSuggestsComplex', () => {
   it('is case-insensitive and tolerant of punctuation', () => {
     expect(titleSuggestsComplex('PLAN a big launch party!')).toBe(true);
     expect(titleSuggestsComplex('')).toBe(false);
+  });
+
+  // rubric.ts's stated invariant, as a test: every verb the PROMPT names must also be in
+  // the code twin's COMPLEX_LEAD_VERBS. The verb sentence now reaches both call sites via
+  // COMPLEXITY_DEFINITION, so a retune that adds a verb to the prompt and forgets the set
+  // fails here instead of silently costing recall — how "prepare" was missed the first time.
+  it('backs every verb the prompt names with the code twin', () => {
+    const sentence = /Verbs like ([^.]+?) usually mean true/.exec(COMPLEXITY_DEFINITION);
+    expect(sentence, 'the verb sentence is gone from the shared definition').toBeTruthy();
+    const verbs = sentence![1].split(',').map((v) => v.replace(/^\s*or\s+/, '').trim()).filter(Boolean);
+    expect(verbs.length).toBeGreaterThan(3);
+    for (const v of verbs) {
+      expect(titleSuggestsComplex(`${v} the annual company retreat`), `verb "${v}"`).toBe(true);
+    }
+  });
+});
+
+// ── The subtask suggester's composed prompt (llm-9) ──────────────────────────
+// One definition, two field names. These pin the split: the shared body must arrive
+// verbatim, and the field name must stay the caller's — a borrowed "isComplex" sentence
+// would instruct the model to set a key its schema does not have, which llama3.2-3B
+// ignores, taking the refusal gate with it (agents/subtasks.ts:25-31).
+
+describe('suggestSubtasks · prompt', () => {
+  it('asks for isBreakdownUseful using the shared definition, never isComplex', async () => {
+    prompts.length = 0;
+    await suggestSubtasks('Plan a trip to Japan');
+    expect(prompts).toHaveLength(1);
+    const prompt = prompts[0];
+    expect(prompt).toContain(`isBreakdownUseful is true when ${COMPLEXITY_DEFINITION}`);
+    expect(prompt).not.toContain('isComplex');
+    expect(prompt).toContain('"isBreakdownUseful": <true|false>');
+  });
+
+  it('honours the boolean refusal — a false verdict yields no chips', async () => {
+    expect(await suggestSubtasks('Call the dentist')).toEqual([]);
   });
 });
 
