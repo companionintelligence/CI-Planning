@@ -13,7 +13,7 @@ import { displayDirection, type Band } from '../lib/day-windows.js';
  *
  * Purely indicative + pointer-transparent: the windows are owned by day-type settings,
  * not edited here. Bands are computed once in the Planner and shared with the
- * background hatch (`PatternBlockOverlay`) so the two never drift; the Planner
+ * background bands (`PatternBlockOverlay`) so the two never drift; the Planner
  * reprojects each band's `top`/`height`/`labelTop` onto the segmented day axis before
  * passing them in, so this lane only needs the axis's total height for its container.
  */

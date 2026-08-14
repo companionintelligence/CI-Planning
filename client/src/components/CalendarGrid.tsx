@@ -16,23 +16,11 @@ import {
   minAt as axisMinAt,
   visibleExtent,
 } from '../lib/day-axis.js';
-import { setElementModal, calendarAxisState, toggleCalendarTop, toggleCalendarBottom, connectionPrefs } from '../stores/index.js';
+import { setElementModal, calendarAxisState, toggleCalendarTop, toggleCalendarBottom, connectionPrefs, categoryPrefs } from '../stores/index.js';
 import { isAllDay, isTimed, isTaskBlock, showsBlockLabel } from '../lib/overlay.js';
-import { connectionTextureStyle, type TextureStyle } from '../lib/textures.js';
+import { blockColorVar, connectionTextureStyle, type TextureStyle } from '../lib/textures.js';
 import { snapToSlot, minuteToHHMM, isSlotOccupied } from '../lib/create-click.js';
 import { localISODate, addDays } from '../lib/dates.js';
-
-// ── Palette (mirrors BlockCard's CI teal kinds) ───────────────────────────────
-// NB (#392): focus/habit/break/buffer entries serve API-only kinds — no UI or server
-// path writes those block_kinds today (block_kind is free-form TEXT by design).
-const kindColor: Record<string, string> = {
-  task:    '#409b9b', // ci-4
-  meeting: '#244859', // ci-10
-  focus:   '#58ebbf', // ci-3
-  habit:   '#85c3b4', // ci-2
-  break:   '#1a3040',
-  buffer:  '#152637',
-};
 
 // Minimum visible chip height (px). Display-only clamp — the stored duration is
 // never altered, position math still uses the true minutes.
@@ -146,7 +134,12 @@ function BlockChip(props: { placed: Placed; day: string; state: () => AxisState 
   const b = () => props.placed.block;
   // A configured connection colour wins over the block-kind palette: the owner set it
   // precisely so events from THIS calendar are identifiable at a glance.
-  const color = () => connectionColor(b()) ?? kindColor[b().block_kind] ?? '#152637';
+  // Same colour source as the Planner's chips (`blockColorVar`: frozen color_token →
+  // live category → tag hash), so a block does not change colour between Today and
+  // Calendar. A configured connection colour still wins: it is a deliberate per-calendar
+  // choice. The old `kindColor` palette was Calendar-only, which is what made the two
+  // views disagree.
+  const color = () => connectionColor(b()) ?? blockColorVar(b(), categoryPrefs()?.prefs);
   const texture = () => connectionTextureFor(b());
   const conflict = () => props.placed.cols > 1;
   const done = () => ['completed', 'skipped'].includes(b().status);
@@ -185,7 +178,7 @@ function BlockChip(props: { placed: Placed; day: string; state: () => AxisState 
   return (
    <Show when={extent()}>
     <div
-      class="absolute rounded-md overflow-hidden text-[11px] leading-tight border transition-colors select-none"
+      class="absolute rounded-md overflow-hidden text-[11px] leading-tight border transition-colors select-none bg-card"
       classList={{
         'opacity-40': done(),
         'ring-1 ring-amber-400/70': conflict(),
@@ -197,7 +190,9 @@ function BlockChip(props: { placed: Placed; day: string; state: () => AxisState 
         height: `${heightPx()}px`,
         left: `${(props.placed.col / props.placed.cols) * 100}%`,
         width: `calc(${100 / props.placed.cols}% - 2px)`,
-        'background-color': `${color()}26`,       // ~15% alpha fill
+        // Solid card ground with the block colour on the border — the same treatment
+        // the Planner chips use on Today, so one block reads identically in both views.
+        // Previously a ~15% alpha tint, which made the same colour look weaker here.
         'border-color': color(),
         // The thick edge STANDS IN for a missing label, so it applies only to chips
         // that render no title. Anything showing its name keeps the slim accent, which
@@ -244,15 +239,15 @@ function BlockChip(props: { placed: Placed; day: string; state: () => AxisState 
 
 // ── All-day chip (pinned header lane; not on the minute axis) ──────────────────
 function AllDayChip(props: { block: Block }) {
-  const color = () => connectionColor(props.block) ?? kindColor[props.block.block_kind] ?? '#152637';
+  const color = () => connectionColor(props.block) ?? blockColorVar(props.block, categoryPrefs()?.prefs);
   const texture = () => connectionTextureFor(props.block);
   const done = () => ['completed', 'skipped'].includes(props.block.status);
   return (
     <div
-      class="relative overflow-hidden rounded px-1.5 py-0.5 text-[10px] leading-tight truncate border-l-2"
+      class="relative overflow-hidden rounded px-1.5 py-0.5 text-[10px] leading-tight truncate border-l-2 bg-card"
       classList={{ 'opacity-40': done() }}
       style={{
-        'background-color': `${color()}26`,
+        // Matches the timed chips and the Planner: no alpha tint on the fill.
         'border-left-color': color(),
       }}
       title={props.block.title}
@@ -688,10 +683,9 @@ export function CalendarGrid(props: Props) {
                   <For each={dayBlocks().slice(0, MAX_CHIPS)}>
                     {(b) => (
                       <div
-                        class="text-[10px] leading-tight truncate rounded px-1 py-0.5"
+                        class="text-[10px] leading-tight truncate rounded px-1 py-0.5 bg-card"
                         style={{
-                          'background-color': `${kindColor[b.block_kind] ?? '#152637'}26`,
-                          'border-left': `2px solid ${kindColor[b.block_kind] ?? '#152637'}`,
+                          'border-left': `2px solid ${blockColorVar(b, categoryPrefs()?.prefs)}`,
                         }}
                         title={`${b.title} · ${fmtTime(b.start_at)}`}
                       >
