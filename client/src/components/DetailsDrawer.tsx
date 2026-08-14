@@ -1,4 +1,4 @@
-import { Show, For, createSignal, onCleanup } from 'solid-js';
+import { Show, For, Switch, Match, createSignal, createEffect, createResource, onCleanup } from 'solid-js';
 import { useLocation } from '@solidjs/router';
 import { Planner } from './Planner.js';
 import { X, PanelRight, Inbox } from 'lucide-solid';
@@ -6,9 +6,10 @@ import {
   detailsOpen, detailsWidth, setDetailsOpen, setDetailsWidth,
   drawerTab, setDrawerTab, DETAILS_MIN_W, DETAILS_MAX_W, DETAILS_DEFAULT_W,
 } from '../stores/ui.js';
-import { activeTask, activeBlock, clearActiveEntity } from '../stores/selection.js';
-import { blocks, tasks, taskOf } from '../stores/index.js';
-import type { Block, Task } from '../lib/api.js';
+import { activeTask, activeBlock, activeEntity, clearActiveEntity, setActiveTask, setActiveBlock, setActiveEntity, type ActiveEntity } from '../stores/selection.js';
+import { blocks, tasks, taskOf, tags, showToast } from '../stores/index.js';
+import { api, type Task, type Block, type Tag } from '../lib/api.js';
+import { displayTag } from '../lib/tag-tax.js';
 
 const PRIORITY_NAME: Record<number, string> = { 1: 'High', 2: 'Medium', 3: 'Low' };
 
@@ -137,7 +138,11 @@ function BlockPanel(props: { block: Block }) {
       <Show when={linked()}>
         {(task) => (
           <Group label="Linked task">
-            <span class="drawer-note">{task().title}</span>
+            <button
+              type="button"
+              class="drawer-tag text-left cursor-pointer hover:border-ring"
+              onClick={() => setActiveTask(task().id)}
+            >{task().title}</button>
           </Group>
         )}
       </Show>
@@ -145,11 +150,192 @@ function BlockPanel(props: { block: Block }) {
   );
 }
 
-function EmptyPanel() {
+
+function TagPanel(props: { tag: Tag }) {
+  const t = () => props.tag;
+  const tagged = () => (tasks() ?? []).filter(
+    (x) => (x.tags ?? []).includes(t().name) || (x.secondary_tags ?? []).includes(t().name),
+  );
+  return (
+    <div class="drawer-body">
+      <div class="flex gap-1.5 flex-wrap">
+        <span class="drawer-pill">{t().kind}</span>
+        <Show when={t().muted}><span class="drawer-pill">Muted</span></Show>
+        <Show when={t().is_base}><span class="drawer-pill">Base</span></Show>
+      </div>
+      <Group label="Usage">
+        <dl class="drawer-grid">
+          <Field label="Tasks" when={true}>{t().count}</Field>
+          <Field label="Directions" when={true}>
+            {t().directions.length ? t().directions.map(displayTag).join(' · ') : <span class="text-muted-foreground">Unsorted</span>}
+          </Field>
+          <Field label="Deletable" when={true}>{t().used ? 'No — in use' : 'Yes'}</Field>
+        </dl>
+      </Group>
+      <Show when={tagged().length > 0}>
+        <Group label="Tagged here">
+          <div class="flex flex-col gap-1">
+            <For each={tagged().slice(0, 8)}>
+              {(x) => (
+                <button type="button" class="drawer-tag text-left cursor-pointer hover:border-ring" onClick={() => setActiveTask(x.id)}>
+                  {x.title}
+                </button>
+              )}
+            </For>
+          </div>
+        </Group>
+      </Show>
+    </div>
+  );
+}
+
+/** Direction and Time-Block-Category groups share one shape: name + member tags. */
+function GroupPanel(props: { tag: Tag }) {
+  const g = () => props.tag;
+  const members = () => (tags() ?? []).filter((x) =>
+    x.kind === 'intention' &&
+    (g().kind === 'direction' ? x.directions.includes(g().name) : (x.categories ?? []).includes(g().name)),
+  );
+  return (
+    <div class="drawer-body">
+      <div class="flex gap-1.5 flex-wrap">
+        <span class="drawer-pill">{g().is_base ? 'Base' : 'Custom'}</span>
+        <Show when={g().kind === 'category' && (g().direction_optouts ?? []).length > 0}>
+          <span class="drawer-pill">{(g().direction_optouts ?? []).length} direction(s) off</span>
+        </Show>
+      </div>
+      <Group label={g().kind === 'direction' ? 'Tags in this direction' : 'Tags in this category'}>
+        <Show when={members().length > 0} fallback={<span class="text-xs text-muted-foreground">No member tags.</span>}>
+          <div class="flex flex-wrap gap-1.5">
+            <For each={members()}>
+              {(x) => (
+                <button type="button" class="drawer-tag cursor-pointer hover:border-ring" onClick={() => setActiveEntity('tag', x.id)}>
+                  {displayTag(x.name)}
+                </button>
+              )}
+            </For>
+          </div>
+        </Show>
+      </Group>
+    </div>
+  );
+}
+
+function DayPanel(props: { date: string }) {
+  const [resolved] = createResource(() => props.date, (d) => api.dayTypes.resolve(d).catch(() => null));
+  const [windows] = createResource(
+    () => resolved()?.key ?? null,
+    (key) => api.patternBlocks.forDay(key).then((r) => r.windows).catch(() => ({})),
+  );
+  const directionName = (tagId: string) =>
+    (tags() ?? []).find((t) => t.id === tagId)?.name ?? 'unknown';
+  const rows = () => Object.entries(windows() ?? {}).map(([tagId, ranges]) => ({
+    name: displayTag(directionName(tagId)),
+    n: (ranges as unknown[]).length,
+  }));
+  return (
+    <div class="drawer-body">
+      <div><span class="drawer-pill" data-status="open">{resolved()?.key ?? '…'}</span></div>
+      <Group label="Day type">
+        <dl class="drawer-grid">
+          <Field label="Type" when={true}>{resolved()?.key ?? '…'}</Field>
+          <Field label="Source" when={resolved()?.source}>{resolved()?.source}</Field>
+        </dl>
+      </Group>
+      <Group label="Windows">
+        <Show when={rows().length > 0} fallback={<span class="text-xs text-muted-foreground">No placement windows configured.</span>}>
+          <dl class="drawer-grid">
+            <For each={rows()}>
+              {(r) => <Field label={r.name} when={true}>{r.n} window{r.n === 1 ? '' : 's'}</Field>}
+            </For>
+          </dl>
+        </Show>
+      </Group>
+    </div>
+  );
+}
+
+function JobPanel(props: { id: string }) {
+  const [jobsRes, { refetch }] = createResource(() => api.jobs.list().then((r) => r.jobs).catch(() => []));
+  const job = () => (jobsRes() ?? []).find((j: { id: string }) => j.id === props.id) as
+    | { id: string; name: string; cron: string; enabled: boolean; last_status?: string | null; last_started?: string | null; items_created?: number; items_updated?: number }
+    | undefined;
+  const [running, setRunning] = createSignal(false);
+  async function runNow() {
+    const j = job(); if (!j || running()) return;
+    setRunning(true);
+    try { await api.jobs.run(j.id); showToast(`Triggered ${j.name}`, 'success'); setTimeout(refetch, 1500); }
+    catch (err) { showToast((err as Error).message, 'error'); }
+    finally { setRunning(false); }
+  }
+  return (
+    <Show when={job()} fallback={<div class="drawer-body"><span class="text-xs text-muted-foreground">Job not found (operator account required).</span></div>}>
+      {(j) => (
+        <div class="drawer-body">
+          <div class="flex gap-1.5 flex-wrap">
+            <span class="drawer-pill" data-status={j().enabled ? 'open' : undefined}>{j().enabled ? 'Active' : 'Disabled'}</span>
+            <Show when={j().last_status}><span class="drawer-pill">{j().last_status}</span></Show>
+          </div>
+          <Group label="Schedule">
+            <dl class="drawer-grid">
+              <Field label="Name" when={true}>{j().name}</Field>
+              <Field label="Cron" when={true}><span class="font-mono text-[11px]">{j().cron}</span></Field>
+              <Field label="Last run" when={true}>{j().last_started ?? '—'}</Field>
+              <Field label="Created" when={j().items_created}>{j().items_created}</Field>
+              <Field label="Updated" when={j().items_updated}>{j().items_updated}</Field>
+            </dl>
+          </Group>
+          <button type="button" class="btn-secondary text-xs self-start" disabled={running()} onClick={runNow}>
+            {running() ? 'Running…' : 'Run now'}
+          </button>
+        </div>
+      )}
+    </Show>
+  );
+}
+
+function DimensionPanel(props: { dimension: string }) {
+  const [prio] = createResource(() => api.priorities.list().then((r) => r.priorities).catch(() => []));
+  const row = () => (prio() ?? []).find((x) => x.category === props.dimension);
+  const open = () => (tasks() ?? []).filter(
+    (t) => ['open', 'scheduled', 'in_progress'].includes(t.status ?? '') && (t.categories ?? []).includes(props.dimension),
+  );
+  return (
+    <div class="drawer-body">
+      <Show when={row()} fallback={<div><span class="drawer-pill">No priorities set</span></div>}>
+        {(r) => (
+          <Group label="Alignment">
+            <dl class="drawer-grid">
+              <Field label="Satisfaction" when={true}>{r().satisfaction}</Field>
+              <Field label="Importance" when={true}>{r().importance}</Field>
+              <Field label="Gap" when={true}>{r().importance - r().satisfaction > 0 ? '+' : ''}{r().importance - r().satisfaction}</Field>
+              <Field label="Target" when={true}>{r().target_hours_per_week}h / week</Field>
+            </dl>
+          </Group>
+        )}
+      </Show>
+      <Group label={`Open tasks (${open().length})`}>
+        <Show when={open().length > 0} fallback={<span class="text-xs text-muted-foreground">Nothing open in this dimension.</span>}>
+          <div class="flex flex-col gap-1">
+            <For each={open().slice(0, 8)}>
+              {(t) => (
+                <button type="button" class="drawer-tag text-left cursor-pointer hover:border-ring" onClick={() => setActiveTask(t.id)}>
+                  {t.title}
+                </button>
+              )}
+            </For>
+          </div>
+        </Show>
+      </Group>
+    </div>
+  );
+}
+
+function EmptyPanel(props: { where: string }) {
   return (
     <div class="drawer-empty">
       <Inbox size={26} class="opacity-50" />
-      <p>Select a task or a scheduled block to see its details here.</p>
+      <p>Select {props.where} to see its details here.</p>
     </div>
   );
 }
@@ -178,8 +364,63 @@ export function DetailsDrawer() {
     return (blocks() ?? []).find((b) => b.id === id);
   };
 
-  const title = () => task()?.title ?? block()?.title ?? 'Nothing selected';
-  const kind = () => (task() ? 'Task' : block() ? 'Scheduled block' : 'Details');
+  const entity = (): ActiveEntity | null => activeEntity();
+  /** Resolve tag-family entities to their Tag row (by id for tags, by name for groups). */
+  const entityTag = (): Tag | undefined => {
+    const e = entity();
+    if (!e) return undefined;
+    if (e.kind === 'tag') return (tags() ?? []).find((t) => t.id === e.id || t.name === e.id);
+    if (e.kind === 'direction' || e.kind === 'category') return (tags() ?? []).find((t) => t.name === e.id);
+    return undefined;
+  };
+
+  const KIND_LABEL: Record<string, string> = {
+    tag: 'Tag', direction: 'Direction', category: 'Category',
+    day: 'Day', job: 'Scheduled job', dimension: 'Life dimension',
+  };
+  const title = () => {
+    const t = task(); if (t) return t.title;
+    const b = block(); if (b) return b.title;
+    const e = entity();
+    if (!e) return 'Nothing selected';
+    if (e.kind === 'day') {
+      const d = new Date(e.id + 'T12:00:00');
+      return Number.isNaN(d.getTime()) ? e.id : d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+    }
+    if (e.kind === 'dimension') return displayTag(e.id);
+    const g = entityTag();
+    return g ? displayTag(g.name) : KIND_LABEL[e.kind];
+  };
+  const kind = () =>
+    task() ? 'Task' : block() ? 'Scheduled block' : entity() ? KIND_LABEL[entity()!.kind] : 'Details';
+
+  /** What the empty state invites you to pick — per view, as in the mockup. */
+  const emptyWhere = () => ({
+    '/': 'a task or a scheduled block',
+    '/focus': 'a task from the list',
+    '/calendar': 'a block or a day header',
+    '/tasks': 'a task',
+    '/balance': 'a life dimension',
+    '/tags': 'a tag or a direction',
+    '/jobs': 'a scheduled job',
+  } as Record<string, string>)[location.pathname] ?? 'an item';
+
+  // Per-view selection memory (mockup contract): each route remembers what was
+  // selected in it, so Jobs → Today → Jobs restores the job you were reading
+  // instead of resetting the drawer to empty.
+  const viewMemory = new Map<string, { task: string | null; block: string | null; entity: ActiveEntity | null }>();
+  let prevPath = location.pathname;
+  createEffect(() => {
+    const path = location.pathname;
+    if (path === prevPath) return;
+    viewMemory.set(prevPath, { task: activeTask(), block: activeBlock(), entity: activeEntity() });
+    const saved = viewMemory.get(path);
+    if (saved?.task) setActiveTask(saved.task);
+    else if (saved?.block) setActiveBlock(saved.block);
+    else if (saved?.entity) setActiveEntity(saved.entity.kind, saved.entity.id);
+    else clearActiveEntity();
+    prevPath = path;
+  });
 
   // ── Resize ──────────────────────────────────────────────────────────────
   const [dragging, setDragging] = createSignal(false);
@@ -275,13 +516,17 @@ export function DetailsDrawer() {
           when={!(hasPlannerTab() && drawerTab() === 'planner')}
           fallback={<div class="drawer-body drawer-body-flush"><Planner /></div>}
         >
-          <Show when={task()} fallback={
-            <Show when={block()} fallback={<EmptyPanel />}>
-              {(b) => <BlockPanel block={b()} />}
-            </Show>
-          }>
-            {(t) => <TaskPanel task={t()} />}
-          </Show>
+          <Switch fallback={<EmptyPanel where={emptyWhere()} />}>
+            <Match when={task()}>{(t) => <TaskPanel task={t()} />}</Match>
+            <Match when={block()}>{(b) => <BlockPanel block={b()} />}</Match>
+            <Match when={entity()?.kind === 'tag' && entityTag()}>{(g) => <TagPanel tag={g()} />}</Match>
+            <Match when={(entity()?.kind === 'direction' || entity()?.kind === 'category') && entityTag()}>
+              {(g) => <GroupPanel tag={g()} />}
+            </Match>
+            <Match when={entity()?.kind === 'day' && entity()}>{(e) => <DayPanel date={e().id} />}</Match>
+            <Match when={entity()?.kind === 'job' && entity()}>{(e) => <JobPanel id={e().id} />}</Match>
+            <Match when={entity()?.kind === 'dimension' && entity()}>{(e) => <DimensionPanel dimension={e().id} />}</Match>
+          </Switch>
         </Show>
       </aside>
     </Show>

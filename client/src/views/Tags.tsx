@@ -1,4 +1,6 @@
 import { createSignal, Show, For, type JSX } from 'solid-js';
+import { setActiveEntity } from '../stores/selection.js';
+import { revealDetails } from '../stores/ui.js';
 import { Lock, Trash2, VolumeX, Volume2, ChevronRight, ChevronDown } from 'lucide-solid';
 import { tags, refetchTags, showToast } from '../stores/index.js';
 import { api, type Tag } from '../lib/api.js';
@@ -193,7 +195,17 @@ function DirectionCard(props: {
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-1.5 section-label">
           <Show when={props.locked}><Lock size={11} class="text-muted-foreground" /></Show>
-          {props.title}
+          <button
+            type="button"
+            class="hover:text-primary transition-colors"
+            title="Show details"
+            onClick={() => {
+              if (!props.pattern) return;
+              const g = (tags() ?? []).find((t) => t.name === props.pattern);
+              setActiveEntity(g?.kind === 'category' ? 'category' : 'direction', props.pattern);
+              revealDetails();
+            }}
+          >{props.title}</button>
         </div>
         <Show when={props.onDeletePattern}>
           <button onClick={() => props.onDeletePattern!()} class="btn-icon" title="Delete"><Trash2 size={13} /></button>

@@ -45,15 +45,34 @@ export function clearSelection(): void {
 const [activeTask, setActiveTaskId] = createSignal<string | null>(null);
 const [activeBlock, setActiveBlockId] = createSignal<string | null>(null);
 
-export { activeTask, activeBlock };
+/**
+ * Non-task/block entities the details drawer can describe (drawer layout, Phase W
+ * of the UI work): tags, tag groups, calendar days, jobs, life dimensions. Kept in
+ * the same store as activeTask/activeBlock so there is still exactly one answer to
+ * "what is selected?" — setting any one of the three clears the other two.
+ * `id` is the tag id for 'tag', the group NAME for direction/category, the ISO
+ * date for 'day', the job id for 'job', and the category key for 'dimension'.
+ */
+export type EntityKind = 'tag' | 'direction' | 'category' | 'day' | 'job' | 'dimension';
+export interface ActiveEntity { kind: EntityKind; id: string }
+const [activeEntity, setActiveEntitySignal] = createSignal<ActiveEntity | null>(null);
+
+export { activeTask, activeBlock, activeEntity };
 
 export function setActiveTask(id: string | null): void {
   setActiveBlockId(null);
+  setActiveEntitySignal(null);
   setActiveTaskId(id);
 }
 export function setActiveBlock(id: string | null): void {
   setActiveTaskId(null);
+  setActiveEntitySignal(null);
   setActiveBlockId(id);
+}
+export function setActiveEntity(kind: EntityKind, id: string): void {
+  setActiveTaskId(null);
+  setActiveBlockId(null);
+  setActiveEntitySignal({ kind, id });
 }
 export function clearActiveTask(): void {
   if (activeTask() !== null) setActiveTaskId(null);
@@ -62,6 +81,7 @@ export function clearActiveTask(): void {
 export function clearActiveEntity(): void {
   if (activeTask() !== null) setActiveTaskId(null);
   if (activeBlock() !== null) setActiveBlockId(null);
+  if (activeEntity() !== null) setActiveEntitySignal(null);
 }
 
 /**

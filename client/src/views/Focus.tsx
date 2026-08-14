@@ -1,4 +1,6 @@
 import { createSignal, createMemo, createResource, Show, For, onCleanup } from 'solid-js';
+import { setActiveTask } from '../stores/selection.js';
+import { revealDetails } from '../stores/ui.js';
 import { ChevronDown, ChevronRight, Crosshair, Play, Check, RotateCcw, NotebookPen } from 'lucide-solid';
 import { FocusRitual } from '../components/FocusRitual.js';
 import { FocusReminders } from '../components/FocusReminders.js';
@@ -255,7 +257,11 @@ export function Focus() {
       >
         <Show when={props.entry.done}><Check size={10} class="text-white" /></Show>
       </button>
-      <span class="flex-1 min-w-0 text-sm truncate" classList={{ 'line-through text-muted-foreground': props.entry.done, 'text-foreground': !props.entry.done }}>
+      <span
+        class="flex-1 min-w-0 text-sm truncate"
+        classList={{ 'line-through text-muted-foreground': props.entry.done, 'text-foreground': !props.entry.done, 'cursor-pointer hover:text-primary': !!props.entry.taskId }}
+        onClick={() => { if (props.entry.taskId) { setActiveTask(props.entry.taskId); revealDetails(); } }}
+      >
         {props.entry.title}
       </span>
       <Show when={isNow(props.entry)}>
