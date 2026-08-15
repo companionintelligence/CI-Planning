@@ -9,6 +9,10 @@
  * Pure and data-only so it can be unit-tested without a DOM: callers pass the day's
  * windows (already resolved to direction names) and the day's busy intervals.
  */
+import type { Block } from './api.js';
+import { localISODate } from './dates.js';
+import { MINUTES_PER_DAY } from './grid.js';
+import { occupiesMinuteAxis } from './overlay.js';
 
 /** Minutes since midnight. The whole module works in this one unit. */
 export type Minutes = number;
@@ -42,11 +46,45 @@ export function parseHHMM(value: string): Minutes | null {
   return h * 60 + min;
 }
 
-/** Minutes-since-midnight for an ISO timestamp, in the viewer's local zone. */
-export function minutesOfDay(iso: string): Minutes | null {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.getHours() * 60 + d.getMinutes();
+/**
+ * The day's busy intervals, from the blocks the store has loaded.
+ *
+ * This is the half of "open time" that decides what counts as taken, and it is the
+ * reason a **Time Block is not open time**: a `timeblock` container occupies its whole
+ * span whether or not anything is nested inside it, because the span IS the commitment.
+ * A member task block nested in one contributes its own interval too, but that costs
+ * nothing — `openTime` merges before subtracting, so the overlap is removed once.
+ *
+ * Two things it deliberately refuses to treat as busy:
+ *
+ *  - anything `occupiesMinuteAxis` rejects (all-day, someday concepts, finished or
+ *    cancelled work) — see that predicate for why each one holds no minutes;
+ *  - blocks belonging to another date. The day fetch is range-contained today, but
+ *    `blockRange` widens to a whole week whenever the standalone Calendar is mounted,
+ *    and a Tuesday meeting must never wall off Monday's morning.
+ *
+ * Wall-clock minutes, not elapsed minutes, so a block lines up with the `HH:MM` window
+ * bounds `parseHHMM` produces on a DST day — the two must be read on the same clock.
+ */
+export function busyFromBlocks(blocks: readonly Block[], day: string): TimeRange[] {
+  const out: TimeRange[] = [];
+  for (const b of blocks) {
+    if (!occupiesMinuteAxis(b)) continue;
+    const start = new Date(b.start_at);
+    const end = new Date(b.end_at);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) continue;
+    if (end.getTime() <= start.getTime()) continue;   // malformed span, not a zero gap
+    if (localISODate(start) !== day) continue;
+    // A block running past midnight is busy until the END OF THIS DAY. Reading its
+    // wall clock instead would give a smaller number than its start and invert the
+    // range — a 22:00–02:00 block would silently vanish rather than close the night.
+    const endMin = localISODate(end) === day
+      ? end.getHours() * 60 + end.getMinutes()
+      : MINUTES_PER_DAY;
+    const startMin = start.getHours() * 60 + start.getMinutes();
+    if (endMin > startMin) out.push({ start: startMin, end: endMin });
+  }
+  return out;
 }
 
 /** `570` → `"9:30am"`. */
