@@ -18,6 +18,7 @@ import { writeAudit } from '../lib/audit.js';
 import { stampRow } from '../sync/apply.js';
 import { isMotivation } from '../agents/rubric.js';
 import { classifyMotivationKeyword } from './motivation.js';
+import { recordCorrection } from './classification-learning.js';
 import { truncateSeriesFrom } from '../engine/series-scope.js';
 
 /**
@@ -467,8 +468,17 @@ export async function updateTask(
   }
 
   // Phase B: category axis — `undefined` preserves, `[]` clears (mirrors tags).
+  //
+  // Phase 8: the owner's answer to a machine assignment is the evidence classification
+  // learning runs on. Recorded after the write lands, only for what the PATCH actually
+  // touched, and a no-op unless the model made a claim about this task and field.
+  // Never throws — a task update must not fail because the learning log did.
   if (Array.isArray(input.categories)) {
     await setEntityCategories('task', targetId, await categoryIdsForOwner(input.categories, ownerId));
+    await recordCorrection(ownerId, targetId, 'category', input.categories);
+  }
+  if (input.motivation !== undefined) {
+    await recordCorrection(ownerId, targetId, 'motivation', input.motivation);
   }
 
   if (Array.isArray(input.depends_on)) {

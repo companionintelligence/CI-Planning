@@ -831,6 +831,45 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   },
   {
     "columns": [
+      "owner_id",
+      "field",
+      "computed_date",
+      "held_out",
+      "correct",
+      "accuracy",
+    ],
+    "table": "classification_accuracy",
+  },
+  {
+    "columns": [
+      "owner_id",
+      "field",
+      "log_id",
+      "input_text",
+      "llm_value",
+      "correct_value",
+      "embedding",
+      "computed_date",
+    ],
+    "table": "classification_exemplars",
+  },
+  {
+    "columns": [
+      "id",
+      "owner_id",
+      "task_id",
+      "field",
+      "input_text",
+      "llm_value",
+      "final_value",
+      "assigned_at",
+      "corrected_at",
+      "local_date",
+    ],
+    "table": "classification_log",
+  },
+  {
+    "columns": [
       "id",
       "owner_id",
       "provider",
