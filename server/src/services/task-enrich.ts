@@ -9,6 +9,7 @@ import {
   entityCategoryIds, categoryIdsForOwner, setEntityCategories, suggestibleVocabulary,
 } from './tags.js';
 import { logger } from '../lib/logger.js';
+import { classificationHint, classificationInput, logAssignment } from './classification-learning.js';
 
 /**
  * Memory-backed task enrichment (handoff D4/§4.5): pull what Companion Intelligence
@@ -148,6 +149,13 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
   if (nodes.length === 0) return { enriched: false, reason: 'No related memory found' };
 
   const directions = vocab.directions;
+  // Phase 8 — what this owner has corrected before, for the two fields they correct.
+  // A pure read of the last `calibrate_classification` run; empty (and therefore a
+  // byte-identical prompt to before) for an owner with no correction history, no
+  // embedder, or no Ollama. Never throws.
+  const classifyText = classificationInput(task.title, task.notes);
+  const categoryHint = needsCategories ? await classificationHint(owner, 'category', classifyText) : '';
+  const motivationHint = needsMotivation ? await classificationHint(owner, 'motivation', classifyText) : '';
   // This surface owes the user a REASON, so it keeps a branch of its own — but on
   // `llmOrNull`'s null, not a hand-rolled catch. The specific transport/parse message now
   // lands in the one warn `llmOrNull` logs (it was never logged before), while the caller
@@ -173,7 +181,10 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
         (needsCategories
           ? ` Choose categories ONLY from the given list — never invent; [] when none fit.`
           : '') +
-        (needsMotivation ? ` For "motivation": ${MOTIVATION_RUBRIC}` : ''),
+        (needsMotivation ? ` For "motivation": ${MOTIVATION_RUBRIC}` : '') +
+        // Last, so the owner's own corrections are the freshest thing in context when
+        // the model answers — and after the vocabulary lists, which still bound it.
+        categoryHint + motivationHint,
       { purpose: 'classify_wide' },
     ),
   );
@@ -215,6 +226,9 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
       await setEntityCategories('task', taskId, await categoryIdsForOwner(picked, owner));
       result.categories = picked;
       result.enriched = true;
+      // Logged AFTER the write, so the evidence never claims an assignment the guard
+      // above rejected.
+      await logAssignment(owner, { taskId, field: 'category', inputText: classifyText, llmValue: picked });
     }
   }
 
@@ -224,6 +238,7 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
     if (await applyMachineMotivation(owner, taskId, out.motivation)) {
       result.motivation = out.motivation;
       result.enriched = true;
+      await logAssignment(owner, { taskId, field: 'motivation', inputText: classifyText, llmValue: out.motivation });
     }
   }
 

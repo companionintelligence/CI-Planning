@@ -30,6 +30,7 @@ import {
 } from '../services/tasks.js';
 import { writeAudit } from '../lib/audit.js';
 import { closeTask } from '../services/task-close.js';
+import { classificationInput, logAssignment } from '../services/classification-learning.js';
 
 // Task business logic lives in services/tasks.ts (Phase W step 3.1, shared with the
 // coming GraphQL resolvers). These handlers are thin HTTP shells: parse → call the
@@ -247,6 +248,26 @@ export function tasksRouter() {
       return;
     }
     let task = res.task;
+
+    // Phase 8 — record what the MODEL claimed, so a later edit becomes evidence about
+    // the classifier. Only when the model actually ran (`llm`), and only for values it
+    // chose: a category or motivation the PARSE carried came from the user's own typing,
+    // and "correcting" your own syntax teaches nothing about the classifier.
+    if (llm) {
+      // Keyed on the title rather than the raw entry, so the indexed text and the text a
+      // later classification queries with (title [+ notes]) live in the same space.
+      const classifyText = classificationInput(enriched.title, null);
+      if (!parsed.categories?.length && enriched.categories?.length) {
+        await logAssignment(currentOwnerId(), {
+          taskId: task.id, field: 'category', inputText: classifyText, llmValue: enriched.categories,
+        });
+      }
+      if (!parsed.motivation && enriched.motivation) {
+        await logAssignment(currentOwnerId(), {
+          taskId: task.id, field: 'motivation', inputText: classifyText, llmValue: enriched.motivation,
+        });
+      }
+    }
 
     // AD1: a scheduled task is placed on its day right away — task_time set → exact
     // placement; no time → that date's direction window → workday gap (owner decision).

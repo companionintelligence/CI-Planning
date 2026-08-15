@@ -23,6 +23,8 @@ import { syncAll } from '../agents/sync.js';
 import { advanceObjectives } from './advance-objectives.js';
 import { calibrateEstimates } from './calibrate-estimates.js';
 import { calibrateTriality } from '../services/triality-learning.js';
+import { calibrateClassification } from '../services/classification-learning.js';
+import { ollamaScorer } from '../services/classification-score.js';
 import { freezeStars } from './freeze-stars.js';
 import { resetRoutineTasks } from './reset-routines.js';
 import { config } from '../lib/config.js';
@@ -379,6 +381,25 @@ async function execute(kind: string): Promise<JobOutcome> {
         : `no slot cleared the ${r.floor}-outcome floor (${r.outcomeRows} outcome(s)) — defaults stand`;
       return { itemsCreated: 0, itemsUpdated: r.slotsWritten, log: `Triality calibration: ${label}` };
     }
+    case 'calibrate_classification': {
+      // Phase 8 — bounded batch learning for the parse/classify LLM. Owner-scoped
+      // (see OWNER_SCOPED_KINDS): every read filters on the owner, and evidence is
+      // never pooled across owners. A cron/agent write, so it deliberately does NOT
+      // stamp owner attribution (WHO rule, owner ruling 2026-07-16).
+      const owner = currentOwnerId();
+      // No Ollama ⇒ no scorer ⇒ the index is still rebuilt from durable evidence and
+      // accuracy is recorded as "not measured". Learning does not require the model;
+      // only MEASURING it does.
+      const r = await calibrateClassification(owner, new Date(), { scoreFn: await ollamaScorer(owner) });
+      const indexed = r.fields.reduce((n, f) => n + f.indexed, 0);
+      const parts = r.fields.map((f) =>
+        f.indexed === 0
+          ? `${f.field}: ${f.corrections} correction(s), under the ${r.floor} floor — stock prompt stands`
+          : `${f.field}: ${f.indexed} exemplar(s) from ${f.corrections} correction(s)` +
+            (f.accuracy == null ? ', accuracy not measured' : `, ${Math.round(f.accuracy * 100)}% on ${f.heldOut} held out`),
+      );
+      return { itemsCreated: 0, itemsUpdated: indexed, log: `Classification calibration — ${parts.join('; ')}` };
+    }
     case 'calibrate_estimates': {
       const r = await calibrateEstimates();
       const label = r.bias_ratio != null
@@ -479,6 +500,9 @@ const OWNER_SCOPED_KINDS = new Set([
   // pass would pool one owner's feedback into another's ranking, which the design
   // rules out absolutely (no cross-owner learning, ever).
   'calibrate_triality',
+  // Phase 8: the correction log is per-owner by construction — one owner's vocabulary
+  // must never teach another's classifier.
+  'calibrate_classification',
   'freeze_stars',
   'reset_routines',
 ]);
