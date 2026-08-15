@@ -27,7 +27,7 @@ makes "connect my calendar" a one-line ingest.
 POST /api/calendar/events
 {
   "events": [
-    { "calendar_id": "liam@lifescope.io", "event_id": "abc123",
+    { "calendar_id": "owner@example.com", "event_id": "abc123",
       "title": "CI Standup", "start": "2026-05-29T09:00:00-07:00",
       "end": "2026-05-29T09:30:00-07:00" }
   ],

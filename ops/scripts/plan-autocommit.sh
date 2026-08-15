@@ -3,7 +3,7 @@
 # Run by launchd. Idempotent — exits cleanly when nothing changed.
 
 set -u
-PLAN_DIR="${PLAN_DIR:-$HOME/Documents/Liam_Plan}"
+PLAN_DIR="${PLAN_DIR:-$HOME/Documents/Owner_Plan}"
 cd "$PLAN_DIR" || exit 0
 [ -d .git ] || exit 0
 
@@ -16,5 +16,5 @@ if /usr/bin/git diff --cached --quiet; then
 fi
 
 TS=$(date -Iseconds)
-/usr/bin/git -c user.email="liam.broza@gmail.com" -c user.name="Liam Broza (autocommit)" \
+/usr/bin/git -c user.email="owner@example.com" -c user.name="Owner (autocommit)" \
   commit -q -m "auto: snapshot $TS" || exit 0

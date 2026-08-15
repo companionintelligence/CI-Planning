@@ -111,7 +111,7 @@ setcat "Triage the GitHub issue backlog and label everything"      '["career"]'
 setcat "Draft the API rate-limit policy for partners"              '["career"]'
 setcat "Call Dad for his birthday and order the cake"              '["relationships"]'
 setcat "Book the family dinner reservation"                        '["relationships","leisure"]'
-setcat "Confirm the AIDevCon talk title and abstract"              '["growth","career"]'
+setcat "Confirm the conference talk title and abstract"              '["growth","career"]'
 setcat "Spike sqlite-vec for the dedupe pipeline"                  '["growth"]'
 setcat "Renew passport before it expires in August"                '["leisure"]'
 setcat "Reconcile the May capital account statements"              '["finance"]'
@@ -134,9 +134,9 @@ link "$O1" "Write integration tests for the block engine"
 link "$O1" "Triage the GitHub issue backlog and label everything"
 close "Write integration tests for the block engine"
 
-link "$O2" "Send Framework the SVG logo and 50-word blurb"
-link "$O2" "Upload the Techstars pitch deck and founder video"
-close "Send Framework the SVG logo and 50-word blurb"
+link "$O2" "Send the vendor partner the SVG logo and 50-word blurb"
+link "$O2" "Upload the accelerator pitch deck and founder video"
+close "Send the vendor partner the SVG logo and 50-word blurb"
 
 # The outdoors goal has no backlog behind it — tasks.md is a work brain-dump —
 # so its leaf gets two tasks of its own. Two extra rows, not a rewritten fixture.
@@ -193,23 +193,23 @@ mtg() { # mtg <YYYY-MM-DD> <HH:MM> <minutes> <title>
   curl -fsS -XPOST "$API/blocks" -H "$JSON" \
     -d "{\"title\":\"$4\",\"block_kind\":\"meeting\",\"is_locked\":true,\"start_at\":\"$s\",\"end_at\":\"$e\"}" >/dev/null
 }
-mtg 2026-06-09 09:00 30 "LITA onboarding standup"
-mtg 2026-06-09 15:00 60 "Rek data-schema review"
-mtg 2026-06-10 11:00 45 "Kwaai MCP connector scope"
-mtg 2026-06-11 09:30 60 "Mighty Capital IC follow-on"
-mtg 2026-06-12 14:00 45 "AMD co-marketing sync"
-mtg 2026-06-15 09:00 30 "LITA onboarding standup"
+mtg 2026-06-09 09:00 30 "Cedar Systems onboarding standup"
+mtg 2026-06-09 15:00 60 "Bluepeak data-schema review"
+mtg 2026-06-10 11:00 45 "Platform team MCP connector scope"
+mtg 2026-06-11 09:30 60 "Northwind Capital IC follow-on"
+mtg 2026-06-12 14:00 45 "Orchard Labs co-marketing sync"
+mtg 2026-06-15 09:00 30 "Cedar Systems onboarding standup"
 mtg 2026-06-16 13:00 90 "SBIR narrative working session"
-mtg 2026-06-17 10:00 60 "InfoDip API contract review"
-mtg 2026-06-18 16:00 45 "Framework partner check-in"
+mtg 2026-06-17 10:00 60 "Lumen API contract review"
+mtg 2026-06-18 16:00 45 "Vendor partner check-in"
 mtg 2026-06-19 11:00 60 "Q2 board prep"
-mtg 2026-06-22 09:00 30 "LITA onboarding standup"
-mtg 2026-06-23 14:30 60 "Minisforum BOM and pricing"
-mtg 2026-06-24 10:00 45 "Techstars mentor session"
+mtg 2026-06-22 09:00 30 "Cedar Systems onboarding standup"
+mtg 2026-06-23 14:30 60 "Hardware partner BOM and pricing"
+mtg 2026-06-24 10:00 45 "Accelerator mentor session"
 mtg 2026-06-25 15:00 60 "LP annual meeting planning"
 mtg 2026-06-26 12:30 60 "Lunch with mentor"
-mtg 2026-06-29 09:00 30 "LITA onboarding standup"
-mtg 2026-06-30 10:00 90 "AIDevCon rehearsal"
+mtg 2026-06-29 09:00 30 "Cedar Systems onboarding standup"
+mtg 2026-06-30 10:00 90 "Conference rehearsal"
 
 # ── Assert the state the film needs ──────────────────────────────────────────
 # The point of the whole file. "No plan yet" on all seven nodes is what shipped,

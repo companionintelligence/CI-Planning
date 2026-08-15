@@ -54,7 +54,7 @@ export function prepTaskTitle(event: { title: string; description: string }): st
   if (!description || NO_PREP.test(description)) return null;
 
   // The LAST actionable sentence, not the first: the opening sentence restates the
-  // meeting ("Kick off the Rek pilot."), the closing one is what has to happen before it.
+  // meeting ("Kick off the pilot."), the closing one is what has to happen before it.
   const sentences = description.split(/(?<=[.;])\s+/).map((s) => s.trim()).filter(Boolean);
   for (let i = sentences.length - 1; i >= 0; i--) {
     let s = sentences[i];

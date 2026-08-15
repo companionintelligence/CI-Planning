@@ -10,7 +10,7 @@
  *
  * Fixture graph persons are UNDATED, so person-token relatedness is date-stable (a
  * day-window graphData still returns them) — the integration test keys on person
- * "Maya Lindqvist" and never on the relative-dated events (the time-bomb-date gotcha).
+ * "Sam Rivera" and never on the relative-dated events (the time-bomb-date gotcha).
  */
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
@@ -48,22 +48,23 @@ const graph = (nodes: { id: string; entityType: string; name: string; properties
 describe('AA3a memoryTerms + memoryRelatedTasks (pure)', () => {
   it('extracts person/event name tokens (≥4), event phrases, and event tags', () => {
     const t = memoryTerms(graph([
-      { id: 'p1', entityType: 'person', name: 'Maya Lindqvist' },
-      { id: 'e1', entityType: 'event', name: 'Dinner with Maya', properties: { tag: 'Home' } },
+      { id: 'p1', entityType: 'person', name: 'Sam Rivera' },
+      { id: 'e1', entityType: 'event', name: 'Dinner with Sam', properties: { tag: 'Home' } },
       { id: 'x1', entityType: 'place', name: 'Reykjavik' }, // ignored (not person/event)
     ]));
-    expect([...t.tokens].sort()).toEqual(['dinner', 'lindqvist', 'maya', 'with']); // 'with' is 4 chars
-    expect(t.phrases).toEqual(['dinner with maya']);
+    // 'sam' is 3 chars, below nameTokens' ≥4 cutoff — 'rivera' is the surviving name token.
+    expect([...t.tokens].sort()).toEqual(['dinner', 'rivera', 'with']);
+    expect(t.phrases).toEqual(['dinner with sam']);
     expect([...t.tags]).toEqual(['home']);
   });
 
   it('relates a task by person token, by event phrase, and by tag — and skips unrelated', () => {
     const terms = memoryTerms(graph([
-      { id: 'p1', entityType: 'person', name: 'Maya Lindqvist' },
+      { id: 'p1', entityType: 'person', name: 'Sam Rivera' },
       { id: 'e1', entityType: 'event', name: 'Quarterly planning review', properties: { tag: 'Work' } },
     ]));
     const tasks = [
-      pt('a', 'Prep notes for Lindqvist'),            // person token
+      pt('a', 'Prep notes for Rivera'),            // person token
       pt('b', 'Quarterly planning review'),           // event phrase
       pt('c', 'Weekly sync', ['Work']),               // event tag on a task tag
       pt('d', 'Buy groceries'),                        // unrelated
@@ -89,7 +90,7 @@ describe('AA3a memoryTerms + memoryRelatedTasks (pure)', () => {
 describe('AA3a deterministicIndices memory band', () => {
   const tasks = [
     pt('early-due', 'Taxes', [], 3, '2026-06-25'), // earlier deadline, NOT related
-    pt('related', 'Call Maya', [], 3, '2026-12-31'), // later deadline, related
+    pt('related', 'Call Sam', [], 3, '2026-12-31'), // later deadline, related
   ];
 
   it('ranks a memory-related task ahead of an earlier-due unrelated one', () => {
