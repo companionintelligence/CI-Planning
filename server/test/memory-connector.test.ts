@@ -186,7 +186,7 @@ describe('fixture transport (MEMORY_MODE default)', () => {
   });
 
   it('graphSearch matches name/description substrings', async () => {
-    const g = await graphSearch(OWNER, 'maya');
+    const g = await graphSearch(OWNER, 'sam');
     expect(g.nodes.some((n) => n.name === 'Sam Rivera')).toBe(true);
     expect(g.nodes.some((n) => n.name === 'Dinner with Sam')).toBe(true);
   });

@@ -10,7 +10,9 @@ import type { CalendarEvent } from '../src/mcp/google.js';
  *
  * These titles are what a viewer reads in the Companion Planning product video and what
  * a new contributor sees on their first `pnpm seed`, so they are asserted verbatim rather
- * than by shape. The rule under test is in src/scripts/prep-task-title.ts: use the event's
+ * than by shape. The fixture is WHOLLY SYNTHETIC — invented companies at example.com —
+ * because the set it replaced held real partners, clients and family references, in a
+ * repo destined to be public. The rule under test is in src/scripts/prep-task-title.ts: use the event's
  * own words, and create nothing when the event implies nothing.
  *
  * If you edit server/test/fixtures/calendar.json, this test fails — that is the point.
@@ -21,25 +23,25 @@ const events: CalendarEvent[] = JSON.parse(readFileSync(join(fixtures, 'calendar
 
 /** event title -> the task it implies, or null for "nothing to do". */
 const EXPECTED: Record<string, string | null> = {
-  'Northwind Capital follow-on review': 'Bring the updated financial model and draft the IC memo',
-  'Cedar Systems onboarding standup': 'Provision staging env and confirm API credentials',
-  'Platform team engineering working session': 'Circulate the scope doc and a draft agenda',
+  'Quarterly partner review': 'Bring the updated forecast and draft the summary memo',
+  'New client onboarding standup': 'Provision the staging environment and confirm API credentials',
+  'Engineering working session': 'Circulate the scope doc and a draft agenda',
   'Dentist appointment': 'Bring insurance card',
-  'Orchard Labs co-marketing call': 'Finish the joint one-pager draft and prepare the hardware lead intro',
+  'Co-marketing call': 'Finish the joint one-pager draft and prepare the hardware lead intro',
   'Board prep': 'Prepare for the board meeting',
   'Gym - leg day': null,
-  'Bluepeak pilot kickoff': 'Get the data schema sent and the shared Slack channel created',
-  "Dad's birthday dinner": 'Book the reservation and pick up the cake and card',
+  'Pilot kickoff': 'Get the data schema sent and the shared channel created',
+  'Family birthday dinner': 'Book the reservation and pick up the cake and card',
   'Conference speaker rehearsal': 'Finalize slides and confirm A/V requirements with organizers',
   'Legal review call - vendor NDA': 'Review comments and prepare questions',
-  'Deep work - SBIR narrative': 'Outline the budget justification',
-  'Lumen API integration sync': 'Prepare the integration spec',
+  'Deep work - grant narrative': 'Outline the budget justification',
+  'Integration sync': 'Prepare the integration spec',
   '1:1 with hardware lead': 'Bring the approved BOM and pricing sign-off',
   'Lunch with mentor': null,
-  'LP annual meeting planning':
-    'Finalize the agenda, confirm the venue, and assign slide owners for the portfolio performance deck',
+  'Investor meeting planning':
+    'Finalize the agenda, confirm the venue, and assign slide owners for the performance deck',
   'Holiday - Office closed': null,
-  'Quarterly tax check-in': 'Categorize May transactions and gather the AWS and travel receipts',
+  'Quarterly tax check-in': 'Categorize May transactions and gather the hosting and travel receipts',
 };
 
 describe('prepTaskTitle over the calendar fixture', () => {
