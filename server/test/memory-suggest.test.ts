@@ -109,7 +109,7 @@ describe('staging from the fixture graph', () => {
     expect(rows.length).toBe(2);
     for (const row of rows) expect(row.source_ref).toMatch(/^ci:[0-9a-f-]{36}$/);
     const titles = rows.map((x) => x.raw_title).sort();
-    expect(titles).toEqual(['Dinner with Maya', 'Quarterly planning review']); // AB2: the event name, no "Prep for"
+    expect(titles).toEqual(['Dinner with Sam', 'Quarterly planning review']); // AB2: the event name, no "Prep for"
 
     // Participants ride the payload; due_at anchors to the event start; AB2 mirror:
     // the estimate is the EVENT DURATION (dinner now+30h→now+32h = 120m) and the
@@ -118,7 +118,7 @@ describe('staging from the fixture graph', () => {
     const payloadRow = sqlite
       .prepare(
         `SELECT source_payload, proposed_due_at, proposed_estimated_minutes, proposed_scheduled_for, proposed_task_time
-           FROM possible_tasks WHERE raw_title = 'Dinner with Maya'`,
+           FROM possible_tasks WHERE raw_title = 'Dinner with Sam'`,
       )
       .get() as {
       source_payload: string;
@@ -127,7 +127,7 @@ describe('staging from the fixture graph', () => {
       proposed_scheduled_for: string;
       proposed_task_time: string;
     };
-    expect(payloadRow.source_payload).toContain('Maya Lindqvist');
+    expect(payloadRow.source_payload).toContain('Sam Rivera');
     expect(Date.parse(payloadRow.proposed_due_at)).toBeGreaterThan(Date.now());
     expect(payloadRow.proposed_estimated_minutes).toBe(120);
     expect(payloadRow.proposed_scheduled_for).toBe(payloadRow.proposed_due_at.slice(0, 10));
@@ -237,7 +237,7 @@ describe('staging from the fixture graph', () => {
     expect(r.status).toBe('ran');
     expect(r.created).toBe(2);
     expect(memoryPossibles('promoted').map((x) => x.raw_title).sort()).toEqual([
-      'Dinner with Maya',
+      'Dinner with Sam',
       'Quarterly planning review',
     ]);
   });
@@ -252,7 +252,7 @@ describe('staging from the fixture graph', () => {
     );
     expect(r.created).toBe(2);
     expect(memoryPossibles('promoted').map((x) => x.raw_title).sort()).toEqual([
-      'Dinner with Maya',
+      'Dinner with Sam',
       'Quarterly planning review',
     ]);
   });
@@ -409,7 +409,7 @@ describe('integration: fixture graph → auto-promoted task → block AT the eve
 
     for (const [title, durMin] of [
       ['Quarterly planning review', 60], // fixture: now+20h → now+21h
-      ['Dinner with Maya', 120], // fixture: now+30h → now+32h
+      ['Dinner with Sam', 120], // fixture: now+30h → now+32h
     ] as const) {
       const possible = byTitle.get(title)!;
       expect(possible).toBeDefined();

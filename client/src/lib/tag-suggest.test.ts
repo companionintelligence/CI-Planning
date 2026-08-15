@@ -2,10 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { suggestTagsFromTitle, localDayPlus } from './tag-suggest.js';
 
 describe('suggestTagsFromTitle', () => {
-  const tags = ['email', 'lita', 'finance', 'deep-work', 'errands'];
+  const tags = ['email', 'acme', 'finance', 'deep-work', 'errands'];
 
   it('matches single-word tags on whole words only', () => {
-    expect(suggestTagsFromTitle('Email Rek about the LITA invoice', tags).sort()).toEqual(['email', 'lita']);
+    expect(suggestTagsFromTitle('Email Bluepeak about the Acme invoice', tags).sort()).toEqual(['acme', 'email']);
     expect(suggestTagsFromTitle('emailing the team', tags)).toEqual([]); // not a whole word
   });
 

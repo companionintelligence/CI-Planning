@@ -1,194 +1,259 @@
 [
   {
     "id": "email-001",
-    "from": "Chris Mathews <chris@investmentops.co>",
-    "subject": "Q3 LP report + wire confirmation",
-    "body": "Hi Liam, two things before Friday: please send the Q3 LP report to the distribution list, and confirm the capital call wire for the Mighty Capital follow-on went out. Also can you book a 30-min sync for next Tuesday to review the follow-on terms?",
-    "receivedAt": "2026-05-26T15:12:00.000Z",
-    "labels": ["1. Investment Ops", "1. Investment Ops/Mighty Capital"]
+    "from": "Avery Stone <avery@northwind.example.com>",
+    "subject": "Updated forecast for the quarterly review",
+    "body": "Attaching the revised forecast ahead of Tuesday. Could you look over the growth assumptions on tab 3 and send back any edits before the review?",
+    "receivedAt": "2026-05-25T15:00:00.000Z",
+    "labels": [
+      "1. Partners",
+      "1. Partners/Northwind"
+    ]
   },
   {
     "id": "email-002",
-    "from": "LITA Team <ops@lita.io>",
-    "subject": "Client onboarding blockers",
-    "body": "We're blocked on two items for the LITA onboarding: we need the signed MSA back from your legal team, and we need you to provision the staging environment. Target go-live is June 5. Can you also send over the API credentials doc?",
-    "receivedAt": "2026-05-27T09:40:00.000Z",
-    "labels": ["2. Clients/LITA"]
+    "from": "Rowan Diaz <rowan@cedarsystems.example.com>",
+    "subject": "Staging credentials for onboarding",
+    "body": "We are ready on our side. Once the staging environment is provisioned, send over the API credentials and we will run the first sync.",
+    "receivedAt": "2026-05-25T17:20:00.000Z",
+    "labels": [
+      "2. Clients",
+      "2. Clients/Cedar Systems"
+    ]
   },
   {
     "id": "email-003",
-    "from": "SoCal Startup Law <chris@socalstartuplaw.com>",
-    "subject": "NDA + SAFE review",
-    "body": "Liam — I've redlined the mutual NDA with Framework. Please review my comments and sign by Thursday. Separately, the SAFE for the new angel needs your signature and the updated cap table. Let me know if you want to hop on a call.",
-    "receivedAt": "2026-05-27T18:05:00.000Z",
-    "labels": ["4. Biz/Legal"]
+    "from": "Accounting <accounting@bookkeeping.example.com>",
+    "subject": "May transactions need categorizing",
+    "body": "There are 42 uncategorized transactions from May. Please categorize them and send any missing receipts so we can close the month.",
+    "receivedAt": "2026-05-25T19:05:00.000Z",
+    "labels": [
+      "3. Admin",
+      "3. Admin/Finance"
+    ]
   },
   {
     "id": "email-004",
-    "from": "AMD Partnerships <devrel@amd.com>",
-    "subject": "Re: Minisforum bundle + demo hardware",
-    "body": "Great chatting today. Next steps on our side: you'll send the joint one-pager draft, and we'll ship the demo units. Can you also intro me to your hardware lead? Would love to lock the co-marketing timeline before end of month.",
-    "receivedAt": "2026-05-25T22:30:00.000Z",
-    "labels": ["3. Strategic Partners/AMD", "3. Strategic Partners/Minisforum"]
+    "from": "Conference Team <speakers@devconference.example.org>",
+    "subject": "Speaker slides due Friday",
+    "body": "Reminder that speaker decks are due Friday. Upload the final slides and confirm your A/V requirements using the form in the speaker portal.",
+    "receivedAt": "2026-05-26T09:15:00.000Z",
+    "labels": [
+      "4. Submissions"
+    ]
   },
   {
     "id": "email-005",
-    "from": "Pitch Events <submissions@techstars.com>",
-    "subject": "Application deadline reminder",
-    "body": "Reminder: your Techstars application is due June 2 at 11:59pm PT. You still need to upload the pitch deck and the 90-second founder video. Don't forget to add two customer references.",
-    "receivedAt": "2026-05-28T16:00:00.000Z",
-    "labels": ["5. Pitch Events & Submissions"]
+    "from": "Partnerships <partnerships@orchardlabs.example.com>",
+    "subject": "Joint one-pager draft",
+    "body": "Here is our half of the one-pager. Fill in the product section and we will get it through our brand review this week.",
+    "receivedAt": "2026-05-26T13:30:00.000Z",
+    "labels": [
+      "1. Partners",
+      "1. Partners/Orchard Labs"
+    ]
   },
   {
     "id": "email-006",
-    "from": "Nils @ Kwaai <nils@kwaai.ai>",
-    "subject": "Open-source collab",
-    "body": "Hey! Following up on the Kwaai collaboration. Could you draft a short scope doc for the shared MCP connector work? And we should schedule a working session with both engineering teams sometime next week. I'll need your availability.",
-    "receivedAt": "2026-05-28T11:20:00.000Z",
-    "labels": ["3. Strategic Partners/Kwaai"]
+    "from": "Riley Novak <riley.novak@bluepeak.example.com>",
+    "subject": "Data schema for the pilot",
+    "body": "Before kickoff we need the data schema and a shared channel set up. Can you send the schema over and add our team to the channel?",
+    "receivedAt": "2026-05-26T16:00:00.000Z",
+    "labels": [
+      "2. Clients",
+      "2. Clients/Bluepeak"
+    ]
   },
   {
     "id": "email-007",
-    "from": "Accountant <accounting@bizfinance.com>",
-    "subject": "Receipts for May",
-    "body": "Tax season prep: please categorize the May credit card transactions in the shared sheet, and send me the receipts for the two AWS invoices and the conference travel. Deadline is end of next week.",
-    "receivedAt": "2026-05-29T14:00:00.000Z",
-    "labels": ["4. Biz"]
+    "from": "Monitoring <noreply@monitoring.example.io>",
+    "subject": "Disk usage above threshold on app-2",
+    "body": "Disk usage on app-2 crossed 85 percent. Log rotation is configured but the archive volume has not been pruned since April.",
+    "receivedAt": "2026-05-26T18:45:00.000Z",
+    "labels": [
+      "5. Engineering",
+      "5. Engineering/Alerts"
+    ]
   },
   {
     "id": "email-008",
-    "from": "Framework <partners@frame.work>",
-    "subject": "Co-marketing assets",
-    "body": "To move the Framework partnership forward we need: your logo in SVG, a 50-word company blurb, and approval on the landing page copy. Can you get those over by Wednesday so we can publish?",
-    "receivedAt": "2026-05-26T08:15:00.000Z",
-    "labels": ["3. Strategic Partners/Framework"]
+    "from": "Sam Rivera <sam.rivera@example.com>",
+    "subject": "Scope doc for the working session",
+    "body": "Drafted the scope doc for Wednesday. Add anything I have missed on the migration section and circulate it to the rest of the team.",
+    "receivedAt": "2026-05-27T08:30:00.000Z",
+    "labels": [
+      "5. Engineering"
+    ]
   },
   {
     "id": "email-009",
-    "from": "Mom <mom@family.net>",
-    "subject": "Dad's birthday",
-    "body": "Don't forget your father's birthday is Saturday! Please call him, and it would be lovely if you could order the cake from the usual bakery and pick up a card. Maybe book a dinner reservation for the three of us?",
-    "receivedAt": "2026-05-29T19:30:00.000Z",
-    "labels": []
+    "from": "Counsel <counsel@lawpartners.example.com>",
+    "subject": "NDA redlines returned",
+    "body": "Our comments on the vendor NDA are attached. The indemnity clause is the only one we would push back on. Review and let us know your questions.",
+    "receivedAt": "2026-05-27T10:10:00.000Z",
+    "labels": [
+      "3. Admin",
+      "3. Admin/Legal"
+    ]
   },
   {
     "id": "email-010",
-    "from": "Rek Partnerships <hello@rek.io>",
-    "subject": "Pilot kickoff",
-    "body": "Excited for the Rek pilot. Action items from our call: you'll send the data schema, set up a shared Slack channel, and confirm the pilot success metrics. We'd like to kick off Monday.",
-    "receivedAt": "2026-05-27T13:45:00.000Z",
-    "labels": ["3. Strategic Partners/Rek"]
+    "from": "Grants Office <grants@fundingbody.example.org>",
+    "subject": "Budget justification section missing",
+    "body": "Your application is otherwise complete. The budget justification section still needs an outline before we can send it for review.",
+    "receivedAt": "2026-05-27T12:25:00.000Z",
+    "labels": [
+      "4. Submissions"
+    ]
   },
   {
     "id": "email-011",
-    "from": "DevOps Alerts <noreply@monitoring.io>",
-    "subject": "[RESOLVED] CPU spike on prod-1",
-    "body": "This is an automated notification. The CPU spike on prod-1 has auto-resolved. No action required. System is nominal.",
-    "receivedAt": "2026-05-29T03:12:00.000Z",
-    "labels": []
+    "from": "Alex Chen <alex.chen@example.com>",
+    "subject": "BOM sign-off before the 1:1",
+    "body": "The bill of materials is approved on the engineering side. Bring the pricing sign-off to our next 1:1 and we can close it out.",
+    "receivedAt": "2026-05-27T14:50:00.000Z",
+    "labels": [
+      "5. Engineering",
+      "5. Engineering/Hardware"
+    ]
   },
   {
     "id": "email-012",
-    "from": "Newsletter <digest@stratechery.com>",
-    "subject": "The Weekly Tech Digest",
-    "body": "This week in tech: AI model releases, antitrust news, and the state of the chip market. Read more on the site. Unsubscribe anytime.",
-    "receivedAt": "2026-05-28T06:00:00.000Z",
-    "labels": ["Podcasts"]
+    "from": "Bank Alerts <alerts@bank.example.com>",
+    "subject": "Statement available for account ending 4471",
+    "body": "Your monthly statement is ready to view. No action is required unless you notice a transaction you do not recognize.",
+    "receivedAt": "2026-05-25T21:40:00.000Z",
+    "labels": [
+      "3. Admin",
+      "3. Admin/Finance"
+    ]
   },
   {
     "id": "email-013",
-    "from": "Mighty Capital <ir@mightycapital.com>",
-    "subject": "Follow-on docs",
-    "body": "For the follow-on to close we need your countersignature on the term sheet and the updated financial model. Can you also prepare a short memo summarizing the round for the IC? We'd like everything by Friday.",
-    "receivedAt": "2026-05-28T20:10:00.000Z",
-    "labels": ["1. Investment Ops/follow-on", "1. Investment Ops/Mighty Capital"]
+    "from": "Dental Clinic <front.desk@dentalclinic.example.com>",
+    "subject": "Appointment confirmation",
+    "body": "Your check-up is confirmed for Wednesday afternoon. Please bring your insurance card and arrive ten minutes early.",
+    "receivedAt": "2026-05-27T16:00:00.000Z",
+    "labels": [
+      "6. Personal"
+    ]
   },
   {
     "id": "email-014",
-    "from": "InfoDip <team@infodip.com>",
-    "subject": "Integration spec questions",
-    "body": "Two open questions on the InfoDip integration: should we use webhooks or polling, and what's the rate limit? Could you write up the integration spec and review our draft API contract this week?",
-    "receivedAt": "2026-05-27T17:25:00.000Z",
-    "labels": ["3. Strategic Partners/InfoDip"]
+    "from": "Jordan Blake <jordan.blake@example.com>",
+    "subject": "Board deck metrics refresh",
+    "body": "The metrics in the board deck are two months stale. Refresh the pipeline report and the retention chart before we circulate it.",
+    "receivedAt": "2026-05-27T18:20:00.000Z",
+    "labels": [
+      "3. Admin",
+      "3. Admin/Board"
+    ]
   },
   {
     "id": "email-015",
-    "from": "Sales Ops <crm@bizdev.com>",
-    "subject": "Pipeline hygiene",
-    "body": "Monthly reminder to update the CRM: please log notes from your last three partner calls, update the deal stages for LITA and Rek, and forecast next quarter's close dates. The board wants the report by month end.",
-    "receivedAt": "2026-05-29T10:00:00.000Z",
-    "labels": ["2. Sales Ops"]
+    "from": "Lumen API <dev@lumenapi.example.com>",
+    "subject": "Breaking change in v3 endpoints",
+    "body": "Version 3 deprecates the batch endpoint on 1 August. Update the integration spec and plan the migration before the cutoff.",
+    "receivedAt": "2026-05-28T07:45:00.000Z",
+    "labels": [
+      "5. Engineering",
+      "5. Engineering/Integrations"
+    ]
   },
   {
     "id": "email-016",
-    "from": "Conference <speakers@aidevcon.com>",
-    "subject": "Speaker confirmation",
-    "body": "Thanks for agreeing to speak at AIDevCon! Please confirm your session title and abstract, upload your headshot and bio, and let us know your A/V requirements. We also need your travel dates to book your hotel.",
-    "receivedAt": "2026-05-26T12:00:00.000Z",
-    "labels": ["5. Pitch Events & Submissions"]
+    "from": "Riverstone Ops <ops@riverstone.example.com>",
+    "subject": "Annual meeting venue options",
+    "body": "Three venues are available for the annual meeting. Confirm which one you want and we will hold the date before the end of the week.",
+    "receivedAt": "2026-05-28T09:30:00.000Z",
+    "labels": [
+      "1. Partners",
+      "1. Partners/Riverstone"
+    ]
   },
   {
     "id": "email-017",
-    "from": "Landlord <office@wework.com>",
-    "subject": "Lease renewal",
-    "body": "Your office lease is up for renewal on June 30. Please review the renewal terms attached and let us know your decision by June 15. If you'd like to change to a smaller suite, schedule a tour.",
-    "receivedAt": "2026-05-25T15:00:00.000Z",
-    "labels": ["4. Biz"]
+    "from": "Community List <hello@localmakers.example.org>",
+    "subject": "Volunteers needed for the repair cafe",
+    "body": "We are short two volunteers for Saturday's repair cafe. Reply if you can take a two hour slot in the afternoon.",
+    "receivedAt": "2026-05-28T11:15:00.000Z",
+    "labels": [
+      "7. Community"
+    ]
   },
   {
     "id": "email-018",
-    "from": "Doctor's Office <appointments@health.clinic>",
-    "subject": "Annual physical due",
-    "body": "Our records show you're due for your annual physical. Please call to schedule, and complete the intake form online before your visit. Fasting bloodwork is recommended.",
-    "receivedAt": "2026-05-28T08:30:00.000Z",
-    "labels": []
+    "from": "Hosting <billing@hostingprovider.example.com>",
+    "subject": "Annual plan renews in 14 days",
+    "body": "Your annual plan renews on 11 June at the current rate. Downgrade or cancel before then if your usage has changed.",
+    "receivedAt": "2026-05-28T13:00:00.000Z",
+    "labels": [
+      "3. Admin",
+      "3. Admin/Finance"
+    ]
   },
   {
     "id": "email-019",
-    "from": "Services Partner <vendor@services.co>",
-    "subject": "Contract renewal + invoice",
-    "body": "Heads up — your annual services contract renews next month. Please approve the renewal SOW and process the outstanding invoice (#4471). Also, can you provide updated billing contact info?",
-    "receivedAt": "2026-05-27T21:00:00.000Z",
-    "labels": ["3. Strategic Partners/Services"]
+    "from": "Recruiter <talent@hiringpartners.example.com>",
+    "subject": "Two candidates for the platform role",
+    "body": "Two strong candidates are through screening. Share your availability for interviews next week and I will coordinate the panel.",
+    "receivedAt": "2026-05-28T15:40:00.000Z",
+    "labels": [
+      "3. Admin",
+      "3. Admin/Hiring"
+    ]
   },
   {
     "id": "email-020",
-    "from": "Receipt <noreply@amazon.com>",
-    "subject": "Your order has shipped",
-    "body": "Your recent order has shipped and will arrive Thursday. No action needed. Track your package in the app.",
-    "receivedAt": "2026-05-29T05:00:00.000Z",
-    "labels": []
+    "from": "Docs Bot <noreply@docsplatform.example.com>",
+    "subject": "Draft page has been idle for 30 days",
+    "body": "The onboarding guide draft has not been edited in 30 days. Publish it or archive it so it stops appearing in the review queue.",
+    "receivedAt": "2026-05-28T17:55:00.000Z",
+    "labels": [
+      "5. Engineering",
+      "5. Engineering/Docs"
+    ]
   },
   {
     "id": "email-021",
-    "from": "Investor Relations <lp@fund.com>",
-    "subject": "Annual meeting logistics",
-    "body": "Planning the LP annual meeting. We need you to: finalize the agenda, confirm the venue booking, prepare the portfolio performance slides, and send calendar invites to all LPs. Target date is June 20.",
-    "receivedAt": "2026-05-28T14:30:00.000Z",
-    "labels": ["1. Investment Ops"]
+    "from": "Mentor <mentor@example.org>",
+    "subject": "Lunch on Friday still good?",
+    "body": "Friday at one still works for me. No agenda, just a catch-up. Let me know if the time has moved and I will work around it.",
+    "receivedAt": "2026-05-29T08:00:00.000Z",
+    "labels": [
+      "6. Personal"
+    ]
   },
   {
     "id": "email-022",
-    "from": "Minisforum <bd@minisforum.com>",
-    "subject": "Hardware bundle pricing",
-    "body": "To finalize the bundle we need you to approve the BOM, sign off on the retail pricing, and review the packaging mockups. Can we also get a quote approval for the first production run of 500 units?",
-    "receivedAt": "2026-05-26T19:45:00.000Z",
-    "labels": ["3. Strategic Partners/Minisforum"]
+    "from": "Insurance <service@insureco.example.com>",
+    "subject": "Policy documents ready to sign",
+    "body": "Your renewal documents are ready. Sign and return them before the current policy lapses at the end of the month.",
+    "receivedAt": "2026-05-29T10:30:00.000Z",
+    "labels": [
+      "3. Admin",
+      "3. Admin/Finance"
+    ]
   },
   {
     "id": "email-023",
-    "from": "Grant Program <grants@nsf-sbir.gov>",
-    "subject": "SBIR Phase I submission",
-    "body": "Your SBIR Phase I proposal window closes June 10. Outstanding items: complete the technical narrative, submit the budget justification, register in SAM.gov, and obtain the letters of support from two partners.",
-    "receivedAt": "2026-05-29T16:20:00.000Z",
-    "labels": ["5. Pitch Events & Submissions"]
+    "from": "Neighbourhood Group <committee@neighbourhood.example.org>",
+    "subject": "Donation drop-off this weekend",
+    "body": "The collection point is open Saturday morning. Bring any clothes or household items you have set aside for the drive.",
+    "receivedAt": "2026-05-29T14:10:00.000Z",
+    "labels": [
+      "7. Community"
+    ]
   },
   {
     "id": "email-024",
-    "from": "Bank <alerts@chase.com>",
-    "subject": "Statement ready",
-    "body": "Your monthly statement is ready to view. This is an automated message; no action is required.",
-    "receivedAt": "2026-05-28T07:00:00.000Z",
-    "labels": []
+    "from": "Product Team <product@internal.example.com>",
+    "subject": "Release notes need a final pass",
+    "body": "Release notes for this cycle are drafted. Give them a final read for accuracy and we will publish alongside the deploy on Thursday.",
+    "receivedAt": "2026-05-29T19:30:00.000Z",
+    "labels": [
+      "5. Engineering",
+      "5. Engineering/Release"
+    ]
   }
 ]

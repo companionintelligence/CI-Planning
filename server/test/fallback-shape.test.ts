@@ -56,9 +56,9 @@ describe('determinism', () => {
   it('a realistic backlog comes out varied, not uniform', () => {
     const backlog = [
       'Finish the SBIR technical narrative and budget justification',
-      'Upload the Techstars pitch deck and founder video',
+      'Upload the accelerator pitch deck and founder video',
       'Register the company in SAM.gov',
-      'Confirm the AIDevCon talk title and abstract',
+      'Confirm the conference talk title and abstract',
       'Book the family dinner reservation',
       'Triage the GitHub issue backlog and label everything',
       'Dentist appointment',

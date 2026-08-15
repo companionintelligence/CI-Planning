@@ -85,10 +85,10 @@ describe('AA2 — memoryBriefExcerpt', () => {
     enablePull();
     connectViaEnv();
     const excerpt = await memoryBriefExcerpt(OWNER, TODAY);
-    // The fixture graph has "Dinner with Maya" (now+30h) and "Quarterly planning review"
+    // The fixture graph has "Dinner with Sam" (now+30h) and "Quarterly planning review"
     // (now+20h) in the 48h window; the excerpt names at least one, with a clock time.
     expect(excerpt).not.toBe('');
-    expect(excerpt).toMatch(/Dinner with Maya|Quarterly planning review/);
+    expect(excerpt).toMatch(/Dinner with Sam|Quarterly planning review/);
     expect(excerpt).toMatch(/\d{1,2}:\d{2}\s?(AM|PM)/); // a 12h clock time is rendered
     expect(excerpt.length).toBeLessThanOrEqual(200); // char budget respected
     // Built for TODAY's date → the day-aware prefix is "Today:".
@@ -99,9 +99,9 @@ describe('AA2 — memoryBriefExcerpt', () => {
     enablePull();
     connectViaEnv();
     const excerpt = await memoryBriefExcerpt(OWNER, TODAY);
-    // "Dinner with Maya" links to person "Maya Lindqvist" → "with Maya Lindqvist".
-    if (excerpt.includes('Dinner with Maya')) {
-      expect(excerpt).toContain('Maya Lindqvist');
+    // "Dinner with Sam" links to person "Sam Rivera" → "with Sam Rivera".
+    if (excerpt.includes('Dinner with Sam')) {
+      expect(excerpt).toContain('Sam Rivera');
     }
   });
 
@@ -142,7 +142,7 @@ describe('AA2 — brief fold-in / byte-identical discipline', () => {
   it('flag OFF → the brief prose carries NO memory phrase (byte-identical shape)', async () => {
     connectViaEnv(); // creds resolve, but the flag is off
     const s = await summarizeDay(TODAY, { refresh: true });
-    expect(s.prose).not.toMatch(/Dinner with Maya|Quarterly planning review|life context/);
+    expect(s.prose).not.toMatch(/Dinner with Sam|Quarterly planning review|life context/);
     // The excerpt seam itself is empty, guaranteeing the prompt/prose match pre-AA2.
     expect(await memoryBriefExcerpt(OWNER, TODAY)).toBe('');
   });
@@ -163,7 +163,7 @@ describe('AA2 — brief fold-in / byte-identical discipline', () => {
     process.env.CI_SERVER_API_KEY = 'test-key';
     const s = await summarizeDay(TODAY, { refresh: true });
     expect(s.prose.length).toBeGreaterThan(0);
-    expect(s.prose).not.toMatch(/Dinner with Maya|Quarterly planning review/); // excerpt degraded to ''
+    expect(s.prose).not.toMatch(/Dinner with Sam|Quarterly planning review/); // excerpt degraded to ''
   });
 
   it('flag ON + fixture connector: the fallback prose folds in a memory phrase', async () => {
@@ -223,7 +223,7 @@ describe('AA2 — day-aware prefix + participant hardening (custom fixture)', ()
         {
           entity_id: 'evt-1',
           entity_type: 'event',
-          name: 'Dinner with Maya',
+          name: 'Dinner with Sam',
           description: 'Catch-up',
           properties: { start_time: 'now+30h', end_time: 'now+32h' },
         },
@@ -232,11 +232,11 @@ describe('AA2 — day-aware prefix + participant hardening (custom fixture)', ()
     });
 
     const todayExcerpt = await memoryBriefExcerpt(OWNER, TODAY);
-    expect(todayExcerpt).toMatch(/^Today: Dinner with Maya /);
+    expect(todayExcerpt).toMatch(/^Today: Dinner with Sam /);
 
     // The EOD Alignment builds the excerpt for TOMORROW's date — must NOT say "Today".
     const tomorrowExcerpt = await memoryBriefExcerpt(OWNER, addDays(TODAY, 1));
-    expect(tomorrowExcerpt).toMatch(/^Tomorrow: Dinner with Maya /);
+    expect(tomorrowExcerpt).toMatch(/^Tomorrow: Dinner with Sam /);
     expect(tomorrowExcerpt).not.toMatch(/^Today:/);
   });
 
@@ -274,7 +274,7 @@ describe('AA2 — day-aware prefix + participant hardening (custom fixture)', ()
           description: null,
           properties: { start_time: 'now+30h', end_time: 'now+31h' },
         },
-        { entity_id: 'p-1', entity_type: 'person', name: 'Maya Lindqvist', properties: {} },
+        { entity_id: 'p-1', entity_type: 'person', name: 'Sam Rivera', properties: {} },
         // A person node with a MISSING id → connector maps it to '' (mapNode). A link
         // to it must not spuriously match the event's blank-guarded walk.
         { entity_type: 'person', name: 'Ghost Person', properties: {} },
@@ -289,9 +289,9 @@ describe('AA2 — day-aware prefix + participant hardening (custom fixture)', ()
     });
 
     const excerpt = await memoryBriefExcerpt(OWNER, TODAY);
-    expect(excerpt).toMatch(/^Today: Planning sync with Maya Lindqvist /);
+    expect(excerpt).toMatch(/^Today: Planning sync with Sam Rivera /);
     // Deduped: exactly one occurrence of the name.
-    expect(excerpt.match(/Maya Lindqvist/g)).toHaveLength(1);
+    expect(excerpt.match(/Sam Rivera/g)).toHaveLength(1);
     // The blank-id ghost never leaks in.
     expect(excerpt).not.toContain('Ghost Person');
   });
