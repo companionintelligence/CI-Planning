@@ -25,8 +25,13 @@ Worth remembering the next time a test looks "just flaky".
 | 5 — auto-nest on create | merged | [#545](https://github.com/companionintelligence/CI-Planning/pull/545) |
 | 6 — mobility ladder | merged | [#550](https://github.com/companionintelligence/CI-Planning/pull/550) + [#551](https://github.com/companionintelligence/CI-Planning/pull/551) |
 | 7 — day-type reflow | merged | [#553](https://github.com/companionintelligence/CI-Planning/pull/553) |
-| **8 — the learning parse LLM** | **open** | 3–4 days, server, independent of everything |
-| **9 — open time stays honest** | **open** | half a day, anytime |
+| 9 — open time stays honest | PR open | [#556](https://github.com/companionintelligence/CI-Planning/pull/556) |
+| L02-first placement (was unowned) | PR open | [#557](https://github.com/companionintelligence/CI-Planning/pull/557) |
+| 8 — the learning parse LLM | PR open | [#558](https://github.com/companionintelligence/CI-Planning/pull/558) |
+
+**Every item in this handoff now has a PR.** The three below are the original
+write-up, kept as written; what each one turned out to involve is in *What the last
+three found* at the bottom.
 
 ## Start here — the three open items
 
@@ -190,6 +195,42 @@ Gotchas, worst first:
 - `DELETE /api/tasks/:id` is a **soft** delete (status → `cancelled`).
 - **Never run `applyDayReflow` against the owner's dev database** to "see it work" —
   it moves and deletes real blocks. Seed a block, verify, delete it; or use the tests.
+
+## What the last three found
+
+Written after the fact, in the same spirit as the lessons above — each of these was a
+surprise, not something the plan predicted.
+
+- **Phase 9 (#556) was not a refactor.** Lifting the busy-interval builder out of
+  `OpenTimeSummary` surfaced that it disagreed with the two predicates the client
+  already had for "does this block hold minutes" (`isSlotOccupied`, the wizard's gap
+  finder). Open time subtracted all-day rows, someday concepts and cancelled work,
+  none of which the others count — an all-day row's `end_at` is start + duration, so
+  subtracting it deleted hours nothing was using. The rule now has one home,
+  `occupiesMinuteAxis` in `overlay.ts`.
+- **L02-first (#557) was blocked on `block_type`.** The two Plan passes in `autoplan`
+  both require `block_type = 'scheduled'`, which only the Element wizard writes; every
+  other creation path leaves it NULL, and `auto-nest` accepts NULL happily. So a
+  container the owner could nest into by hand was invisible to the autoscheduler. Four
+  such rows exist in the owner's own database. `dayObstacles` keys on the same value
+  and was left alone — see that PR's closing note.
+- **Phase 8 (#558) needed the plan's acceptance test to set the constant.** The
+  learning floor was written at 5 by analogy with `OUTCOME_FLOOR = 20`, which
+  contradicts the plan's own "correcting twice makes the third similar input classify
+  correctly". It is 2, and a test asserts the constant so raising it fails loudly.
+
+Two more verification lessons, both earned the hard way:
+
+- **Mutate the source to check a test.** Every claim in these three PRs was checked by
+  breaking the code and confirming the intended test failed. It caught two tests that
+  could not fail: a "does not double-subtract" fixture that passed under every mutant
+  (`mergeRanges` collapsed the overlap before the code under test saw it), and an
+  untested day-clamp. Both were rewritten rather than shipped as decoration.
+- **uuid7 ties are random within a millisecond.** A test fixture that writes rows in a
+  loop gives them all the same `assigned_at`, so any `ORDER BY ts, id` read falls
+  through to uuid7's random within-ms bytes. Phase 8's tests passed alone and failed in
+  the suite until every fixture row got a distinct timestamp. If a read's order matters,
+  the fixture must make it total.
 
 ## Open questions for the owner
 
