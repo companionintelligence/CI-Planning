@@ -191,7 +191,7 @@ describe('titleSuggestsComplex', () => {
   it('leaves ordinary single actions alone', () => {
     expect(titleSuggestsComplex('Call the dentist')).toBe(false);
     expect(titleSuggestsComplex('Pay the electricity bill')).toBe(false);
-    expect(titleSuggestsComplex('Send email to Rek')).toBe(false);
+    expect(titleSuggestsComplex('Send email to Bluepeak')).toBe(false);
   });
 
   it('is case-insensitive and tolerant of punctuation', () => {

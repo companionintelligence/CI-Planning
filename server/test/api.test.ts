@@ -206,7 +206,7 @@ describe('tasks / blocks / tags / possibles API', () => {
 
   it('suggest-tags returns an array constrained to existing tags (empty when Ollama is down)', async () => {
     await api(server.url, '/api/tasks', { method: 'POST', json: { title: 'seed', tags: ['email'] } });
-    const res = await api(server.url, '/api/tasks/suggest-tags', { method: 'POST', json: { title: 'Email Rek about the invoice' } });
+    const res = await api(server.url, '/api/tasks/suggest-tags', { method: 'POST', json: { title: 'Email Bluepeak about the invoice' } });
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body.tags)).toBe(true);
     for (const t of res.body.tags) expect(['email']).toContain(t); // never invents a tag

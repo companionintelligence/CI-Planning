@@ -52,7 +52,7 @@ describe('tagTitleFallback', () => {
   const vocab = ['email', 'finance', 'deep-work', 'errands'];
 
   it('matches whole words, not substrings', () => {
-    expect(tagTitleFallback('Email Rek about FINANCE', vocab).sort()).toEqual(['email', 'finance']);
+    expect(tagTitleFallback('Email Bluepeak about FINANCE', vocab).sort()).toEqual(['email', 'finance']);
     expect(tagTitleFallback('emailing the team', vocab)).toEqual([]);
   });
 
@@ -101,7 +101,7 @@ describe('tagUntaggedTasks', () => {
 
   it('tags an untagged task using the heuristic fallback (Ollama unavailable in tests)', async () => {
     seedTag('email');
-    const t = insertTask('Send email to Rek');
+    const t = insertTask('Send email to Bluepeak');
 
     const result = await tagUntaggedTasks(OWNER);
 
@@ -148,7 +148,7 @@ describe('tagUntaggedTasks', () => {
   it('ignores muted tags', async () => {
     const id = seedTag('email');
     sqlite.prepare(`UPDATE tags SET muted = 1 WHERE id = ?`).run(id);
-    const t = insertTask('Send email to Rek');
+    const t = insertTask('Send email to Bluepeak');
 
     const result = await tagUntaggedTasks(OWNER);
 
@@ -160,7 +160,7 @@ describe('tagUntaggedTasks', () => {
   // user can see; the cron omits the argument and sweeps the whole owner.
   it('honours the taskIds scope, leaving out-of-scope tasks untouched', async () => {
     seedTag('email');
-    const inScope = insertTask('Send email to Rek');
+    const inScope = insertTask('Send email to Bluepeak');
     const outOfScope = insertTask('Email the invoice');
 
     const result = await tagUntaggedTasks(OWNER, [inScope]);
@@ -172,7 +172,7 @@ describe('tagUntaggedTasks', () => {
 
   it('treats an empty scope as "nothing selected", not owner-wide', async () => {
     seedTag('email');
-    const t = insertTask('Send email to Rek');
+    const t = insertTask('Send email to Bluepeak');
 
     const result = await tagUntaggedTasks(OWNER, []);
 
@@ -194,7 +194,7 @@ describe('tagUntaggedTasks', () => {
 
   it('is idempotent: running twice does not duplicate tags', async () => {
     seedTag('email');
-    const t = insertTask('Email Rek about the invoice');
+    const t = insertTask('Email Bluepeak about the invoice');
 
     await tagUntaggedTasks(OWNER);
     expect((await levels(t)).l2).toEqual(['email']);
@@ -227,7 +227,7 @@ describe('tagUntaggedTasks', () => {
   });
 
   it('returns helpful log message when vocabulary is empty', async () => {
-    insertTask('Email Rek'); // no tags seeded
+    insertTask('Email Bluepeak'); // no tags seeded
     const result = await tagUntaggedTasks(OWNER);
     expect(result.tagged).toBe(0);
     expect(result.log).toMatch(/vocabulary/i);
@@ -307,7 +307,7 @@ describe('tag_tasks scheduled job', () => {
 
   it('can be triggered via POST /api/jobs/:id/run and updates items_updated', async () => {
     seedTag('email');
-    insertTask('Email Rek about the project');
+    insertTask('Email Bluepeak about the project');
 
     const listRes = await api(srv.url, '/api/jobs');
     const job = (listRes.body.jobs as { kind: string; id: string }[]).find((j) => j.kind === 'tag_tasks')!;

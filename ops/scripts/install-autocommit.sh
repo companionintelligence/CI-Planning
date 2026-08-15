@@ -5,7 +5,7 @@ DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT="$DIR/scripts/plan-autocommit.sh"
 PLIST_SRC="$DIR/launchd/com.liam.plan-autocommit.plist"
 PLIST_DEST="$HOME/Library/LaunchAgents/com.liam.plan-autocommit.plist"
-PLAN_DIR="${PLAN_DIR:-$HOME/Documents/Liam_Plan}"
+PLAN_DIR="${PLAN_DIR:-$HOME/Documents/Owner_Plan}"
 
 chmod +x "$SCRIPT"
 

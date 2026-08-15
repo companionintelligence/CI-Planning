@@ -84,7 +84,7 @@ describe('muted tags are never suggested — per surface', () => {
   // which is exactly the path that would otherwise re-introduce a muted name.
   it('the Auto-tag sweep will not apply a muted tag', async () => {
     seedTag('email', 'intention', 1); // muted
-    const t = insertTask('Send email to Rek');
+    const t = insertTask('Send email to Bluepeak');
     const r = await tagUntaggedTasks(OWNER);
     expect(r.tagged).toBe(0);
     expect(tagNamesOn(t)).toEqual([]);
@@ -92,7 +92,7 @@ describe('muted tags are never suggested — per surface', () => {
 
   it('the sweep still applies an UNMUTED tag (the control)', async () => {
     seedTag('email');
-    const t = insertTask('Send email to Rek');
+    const t = insertTask('Send email to Bluepeak');
     await tagUntaggedTasks(OWNER);
     expect(tagNamesOn(t)).toContain('email');
   });
@@ -126,7 +126,7 @@ describe('muted tags are never suggested — per surface', () => {
   it('an explicitly typed #tag still applies even when muted', async () => {
     seedTag('email', 'intention', 1);
     const { body } = await api(srv.url, '/api/tasks/quick/parse', {
-      method: 'POST', json: { text: 'ping Rek #email' },
+      method: 'POST', json: { text: 'ping Bluepeak #email' },
     });
     expect(body.parsed.tags).toContain('email');
   });

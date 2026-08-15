@@ -4,7 +4,7 @@
  * the moment it's typed — no model required. The LLM path (suggest-tags endpoint)
  * refines this when Ollama is available; this is the always-on baseline.
  *
- * Matching is word-aware for single-word tags ("email" tags "Email Rek" but not
+ * Matching is word-aware for single-word tags ("email" tags "Email Bluepeak" but not
  * "emailing"), and phrase-aware for multi-word tags ("deep-work" tags "deep work
  * session"). Returns the original tag names (already normalized by the store).
  */
