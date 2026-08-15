@@ -515,8 +515,9 @@ export async function status(owner?: string, opts?: { fresh?: boolean }): Promis
   if (!probe.ok) {
     return { ...eff, url: config.ollamaUrl, available: false, ready: false, models: [], missingModels: [], error: probe.error };
   }
-  // The embed tier is only exercised by dedupe/memory, so a missing embedder is
-  // reported but does not by itself make the app "not ready" for AI features.
+  // The embed tier is only exercised by dedupe/memory and Triality's novelty blend, so a
+  // missing embedder is reported but does not by itself make the app "not ready" for AI
+  // features. The paths that do call it ask `embedReady()` instead.
   const missingModels = [eff.fastModel, eff.qualityModel, eff.embedModel].filter((m) => !isInstalled(m));
   return {
     ...eff,
@@ -542,5 +543,28 @@ export async function isReady(): Promise<boolean> {
   return (await status()).ready;
 }
 
-export const ollama = { generate, generateJson, llmOrNull, parseJsonLoose, embed, status, isReady };
+/**
+ * The same question as `isReady()`, asked about the EMBEDDING tier.
+ *
+ * A separate predicate because `ready` is deliberately the generation pair (fast +
+ * quality): a missing embedder is reported but does not turn AI off. An embedding path
+ * that gated on `isReady()` would therefore be asking about two models it never calls —
+ * and would still fire `/api/embeddings` at an Ollama with no embedder pulled.
+ *
+ * "Unknown" counts as NOT ready, exactly as it does for `ready`. The installed set is
+ * unknown after a failed probe and under NODE_ENV=test (see `applyInstalled`), and in
+ * both cases starting a per-request embedding fan-out is the wrong bet — a fan-out that
+ * races a wall-clock budget answers the same request differently depending on how busy
+ * the box is.
+ *
+ * `owner` is taken (and forwarded) because `embed()` resolves its model through
+ * `resolveEmbedModel(currentOwnerId())`: asked without one, this would report on the
+ * env/auto-selected embedder while the call it gates used the owner's Settings override.
+ */
+export async function embedReady(owner?: string): Promise<boolean> {
+  const s = await status(owner);
+  return s.available && isInstalled(s.embedModel);
+}
+
+export const ollama = { generate, generateJson, llmOrNull, parseJsonLoose, embed, status, isReady, embedReady };
 logger.debug('ollama client ready', { url: config.ollamaUrl });
