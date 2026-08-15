@@ -265,7 +265,9 @@ export type TrialityResult =
 
 export interface TrialityOpts {
   /** Injectable embedding fn (the possibles.ts embedFn idiom). `null` forces the
-   *  categorical-only path; undefined = use Ollama when it answers, degrade silently. */
+   *  categorical-only path; undefined = use Ollama when it has an embedder pulled AND
+   *  answers inside the stage budget, degrade silently otherwise. An injected fn is
+   *  taken at its word — the readiness gate gets asked about Ollama only. */
   embedFn?: ((text: string) => Promise<number[]>) | null;
   getWeightsFn?: GetWeightsFn;
 }
@@ -684,8 +686,8 @@ function squashedCosineDistance(a: number[], b: number[]): number {
 
 /**
  * N: categorical novelty (1 − H_class), blended 50/50 with embedding-centroid
- * distance when embeddings answer. Ollama down / no embedFn ⇒ categorical only —
- * never blocks, never throws past this frame.
+ * distance when embeddings answer. Ollama down, no embedder pulled, or no embedFn ⇒
+ * categorical only — never blocks, never throws past this frame.
  *
  * `classStrengths` — the LEVEL-3 value — not the blended H, and the parameter is named
  * for it so the two can never be swapped by accident. Novelty asks "is this exact kind
@@ -708,6 +710,26 @@ async function noveltyScores(
   if (!embed) return categorical;
 
   try {
+    // Readiness gate on the DEFAULT embedder only — an injected embedFn is the caller's
+    // business, and the fakes the engine tests drive this stage with must still run.
+    //
+    // Load-bearing, not tidying. This was the one model call in the request path with no
+    // availability check, and combined with the budget below that made N a COIN FLIP
+    // whenever Ollama was reachable-but-busy: the same request answered twice a second
+    // apart returned a blended N one time and a categorical N the next — a different
+    // confidence on the wire and a different score blob in the learning corpus for an
+    // identical situation. Asked BEFORE the budget rather than left to the fallback
+    // because "the embedder isn't there" and "the embedder was slow today" must not be
+    // the same observable event. INSIDE the try like every other line here: this frame
+    // is the one that owes callers "never throws".
+    //
+    // debug, not info, unlike the two bounded-skip logs below: those are anomalies, this
+    // is the steady state on any box with no embedder pulled — one line per request.
+    if (embedFn === undefined && !(await ollama.embedReady(ownerId))) {
+      logger.debug('triality: no embedder installed — categorical novelty only', { ownerId });
+      return categorical;
+    }
+
     const since = new Date(now.getTime() - WINDOW_DAYS * 86_400_000).toISOString();
     const recent = await store()
       .prepare(
