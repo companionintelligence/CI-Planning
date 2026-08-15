@@ -15,6 +15,7 @@ import { flightPlanRouter } from './flight-plan.js';
 import { sseRouter } from './sse.js';
 import { patternBlocksRouter } from './pattern-blocks.js';
 import { dayTypesRouter } from './day-types.js';
+import { dayReflowRouter } from './day-reflow.js';
 import { patternPrefsRouter } from './pattern-prefs.js';
 import { categoryPrefsRouter } from './category-prefs.js';
 import { connectionPrefsRouter } from './connection-prefs.js';
@@ -63,6 +64,7 @@ export function mountRoutes(app: Koa) {
     flightPlanRouter(),
     patternBlocksRouter(),
     dayTypesRouter(),
+    dayReflowRouter(),
     patternPrefsRouter(),
     categoryPrefsRouter(),
     connectionPrefsRouter(),

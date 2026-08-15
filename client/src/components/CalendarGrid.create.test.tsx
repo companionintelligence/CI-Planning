@@ -18,6 +18,8 @@ vi.mock('../stores/index.js', async () => {
     setElementModal: vi.fn(),
     // Chips colour via blockColorVar(block, categoryPrefs) — same source as the Planner.
     categoryPrefs: () => ({ prefs: {} }),
+    // Phase 7 — the component reads this for the stranded-block treatment.
+    conflictedBlockIds: () => new Set<string>(),
     calendarAxisState: state,
     __resetCalendarAxisState: () => setState({ ...DEFAULT }),
     toggleCalendarTop: () => setState((s: typeof DEFAULT) => ({ ...s, topExpanded: !s.topExpanded })),

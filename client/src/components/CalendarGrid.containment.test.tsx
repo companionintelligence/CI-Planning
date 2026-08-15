@@ -25,6 +25,8 @@ vi.mock('../stores/index.js', async () => {
   return {
     setElementModal: vi.fn(),
     categoryPrefs: () => ({ prefs: {} }),
+    // Phase 7 — the component reads this for the stranded-block treatment.
+    conflictedBlockIds: () => new Set<string>(),
     calendarAxisState: state,
     toggleCalendarTop: vi.fn(),
     toggleCalendarBottom: vi.fn(),

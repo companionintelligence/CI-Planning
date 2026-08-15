@@ -21,6 +21,8 @@ vi.mock('../stores/index.js', async () => {
     setElementModal: vi.fn(),
     // Chips colour via blockColorVar(block, categoryPrefs) — same source as the Planner.
     categoryPrefs: () => ({ prefs: {} }),
+    // Phase 7 — the component reads this for the stranded-block treatment.
+    conflictedBlockIds: () => new Set<string>(),
     calendarAxisState: state, // collapse state now lives in the store (0111); default collapsed
     toggleCalendarTop: vi.fn(),
     toggleCalendarBottom: vi.fn(),
