@@ -27,7 +27,8 @@
 > - **"No LLM in the scoring path" (§11) was written broader than what shipped.** No
 >   *generative* model chooses, writes, or re-orders a pick — that part holds absolutely.
 >   But `noveltyScores` in `services/triality.ts` blends cosine distance from an
->   **embedding** centroid into N at 50% whenever Ollama answers and the owner has ≥ 5
+>   **embedding** centroid into N at 50% whenever the owner's embedder is installed, Ollama
+>   answers, and the owner has ≥ 5
 >   recent completions, and N carries weight 0.30 in the Contextual and Novel slots (0 in
 >   Habitual). So stopping Ollama can change the picks against identical SQLite state, and
 >   the honest claim is *reproducible at a fixed embedding availability* rather than
@@ -35,7 +36,10 @@
 >   (a bigger pool skips embedding entirely rather than half-embedding it),
 >   `EMBED_TIMEOUT_MS = 3000` per call, and one `NOVELTY_BUDGET_MS = 4000` deadline over the
 >   whole stage with an all-or-nothing categorical fallback — so a slow Ollama degrades the
->   ranking instead of stalling the request. §5 and §11 below are narrowed to match.
+>   ranking instead of stalling the request. It is also *gated*: the stage is entered only
+>   when `ollama.embedReady()` confirms the effective embedder is pulled, so a box that
+>   cannot embed never pays the budget and never sees N wobble between two identical
+>   requests. §5 and §11 below are narrowed to match.
 >
 > **Migration numbers below are the DESIGN's "next free slot" placeholders; as built
 > the feature occupies `0139_triality_flag` · `0140_triality_log` ·
@@ -321,7 +325,9 @@ when one is reachable (below), which is the whole of the feature's I/O and the r
   the `completed_at` ordering. No new table — it is a scan over 90 days of local
   rows, which SQLite does in microseconds at this app's scale.
 - **N (novelty)** = `1 − H_class` where `H_class` is habit strength at the
-  signature-class level; when Ollama embeddings are reachable *and* the owner has ≥ 5
+  signature-class level; when the owner's effective embedder is actually pulled
+  (`ollama.embedReady()` — *reachable* alone is not enough, and an unknown installed set
+  counts as no) *and* the owner has ≥ 5
   completions in the window, blended 50/50 with cosine distance from the centroid of the
   owner's last 25 completed-task embeddings (`nomic-embed-text`, same fallback ladder as the
   dedupe path in `services/possibles.ts`). Ollama down ⇒ the categorical term alone. Never
@@ -541,6 +547,7 @@ history yet (N of 10 reflected completions)" beats an over-confident guess.
 | Recent ritual mood | `day_energy = 0`; C's energy factor inert |
 | Ollama | categorical novelty only; template rationale |
 | Ollama reachable but slow, or a candidate pool over 40 | categorical novelty only — the whole embedding stage is skipped or abandoned as one unit (§5), never partially applied |
+| Ollama reachable but no embedder pulled (or the installed set is unknown) | categorical novelty only — the stage is not entered at all, so "no embedder" and "a slow embedder" are not the same observable event |
 | < 5 completions in the window | categorical novelty only — too little signal for a meaningful centroid |
 | Memory (off/unreachable) | `memory_context = 0` |
 | Life-priorities self-audit | `stated_c = 0` — deficit pull halves |
