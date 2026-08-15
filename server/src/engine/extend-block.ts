@@ -1,6 +1,7 @@
 import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { stampRow } from '../sync/apply.js';
+import { HOLDS_SLOT_SQL } from './mobility.js';
 
 /**
  * Phase Z · Z3 (Time-Sense) — "Keep working" block extension (§1.1a).
@@ -117,11 +118,15 @@ export async function extendBlock(
   // Top-level timeline entities starting at/after this block's ORIGINAL end, in
   // order — the only things an end-extension can run into. Scoped to real
   // obstacles (mirrors dayObstacles): locked, meetings, live task blocks, focus/habit
-  // sessions (protected work, #392), and scheduled Plan containers. break/buffer padding
-  // is deliberately omitted — it stays loose. `parent_block_id IS NULL` excludes child blocks —
-  // they live inside a container (itself fixed here) and must never be pushed
-  // independently. Someday Plans and completed/skipped/cancelled blocks aren't
-  // timeline obstacles.
+  // sessions (protected work, #392), and Time Blocks that hold their slot. break/buffer
+  // padding is deliberately omitted — it stays loose. `parent_block_id IS NULL` excludes
+  // child blocks — they live inside a container (itself fixed here) and must never be
+  // pushed independently. Completed/skipped/cancelled blocks aren't timeline obstacles.
+  //
+  // The container arm is `HOLDS_SLOT_SQL` (engine/mobility.ts) — the same rung
+  // dayObstacles uses, so "mirrors dayObstacles" is now enforced rather than asserted.
+  // It kept Someday Plans out, as the old hand-written clause did, and also drops
+  // all-day rows and unrendered recurrence templates.
   const subsequent = await store()
     .prepare(
       `SELECT id, task_id, title, start_at, end_at, block_kind, block_type, is_locked, status,
@@ -135,7 +140,7 @@ export async function extendBlock(
             OR block_kind = 'task'
             OR block_kind = 'focus'
             OR block_kind = 'habit'
-            OR (block_kind = 'timeblock' AND block_type = 'scheduled')
+            OR (${HOLDS_SLOT_SQL})
           )
         ORDER BY start_at ASC`,
     )
