@@ -2,7 +2,7 @@ import { For, Show, createMemo, createResource } from 'solid-js';
 import { api } from '../lib/api.js';
 import { blocks, tags } from '../stores/index.js';
 import {
-  formatClock, formatDuration, minutesOfDay, openTime, parseHHMM, totalOpen,
+  busyFromBlocks, formatClock, formatDuration, openTime, parseHHMM, totalOpen,
   type TimeRange,
 } from '../lib/open-time.js';
 
@@ -48,11 +48,7 @@ export function OpenTimeSummary(props: { date: string }) {
   });
 
   /** Everything scheduled on this date, as minute intervals. */
-  const busy = createMemo<TimeRange[]>(() =>
-    (blocks() ?? [])
-      .map((b) => ({ start: minutesOfDay(b.start_at), end: minutesOfDay(b.end_at) }))
-      .filter((r): r is TimeRange => r.start !== null && r.end !== null && r.end > r.start),
-  );
+  const busy = createMemo<TimeRange[]>(() => busyFromBlocks(blocks() ?? [], props.date));
 
   const segments = createMemo(() => openTime(byDirection(), busy()));
   const total = () => totalOpen(segments());
