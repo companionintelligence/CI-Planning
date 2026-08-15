@@ -18,7 +18,7 @@
  * Plan" affordance).
  */
 import { store } from '../db/store.js';
-import { REFLOW_CANDIDATE_SQL } from './mobility.js';
+import { AUTO_PLACED_SQL, REFLOW_CANDIDATE_SQL } from './mobility.js';
 import { broadcast } from '../routes/sse.js';
 import { serverTimezone, zonedWallTimeToUTC, utcDayBounds, localDateInTZ, todayInTZ } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
@@ -978,7 +978,7 @@ export async function fillByPriority(owner: string = currentOwnerId(), opts: { d
     (await store()
       .prepare(
         `SELECT DISTINCT task_id FROM time_blocks
-          WHERE owner_id = ? AND is_auto = 1 AND source_kind = 'agent' AND block_kind = 'task' AND task_id IS NOT NULL
+          WHERE owner_id = ? AND ${AUTO_PLACED_SQL} AND task_id IS NOT NULL
             AND start_at < ? AND end_at > ?`,
       )
       .all(owner, dayEndISO, dayStartISO) as { task_id: string }[]).map((r) => r.task_id),
