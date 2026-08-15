@@ -19,7 +19,7 @@ import { snapToSlot, minuteToHHMM, isSlotOccupied } from '../lib/create-click.js
 import { useDropZone } from '../lib/draggable.js';
 import { isSelected, toggleSelection, setActiveTask, setActiveBlock, selection, setRoutineModal } from '../stores/selection.js';
 import { layoutBlocks } from './CalendarGrid.js';
-import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay, tags, categoryPrefs, patternPrefs, patternBlocks, tasks, plannerAxisState, togglePlannerTop, togglePlannerBottom, texturesEnabled, objectiveAccentByBlock, askRecurringScope, isRecurringOccurrence } from '../stores/index.js';
+import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay, tags, categoryPrefs, patternPrefs, patternBlocks, tasks, plannerAxisState, togglePlannerTop, togglePlannerBottom, texturesEnabled, objectiveAccentByBlock, askRecurringScope, isRecurringOccurrence, conflictedBlockIds } from '../stores/index.js';
 import { accentColor } from '../lib/objective-accent.js';
 import { isAllDay } from '../lib/overlay.js';
 import { elementTextureStyle, blockColorVar, doneHatchStyle } from '../lib/textures.js';
@@ -455,6 +455,8 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
     );
   };
   const conflict = () => props.placed.cols > 1;
+  // Phase 7 — stranded outside its direction's windows by a day-type change.
+  const stranded = () => conflictedBlockIds().has(b().id);
   // Settled = ANY terminal status, matching BlockCard.done() and the server's
   // TERMINAL_BLOCK_STATUSES (block-task-sync.ts) — the views must agree on what reads
   // as settled history vs live work. `completed()` (the done semantics: hatch +
@@ -510,8 +512,9 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
         'opacity-40': settled() && b().status !== 'completed',
         'opacity-70': completed(),
         'anim-done-glow': glow(),
-        'border-l-[3px] border-l-primary border-border': !props.isNextUp,
-        'border-l-[3px] border-l-primary border-primary ring-2 ring-primary/70': props.isNextUp,
+        'border-l-[3px] border-l-primary border-border': !props.isNextUp && !stranded(),
+        'border-l-[3px] border-l-primary border-primary ring-2 ring-primary/70': props.isNextUp && !stranded(),
+        'border-l-[3px] border-l-destructive border-destructive ring-2 ring-destructive/70': stranded(),
         'cursor-grab': !locked() && !props.updateMode,
         'cursor-pointer': props.updateMode,
         'cursor-default': locked() && !props.updateMode,
