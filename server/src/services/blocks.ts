@@ -1,6 +1,7 @@
 import { and, eq, gte, inArray, lte } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { store } from '../db/store.js';
+import { REFLOW_CANDIDATE_SQL } from '../engine/mobility.js';
 import { timeBlocks } from '../db/schema.js';
 import { toApi, toApiList, toBlockApi } from '../lib/serialize.js';
 import { localISODate } from '../lib/dates.js';
@@ -835,7 +836,7 @@ export async function clearDayAutoBlocks(ownerId: string, date: string): Promise
     .prepare(
       `DELETE FROM time_blocks
         WHERE owner_id = ?
-          AND is_auto = 1 AND is_locked = 0 AND block_kind = 'task' AND source_kind = 'agent'
+          AND ${REFLOW_CANDIDATE_SQL}
           AND status NOT IN (${TERMINAL_BLOCK_STATUS_SQL})
           AND start_at < ? AND end_at > ?
         RETURNING id, task_id`,

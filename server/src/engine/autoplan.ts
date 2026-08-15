@@ -18,6 +18,7 @@
  * Plan" affordance).
  */
 import { store } from '../db/store.js';
+import { REFLOW_CANDIDATE_SQL } from './mobility.js';
 import { broadcast } from '../routes/sse.js';
 import { serverTimezone, zonedWallTimeToUTC, utcDayBounds, localDateInTZ, todayInTZ } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
@@ -379,7 +380,7 @@ async function clearPriorAuto(
   await store()
     .prepare(
       `DELETE FROM time_blocks
-        WHERE owner_id = ? AND is_auto = 1 AND is_locked = 0 AND block_kind = 'task' AND source_kind = 'agent'
+        WHERE owner_id = ? AND ${REFLOW_CANDIDATE_SQL}
           AND status NOT IN (${TERMINAL_BLOCK_STATUS_SQL})
           AND task_id IN (${opts.taskIds.map(() => '?').join(',')})
           AND start_at < ? AND end_at > ?` + notIn
@@ -1067,7 +1068,7 @@ async function clearPriorAutoInWindow(owner: string, windowStartMs: number, wind
   await store()
     .prepare(
       `DELETE FROM time_blocks
-        WHERE owner_id = ? AND is_auto = 1 AND is_locked = 0 AND block_kind = 'task' AND source_kind = 'agent'
+        WHERE owner_id = ? AND ${REFLOW_CANDIDATE_SQL}
           AND status NOT IN (${TERMINAL_BLOCK_STATUS_SQL})
           AND task_id IN (${taskIds.map(() => '?').join(',')})
           AND start_at < ? AND end_at > ?`
