@@ -5,6 +5,10 @@ import { logger } from '../lib/logger.js';
 import { currentOwnerId } from '../lib/context.js';
 import { promotePossible } from '../services/possibles.js';
 import { EXCLUDE_REVIEWED_SQL, ONLY_REVIEWED_SQL, REVIEW_SOURCE_PARAMS } from '../services/review-gate.js';
+// The cosine SIMILARITY this file's dedupe decisions are made with — moved to lib so
+// the classification exemplar index scores against the same one (NOT triality's
+// squashed distance, which is a different function despite the similar name).
+import { cosineSimilarity } from '../lib/vector.js';
 
 export interface PromoteResult {
   promoted: number;
@@ -82,20 +86,6 @@ export async function promotePossibles(
   return { promoted, failed };
 }
 
-/** Cosine SIMILARITY in [-1,1] (1 = same direction, 0 = orthogonal). A zero-norm vector
- *  yields 0 via the `|| 1` denominator guard, never NaN. This is NOT triality's
- *  `squashedCosineDistance` — that one is a squashed DISTANCE and is not `1 − this`. */
-function cosineSimilarity(a: number[], b: number[]): number {
-  let dot = 0;
-  let na = 0;
-  let nb = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    na += a[i] * a[i];
-    nb += b[i] * b[i];
-  }
-  return dot / (Math.sqrt(na) * Math.sqrt(nb) || 1);
-}
 
 // Phase M C3: test override for the sqlite-vec path. null = use the real `vecAvailable`.
 let vecOverride: boolean | null = null;
