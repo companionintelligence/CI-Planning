@@ -1,7 +1,7 @@
 import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { stampRow } from '../sync/apply.js';
-import { HOLDS_SLOT_SQL } from './mobility.js';
+import { PLACED_TIMEBLOCK_SQL } from './mobility.js';
 
 /**
  * Phase Z · Z3 (Time-Sense) — "Keep working" block extension (§1.1a).
@@ -123,7 +123,7 @@ export async function extendBlock(
   // child blocks — they live inside a container (itself fixed here) and must never be
   // pushed independently. Completed/skipped/cancelled blocks aren't timeline obstacles.
   //
-  // The container arm is `HOLDS_SLOT_SQL` (engine/mobility.ts) — the same rung
+  // The container arm is `PLACED_TIMEBLOCK_SQL` (engine/mobility.ts) — the same rung
   // dayObstacles uses, so "mirrors dayObstacles" is now enforced rather than asserted.
   // It kept Someday Plans out, as the old hand-written clause did, and also drops
   // all-day rows and unrendered recurrence templates.
@@ -140,7 +140,7 @@ export async function extendBlock(
             OR block_kind = 'task'
             OR block_kind = 'focus'
             OR block_kind = 'habit'
-            OR (${HOLDS_SLOT_SQL})
+            OR (${PLACED_TIMEBLOCK_SQL})
           )
         ORDER BY start_at ASC`,
     )

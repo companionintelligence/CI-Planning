@@ -172,35 +172,46 @@ describe('a Time Block holds its slot against the direction-window pass', () => 
 describe('rows that are Time Blocks but occupy no minutes', () => {
   // Same geometry, same window, opposite expectation — each of these must leave 09:00
   // free, or the fix would have started blocking time nothing is using.
+  //
+  // All UNTAGGED, and the parent assertion is load-bearing: if one of these shapes ever
+  // became a real container, the L02-first pass would nest the task INSIDE it at 09:00
+  // and a start-time-only assertion would still read 09:00 and pass. Untagged, nothing
+  // can claim it; the parent check catches it anyway if something tries.
 
   it('a someday concept holds nothing — it is parked, not placed', async () => {
-    container({ start: '09:00', end: '10:00', blockType: 'someday' });
+    container({ start: '09:00', end: '10:00', blockType: 'someday', tag: null });
     stageTask('ship the release');
 
     await placeFlightPlan(OWNER, { date: DAY });
 
-    expect(placementOf('ship the release')!.start).toBe('09:00');
+    const p = placementOf('ship the release')!;
+    expect(p.parent).toBeNull();
+    expect(p.start).toBe('09:00');
   });
 
   it('an all-day row holds nothing — it lives in the header lane', async () => {
     // Its `end_at` is start + duration, an artifact of the notNull column rather than a
     // span; blocking on it would delete an hour nothing is using.
-    container({ start: '09:00', end: '10:00', allDay: true });
+    container({ start: '09:00', end: '10:00', allDay: true, tag: null });
     stageTask('ship the release');
 
     await placeFlightPlan(OWNER, { date: DAY });
 
-    expect(placementOf('ship the release')!.start).toBe('09:00');
+    const p = placementOf('ship the release')!;
+    expect(p.parent).toBeNull();
+    expect(p.start).toBe('09:00');
   });
 
   it('a recurrence TEMPLATE holds nothing — it is never on any day', async () => {
     // A rule with no parent is never rendered; only its materialized instances are.
-    container({ start: '09:00', end: '10:00', recurrenceRule: 'FREQ=WEEKLY;BYDAY=MO' });
+    container({ start: '09:00', end: '10:00', recurrenceRule: 'FREQ=WEEKLY;BYDAY=MO', tag: null });
     stageTask('ship the release');
 
     await placeFlightPlan(OWNER, { date: DAY });
 
-    expect(placementOf('ship the release')!.start).toBe('09:00');
+    const p = placementOf('ship the release')!;
+    expect(p.parent).toBeNull();
+    expect(p.start).toBe('09:00');
   });
 
   it('a materialized INSTANCE of that rule does hold its slot', async () => {
