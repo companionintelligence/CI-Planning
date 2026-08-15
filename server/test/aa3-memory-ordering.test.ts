@@ -126,9 +126,9 @@ describe('AA3a authorPlanOrder integration (fixture graph)', () => {
     sqlite.exec(`DELETE FROM flight_plan`);
     sqlite.exec(`DELETE FROM daily_plan WHERE owner_id = '${OWNER}'`);
     delete process.env.CI_SERVER_URL; delete process.env.CI_SERVER_API_KEY; process.env.MEMORY_MODE = 'fixture'; // explicit fixture opt-in (unset = off)
-    // 'related' relates to fixture person "Maya Lindqvist"; 'other' matches nothing.
+    // 'related' relates to fixture person "Sam Rivera"; 'other' matches nothing.
     // Same priority; 'other' has the EARLIER deadline so, without memory, it leads.
-    insertTask('t-related', 'Prep for Lindqvist', 3, '2026-12-31');
+    insertTask('t-related', 'Prep for Rivera', 3, '2026-12-31');
     insertTask('t-other', 'File taxes', 3, '2026-06-25');
     stage('t-related', 0);
     stage('t-other', 1);

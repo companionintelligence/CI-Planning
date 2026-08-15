@@ -186,22 +186,22 @@ describe('fixture transport (MEMORY_MODE default)', () => {
   });
 
   it('graphSearch matches name/description substrings', async () => {
-    const g = await graphSearch(OWNER, 'maya');
-    expect(g.nodes.some((n) => n.name === 'Maya Lindqvist')).toBe(true);
-    expect(g.nodes.some((n) => n.name === 'Dinner with Maya')).toBe(true);
+    const g = await graphSearch(OWNER, 'sam');
+    expect(g.nodes.some((n) => n.name === 'Sam Rivera')).toBe(true);
+    expect(g.nodes.some((n) => n.name === 'Dinner with Sam')).toBe(true);
   });
 
   it('graphContext renders every fixture node as a `type: name — description` line', async () => {
     const ctx = await graphContext(OWNER);
     // Events AND people render (not just the first node type).
     expect(ctx).toContain('Quarterly planning review');
-    expect(ctx).toContain('Maya Lindqvist');
+    expect(ctx).toContain('Sam Rivera');
     // Line shape: `type: name — description`.
     expect(ctx).toMatch(/^event: Quarterly planning review — /m);
-    expect(ctx).toMatch(/^person: Maya Lindqvist — /m);
+    expect(ctx).toMatch(/^person: Sam Rivera — /m);
     // All 5 fixture nodes make it into the snapshot, one line each.
     expect(ctx.split('\n')).toHaveLength(5);
-    for (const name of ['Quarterly planning review', 'Dinner with Maya', 'Dentist appointment', 'Maya Lindqvist', 'Devon Park']) {
+    for (const name of ['Quarterly planning review', 'Dinner with Sam', 'Dentist appointment', 'Sam Rivera', 'Alex Chen']) {
       expect(ctx).toContain(name);
     }
   });

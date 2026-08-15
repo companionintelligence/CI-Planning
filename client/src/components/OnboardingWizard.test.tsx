@@ -34,7 +34,8 @@ const googleConfigGetMock = vi.fn(async () => ({
   clientId: null, hasClientSecret: false, enabled: false, redirectUri: 'http://x/api/oauth/google/callback',
 }));
 const googleConfigSaveMock = vi.fn(async (_b: unknown) => googleConfigGetMock());
-const demoSampleDataMock = vi.fn(async () => ({ tasks: 6, habits: 5, objectives: 1, blocks: 4 }));
+type DemoSeedResult = { tasks: number; habits: number; objectives: number; blocks: number; skipped?: string };
+const demoSampleDataMock = vi.fn(async (): Promise<DemoSeedResult> => ({ tasks: 6, habits: 5, objectives: 1, blocks: 4 }));
 const runNowMock = vi.fn(async () => ({
   ok: true,
   ran: [{ kind: 'sync_calendar', status: 'done', itemsCreated: 3, itemsUpdated: 1, log: '' }],

@@ -5,43 +5,36 @@ Jotting everything down before it slips. Mix of work and personal.
 ## Product / Eng
 - Ship the auto-scheduler reactive reflow behind a flag
 - Write integration tests for the block engine
-- Triage the GitHub issue backlog and label everything
-- Upgrade the production database to WAL checkpoint tuning
+- Triage the issue backlog and label everything
+- Tune the production database checkpoint settings
 - Draft the API rate-limit policy for partners
-- Review the InfoDip API contract and reply with edits
-- Spike sqlite-vec for the dedupe pipeline
-
-## Investment ops
-- Countersign the Mighty Capital term sheet
-- Prepare the IC memo for the follow-on round
-- Reconcile the May capital account statements
-- Send the Q3 LP report to the distribution list
-- Update the cap table with the new SAFE
+- Review the Lumen API contract and reply with edits
+- Spike a vector index for the dedupe pipeline
+- Prune the archive volume on app-2 before it fills
 
 ## Partnerships
-- Finish the AMD joint one-pager
-- Send Framework the SVG logo and 50-word blurb
-- Create the Rek shared Slack channel and send the data schema
-- Draft the Kwaai MCP connector scope doc
-- Approve the Minisforum BOM and retail pricing
+- Send the joint one-pager back to Orchard Labs
+- Book the intro call between their hardware lead and ours
+- Chase the co-marketing dates for the autumn campaign
 
-## Bizdev / admin
-- Update CRM deal stages for LITA and Rek
-- Categorize May credit-card transactions
-- Approve the services renewal SOW and pay invoice #4471
-- Decide on the WeWork lease renewal before June 15
-- Renew the business insurance policy
+## Clients
+- Provision the Cedar Systems staging environment
+- Send Bluepeak the data schema and open a shared channel
+- Write the pilot success criteria down somewhere they can see it
+
+## Admin / finance
+- Categorize May transactions and gather the missing receipts
+- Sign and return the insurance renewal documents
+- Decide on the hosting plan before it renews
+- Refresh the board deck metrics
 
 ## Submissions
-- Upload the Techstars pitch deck and founder video
-- Finish the SBIR technical narrative and budget justification
-- Register the company in SAM.gov
-- Confirm the AIDevCon talk title and abstract
+- Outline the budget justification for the grant application
+- Upload the conference slides and confirm A/V requirements
 
 ## Personal
-- Call Dad for his birthday and order the cake
-- Book the family dinner reservation
-- Schedule the annual physical and fill out the intake form
-- Renew passport before it expires in August
-- Pick up dry cleaning
-- Fix the leaking kitchen faucet or call a plumber
+- Book the table for the family birthday dinner
+- Pick up a card and a cake
+- Bring the insurance card to the dentist
+- Drop the donation bags off on Saturday
+- Two hour volunteer slot at the repair cafe
