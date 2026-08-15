@@ -10,6 +10,7 @@
  * reflow, which build on the helpers below) fully superseded it.
  */
 import { store } from '../db/store.js';
+import { HOLDS_SLOT_SQL } from './mobility.js';
 
 /** A free window in the day, with a moving cursor as blocks are packed in. */
 export interface Gap {
@@ -74,6 +75,11 @@ export function pickGap(gaps: Gap[], wantMs: number): { gap: Gap; len: number } 
  * containers are obstacles too (the workday fallback flows *around* the Plans
  * the user drew, leaving their windows to their own tag-matched tasks).
  *
+ * Which containers those are is `HOLDS_SLOT_SQL` (engine/mobility.ts) — the ladder's
+ * `holds` rung, not a hand-written copy of it. This clause used to read
+ * `block_type = 'scheduled'`, a value only the Element wizard writes, so a Time Block
+ * created anywhere else held no slot and the engine placed straight through it.
+ *
  * `excludeBlockId` drops one row (the Plan being filled) so a Plan isn't an
  * obstacle to placing inside itself.
  */
@@ -93,7 +99,7 @@ export async function dayObstacles(
                is_locked = 1
             OR block_kind = 'meeting'
             OR (block_kind = 'task' AND status NOT IN ('completed','skipped','cancelled'))
-            OR (? = 1 AND block_kind = 'timeblock' AND block_type = 'scheduled')
+            OR (? = 1 AND ${HOLDS_SLOT_SQL})
           )`
     )
     .all(owner, windowEndISO, windowStartISO, opts.includePlans ? 1 : 0) as { id: string; start_at: string; end_at: string }[];
