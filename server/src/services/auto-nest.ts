@@ -51,41 +51,61 @@ const intersects = (a: Set<string>, b: Set<string>) => {
 };
 
 /**
- * Pick the Time Block a new task block should nest into, or null to leave it loose.
+ * Do a subject and a container agree on BOTH coordinates (plan decision 4)?
  *
- * A candidate qualifies when:
- *  1. it CONTAINS the subject's span (a partial overlap is not containment — the task
- *     would hang outside the box it claims to be in);
- *  2. its directions intersect the subject's. A container with no direction tag
- *     carries no coordinate to match on and never claims a task;
- *  3. its categories intersect the subject's — unless the container has none, which
- *     the owner's rule lets match on direction alone.
+ *  - the container's directions intersect the subject's. A container with no
+ *    direction tag carries no coordinate to match on and never claims a task;
+ *  - its categories intersect the subject's — unless the container has none, which
+ *    the owner's rule lets match on direction alone.
+ *
+ * Says nothing about time. Split out because the autoscheduler asks the same
+ * question with the spans reversed: it knows the container and is choosing where to
+ * put the task, so it cannot use the containment test `chooseContainer` applies.
+ */
+export function coordsMatch(subject: NestCoords, candidate: NestCoords): boolean {
+  const dirs = lower(candidate.directions);
+  if (dirs.size === 0 || !intersects(dirs, lower(subject.directions))) return false;
+  const cats = lower(candidate.categories);
+  return cats.size === 0 || intersects(cats, lower(subject.categories));
+}
+
+const span = (c: NestCandidate) => c.endMs - c.startMs;
+
+/**
+ * The containers that may claim `subject`, most specific FIRST — or none at all.
  *
  * Ambiguity (nested or overlapping Time Blocks both qualifying) resolves to the
- * TIGHTEST span — the most specific claim wins. A genuine tie leaves the block loose
- * rather than guessing: a wrong parent is worse than none, because containment
- * changes how reflow and the L01 window rules treat the task (L02 overrides L01).
+ * TIGHTEST span: the most specific claim wins. A genuine tie for tightest returns
+ * NOTHING rather than guessing — a wrong parent is worse than none, because
+ * containment changes how reflow and the L01 window rules treat the task (L02
+ * overrides L01), and there is no basis to prefer one over the other.
  *
- * Pure — no DB, no clock. `resolveAutoNestParent` below feeds it.
+ * Callers filter by time first: `chooseContainer` passes only containers that
+ * CONTAIN the subject; the autoscheduler passes the day's containers and then
+ * places into the first one with room.
+ *
+ * Pure — no DB, no clock.
+ */
+export function preferredContainers(subject: NestCoords, candidates: NestCandidate[]): NestCandidate[] {
+  const matches = candidates
+    .filter((c) => coordsMatch(subject, c))
+    // Ties broken by id so a run is deterministic — the tie RULE below still refuses
+    // to choose, but ordering must not depend on row order for the non-tied ranks.
+    .sort((a, b) => span(a) - span(b) || a.id.localeCompare(b.id));
+  if (matches.length > 1 && span(matches[1]) === span(matches[0])) return [];
+  return matches;
+}
+
+/**
+ * Pick the Time Block a new task block should nest into, or null to leave it loose.
+ *
+ * A candidate qualifies when it CONTAINS the subject's span (a partial overlap is not
+ * containment — the task would hang outside the box it claims to be in) and both
+ * coordinates match. `preferredContainers` resolves the rest.
  */
 export function chooseContainer(subject: NestSubject, candidates: NestCandidate[]): string | null {
-  const subjDirs = lower(subject.directions);
-  const subjCats = lower(subject.categories);
-
-  const matches = candidates.filter((c) => {
-    if (!(c.startMs <= subject.startMs && c.endMs >= subject.endMs)) return false;
-    const dirs = lower(c.directions);
-    if (dirs.size === 0 || !intersects(dirs, subjDirs)) return false;
-    const cats = lower(c.categories);
-    return cats.size === 0 || intersects(cats, subjCats);
-  });
-
-  if (matches.length === 0) return null;
-  const span = (c: NestCandidate) => c.endMs - c.startMs;
-  const tightest = matches.reduce((best, c) => (span(c) < span(best) ? c : best));
-  // Two equally tight containers both claim it → no basis to choose. Leave it loose.
-  if (matches.filter((c) => span(c) === span(tightest)).length > 1) return null;
-  return tightest.id;
+  const containing = candidates.filter((c) => c.startMs <= subject.startMs && c.endMs >= subject.endMs);
+  return preferredContainers(subject, containing)[0]?.id ?? null;
 }
 
 /** The subject's fields as `createBlock` knows them, before the row exists. */
@@ -99,16 +119,102 @@ export interface AutoNestSubjectInput {
   categories: string[] | undefined;
 }
 
+/**
+ * Which rows can receive a member at all, independent of time.
+ *
+ * NB `block_type` is deliberately only tested against 'someday': a container created
+ * outside the Element wizard carries block_type NULL, and it is still a real Time
+ * Block. The autoscheduler's Plan passes require `block_type = 'scheduled'`, which is
+ * exactly why they cannot see one — see `placeIntoContainers` in engine/autoplan.ts.
+ */
+const CANDIDATE_WHERE = `
+       block_kind = 'timeblock'
+   AND COALESCE(all_day, 0) = 0
+   AND COALESCE(block_type, '') != 'someday'
+   AND (recurrence_rule IS NULL OR recurrence_parent_id IS NOT NULL)`;
+
 const CANDIDATES_SQL = `
   SELECT id, start_at, end_at, tag, task_id
     FROM time_blocks
    WHERE owner_id = ?
-     AND block_kind = 'timeblock'
-     AND COALESCE(all_day, 0) = 0
-     AND COALESCE(block_type, '') != 'someday'
-     AND (recurrence_rule IS NULL OR recurrence_parent_id IS NOT NULL)
+     AND ${CANDIDATE_WHERE}
      AND start_at <= ?
      AND end_at >= ?`;
+
+/** Same rows, selected by OVERLAP with a range rather than containment of a span. */
+const CANDIDATES_IN_RANGE_SQL = `
+  SELECT id, start_at, end_at, tag, task_id
+    FROM time_blocks
+   WHERE owner_id = ?
+     AND ${CANDIDATE_WHERE}
+     AND start_at < ?
+     AND end_at > ?
+   ORDER BY start_at, id`;
+
+interface CandidateRow {
+  id: string; start_at: string; end_at: string; tag: string | null; task_id: string | null;
+}
+
+/** Read each row's two coordinates, dropping rows with unparseable timestamps. */
+async function toCandidates(rows: CandidateRow[]): Promise<NestCandidate[]> {
+  const out: NestCandidate[] = [];
+  for (const r of rows) {
+    const startMs = Date.parse(r.start_at);
+    const endMs = Date.parse(r.end_at);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) continue;
+    out.push({
+      id: r.id,
+      startMs,
+      endMs,
+      directions: splitTagString(r.tag),
+      categories: await containerCategories(r.id, r.task_id),
+    });
+  }
+  return out;
+}
+
+/**
+ * Every Time Block overlapping [fromISO, toISO) that could receive a member, with its
+ * coordinates read the same way `resolveAutoNestParent` reads them.
+ *
+ * For the autoscheduler's L02-first pass: it needs the DAY's containers rather than the
+ * ones containing a span that does not exist yet. Sharing the query is the point — a
+ * container the create path would nest into and the engine would not is the drift this
+ * removes.
+ */
+export async function nestCandidatesInRange(
+  ownerId: string,
+  fromISO: string,
+  toISO: string,
+): Promise<NestCandidate[]> {
+  const rows = (await store().prepare(CANDIDATES_IN_RANGE_SQL).all(ownerId, toISO, fromISO)) as CandidateRow[];
+  return await toCandidates(rows);
+}
+
+/** A task's level-1 direction tag names. */
+async function taskDirectionNames(ownerId: string, taskId: string): Promise<string[]> {
+  const rows = (await store()
+    .prepare(
+      `SELECT tg.name FROM entity_tags et
+         JOIN tags tg ON tg.id = et.tag_id
+        WHERE et.entity_kind = 'task' AND et.entity_id = ? AND et.level = 1
+          AND tg.kind = 'direction' AND tg.owner_id = ?`,
+    )
+    .all(taskId, ownerId)) as { name: string }[];
+  return rows.map((r) => r.name);
+}
+
+/**
+ * An existing task's coordinates. The autoscheduler's subject is a task that has not
+ * been given a span yet, so it reads the task directly rather than through
+ * `AutoNestSubjectInput` (which describes a block about to be inserted).
+ */
+export async function taskNestCoords(ownerId: string, taskId: string): Promise<NestCoords> {
+  return {
+    directions: await taskDirectionNames(ownerId, taskId),
+    categories: await entityCategoryNames('task', taskId),
+  };
+}
 
 /**
  * Resolve the parent a new task block should nest into, reading the coordinates the
@@ -134,9 +240,7 @@ export async function resolveAutoNestParent(
 
   const rows = (await store()
     .prepare(CANDIDATES_SQL)
-    .all(ownerId, input.startAt, input.endAt)) as {
-      id: string; start_at: string; end_at: string; tag: string | null; task_id: string | null;
-    }[];
+    .all(ownerId, input.startAt, input.endAt)) as CandidateRow[];
   if (rows.length === 0) return null;
 
   const subject: NestSubject = {
@@ -148,32 +252,14 @@ export async function resolveAutoNestParent(
   // Nothing to match on → nothing to nest into. Skips the per-candidate category reads.
   if (subject.directions.length === 0) return null;
 
-  const candidates: NestCandidate[] = [];
-  for (const r of rows) {
-    candidates.push({
-      id: r.id,
-      startMs: Date.parse(r.start_at),
-      endMs: Date.parse(r.end_at),
-      directions: splitTagString(r.tag),
-      categories: await containerCategories(r.id, r.task_id),
-    });
-  }
-  return chooseContainer(subject, candidates.filter((c) => Number.isFinite(c.startMs) && Number.isFinite(c.endMs)));
+  return chooseContainer(subject, await toCandidates(rows));
 }
 
 /** The block's own tag wins; otherwise the linked task's level-1 direction tags. */
 async function subjectDirections(ownerId: string, input: AutoNestSubjectInput): Promise<string[]> {
   const own = splitTagString(input.tag);
   if (own.length || !input.taskId) return own;
-  const rows = (await store()
-    .prepare(
-      `SELECT tg.name FROM entity_tags et
-         JOIN tags tg ON tg.id = et.tag_id
-        WHERE et.entity_kind = 'task' AND et.entity_id = ? AND et.level = 1
-          AND tg.kind = 'direction' AND tg.owner_id = ?`,
-    )
-    .all(input.taskId, ownerId)) as { name: string }[];
-  return rows.map((r) => r.name);
+  return await taskDirectionNames(ownerId, input.taskId);
 }
 
 /** Explicit categories win; otherwise the linked task's. */

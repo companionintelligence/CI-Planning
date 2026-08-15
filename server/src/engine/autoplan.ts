@@ -9,6 +9,10 @@
  *         selected tasks that share its tag — best-fit by priority, then by
  *         tag-overlap (related work clusters). Placed tasks become the Plan's
  *         grouped members (parent_block_id), so they move with it (PR-C).
+ *      1.9. **Any other matching Time Block** (`placeIntoContainers`), by the phase-5
+ *         auto-nest rule — both coordinates, direction AND life-balance category.
+ *         This is the plan's "matching Time Block with room first, then L01 windows":
+ *         a container the Plan passes' narrower queries cannot see still gets its task.
  *      2. **Workday fallback** (secondary, gated by `auto_fill_workday`). Anything
  *         still unplaced fills open workday time, flowing *around* the Plans.
  *
@@ -30,6 +34,7 @@ import { mirrorEnginePlacement, revertTaskPlacementStatus, applyTaskPlacementSta
 import { getPatternBlocks } from '../services/pattern-blocks.js';
 import { resolveDayType } from '../services/day-types.js';
 import { getPatternPrefs } from '../services/pattern-prefs.js';
+import { nestCandidatesInRange, preferredContainers, taskNestCoords } from '../services/auto-nest.js';
 
 const DEFAULT_EST_MIN = 30;
 const MIN_SESSION_MS = 15 * MS_PER_MIN;
@@ -625,6 +630,72 @@ async function placeHintWindows(
   return { placedTaskIds, constrainedIds, blocksCreated };
 }
 
+/**
+ * L02-first placement — offer each still-unplaced task a matching Time Block before
+ * the L01 direction windows get it.
+ *
+ * The plan's placement order is "matching Time Block with room first, then L01
+ * windows, then unplaced", and a match is BOTH coordinates: direction and
+ * life-balance category (decision 4). Phase 5 built that rule for CREATE time; this
+ * is the same rule on the engine side, reading the same matcher
+ * (`preferredContainers`) and the same candidate query rather than a second one.
+ *
+ * It is not redundant with the Plan passes above, which ask narrower questions:
+ * Pass 1 matches a tag-only container on direction, Pass 1.5 matches a category
+ * container on CATEGORY ALONE, and both require `block_type = 'scheduled'` — so a
+ * Time Block created outside the Element wizard (block_type NULL) is invisible to
+ * them while the create path nests into it happily. That gap is what sent a task
+ * with a perfectly good container into a bare window.
+ *
+ * Decision 7 — a full Time Block never auto-extends. A container with no room simply
+ * yields: the next matching container gets a turn, then L01. Tasks already claimed by
+ * a Plan pass or constrained by an NL hint window never reach here.
+ */
+async function placeIntoContainers(
+  owner: string,
+  date: string,
+  tasks: StagedTask[],
+  prefs: PrefsRow | undefined,
+  tz: string,
+  runId: string,
+  notBeforeMs?: number | null,
+): Promise<{ placedTaskIds: Set<string>; blocksCreated: number }> {
+  const placedTaskIds = new Set<string>();
+  let blocksCreated = 0;
+  if (tasks.length === 0) return { placedTaskIds, blocksCreated };
+
+  const { start: dayStartISO, end: dayEndISO } = utcDayBounds(date, tz);
+  const candidates = await nestCandidatesInRange(owner, dayStartISO, dayEndISO);
+  if (candidates.length === 0) return { placedTaskIds, blocksCreated };
+
+  const dayStartMs = Date.parse(dayStartISO);
+  const dayEndMs = Date.parse(dayEndISO);
+
+  for (const t of tasks) {
+    const coords = await taskNestCoords(owner, t.task_id);
+    // No direction → no coordinate to match on, exactly as at create time.
+    if (coords.directions.length === 0) continue;
+    for (const container of preferredContainers(coords, candidates)) {
+      // Clamped to the day this run owns: a container spanning midnight would
+      // otherwise take a session outside the window `clearPriorAuto` sweeps, and the
+      // next run would place a second one beside it.
+      const winStart = Math.max(container.startMs, dayStartMs);
+      const winEnd = Math.min(container.endMs, dayEndMs);
+      if (winEnd <= winStart) continue;
+      const r = await placeIntoWindow(owner, [t], winStart, winEnd, prefs, {
+        parentBlockId: container.id,
+        runId,
+        notBeforeMs,
+      });
+      if (!r.placedTaskIds.has(t.task_id)) continue; // full → the next container, then L01
+      placedTaskIds.add(t.task_id);
+      blocksCreated += r.blocksCreated;
+      break;
+    }
+  }
+  return { placedTaskIds, blocksCreated };
+}
+
 /** STEP 1: propose open-task candidates (not already staged) into the flight-plan.
  * Habits are excluded — they're auto-placed daily from their recurrence, so they
  * shouldn't flood the flight-plan as one-off candidates.
@@ -849,6 +920,22 @@ export async function placeFlightPlan(
   blocksCreated += hintPass.blocksCreated;
   const hintConstrainedIds = hintPass.constrainedIds;
 
+  // Pass 1.9 — L02-first. A task with a matching Time Block belongs in it, not in the
+  // bare L01 window the block sits inside ("matching Time Block with room first, then
+  // L01 windows"). Runs after the hint pass so a same-day NL instruction still wins,
+  // and before the direction windows so a container outranks a pattern window.
+  const containerPass = await placeIntoContainers(
+    owner,
+    date,
+    staged.filter((s) => !placedIds.has(s.task_id) && !hintConstrainedIds.has(s.task_id)),
+    prefs,
+    tz,
+    runId,
+    notBeforeMs,
+  );
+  containerPass.placedTaskIds.forEach((id) => placedIds.add(id));
+  blocksCreated += containerPass.blocksCreated;
+
   // Pass 2a — direction-window placement (tag-matched). Runs UNCONDITIONALLY: this is
   // part of tag-matched placement (tap 2), not the priority fill. Direction-tagged
   // tasks are constrained to their direction's pattern windows (union, earliest-first),
@@ -943,13 +1030,16 @@ export async function placeFlightPlan(
 
   const placed = placedIds.size;
   const unplaced = staged.length - placed;
+  // A container placement IS a placement into a Plan — the L02-first pass just gets
+  // there by the nest rule rather than by the Plan passes' narrower candidate queries.
+  const placedInContainers = containerPass.placedTaskIds.size;
   if (!opts.silent) broadcast(owner, 'auto:placed', { blocksCreated, placed, unplaced });
   if (placedIds.size > 0) {
     const del = store().prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`);
     for (const id of placedIds) await del.run(owner, id);
     if (!opts.silent) broadcast(owner, 'flight_plan:updated', { removed: placedIds.size });
   }
-  return { step: 'place', blocksCreated, placed, unplaced, placedInPlans, placedInWorkday };
+  return { step: 'place', blocksCreated, placed, unplaced, placedInPlans: placedInPlans + placedInContainers, placedInWorkday };
 }
 
 /**
