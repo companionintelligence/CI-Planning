@@ -1,4 +1,4 @@
-# Handoff — CI-Planning: Focus × Time Blocks, phases 1–7 merged → 8, 9 open
+# Handoff — CI-Planning: Focus × Time Blocks, the whole wave is merged
 
 For whoever picks this up — human or agent. Everything here is verifiable from the
 repo and the linked plan; nothing depends on the session that wrote it.
@@ -7,9 +7,12 @@ Full plan: **https://claude.ai/code/artifact/a92ca82a-32e9-4955-b474-566c3fc7e54
 
 ## Where things stand
 
-Main is at `6b24e7e`, and **`pnpm test` is fully green there** — measured, not
-assumed: server **3083 passing** / 236 files, client **1046 passing** / 81 files,
-`tsc` clean on both. All seven plan decisions are resolved; nothing is blocked.
+**Every phase is merged, and the two items the plan left unowned with them.** Nothing
+in this wave is open.
+
+Main is at `ef6f941`, and **`pnpm test` is fully green there** — measured, not
+assumed: server **3153 passing** / 241 files, client **1056 passing** / 81 files,
+`tsc` clean on both. All seven plan decisions are resolved.
 
 The long-standing flaky `triality-routes` test is also gone — it turned out to be a
 real product bug, not test interference: the novelty embedder was not gated on
@@ -25,40 +28,21 @@ Worth remembering the next time a test looks "just flaky".
 | 5 — auto-nest on create | merged | [#545](https://github.com/companionintelligence/CI-Planning/pull/545) |
 | 6 — mobility ladder | merged | [#550](https://github.com/companionintelligence/CI-Planning/pull/550) + [#551](https://github.com/companionintelligence/CI-Planning/pull/551) |
 | 7 — day-type reflow | merged | [#553](https://github.com/companionintelligence/CI-Planning/pull/553) |
-| 9 — open time stays honest | PR open | [#556](https://github.com/companionintelligence/CI-Planning/pull/556) |
-| L02-first placement (was unowned) | PR open | [#557](https://github.com/companionintelligence/CI-Planning/pull/557) |
-| 8 — the learning parse LLM | PR open | [#558](https://github.com/companionintelligence/CI-Planning/pull/558) |
+| 9 — open time stays honest | merged | [#556](https://github.com/companionintelligence/CI-Planning/pull/556) |
+| L02-first placement (was unowned) | merged | [#557](https://github.com/companionintelligence/CI-Planning/pull/557) |
+| 8 — the learning parse LLM | merged | [#558](https://github.com/companionintelligence/CI-Planning/pull/558) |
+| Time Blocks hold their slot (fell out of 557) | merged | [#559](https://github.com/companionintelligence/CI-Planning/pull/559) |
 
-**Every item in this handoff now has a PR.** The three below are the original
-write-up, kept as written; what each one turned out to involve is in *What the last
-three found* at the bottom.
+## If you are picking this up next
 
-## Start here — the three open items
+There is no open work in this wave. The two things a reader of the plan might still
+expect are in *Known gaps* below, and neither is a bug: LLM-authored reflow proposals
+are optional and unwired, and Phase 7's UI still rests on component tests.
 
-### 1. Phase 9 (half a day, lowest risk)
-
-`OpenTimeSummary` already subtracts every block, so "timeblocks are not open time" is
-true **by accident**. Extract the busy-interval builder into
-`client/src/lib/open-time.ts` (`busyFromBlocks`) and pin it: a timeblock counts as
-busy even when empty; a member inside a timeblock does not double-subtract
-(`mergeRanges` already guarantees that — the test makes it load-bearing).
-
-### 2. The L02-first placement ordering (unowned, small, keeps slipping)
-
-Phase 5 nests at **create** time. Making the *autoscheduler* prefer a matching Time
-Block over a bare L01 window is a separate `autoplan` change. The plan mentions it
-inside phases 5 and 7; it shipped with neither, and Phase 7 deliberately did not
-touch autoplan's window placement. It belongs there. **Do this before Phase 8** — it
-is small, and it is the last piece of the L02 story.
-
-### 3. Phase 8 (3–4 days, the biggest remaining)
-
-The parse/classify LLM gets better at life-balance category and me/us/them, learning
-from corrections via retrieval few-shot over a per-owner correction log
-(nomic-embed + sqlite-vec, both present), batch-calibrated in the `calibrate_*`
-family per the `triality-learning.ts` house contract: never online, bounded,
-measured by the existing rubric harness. Read that file's header first — it is the
-contract, not a suggestion.
+The most likely reason to be here is that you are touching one of these areas and want
+to know what the shape is. Start with *What each shipped phase left behind* and the
+code map; read *Lessons* before you verify anything, because most of them were paid
+for twice.
 
 ## Known gaps in what shipped
 
@@ -73,7 +57,18 @@ the plan would reasonably expect more:
   of the app (the systemd service in `.claude/launch.json`), so the HTTP routes were
   exercised with curl on port 3901 instead and the UI rests on 11 component tests.
   That is weaker than phases 2–4 got, on the phase with the most regression risk. If
-  you touch the reflow UI, drive it properly — see *Verifying* below.
+  you touch the reflow UI, drive it properly — see *Verifying* below. (Phase 9 was
+  driven properly, on 3901, with the API response intercepted rather than the database
+  seeded — that recipe is under *Verifying* and works around the same held port.)
+
+Phase 8 added two of its own, both stated in [#558](https://github.com/companionintelligence/CI-Planning/pull/558):
+
+- **No client chart for the accuracy trend.** The per-run numbers are in the Jobs run
+  log and at `GET /api/classification/accuracy`; a chart wants a design.
+- **The rubric scorer asks the classification question in isolation** — same rubric,
+  same exemplars, no memory graph. An old held-out task's graph context is
+  unreproducible, so scoring the full enrichment prompt would measure drift in the
+  graph rather than in the exemplars, which are the only thing learning changes.
 
 ## What each shipped phase left behind
 
@@ -95,6 +90,18 @@ the plan would reasonably expect more:
 - **7 — day-type reflow.** `engine/day-conflicts.ts` (detect, pure core),
   `engine/day-reflow.ts` (propose/apply), `routes/day-reflow.ts`,
   `components/DayReflowBanner.tsx`.
+- **8 — the learning parse LLM.** `services/classification-learning.ts` is the whole
+  contract (capture, evidence, retrieval, calibration); `classification-score.ts` is
+  the grader. Three tables — `classification_log` is the durable evidence and the only
+  thing that cannot be recomputed. Capture hangs off three seams: quick-add and
+  `task-enrich` log what the model claimed, `updateTask` records the owner's answer.
+- **9 — open time stays honest.** `busyFromBlocks` in `client/src/lib/open-time.ts`,
+  and `occupiesMinuteAxis` in `client/src/lib/overlay.ts` — the one home for "does
+  this block hold minutes", which click-to-create reads too.
+- **L02-first.** `placeIntoContainers` (Pass 1.9) in `engine/autoplan.ts`, matching on
+  the phase-5 rule via `preferredContainers` / `coordsMatch` in `services/auto-nest.ts`.
+- **Holds its slot.** `HOLDS_SLOT_SQL` in `engine/mobility.ts` — the SQL twin of the
+  ladder's `holds` rung, read by `dayObstacles` and by `extend-block.ts`.
 
 ## Three places the plan's text did not survive contact with the code
 
@@ -146,16 +153,22 @@ same each time: the check was narrower than the failure.
 | Reflow propose/apply | `server/src/engine/day-reflow.ts` — `proposeDayReflow` (pure read), `applyDayReflow` (recomputes; the only mutator) |
 | Reflow endpoints | `GET /api/days/:date/conflicts`, `GET /api/days/:date/reflow/preview`, `POST /api/days/:date/reflow/apply` |
 | Conflict UI | `client/src/components/DayReflowBanner.tsx`; red treatment keys off `conflictedBlockIds` in `stores/index.ts` |
-| Mobility ladder | `server/src/engine/mobility.ts` — `mobility()`, `MOBILITY_RANK`, `AUTO_PLACED_SQL`, `REFLOW_CANDIDATE_SQL` |
+| Mobility ladder | `server/src/engine/mobility.ts` — `mobility()`, `MOBILITY_RANK`, `AUTO_PLACED_SQL`, `REFLOW_CANDIDATE_SQL`, `HOLDS_SLOT_SQL` |
+| "Does this Time Block occupy minutes" | `HOLDS_SLOT_SQL` (mobility.ts) — read by `dayObstacles` (`engine/scheduler.ts`) and `engine/extend-block.ts`. **Not** `block_type = 'scheduled'`, which only the wizard writes |
 | Auto-nest on create | `server/src/services/auto-nest.ts` — `chooseContainer` (pure), `resolveAutoNestParent` |
+| The nest rule, without time | `coordsMatch` / `preferredContainers` (auto-nest.ts) — shared by create-time nesting and the autoscheduler |
+| L02-first autoscheduling | `placeIntoContainers` (Pass 1.9) in `engine/autoplan.ts`, between the hint pass and the direction windows |
 | A block's effective categories | `blockCategoryNames(blockId, taskId)` (`services/blocks.ts`) |
 | Membership | `parent_block_id`; `isValidParent` (`services/blocks.ts:261`) — parents must be `block_kind='timeblock'` |
 | Calendar containment | `client/src/components/CalendarGrid.tsx` — `splitContainment`, `chipFrame`, `CONTAINER_EDGE_PX` |
 | Focus grouping / add box | `client/src/lib/focus-sections.ts`, `client/src/lib/focus-add.ts` |
 | Lock affordance | `client/src/components/LockToggle.tsx` + `client/src/lib/lock.ts` |
 | Owner's planning timezone | `ownerTimezone(owner)` in `engine/recurrence-generate.ts` — **use this, not `serverTimezone()`** |
-| Open time (Phase 9's target) | `client/src/components/OpenTimeSummary.tsx` + `client/src/lib/open-time.ts` |
-| Phase 8's grounding | `services/task-enrich.ts`, `services/triality-learning.ts` (the house contract), `engine/quickadd.ts` |
+| Open time | `client/src/lib/open-time.ts` — `busyFromBlocks`, `openTime`; rendered by `components/OpenTimeSummary.tsx` |
+| "Does this block hold minutes" (client) | `occupiesMinuteAxis` in `client/src/lib/overlay.ts` — read by open time AND click-to-create (`lib/create-click.ts`) |
+| Classification learning | `services/classification-learning.ts` (the contract), `services/classification-score.ts` (the grader), `routes/classification.ts` |
+| Its evidence | `classification_log` (durable), `classification_exemplars` (regenerable index), `classification_accuracy` (migrations 0149/0150) |
+| Learning house contract | `services/triality-learning.ts` — read its header before writing any learning loop |
 
 ## Running the app / verifying
 
@@ -195,8 +208,14 @@ Gotchas, worst first:
 - `DELETE /api/tasks/:id` is a **soft** delete (status → `cancelled`).
 - **Never run `applyDayReflow` against the owner's dev database** to "see it work" —
   it moves and deletes real blocks. Seed a block, verify, delete it; or use the tests.
+- **Better than seeding: intercept the response.** To see the UI handle data the dev
+  database does not contain, enable CDP `Fetch` with `requestStage: 'Response'` on
+  `*/api/blocks*`, `Fetch.getResponseBody`, splice rows into the JSON, and
+  `Fetch.fulfillRequest`. The real component renders real data plus your fixture, and
+  the owner's database is never written to. Phase 9 was verified this way, including a
+  before/after A-B against the pre-change builder (patch the component, re-run, restore).
 
-## What the last three found
+## What the last four found
 
 Written after the fact, in the same spirit as the lessons above — each of these was a
 surprise, not something the plan predicted.
@@ -212,20 +231,33 @@ surprise, not something the plan predicted.
   both require `block_type = 'scheduled'`, which only the Element wizard writes; every
   other creation path leaves it NULL, and `auto-nest` accepts NULL happily. So a
   container the owner could nest into by hand was invisible to the autoscheduler. Four
-  such rows exist in the owner's own database. `dayObstacles` keys on the same value
-  and was left alone — see that PR's closing note.
+  such rows exist in the owner's own database.
 - **Phase 8 (#558) needed the plan's acceptance test to set the constant.** The
   learning floor was written at 5 by analogy with `OUTCOME_FLOOR = 20`, which
   contradicts the plan's own "correcting twice makes the third similar input classify
   correctly". It is 2, and a test asserts the constant so raising it fails loudly.
+- **The same `block_type` assumption was in the obstacle set too (#559).** `dayObstacles`
+  and `extend-block.ts` both wrote the ladder's `holds` rung by hand as
+  `block_type = 'scheduled'`, so a Planner-drawn Time Block held no slot and the engine
+  placed straight through it — in the file whose own header says the ladder lives there
+  once because near-identical WHERE clauses drift. It had drifted. Widening it also
+  needed three explicit exclusions (someday, all-day, recurrence templates), or the fix
+  would have started blocking time nothing uses — the inverse of the Phase 9 bug.
 
-Two more verification lessons, both earned the hard way:
+Three more verification lessons, all earned the hard way:
 
-- **Mutate the source to check a test.** Every claim in these three PRs was checked by
-  breaking the code and confirming the intended test failed. It caught two tests that
+- **Mutate the source to check a test.** Every claim in these four PRs was checked by
+  breaking the code and confirming the intended test failed. It caught three tests that
   could not fail: a "does not double-subtract" fixture that passed under every mutant
-  (`mergeRanges` collapsed the overlap before the code under test saw it), and an
-  untested day-clamp. Both were rewritten rather than shipped as decoration.
+  (`mergeRanges` collapsed the overlap before the code under test saw it), an untested
+  day-clamp, and an embedder readiness gate that no test reached because every fixture
+  injected an embedder. All three were rewritten rather than shipped as decoration.
+- **Per-PR green says nothing about the combination.** #557 and #559 were each green
+  alone and failed together: #559's fixtures gave a container the same direction as the
+  task, so once #557's L02-first pass existed that container CLAIMED the task and the
+  overlap became legitimate. Found by merging all four into a throwaway branch and
+  running the suite BEFORE anything landed on main. A test can encode an assumption
+  about what else exists in the tree.
 - **uuid7 ties are random within a millisecond.** A test fixture that writes rows in a
   loop gives them all the same `assigned_at`, so any `ORDER BY ts, id` read falls
   through to uuid7's random within-ms bytes. Phase 8's tests passed alone and failed in
