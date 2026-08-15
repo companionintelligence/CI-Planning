@@ -4,7 +4,7 @@ How Companion Planning turns Liam's Google accounts (mail, calendar, files) into
 reviewable tasks each morning, without anything writing to the task list
 unreviewed.
 
-> Status: **design**, salvaged 2026-06-19 from the original `owner-plan.md`.
+> Status: **design**, salvaged 2026-06-19 from the original owner's planning notes.
 > Corrected to the **current job-based architecture** (the old draft assumed a
 > push API — `/api/calendar/events`, `/api/extract`, `/api/suggestions` — that
 > this codebase never shipped). This doc is the product framing for the
@@ -70,11 +70,11 @@ Ingestion runs **inside** the server as jobs; it does not call these routes.
 
 | # | Account | Role | Connect via |
 |---|---|---|---|
-| 1 | `REDACTED-DEV-EMAIL@example.invalid` | personal | Google MCP (calendar already authed) |
-| 2 | `owner@example.com` | LifeScope / work | Google MCP (calendar already authed) |
+| 1 | `owner@example.com` | personal | Google MCP (calendar already authed) |
+| 2 | `owner@workdomain.example` | work | Google MCP (calendar already authed) |
 | 3 | `alias1@example.com` | project / alias | needs Google MCP OAuth |
 | 4 | `alias2@example.com` | project / alias | needs Google MCP OAuth |
-| 5 | `owner@vendor.example` | BitScoop / work | needs Google MCP OAuth |
+| 5 | `owner@vendor.example` | vendor / work | needs Google MCP OAuth |
 
 **Multi-account is the central challenge.** A single Google MCP connection
 authenticates one identity at a time (calendar currently sees 1 & 2 via
@@ -207,4 +207,4 @@ accounts.
    or stay manual?
 
 *Next action: wire `createLiveGoogleClient()` to a real Gmail + Calendar MCP for
-`REDACTED-DEV-EMAIL@example.invalid` + `owner@example.com`, behind `GOOGLE_MODE=live` (Phase 1).*
+`owner@example.com` + `owner@workdomain.example`, behind `GOOGLE_MODE=live` (Phase 1).*

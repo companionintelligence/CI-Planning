@@ -17,7 +17,7 @@ A single working session that audited the app end-to-end, fixed the ship-blocker
 ### PR #325 — data-flow ship-blockers (MERGED)
 Three issues where the app misled a real user:
 1. **Fixture data off by default.** `GOOGLE_MODE`/`MEMORY_MODE` unset now = **off** (was `fixture`, which silently ingested committed sample emails/events as real tasks every 30 min). Fixture is an explicit dev/demo opt-in; production refuses fixture unless `CP_ALLOW_FIXTURE=true`. Live ingest is gated per-owner on an active Google connection.
-2. **Scrubbed the seeded developer identity** — migration 0122 turns the old `Liam / REDACTED-DEV-EMAIL@example.invalid` system owner into `System / NULL`; fresh installs seed neutral.
+2. **Scrubbed the seeded developer identity** — migration 0122 turns the old `the developer's real name and email` system owner into `System / NULL`; fresh installs seed neutral.
 3. **Task completion mirrors onto calendar blocks** — `mirrorTaskStatusToBlocks` in `services/block-task-sync.ts`; checking a task off now completes its planner block (both directions), so finished work is no longer flagged "missed."
 
 ### PR #326 — input-handling honesty (MERGED, sibling session)

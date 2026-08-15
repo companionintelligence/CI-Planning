@@ -52,8 +52,9 @@ describe('AA3a memoryTerms + memoryRelatedTasks (pure)', () => {
       { id: 'e1', entityType: 'event', name: 'Dinner with Sam', properties: { tag: 'Home' } },
       { id: 'x1', entityType: 'place', name: 'Reykjavik' }, // ignored (not person/event)
     ]));
-    expect([...t.tokens].sort()).toEqual(['dinner', 'lindqvist', 'maya', 'with']); // 'with' is 4 chars
-    expect(t.phrases).toEqual(['dinner with maya']);
+    // 'sam' is 3 chars, below nameTokens' ≥4 cutoff — 'rivera' is the surviving name token.
+    expect([...t.tokens].sort()).toEqual(['dinner', 'rivera', 'with']);
+    expect(t.phrases).toEqual(['dinner with sam']);
     expect([...t.tags]).toEqual(['home']);
   });
 

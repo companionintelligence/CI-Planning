@@ -16,5 +16,5 @@ if /usr/bin/git diff --cached --quiet; then
 fi
 
 TS=$(date -Iseconds)
-/usr/bin/git -c user.email="REDACTED-DEV-EMAIL@example.invalid" -c user.name="Owner (autocommit)" \
+/usr/bin/git -c user.email="owner@example.com" -c user.name="Owner (autocommit)" \
   commit -q -m "auto: snapshot $TS" || exit 0
