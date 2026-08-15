@@ -102,15 +102,18 @@ beforeEach(() => {
 
 describe('a Time Block holds its slot against the direction-window pass', () => {
   it('does not place a task through a container the wizard did not create', async () => {
-    container({ start: '09:00', end: '10:00' }); // block_type NULL
+    // block_type NULL — the bug's trigger — and deliberately UNTAGGED, for the same
+    // reason as the wizard-shaped case below: a container whose coordinates MATCH the
+    // task gets claimed by a filling pass and the task lands inside it, which is a
+    // legitimate overlap and says nothing about the obstacle rule. Untagged, no pass
+    // can claim it, so an overlap can only mean the engine placed straight through.
+    container({ start: '09:00', end: '10:00', tag: null });
     stageTask('ship the release');
 
     await placeFlightPlan(OWNER, { date: DAY });
 
     const p = placementOf('ship the release');
     expect(p, 'the task was not placed at all').toBeDefined();
-    // Not nested either: on this branch no pass fills a NULL-block_type container, so
-    // "inside it" is not an available excuse for the overlap.
     expect(p!.parent).toBeNull();
     expect(overlaps(p!, '09:00', '10:00'), `placed at ${p!.start}–${p!.end}, through the Time Block`).toBe(false);
   });
@@ -202,8 +205,10 @@ describe('rows that are Time Blocks but occupy no minutes', () => {
 
   it('a materialized INSTANCE of that rule does hold its slot', async () => {
     // The mirror of the test above: instances are real blocks on the day.
-    const template = container({ start: '08:00', end: '08:30', recurrenceRule: 'FREQ=WEEKLY;BYDAY=MO', title: 'template' });
-    container({ start: '09:00', end: '10:00', recurrenceRule: 'FREQ=WEEKLY;BYDAY=MO', recurrenceParentId: template, title: 'instance' });
+    const template = container({ start: '08:00', end: '08:30', recurrenceRule: 'FREQ=WEEKLY;BYDAY=MO', title: 'template', tag: null });
+    // Untagged for the same reason as above — an instance IS a real container, so a
+    // matching one would be filled rather than flowed around.
+    container({ start: '09:00', end: '10:00', recurrenceRule: 'FREQ=WEEKLY;BYDAY=MO', recurrenceParentId: template, title: 'instance', tag: null });
     stageTask('ship the release');
 
     await placeFlightPlan(OWNER, { date: DAY });
