@@ -7,6 +7,35 @@ it, and the scheduling model gets an explicit mobility ladder: synced calendar
 events never move, anything can be locked, Time Blocks hold their slots while
 reflow shuffles tasks around them.
 
+**Status: phases 1–7 are merged. Phases 8 and 9 remain, plus the L02-first
+placement ordering.** Main is at `6b24e7e`; `pnpm test` is green there (server 3083,
+client 1046).
+
+| Phase | State | PR |
+| --- | --- | --- |
+| 1 — lock model | merged | [#547](https://github.com/companionintelligence/CI-Planning/pull/547) |
+| 2 — Focus sections | merged | [#548](https://github.com/companionintelligence/CI-Planning/pull/548) |
+| 3 — add into a block | merged | [#549](https://github.com/companionintelligence/CI-Planning/pull/549) |
+| 4 — Calendar containment | merged | [#544](https://github.com/companionintelligence/CI-Planning/pull/544) |
+| 5 — auto-nest | merged | [#545](https://github.com/companionintelligence/CI-Planning/pull/545) |
+| 6 — mobility ladder | merged | [#550](https://github.com/companionintelligence/CI-Planning/pull/550) + [#551](https://github.com/companionintelligence/CI-Planning/pull/551) |
+| 7 — day-type reflow | merged | [#553](https://github.com/companionintelligence/CI-Planning/pull/553) |
+| **8 — learning parse LLM** | **open** | — |
+| **9 — open time** | **open** | — |
+
+All seven decisions are resolved — nothing in this plan is blocked.
+
+**Two things a reader of this plan should not assume shipped:** Phase 7's optional
+LLM-authored proposal is not wired (the deterministic engine IS the contract), and
+the **L02-first placement ordering** — making the autoscheduler prefer a matching
+Time Block over a bare L01 window — shipped with neither phase 5 nor 7. It belongs
+in `autoplan`, which phase 7 deliberately left alone.
+
+**Verification lessons are in the handoff**
+(https://claude.ai/code/artifact/b34f617a-adcf-4ac3-a93d-0d5cd893b9bf) — phases 3 and
+6 both merged with defects that passed their unit tests. Read that section before
+verifying anything here.
+
 ---
 
 ## What the codebase already provides
@@ -14,7 +43,7 @@ reflow shuffles tasks around them.
 The plan builds on machinery that exists rather than inventing parallel systems.
 
 | Piece | Where | State |
-|---|---|---|
+| --- | --- | --- |
 | Time Block containers | `block_kind='timeblock'`, members are task blocks with `parent_block_id` | Fully modelled; `isValidParent` guards the relation (`server/services/blocks.ts:338`) |
 | Membership API | `api.blocks.create/update` accept `parent_block_id` | Exists — the Planner's "Removed from Time Block" action already uses it |
 | Lock flag | `is_locked` on every block | Exists; reflow honours it (`auto-defense.ts:111` — "a user-pinned block holds its slot AND its task") |
@@ -23,6 +52,8 @@ The plan builds on machinery that exists rather than inventing parallel systems.
 | Task search over the backlog | FlightPlan's `backlogMatches` — `filterByName` over an `openTasks` resource (`FlightPlan.tsx:108`) | Reusable pattern, already handles staged-exclusion |
 | Focus view | `FOCUS_KINDS = {'task','focus','habit'}` (`Focus.tsx:28`) | Timeblocks and meetings are filtered out — this one line is why they don't show |
 | Open time | `OpenTimeSummary` subtracts **every** block from the day's windows | Timeblocks already count as busy — correct, but accidental and untested |
+| Calendar containment | `splitContainment` + `chipFrame` (`CalendarGrid.tsx`) | **Shipped in Phase 4** — the Calendar now draws members inside their container |
+| Auto-nest on create | `server/src/services/auto-nest.ts` (`chooseContainer`, `resolveAutoNestParent`), called from `createBlock` | **Shipped in Phase 5** — REST and GraphQL both go through it |
 
 ## The scheduling model — L00 / L01 / L02 (canonical)
 
@@ -71,7 +102,7 @@ direction tag in `tags`; blocks have `category_id` and a direction `tag`;
 categories are `kind='category'` tags that already declare a per-category direction
 scope (`direction_optouts`). **No schema change required.**
 
-**Decisions** (my recommendation first; 4 is resolved, 5–7 are new):
+**Decisions** — all seven resolved:
 
 1. **RESOLVED — a synced event cannot be unlocked, and shows its SOURCE instead
    of a lock toggle.** No disabled control: where a native block renders the
@@ -82,9 +113,10 @@ scope (`direction_optouts`). **No schema change required.**
 2. **RESOLVED — tasks move first, Time Blocks hold their slots.** Reflow shuffles
    task blocks around the blocks; Time Blocks are not reflow candidates. They stay
    above L00 only in the sense that a *user* may move them; the engine may not.
-3. **When a Time Block moves, its members move with it** (same offset, container
-   intact). Recommend yes — members are *inside* the block; anything else breaks
-   the containment metaphor.
+3. **RESOLVED — when a Time Block moves, its members move with it** (same offset,
+   container intact). Members are *inside* the block; anything else breaks the
+   containment metaphor. This ratifies existing `move-group` behaviour, so it is
+   asserted rather than built — see Phase 6.
 4. **RESOLVED — "priority" means the life-balance category** (Career, Health,
    Leisure, …), not P1–P3. The match is `block.category_id`'s category name ∈
    `task.categories`, plus the direction tag. Both fields exist today; no schema
@@ -103,7 +135,7 @@ scope (`direction_optouts`). **No schema change required.**
 
 Each lands independently; order matters only where noted.
 
-### Phase 1 — The lock model *(1 day, server + client)*
+### Phase 1 — The lock model ✅ *(merged — #547)*
 
 The smallest phase and the foundation. No behaviour change for reflow — locked
 blocks are already pinned — this makes lock state universal and visible.
@@ -115,6 +147,7 @@ blocks are already pinned — this makes lock state universal and visible.
    - `DetailsDrawer`'s BlockPanel
    - `PlannerEntityCard` (it has Unlock at line 183; gains Lock)
    - the Focus rows/sections from Phases 2–3
+
    Synced events render **no toggle at all** (decision 1): in its place, the
    event's source — `source_provider` / `source_account`, the same pair the
    connection-appearance work already keys on — alongside the lock icon.
@@ -124,7 +157,7 @@ blocks are already pinned — this makes lock state universal and visible.
 **Done when:** every scheduled item shows and toggles its lock; a fresh calendar
 sync produces locked events; reflow tests still green.
 
-### Phase 2 — Focus shows Time Blocks as expandable sections *(1–2 days)*
+### Phase 2 — Focus shows Time Blocks as expandable sections ✅ *(merged — #548)*
 
 `Focus.tsx` today builds a flat, time-ordered entry list and skips anything not in
 `FOCUS_KINDS`. Restructure the entry builder:
@@ -145,7 +178,7 @@ sync produces locked events; reflow tests still green.
 collapses, progress counts match, and the flat rows are unchanged for days with no
 timeblocks.
 
-### Phase 3 — Add / search tasks into a Time Block from Focus *(1–2 days)*
+### Phase 3 — Add / search tasks into a Time Block from Focus ✅ *(merged — #549)*
 
 Each expanded section gets one inline input, reusing FlightPlan's proven pattern:
 
@@ -163,7 +196,7 @@ Each expanded section gets one inline input, reusing FlightPlan's proven pattern
 **Done when:** both paths work from the keyboard alone; the new member appears in
 the section, the Planner, and the Calendar without refetch weirdness.
 
-### Phase 4 — Calendar draws containment like the Planner *(1 day)*
+### Phase 4 — Calendar draws containment like the Planner ✅ *(shipped — `1df9679`)*
 
 Today the Calendar's `layoutBlocks` (`CalendarGrid.tsx:59`) treats every timed
 block as a flat sibling: a member overlapping its own container is swept into an
@@ -175,63 +208,110 @@ The Planner already has the correct model (`Planner.tsx:731–738`): containers
 render as outline boxes, and `placedChildren(cid)` runs the overlap layout over
 **only that container's members**, inset via `chipFrame(…, nested)`.
 
-1. Port the split to `CalendarGrid`: exclude members (`parent_block_id` set, and
-   the parent is on this day) from the top-level `layoutBlocks` pass; render each
-   container's outline wrapping its span; lay members out inside it with their own
-   mini-cluster pass.
-2. Conflict highlighting keys off the top-level pass only — a member can no longer
-   conflict with its own container, but two overlapping *containers*, or a member
-   overlapping a foreign block, still ring correctly.
-3. Reuse the Planner's inset geometry constants rather than inventing a second
-   containment look — Phase W of the UI work was about one visual language.
+1. ✅ Ported the split to `CalendarGrid` as the pure, exported `splitContainment`:
+   members (`parent_block_id` naming a timeblock **on this day**) leave the
+   top-level `layoutBlocks` pass; each container's members lay out in their own
+   mini-cluster pass. An orphan member whose container is not on the day stays
+   top-level so it still renders rather than vanishing.
+2. ✅ Conflict highlighting keys off the pass a chip was laid out in. A member can
+   no longer conflict with its own container; two overlapping *containers* still
+   ring, and so do two members double-booked inside one container. A foreign block
+   overlapping a member also overlaps that member's container, so the collision
+   surfaces on the container — the honest place for it.
+3. ✅ Reused the Planner's containment geometry rather than inventing a second look:
+   `chipFrame(placed, container?)` mirrors `Planner.tsx:96` — origin past the label
+   cell, the remaining region split into the chip's own overlap columns — with
+   `CONTAINER_EDGE_PX` (15px, the container's thick coloured left edge) playing the
+   role of the Planner's `CAT_WIDTH_PX`. The literal 104px could not be reused: a
+   week column floors at 7rem, which would leave ~8px of chip. Containers also
+   render as outline boxes (no card fill) so members read as inside them.
 
-**Done when:** the screenshot's scenario — one member inside one Time Block —
-renders as a wrapped outline with no conflict ring, in Week and Day views, and the
-existing CalendarGrid tests (17) still pass plus new cases for member-in-container
-and container-vs-container overlap.
+**Done:** the screenshot's scenario renders as a wrapped outline with no conflict
+ring in Week and Day views (verified by driving the app headlessly against the
+seeded data, which already contained a nested task in a Time Block). The existing
+CalendarGrid tests still pass; 17 new tests cover member-in-container,
+container-vs-container overlap, sibling double-booking, foreign-block overlap, and
+the orphan-member case. Client suite: 971 passing / 75 files.
 
-### Phase 5 — Auto-nest matching tasks into Time Blocks *(1–2 days, server)*
+### Phase 5 — Auto-nest matching tasks into Time Blocks ✅ *(shipped — `20b18f6`)*
 
 "Created inside" must mean *every* creation path — Focus's new add box (Phase 3),
-Planner click-to-create, the Element wizard, quick-add, agents — so the rule lives
-in `server/services/blocks.ts` create, not in any one UI:
+Planner click-to-create, the Element wizard, agents — so the rule lives in
+`createBlock`, not in any one UI. Both REST `POST /api/blocks` and GraphQL
+`createTimeBlock` route through it.
 
-1. On task-block creation, when no explicit `parent_block_id` was given: find a
-   same-day Time Block whose span contains the new block's span, whose direction
-   tag (the container's `tag`, split via `splitTagNames` — it can be a
-   multi-direction union) matches the task's direction, **and whose
-   `category_id` names a category in the task's `categories`** (decision 4 — the
-   life-balance match). Both match → stamp `parent_block_id`. A block with no
-   `category_id` matches on direction alone.
-2. Ambiguity rule: two candidate containers (nested/overlapping Time Blocks) →
-   prefer the tightest span; still tied → leave un-nested rather than guess.
-3. Explicit intent always wins: a caller that passes `parent_block_id` (drag-onto-
-   Plan, routine placement) bypasses matching entirely; passing `null` explicitly
-   means "keep it loose".
-4. `autoplan` already stamps `parent_block_id` when placing into Plans
-   (`autoplan.ts:349`) — reflow-placed blocks are unaffected; this phase only
-   covers user-created ones.
-5. Tests: direction match nests; direction mismatch does not; priority mismatch
-   does not (per decision 4); tightest-container tiebreak; explicit
-   `parent_block_id: null` respected.
+1. ✅ `server/src/services/auto-nest.ts`. `chooseContainer` is **pure** and carries
+   the semantics; `resolveAutoNestParent` reads the coordinates and feeds it.
+   A candidate qualifies when it **contains** the new block's span (a partial
+   overlap is not containment — the task would hang outside the box it claims to be
+   in), its directions intersect the subject's, and its categories intersect the
+   subject's *unless it has none*, which matches on direction alone. A container
+   with **no direction** carries no coordinate and never claims a task.
+2. ✅ Ambiguity: the **tightest span** wins — the most specific claim. An exact tie
+   leaves the block loose rather than guessing. A wrong parent is worse than none:
+   containment changes how reflow and the L01 window rules treat the task, since
+   L02 overrides L01.
+3. ✅ Explicit intent always wins: a caller passing `parent_block_id` attaches there
+   and bypasses matching; an explicit `null` keeps it loose.
+4. ✅ Engine paths (`autoplan`, `patterns-place`, `blocks-place`) insert directly
+   rather than through `createBlock`, so reflow-placed blocks are untouched — this
+   covers user-created blocks only, as intended.
+5. ✅ 26 tests: the pure matcher (containment, both mismatches, the no-category and
+   no-direction carve-outs, multi-direction union, case-insensitivity, partial
+   overlap, coincident span, tightest-wins both orderings, exact tie, a
+   non-matching tight container not shadowing a matching wide one) plus the
+   `createBlock` wiring (the acceptance scenario, all-day, someday, timeblock-in-
+   timeblock, explicit parent, explicit null, explicit undefined, task fallback).
 
-**Done when:** creating a `#work` Career task at 12:30 inside a `#work` Career
-Time Block nests it (and the Calendar/Planner/Focus all show it wrapped), while a
-`#work` Health task or a `#home` task at the same time stays loose.
+**Done:** verified over HTTP against the dev server — a `#work` Career task at
+12:30 inside a `#work` Career Time Block nests; a `#work` Health task, a `#home`
+task, an explicit null parent, and a task outside the span all stay loose. Server
+suite 3025 passing.
 
-### Phase 6 — Reflow mobility ladder *(1 day — formalisation, per decision 2)*
+**Two deviations from this plan as originally written, both forced by the code:**
 
-Decision 2 ratified the engine's current shape — reflow moves only auto task
-blocks; Time Blocks hold. So this phase is formalisation, not behaviour change:
+- The category match was specified as `block.category_id`'s name ∈ `task.categories`.
+  **Migration 0135 retired that column from the write path** — categories live in
+  `entity_categories` (1–3, position-ordered) and a block's effective set is its own
+  rows else its task's. The shipped rule is the same intent against the live schema
+  (the container's effective categories intersect the subject's), which also
+  generalizes now that a container can carry three.
+- The opt-in test is `parent_block_id === undefined`, **not** key presence. The
+  GraphQL mapper `toSvcCreate` builds a full object with every unsent field set to
+  undefined, so a key-presence test would have silently disabled auto-nest for every
+  GraphQL caller while working fine over REST. The cost: GraphQL cannot express
+  "definitely loose" — it collapses null to undefined before the service sees it —
+  which is unchanged from before, since both already meant the same thing there.
 
-1. Encode the ladder in one place (a `mobility(block)` function server-side) so
-   the ordering is a fact, not an emergent property of five WHERE clauses;
-   autoplan/auto-defense filter through it.
-2. Tests pin the ladder: "reflow never moves a Time Block", "reflow never moves a
-   locked or synced block even when it blocks everything", "a user group-move of a
-   container carries its members" (existing `move-group` behaviour, now asserted).
+*Note:* Phase 4 renders whatever nesting the server produces, so these nests show
+up wrapped in the Calendar with no further client work.
 
-### Phase 7 — Day-type change: conflicts and the confirmed reflow *(2–3 days)*
+### Phase 6 — Reflow mobility ladder ✅ *(merged — #550, completed by #551)*
+
+Decisions 2 and 3 ratified the engine's current shape — reflow moves only auto task
+blocks, Time Blocks hold, and a user's container move carries its members. So this
+phase is formalisation, not behaviour change:
+
+1. ✅ `server/src/engine/mobility.ts`. `mobility(block)` returns the rung —
+   `fixed` / `holds` / `manual` / `auto` — with `MOBILITY_RANK` exposing the
+   loosest-first ordering so a scheduler can sort rather than re-derive it.
+2. ✅ The five near-identical WHERE clauses now embed one of two shared fragments.
+   They turned out to be **two** predicates, not one: `AUTO_PLACED_SQL` (an agent's
+   own placement — what auto-defense selects before deciding protection in memory)
+   and `REFLOW_CANDIDATE_SQL` (that, plus unlocked — what the clear/re-place paths
+   delete). Conflating them would have changed behaviour.
+3. ✅ Tests pin the ladder end-to-end: a real `clearDayAutoBlocks` sweep leaves the
+   Time Block, the locked auto block, the synced meeting and the hand-placed task
+   untouched and removes only the agent's own placement; and `moveBlockGroup`
+   carries members whether the owner grabs the container or one of its members
+   (decision 3, asserted rather than built).
+
+**The load-bearing test is SQL ≡ function.** A shared constant alone would not catch
+someone hand-editing a query, so a matrix of block shapes asserts the embedded SQL
+and the in-memory twin select exactly the same rows. That, not the constant, is what
+stops the copies drifting again.
+
+### Phase 7 — Day-type change: conflicts and the confirmed reflow ✅ *(merged — #553)*
 
 The L01 consequence. Changing a day's type swaps its windows; tasks already placed
 can end up outside their direction's hours.
@@ -275,7 +355,7 @@ Grounding — all of the machinery exists, none of it currently learns
 classification:
 
 | Piece | Where |
-|---|---|
+| --- | --- |
 | Input → task parse | `server/src/engine/quickadd.ts` (dates via chrono; recently fixed for durations) |
 | LLM classification | `server/src/services/task-enrich.ts` — assigns `categories` from `suggestibleVocabulary` via `generateJson`; `motivation: 'me'\|'us'\|'them'` lives on the triality side |
 | Learning precedent | `server/src/services/triality-learning.ts` — batch over durable evidence (`triality_log`), bounded weights, **never online, no rate knobs**; its header is the house contract |
@@ -328,15 +408,19 @@ counts as busy even when empty; a member inside a timeblock doesn't double-subtr
 
 ## Order and estimate
 
-1 → 2 → 3 are sequential (each builds on the last). 4 (Calendar containment) and
-5 (auto-nest) are independent of the Focus work and of each other — 4 is the
-quickest visible win and fixes the false-conflict defect. 6 (mobility ladder,
-formalisation only after decision 2) comes before 7 (day-type reflow) so the
-reflow proposal can lean on the `mobility()` function. 8 (the learning parse LLM)
-is independent of everything else. 9 (open time) is anytime. The L02-first
-placement ordering lands with Phase 5's matcher plus a small autoplan ordering
-change — called out inside Phases 5/7, not a phase of its own. Total: **11–16
-working days**, with Phase 7 carrying the main regression risk.
+1 → 2 → 3 (the Focus arc), 4 (Calendar containment) and 5 (auto-nest) are **all
+merged**; 6 (mobility ladder) is in review. It landed before 7 (day-type reflow)
+precisely so the reflow proposal can lean on `mobility()` rather than re-deriving
+which blocks may move. 8 (the learning parse LLM) is independent of everything else.
+9 (open time) is anytime.
+
+**Still open: the L02-first placement ordering.** Phase 5 nests blocks at *create*
+time; making the autoscheduler *prefer* a matching Time Block over a bare L01 window
+is the small autoplan ordering change called out inside Phases 5/7 — it did not ship
+with Phase 5 and is now best folded into Phase 7's placement work.
+
+Total remaining: **6–8 working days** (7, 8, 9), with Phase 7 carrying the main
+regression risk.
 
 ## Autoscheduler: what L01 already does
 
