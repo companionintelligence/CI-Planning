@@ -873,9 +873,23 @@ export const api = {
   // In-app Google connection setup (admin-gated; GET 403s for non-admin credentials).
   googleConfig: {
     get: () => request<GoogleConfigState>('GET', '/google-config'),
-    // FTUE · T12 — `mode: 'fixture'` powers "Try with sample data" (no client_id/KEK needed).
     save: (body: { client_id?: string; client_secret?: string | null; enabled: boolean; mode?: 'live' | 'fixture' }) =>
       request<GoogleConfigState>('PUT', '/google-config', body),
+  },
+
+  /**
+   * FTUE "Try with sample data" — installs a small, curated, wholly generic set (three
+   * tasks, five habits, one objective with its steps, and a Deep-work Time Block on
+   * today). Idempotent: a second call returns `skipped` instead of duplicating it.
+   *
+   * This used to be `googleConfig.save({ mode: 'fixture' })` followed by an ingest run,
+   * which quietly left the owner with a connector configured that they never chose.
+   */
+  demo: {
+    sampleData: () =>
+      request<{ tasks: number; habits: number; objectives: number; blocks: number; skipped?: string }>(
+        'POST', '/demo/sample-data',
+      ),
   },
 
   // FTUE · T12 (#348) — the Google OAuth connect flow, lifted out of Settings.tsx's

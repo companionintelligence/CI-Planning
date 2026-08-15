@@ -1,6 +1,6 @@
 import { createResource, createSignal, Show, For } from 'solid-js';
 import { api } from '../../lib/api.js';
-import { integrations, runIngestNowAndRefetch, showToast } from '../../stores/index.js';
+import { integrations, refetchBlocks, refetchTasks, showToast } from '../../stores/index.js';
 import { FTUE_RESUME_KEY } from '../../lib/onboarding.js';
 import { GOOGLE_CONNECT_ENABLED } from '../../lib/flags.js';
 
@@ -46,21 +46,27 @@ export function ConnectSourceStep(props: { onNext: () => void; onBack: () => voi
     }
   }
 
+  /**
+   * Install the curated sample set (server: services/demo-data.ts).
+   *
+   * This used to flip Google into `fixture` mode and run the ingest jobs, which meant
+   * asking for sample data silently configured a connector the owner never chose, and
+   * what appeared depended on fixture files. One call, one known set, no side effects
+   * on their integrations.
+   *
+   * The failure posture from the old version is kept deliberately: on error, stay on
+   * this step so the action can be retried, rather than advancing over a board that is
+   * still empty.
+   */
   async function trySampleData() {
     if (busy()) return;
     setTryingSample(true);
     try {
-      await api.googleConfig.save({ enabled: true, mode: 'fixture' });
-      const ran = await runIngestNowAndRefetch();
-      // Adversarial review caught this: runJob never throws (failures land in
-      // `status`, not a rejection), so the old code always reached this success toast
-      // and always advanced, even when every job failed.
-      const failed = ran.filter((r) => r.status !== 'done');
-      if (failed.length === ran.length) {
-        showToast('Could not load sample data — try again in a moment.', 'error');
-        return; // stay on this step so the user can retry, don't advance
-      }
-      showToast(failed.length ? 'Sample data loaded (some sources had trouble)' : 'Sample data loaded', 'success');
+      const res = await api.demo.sampleData();
+      // Explicit rather than relying on the server's SSE broadcast: the wizard can be
+      // running before the event stream is attached, and the next step reads both.
+      await Promise.all([refetchTasks(), refetchBlocks()]);
+      showToast(res.skipped ?? 'Sample data loaded', 'success');
       props.onNext();
     } catch (err) {
       showToast((err as Error).message, 'error');
@@ -113,15 +119,6 @@ export function ConnectSourceStep(props: { onNext: () => void; onBack: () => voi
           </p>
         </Show>
 
-        <Show when={gcfg()}>
-          <button type="button" class="btn-secondary text-sm" disabled={tryingSample()} onClick={() => void trySampleData()}>
-            {tryingSample() ? 'Loading sample data…' : 'Try with sample data'}
-          </button>
-        </Show>
-        <Show when={gcfg() === null}>
-          <p class="text-[11px] text-muted-foreground">Sample data is available to an operator account.</p>
-        </Show>
-
         <Show when={connections().length > 0}>
           <div class="flex flex-col gap-1">
             <For each={connections()}>
@@ -134,6 +131,19 @@ export function ConnectSourceStep(props: { onNext: () => void; onBack: () => voi
             </For>
           </div>
         </Show>
+      </Show>
+
+      {/* OUTSIDE the Google gate, deliberately. Sample data no longer touches Google —
+          it inserts a curated set server-side — so a build with Google connect disabled
+          must still offer the one path that fills the board. While this sat inside the
+          gate, `GOOGLE_CONNECT_ENABLED=false` left this step with no action at all. */}
+      <Show when={gcfg()}>
+        <button type="button" class="btn-secondary text-sm" disabled={tryingSample()} onClick={() => void trySampleData()}>
+          {tryingSample() ? 'Loading sample data…' : 'Try with sample data'}
+        </button>
+      </Show>
+      <Show when={gcfg() === null}>
+        <p class="text-[11px] text-muted-foreground">Sample data is available to an operator account.</p>
       </Show>
 
       <div class="flex justify-between items-center pt-1">
