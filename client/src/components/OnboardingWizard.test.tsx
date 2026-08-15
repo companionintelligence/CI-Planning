@@ -34,6 +34,7 @@ const googleConfigGetMock = vi.fn(async () => ({
   clientId: null, hasClientSecret: false, enabled: false, redirectUri: 'http://x/api/oauth/google/callback',
 }));
 const googleConfigSaveMock = vi.fn(async (_b: unknown) => googleConfigGetMock());
+const demoSampleDataMock = vi.fn(async () => ({ tasks: 6, habits: 5, objectives: 1, blocks: 4 }));
 const runNowMock = vi.fn(async () => ({
   ok: true,
   ran: [{ kind: 'sync_calendar', status: 'done', itemsCreated: 3, itemsUpdated: 1, log: '' }],
@@ -52,6 +53,7 @@ vi.mock('../lib/api.js', () => ({
     },
     oauth: { googleStart: () => googleStartMock() },
     googleConfig: { get: () => googleConfigGetMock(), save: (b: unknown) => googleConfigSaveMock(b) },
+    demo: { sampleData: () => demoSampleDataMock() },
     jobs: { runNow: () => runNowMock() },
   },
 }));
@@ -165,6 +167,7 @@ describe('OnboardingWizard', () => {
       clientId: null, hasClientSecret: false, enabled: false, redirectUri: 'http://x/api/oauth/google/callback',
     });
     googleConfigSaveMock.mockReset().mockImplementation(async () => googleConfigGetMock());
+    demoSampleDataMock.mockReset().mockResolvedValue({ tasks: 6, habits: 5, objectives: 1, blocks: 4 });
     runNowMock.mockReset().mockResolvedValue({
       ok: true, ran: [{ kind: 'sync_calendar', status: 'done', itemsCreated: 3, itemsUpdated: 1, log: '' }],
     });
@@ -370,7 +373,7 @@ describe('OnboardingWizard', () => {
       window.history.replaceState({}, '', originalHref); // navigation is stubbed in jsdom; restore
     });
 
-    it('Step 3: Try with sample data (admin) saves fixture mode, runs sync, and advances', async () => {
+    it('Step 3: Try with sample data installs the curated set and advances', async () => {
       setPrefs({ onboarded_at: null });
       mount();
       await advanceToConnectStep();
@@ -378,9 +381,14 @@ describe('OnboardingWizard', () => {
       await screen.findByText('Try with sample data');
       fireEvent.click(screen.getByText('Try with sample data'));
 
-      await waitFor(() => expect(googleConfigSaveMock).toHaveBeenCalledWith({ enabled: true, mode: 'fixture' }));
-      await waitFor(() => expect(runNowMock).toHaveBeenCalled());
+      await waitFor(() => expect(demoSampleDataMock).toHaveBeenCalled());
       await screen.findByText('Trust dial'); // onNext() advances past Connect
+
+      // Asking for sample data must not configure an integration the owner never chose.
+      // The old path called googleConfig.save({ mode: 'fixture' }) and ran the ingest
+      // jobs as a side effect; both assertions below are the point of the change.
+      expect(googleConfigSaveMock).not.toHaveBeenCalled();
+      expect(runNowMock).not.toHaveBeenCalled();
     });
 
     it('Step 3: Skip/Back/Next are disabled while "Connect Google" is in flight (adversarial-review fix)', async () => {
@@ -399,10 +407,10 @@ describe('OnboardingWizard', () => {
       resolveStart({ url: 'https://accounts.google.com/o/oauth2/consent' });
     });
 
-    it('Step 3: "Try with sample data" shows an error and does not advance when every job fails (adversarial-review fix)', async () => {
-      runNowMock.mockResolvedValue({
-        ok: true, ran: [{ kind: 'sync_calendar', status: 'error', itemsCreated: 0, itemsUpdated: 0, log: 'boom' }],
-      });
+    it('Step 3: "Try with sample data" stays on the step when the seed fails', async () => {
+      // The posture carried over from the old ingest-based version: a failure must not
+      // advance the wizard over a board that is still empty.
+      demoSampleDataMock.mockRejectedValue(new Error('seed exploded'));
       setPrefs({ onboarded_at: null });
       mount();
       await advanceToConnectStep();
@@ -410,9 +418,22 @@ describe('OnboardingWizard', () => {
 
       fireEvent.click(screen.getByText('Try with sample data'));
 
-      await waitFor(() => expect(toastMock).toHaveBeenCalledWith('Could not load sample data — try again in a moment.', 'error'));
+      await waitFor(() => expect(toastMock).toHaveBeenCalledWith('seed exploded', 'error'));
       await screen.findByText('Connect a source'); // did NOT advance to Trust dial
       expect(screen.queryByText('Trust dial')).toBeNull();
+    });
+
+    it('Step 3: a second press reports the skip rather than duplicating the set', async () => {
+      demoSampleDataMock.mockResolvedValue({ tasks: 0, habits: 0, objectives: 0, blocks: 0, skipped: 'Sample data is already loaded' });
+      setPrefs({ onboarded_at: null });
+      mount();
+      await advanceToConnectStep();
+      await screen.findByText('Try with sample data');
+
+      fireEvent.click(screen.getByText('Try with sample data'));
+
+      await waitFor(() => expect(toastMock).toHaveBeenCalledWith('Sample data is already loaded', 'success'));
+      await screen.findByText('Trust dial'); // still advances — the data is there either way
     });
 
     it('Step 3: a non-admin (googleConfig.get 403 -> null) never sees "Try with sample data"', async () => {
