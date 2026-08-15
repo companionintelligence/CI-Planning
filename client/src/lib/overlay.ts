@@ -67,6 +67,33 @@ export const isExternalBlock = (b: Pick<Block, 'source_account'>): boolean => !!
 export const isCommitment = (b: Pick<Block, 'source_account' | 'is_locked'>): boolean =>
   isExternalBlock(b) || b.is_locked === true;
 
+/** Done-ish statuses no longer hold their span — the slot is open again. Mirrors the
+ *  server's block DONE_STATUSES (engine/blocks-place.ts). */
+const INACTIVE_STATUSES = new Set(['completed', 'done', 'cancelled', 'skipped', 'missed']);
+
+/**
+ * Does this block hold minutes on the day's timeline?
+ *
+ * The single home for that question, because more than one feature asks it and they
+ * must not drift: click-to-create asks it to refuse stacking onto an occupied slot
+ * (`isSlotOccupied`), and the Today header asks it to subtract busy time from the
+ * day's placement windows (`busyFromBlocks`). Three things do NOT occupy minutes:
+ *
+ *  - **all-day blocks** live in the pinned header lane, not the minute axis. Their
+ *    `end_at` is start + duration — an artifact of the notNull column, not a span —
+ *    so subtracting it removes hours nothing is actually using.
+ *  - **someday concepts** have no start/end semantics at all (0019/CON-2); they are
+ *    stored at their goal day's midnight for ordering, not placement.
+ *  - **finished or cancelled blocks** have given their slot back.
+ *
+ * Says nothing about WHICH minutes — the caller resolves that against its own day.
+ */
+export const occupiesMinuteAxis = (
+  b: Pick<Block, 'all_day' | 'block_type' | 'status' | 'start_at' | 'end_at'>,
+): boolean =>
+  isTimed(b) && b.block_type !== 'someday' && !INACTIVE_STATUSES.has(b.status)
+  && !!b.start_at && !!b.end_at;
+
 /** The three tag axes the calendar overlay filters on (tags.kind, post Z/W2 revert). */
 export type TagAxis = 'direction' | 'intention' | 'category';
 export const TAG_AXES: TagAxis[] = ['direction', 'intention', 'category'];
