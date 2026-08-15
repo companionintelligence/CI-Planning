@@ -100,8 +100,11 @@ Phase 8 added two of its own, both stated in [#558](https://github.com/companion
   this block hold minutes", which click-to-create reads too.
 - **L02-first.** `placeIntoContainers` (Pass 1.9) in `engine/autoplan.ts`, matching on
   the phase-5 rule via `preferredContainers` / `coordsMatch` in `services/auto-nest.ts`.
-- **Holds its slot.** `HOLDS_SLOT_SQL` in `engine/mobility.ts` — the SQL twin of the
-  ladder's `holds` rung, read by `dayObstacles` and by `extend-block.ts`.
+- **Holds its slot.** `PLACED_TIMEBLOCK_SQL` in `engine/mobility.ts` — one fact ("this
+  Time Block is actually on the timeline") behind both questions anyone asks of a
+  container: does it hold its slot (`dayObstacles`, `extend-block.ts`) and may it
+  receive a member (`auto-nest.ts`). It was `HOLDS_SLOT_SQL` until auto-nest's own copy
+  was folded into it.
 
 ## Three places the plan's text did not survive contact with the code
 
@@ -153,8 +156,8 @@ same each time: the check was narrower than the failure.
 | Reflow propose/apply | `server/src/engine/day-reflow.ts` — `proposeDayReflow` (pure read), `applyDayReflow` (recomputes; the only mutator) |
 | Reflow endpoints | `GET /api/days/:date/conflicts`, `GET /api/days/:date/reflow/preview`, `POST /api/days/:date/reflow/apply` |
 | Conflict UI | `client/src/components/DayReflowBanner.tsx`; red treatment keys off `conflictedBlockIds` in `stores/index.ts` |
-| Mobility ladder | `server/src/engine/mobility.ts` — `mobility()`, `MOBILITY_RANK`, `AUTO_PLACED_SQL`, `REFLOW_CANDIDATE_SQL`, `HOLDS_SLOT_SQL` |
-| "Does this Time Block occupy minutes" | `HOLDS_SLOT_SQL` (mobility.ts) — read by `dayObstacles` (`engine/scheduler.ts`) and `engine/extend-block.ts`. **Not** `block_type = 'scheduled'`, which only the wizard writes |
+| Mobility ladder | `server/src/engine/mobility.ts` — `mobility()`, `MOBILITY_RANK`, `AUTO_PLACED_SQL`, `REFLOW_CANDIDATE_SQL`, `PLACED_TIMEBLOCK_SQL` |
+| "Is this Time Block on the timeline" | `PLACED_TIMEBLOCK_SQL` (mobility.ts) — the ONE predicate behind "holds its slot" (`dayObstacles` in `engine/scheduler.ts`, `engine/extend-block.ts`) and "may receive a member" (`services/auto-nest.ts`). **Not** `block_type = 'scheduled'`, which only the wizard writes |
 | Auto-nest on create | `server/src/services/auto-nest.ts` — `chooseContainer` (pure), `resolveAutoNestParent` |
 | The nest rule, without time | `coordsMatch` / `preferredContainers` (auto-nest.ts) — shared by create-time nesting and the autoscheduler |
 | L02-first autoscheduling | `placeIntoContainers` (Pass 1.9) in `engine/autoplan.ts`, between the hint pass and the direction windows |
