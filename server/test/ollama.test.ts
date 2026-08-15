@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
-import { status, generate, embed, parseJsonLoose, resolveCall, CALL_POLICY, resetProbeCache } from '../src/mcp/ollama.js';
+import { status, generate, embed, embedReady, parseJsonLoose, resolveCall, CALL_POLICY, resetProbeCache } from '../src/mcp/ollama.js';
 import { setInstalledModels } from '../src/lib/models.js';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
@@ -274,5 +274,74 @@ describe('status() probe cache', () => {
     const rechecked = await status(undefined, { fresh: true });
     expect(tagFetches).toBe(2);        // …and Re-check gets through, so nothing is stuck
     expect(rechecked.available).toBe(false);
+  });
+});
+
+/**
+ * `embedReady()` — the readiness question the EMBEDDING paths ask (Triality's novelty
+ * blend, services/triality.ts). Deliberately not `ready`: that one is the generation
+ * pair, so a box with a chat model and no embedder reports ready for AI features while
+ * every `/api/embeddings` call would 404.
+ *
+ * Like the block above, these have to leave test mode: the probe only fills the
+ * installed-model cache outside it, and "the cache is unknown under NODE_ENV=test" is
+ * itself one of the cases pinned here — it is what keeps the rest of the suite off the
+ * embedding path and therefore deterministic.
+ */
+describe('embedReady()', () => {
+  const SAVED_NODE_ENV = process.env.NODE_ENV;
+  const EMBEDDER = 'probe-embed:latest';
+
+  /** `null` ⇒ the probe fails. Capabilities are irrelevant here: the effective embedder
+   *  is a Settings override, so nothing is auto-selected — only "is it in the list". */
+  function stubTags(models: string[] | null) {
+    vi.stubGlobal('fetch', async (url: string | URL) => {
+      if (!String(url).endsWith('/api/tags')) throw new Error(`unexpected fetch: ${url}`);
+      if (!models) throw new Error('connection refused');
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: models.map((name) => ({ name, capabilities: ['embedding'] })) }),
+      } as unknown as Response;
+    });
+  }
+
+  beforeEach(() => {
+    resetProbeCache();
+    sqlite.prepare(`UPDATE scheduling_prefs SET embed_model = ? WHERE owner_id = ?`).run(EMBEDDER, SYSTEM_OWNER);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    if (SAVED_NODE_ENV === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = SAVED_NODE_ENV;
+    resetProbeCache();
+    setInstalledModels(null);   // hand the suite back its "never probed" state
+    sqlite.prepare(`UPDATE scheduling_prefs SET embed_model = NULL WHERE owner_id = ?`).run(SYSTEM_OWNER);
+  });
+
+  it('true only while the owner’s EFFECTIVE embedder is pulled', async () => {
+    process.env.NODE_ENV = 'production';
+
+    stubTags([EMBEDDER, 'probe-chat:latest']);
+    expect(await embedReady(SYSTEM_OWNER)).toBe(true);
+
+    // The same reachable Ollama, one model short — reachable is not ready.
+    resetProbeCache();
+    stubTags(['probe-chat:latest']);
+    expect(await embedReady(SYSTEM_OWNER)).toBe(false);
+  });
+
+  it('unknown counts as NOT ready — a failed probe, and the whole test suite', async () => {
+    process.env.NODE_ENV = 'production';
+    stubTags(null);
+    expect(await embedReady(SYSTEM_OWNER)).toBe(false);
+
+    // Under NODE_ENV=test the probe never feeds the installed cache (applyInstalled), so
+    // this is false even though the embedder is right there in the tags list.
+    process.env.NODE_ENV = 'test';
+    resetProbeCache();
+    stubTags([EMBEDDER]);
+    expect(await embedReady(SYSTEM_OWNER)).toBe(false);
   });
 });

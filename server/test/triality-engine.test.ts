@@ -348,6 +348,39 @@ describe('N — the embedding stage is bounded (the only I/O in the scoring path
     }
   });
 
+  /**
+   * Every case above INJECTS an embedFn. This one pins the arm the routes and the
+   * GraphQL resolver actually take — no opts at all — because that is where the
+   * bound stopped holding: the default embedder is Ollama, and nothing asked whether
+   * Ollama had an embedder before firing one call per title at it. Combined with the
+   * stage budget that made N a coin flip on a busy box, which is what flaked
+   * triality-routes' "shown is an event" (two GETs, one blended N and one categorical).
+   *
+   * The suite's conditions ARE the gate's false case: under NODE_ENV=test the probe
+   * deliberately leaves the installed set unknown (mcp/ollama.ts applyInstalled), so
+   * every test in the suite now takes the deterministic categorical path.
+   */
+  it('no embedFn → gated on embedReady(); an unknown installed set never calls /api/embeddings', async () => {
+    seedConfirmedHistory(12);
+    insertTask('alpha', { estimate: 20 });
+    insertTask('beta', { estimate: 25 });
+
+    const categorical = await trialityNext(OWNER, NOW, { embedFn: null });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    try {
+      // Two halves, because between them they have teeth in BOTH environments. Remove
+      // the gate and, on a machine with Ollama up, the blend moves N and the deep-equal
+      // fails; on a machine with Ollama down, the calls are still ATTEMPTED, so the spy
+      // records them and the second assertion fails. Either alone would pass vacuously
+      // on the other kind of box — which is precisely how this arm went unpinned.
+      await expect(trialityNext(OWNER, NOW)).resolves.toEqual(categorical);
+      const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
+      expect(urls.filter((u) => u.includes('/api/embeddings'))).toEqual([]);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   it('an embedFn that throws degrades to categorical without propagating', async () => {
     seedConfirmedHistory(12);
     insertTask('alpha', { estimate: 20 });
