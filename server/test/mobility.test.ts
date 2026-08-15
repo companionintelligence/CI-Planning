@@ -81,6 +81,26 @@ describe('mobility() — which rung a block sits on', () => {
     expect(mobility({ is_auto: 1, block_kind: 'task', source_kind: 'pattern', is_locked: 0 })).toBe('manual');
   });
 
+  it('reads drizzle camelCase rows identically to snake_case ones', () => {
+    // BlockRow is camelCase; the API dicts and raw SQL rows are snake_case. Every
+    // field being optional means a camelCase row satisfies a snake_case-only
+    // interface structurally — so getting this wrong would be a silent `manual`
+    // for every block, not a compile error. Phase 7 is the first caller.
+    for (const { label, row } of MATRIX) {
+      const camel = {
+        blockKind: row.block_kind, isAuto: row.is_auto,
+        isLocked: row.is_locked, sourceKind: row.source_kind,
+      };
+      expect(mobility(camel), `${label}: casings disagree`).toBe(mobility(row));
+      expect(isAutoPlaced(camel)).toBe(isAutoPlaced(row));
+    }
+  });
+
+  it('accepts drizzle booleans as well as SQLite 0/1', () => {
+    expect(mobility({ isLocked: true, blockKind: 'task' })).toBe('fixed');
+    expect(mobility({ isAuto: true, blockKind: 'task', sourceKind: 'agent', isLocked: false })).toBe('auto');
+  });
+
   it('ranks loosest-first, so a scheduler can sort rather than re-derive', () => {
     expect(MOBILITY_RANK.auto).toBeLessThan(MOBILITY_RANK.manual);
     expect(MOBILITY_RANK.manual).toBeLessThan(MOBILITY_RANK.holds);

@@ -303,7 +303,7 @@ export async function recoverStaleFreezeLocks(): Promise<number> {
   const res = await store()
     .prepare(
       `UPDATE time_blocks SET is_locked = 0
-        WHERE is_locked = 1 AND is_auto = 1 AND source_kind = 'agent' AND block_kind = 'task'
+        WHERE ${AUTO_PLACED_SQL} AND is_locked = 1
           AND status = 'planned'`
     )
     .run();
