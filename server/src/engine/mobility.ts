@@ -38,15 +38,33 @@ export const MOBILITY_RANK: Readonly<Record<MobilityTier, number>> = Object.free
   fixed: 3,
 });
 
-/** The block columns the ladder reads. Structural, so callers can pass rows or API dicts. */
+/**
+ * The block columns the ladder reads, in EITHER casing.
+ *
+ * This repo carries both shapes: raw SQL rows and the snake_case API dicts use
+ * `is_auto`, while drizzle's `BlockRow` uses `isAuto`. Accepting only one would be a
+ * silent trap rather than a compile error — every field is optional, so a camelCase
+ * row satisfies a snake_case-only interface structurally (excess-property checks
+ * catch fresh object literals, not a variable typed `BlockRow`) and every block would
+ * quietly come back `manual`. Reading both is the cheap way to make that impossible.
+ */
 export interface MobilityInput {
   block_kind?: string | null;
   is_auto?: boolean | number | null;
   is_locked?: boolean | number | null;
   source_kind?: string | null;
+  blockKind?: string | null;
+  isAuto?: boolean | number | null;
+  isLocked?: boolean | number | null;
+  sourceKind?: string | null;
 }
 
 const truthy = (v: boolean | number | null | undefined): boolean => v === true || v === 1;
+
+const kindOf = (b: MobilityInput) => b.block_kind ?? b.blockKind ?? null;
+const sourceOf = (b: MobilityInput) => b.source_kind ?? b.sourceKind ?? null;
+const autoOf = (b: MobilityInput) => truthy(b.is_auto ?? b.isAuto);
+const lockedOf = (b: MobilityInput) => truthy(b.is_locked ?? b.isLocked);
 
 /**
  * Which rung a block sits on.
@@ -57,10 +75,18 @@ const truthy = (v: boolean | number | null | undefined): boolean => v === true |
  * belt-and-braces the client's `isImmovable` keeps — defence in depth if a mirror
  * ever lands unlocked. It cannot widen the reflow candidate set: a meeting is never
  * `is_auto=1 AND block_kind='task'` in the first place.
+ *
+ * SCOPE — the ladder describes TASK blocks and Time Blocks, which is all the plan
+ * defines. Scaffolding kinds (`break`, `buffer`) therefore fall through to `manual`
+ * even when an agent generated them. That is a floor, not a claim: they are never
+ * reflow candidates (the predicate requires `block_kind = 'task'`), and nothing moves
+ * them independently of the run that produced them. A future caller that needs to
+ * reason about scaffolding should give it its own rung rather than read `manual` as
+ * "the owner placed this".
  */
 export function mobility(b: MobilityInput): MobilityTier {
-  if (truthy(b.is_locked) || b.block_kind === 'meeting') return 'fixed';
-  if (b.block_kind === 'timeblock') return 'holds';
+  if (lockedOf(b) || kindOf(b) === 'meeting') return 'fixed';
+  if (kindOf(b) === 'timeblock') return 'holds';
   if (isAutoPlaced(b)) return 'auto';
   return 'manual';
 }
@@ -74,7 +100,7 @@ export function mobility(b: MobilityInput): MobilityTier {
  * task). Use `isReflowCandidate` for "may the engine move this".
  */
 export function isAutoPlaced(b: MobilityInput): boolean {
-  return truthy(b.is_auto) && b.block_kind === 'task' && b.source_kind === 'agent';
+  return autoOf(b) && kindOf(b) === 'task' && sourceOf(b) === 'agent';
 }
 
 /** May reflow move this block? Equivalent to sitting on the loosest rung. */
