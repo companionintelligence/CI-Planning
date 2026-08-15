@@ -44,9 +44,22 @@ export const [blocks, { refetch: refetchBlocks, mutate: mutateBlocks }] = create
   api.blocks.list(r.from, r.to).then((res) => res.blocks)
 );
 
-on('block:created', () => refetchBlocks());
-on('block:updated', () => refetchBlocks());
-on('block:deleted', () => refetchBlocks());
+// Phase 7 — the day's stranded tasks. Keyed on the selected day so the banner and the
+// red treatment always describe the day being looked at. Refetched alongside blocks:
+// a day-type change, a move, or a reflow all change the answer.
+export const [dayConflicts, { refetch: refetchDayConflicts }] = createResource(
+  selectedDay,
+  (date: string) => api.dayReflow.conflicts(date).then((r) => r.conflicts),
+);
+
+/** Block ids the L01 windows no longer accommodate — drives the alert-red treatment. */
+export const conflictedBlockIds = createMemo(
+  () => new Set((dayConflicts() ?? []).map((c) => c.block_id)),
+);
+
+on('block:created', () => { refetchBlocks(); refetchDayConflicts(); });
+on('block:updated', () => { refetchBlocks(); refetchDayConflicts(); });
+on('block:deleted', () => { refetchBlocks(); refetchDayConflicts(); });
 on('schedule:done',  () => refetchBlocks());
 // Phase M B3: a reactive reflow (auto-defense) emits schedule:done with a diff.
 // The refetch above repaints the day; this surfaces a low-noise toast ONLY when

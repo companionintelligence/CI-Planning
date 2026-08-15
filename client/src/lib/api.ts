@@ -684,6 +684,17 @@ export const api = {
 
   // Day types (T-SCHED-3): the catalog, the weekly default map (dow→key), and
   // per-date overrides. resolveDayType picks which pattern_blocks windows Auto uses.
+  // Phase 7 — day-type conflicts and the confirmed reflow. `conflicts` and `preview`
+  // are reads; only `apply` mutates, which is the feature's whole contract.
+  dayReflow: {
+    conflicts: (date: string) =>
+      request<DayConflictReport>('GET', `/days/${date}/conflicts`),
+    preview: (date: string) =>
+      request<ReflowProposal>('GET', `/days/${date}/reflow/preview`),
+    apply: (date: string) =>
+      request<{ moved: number; unscheduled: number; restaged: number }>('POST', `/days/${date}/reflow/apply`),
+  },
+
   dayTypes: {
     list: () => request<{ day_types: DayType[] }>('GET', '/day-types'),
     resolve: (date: string) => request<{ date: string; key: string; source: 'assignment' | 'map' | 'default' }>('GET', `/day-types/resolve/${date}`),
@@ -1719,4 +1730,44 @@ export interface ObjectiveInput {
   priority?: number;
   description?: string | null;  /** #391 — per-item colour token; explicit null clears (fall back to the accent hash). */
   color_token?: string | null;
+}
+
+/** Phase 7 — a task block now sitting outside its direction's windows. */
+export interface DayConflict {
+  block_id: string;
+  task_id: string | null;
+  title: string;
+  start_at: string;
+  end_at: string;
+  directions: string[];
+  is_locked: boolean;
+}
+
+export interface DayConflictReport {
+  date: string;
+  day_type: string;
+  conflicts: DayConflict[];
+}
+
+export interface ReflowMove {
+  block_id: string;
+  task_id: string | null;
+  title: string;
+  from: { start_at: string; end_at: string };
+  to: { start_at: string; end_at: string };
+}
+
+export interface ReflowUnschedule {
+  block_id: string;
+  task_id: string | null;
+  title: string;
+  reason: 'no_room';
+}
+
+export interface ReflowProposal {
+  date: string;
+  day_type: string;
+  moves: ReflowMove[];
+  unschedule: ReflowUnschedule[];
+  kept_locked: DayConflict[];
 }

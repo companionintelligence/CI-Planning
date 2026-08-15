@@ -27,6 +27,7 @@ import { api } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
 import { localISODate, rangeUTC, addDays, weekDaysOf, monthGridOf } from '../lib/dates.js';
 import { minutesIntoDay } from '../lib/grid.js';
+import { DayReflowBanner } from '../components/DayReflowBanner.js';
 import { CalendarGrid } from '../components/CalendarGrid.js';
 import { DayTypeControl } from '../components/DayTypeControl.js';
 import { WeeklyReview } from '../components/WeeklyReview.js';
@@ -507,6 +508,10 @@ export function Calendar() {
           </Show>
         </div>
       </Show>
+
+      {/* Phase 7 — stranded tasks + the confirmed reflow. Sits right under the
+          day-type control, because changing that is what strands them. */}
+      <DayReflowBanner />
 
       {/* Phase N3/N4: weekly review panel — visible only in week view when toggled. */}
       <Show when={view() === 'week' && showReview()}>
