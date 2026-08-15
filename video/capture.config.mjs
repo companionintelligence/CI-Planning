@@ -224,10 +224,10 @@ export default {
   // clock below moved with it — 11:20Z, not 18:20Z.
   //
   // 2026-06-03T11:20Z is a Wednesday chosen deliberately:
-  //   - that day holds Legal review 09:30-10:00, Kwaai working session
+  //   - that day holds Legal review 09:30-10:00, Platform team working session
   //     11:00-12:00 and Lunch with mentor 12:30-13:30, all inside the visible
   //     07:00-21:00 band (day-axis.ts:29-33) rather than the collapsed bars;
-  //   - 11:20 falls INSIDE the Kwaai session, so Focus's "the block you're in"
+  //   - 11:20 falls INSIDE the Platform team session, so Focus's "the block you're in"
   //     is literally true at the shutter;
   //   - weekDaysOf is Monday-start (client/src/lib/dates.ts:94-98), so the week
   //     grid anchors Mon 1 - Sun 7 June and contains 17 of the 18 fixture events,
