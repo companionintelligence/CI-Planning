@@ -125,21 +125,28 @@ export const AUTO_PLACED_SQL = `is_auto = 1 AND block_kind = 'task' AND source_k
 export const REFLOW_CANDIDATE_SQL = `${AUTO_PLACED_SQL} AND is_locked = 0`;
 
 /**
- * SQL for "this Time Block holds its slot" — the ladder's `holds` rung, which is what
- * makes "reflow shuffles tasks AROUND them" true rather than aspirational. Embedded by
- * the obstacle queries (`dayObstacles`, and the end-extension sweep in
- * engine/extend-block.ts).
+ * SQL for **a Time Block that is actually placed on a day's timeline** — as opposed to
+ * one of the three shapes below, which are `block_kind = 'timeblock'` rows that occupy
+ * no minutes at all.
  *
- * Both of those previously wrote `block_type = 'scheduled'` by hand, which only the
- * Element wizard ever writes: every other creation path leaves `block_type` NULL, so a
- * Time Block made from the Planner or the Focus add box did NOT hold its slot and the
- * engine placed straight through it. That is the drift this file exists to prevent —
- * the rung was stated here and then re-derived, differently, in two queries.
+ * One fact, and every question worth asking about a container reduces to it:
+ *
+ *  - **does it hold its slot?** The ladder's `holds` rung, which is what makes "reflow
+ *    shuffles tasks AROUND them" true rather than aspirational. Read by `dayObstacles`
+ *    (engine/scheduler.ts) and the end-extension sweep (engine/extend-block.ts).
+ *  - **may it receive a member?** Auto-nest's candidate filter (services/auto-nest.ts),
+ *    for both the create-time nest and the autoscheduler's L02-first pass. You can only
+ *    nest into something that occupies time, so it is the same set.
+ *
+ * Those two arrived here separately and by different routes. The obstacle queries wrote
+ * the rung by hand as `block_type = 'scheduled'` — a value only the Element wizard
+ * writes, so a Planner-drawn Time Block held no slot and the engine placed straight
+ * through it. Auto-nest had the correct conditions but as its own copy, in a different
+ * clause order, which is exactly the shape a grep for the other one does not find.
  *
  * NARROWER than `mobility(b) === 'holds'`, deliberately, and the difference is not a
  * disagreement. The tier answers "how readily may the engine move this block"; this
- * answers "does it occupy minutes on a day's timeline at all", and three kinds of row
- * are Time Blocks that occupy nothing:
+ * answers "is it on the timeline at all", and three kinds of row are not:
  *
  *  - **someday concepts** have no start/end semantics (0019/CON-2) — they are parked at
  *    their goal day's midnight for ordering, not placed;
@@ -148,17 +155,16 @@ export const REFLOW_CANDIDATE_SQL = `${AUTO_PLACED_SQL} AND is_locked = 0`;
  *  - **recurrence templates** (a rule with no parent) are never rendered on any day —
  *    only their materialized instances are (CON-4).
  *
- * Treating any of them as an obstacle would block time nothing is actually using. A
- * bare fragment: no owner scoping, no leading AND, no date bounds — every call site is
+ * Treating any of them as an obstacle would block time nothing is actually using, and
+ * nesting a task into one would put it inside a container with no span to be inside of.
+ * A bare fragment: no owner scoping, no leading AND, no date bounds — every call site is
  * already scoped and composes this into a longer WHERE.
  *
- * NB `services/auto-nest.ts` asks a different question — "may this block RECEIVE a
- * member" — with, today, exactly these conditions. They are kept separate because they
- * could legitimately diverge (a Time Block might stop accepting members while still
- * holding its slot), but if they are still identical the next time either is touched,
- * one should point at the other rather than a third copy appearing.
+ * If the two questions ever genuinely diverge — a Time Block that stops accepting
+ * members while still holding its slot, say — split them then, with the difference
+ * stated. Do not pre-emptively keep two copies against the possibility.
  */
-export const HOLDS_SLOT_SQL = `block_kind = 'timeblock'
+export const PLACED_TIMEBLOCK_SQL = `block_kind = 'timeblock'
             AND COALESCE(block_type, '') != 'someday'
             AND COALESCE(all_day, 0) = 0
             AND (recurrence_rule IS NULL OR recurrence_parent_id IS NOT NULL)`;

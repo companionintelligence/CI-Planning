@@ -1,5 +1,6 @@
 import { store } from '../db/store.js';
 import { splitTagString, entityCategoryNames } from './tags.js';
+import { PLACED_TIMEBLOCK_SQL } from '../engine/mobility.js';
 
 /**
  * Auto-nest (Focus × Time Blocks, Phase 5) — a task block created inside a matching
@@ -120,24 +121,25 @@ export interface AutoNestSubjectInput {
 }
 
 /**
- * Which rows can receive a member at all, independent of time.
+ * Which rows can receive a member at all, independent of time: a Time Block actually
+ * placed on the timeline. `PLACED_TIMEBLOCK_SQL` (engine/mobility.ts) is that fact, and
+ * the obstacle queries read the same constant to decide which containers hold their
+ * slot — you can only nest into something that occupies time, so it is one set.
  *
- * NB `block_type` is deliberately only tested against 'someday': a container created
- * outside the Element wizard carries block_type NULL, and it is still a real Time
- * Block. The autoscheduler's Plan passes require `block_type = 'scheduled'`, which is
- * exactly why they cannot see one — see `placeIntoContainers` in engine/autoplan.ts.
+ * This file used to carry its own copy with the same four conditions in a different
+ * clause order, which is precisely the shape a grep for the other one does not find.
+ *
+ * Note what it does NOT say: `block_type = 'scheduled'`. That value is written only by
+ * the Element wizard, and a container created anywhere else carries NULL and is still a
+ * real Time Block — the assumption that kept such containers invisible to the
+ * autoscheduler's Plan passes (see `placeIntoContainers` in engine/autoplan.ts) and,
+ * until #559, to the obstacle set as well.
  */
-const CANDIDATE_WHERE = `
-       block_kind = 'timeblock'
-   AND COALESCE(all_day, 0) = 0
-   AND COALESCE(block_type, '') != 'someday'
-   AND (recurrence_rule IS NULL OR recurrence_parent_id IS NOT NULL)`;
-
 const CANDIDATES_SQL = `
   SELECT id, start_at, end_at, tag, task_id
     FROM time_blocks
    WHERE owner_id = ?
-     AND ${CANDIDATE_WHERE}
+     AND ${PLACED_TIMEBLOCK_SQL}
      AND start_at <= ?
      AND end_at >= ?`;
 
@@ -146,7 +148,7 @@ const CANDIDATES_IN_RANGE_SQL = `
   SELECT id, start_at, end_at, tag, task_id
     FROM time_blocks
    WHERE owner_id = ?
-     AND ${CANDIDATE_WHERE}
+     AND ${PLACED_TIMEBLOCK_SQL}
      AND start_at < ?
      AND end_at > ?
    ORDER BY start_at, id`;

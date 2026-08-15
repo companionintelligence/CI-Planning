@@ -150,6 +150,52 @@ describe('the SQL and its in-memory twin agree', () => {
   });
 });
 
+describe('both questions about a container agree', () => {
+  /**
+   * "May this receive a member" (auto-nest) and "does this hold its slot" (the obstacle
+   * queries) are one fact — `PLACED_TIMEBLOCK_SQL`. They share a constant now, so they
+   * cannot disagree by construction; this asserts the CONSEQUENCE, which survives
+   * someone re-copying the conditions into either query.
+   *
+   * Each shape gets its own hour so an obstacle can be identified by its start time —
+   * `dayObstacles` returns spans, not ids.
+   */
+  const SHAPES: { label: string; hour: string; row: Record<string, unknown>; placed: boolean }[] = [
+    { label: 'timeblock, block_type NULL', hour: '09', row: { block_kind: 'timeblock' }, placed: true },
+    { label: 'timeblock, scheduled', hour: '10', row: { block_kind: 'timeblock', block_type: 'scheduled' }, placed: true },
+    { label: 'someday concept', hour: '11', row: { block_kind: 'timeblock', block_type: 'someday' }, placed: false },
+    { label: 'all-day timeblock', hour: '12', row: { block_kind: 'timeblock', all_day: 1 }, placed: false },
+    { label: 'recurrence template', hour: '13', row: { block_kind: 'timeblock', recurrence_rule: 'FREQ=WEEKLY' }, placed: false },
+    { label: 'materialized instance', hour: '14', row: { block_kind: 'timeblock', recurrence_rule: 'FREQ=WEEKLY', recurrence_parent_id: 'tpl' }, placed: true },
+  ];
+
+  it('a container that can receive a member is exactly one that holds its slot', async () => {
+    const { nestCandidatesInRange } = await import('../src/services/auto-nest.js');
+    const { dayObstacles } = await import('../src/engine/scheduler.js');
+
+    const ids = new Map<string, { label: string; hour: string; placed: boolean }>();
+    for (const s of SHAPES) {
+      ids.set(insert({ ...s.row, start_at: at(`${s.hour}:00`), end_at: at(`${s.hour}:30`) }), s);
+    }
+
+    const canReceive = new Set(
+      (await nestCandidatesInRange(OWNER, at('00:00'), at('23:00'))).map((c) => c.id),
+    );
+    // Obstacles come back as spans; map them to the hour that identifies each shape.
+    const holdsSlot = new Set(
+      (await dayObstacles(OWNER, Date.parse(at('00:00')), Date.parse(at('23:00')), { includePlans: true }))
+        .map((o) => new Date(o.start).toISOString().slice(11, 13)),
+    );
+
+    for (const [id, s] of ids) {
+      expect(canReceive.has(id), `${s.label}: may it receive a member?`).toBe(s.placed);
+      expect(holdsSlot.has(s.hour), `${s.label}: does it hold its slot?`).toBe(s.placed);
+    }
+    // The matrix must actually exercise both answers, or agreement is vacuous.
+    expect(SHAPES.some((s) => s.placed) && SHAPES.some((s) => !s.placed)).toBe(true);
+  });
+});
+
 describe('the ladder holds when the engine actually sweeps a day', () => {
   it('reflow never moves a Time Block, a locked block, or a synced event — only its own auto placements', async () => {
     // Everything overlaps the same window, so nothing survives by being out of range.
