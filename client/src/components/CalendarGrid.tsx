@@ -16,7 +16,7 @@ import {
   minAt as axisMinAt,
   visibleExtent,
 } from '../lib/day-axis.js';
-import { setElementModal, calendarAxisState, toggleCalendarTop, toggleCalendarBottom, connectionPrefs, categoryPrefs } from '../stores/index.js';
+import { setElementModal, calendarAxisState, toggleCalendarTop, toggleCalendarBottom, connectionPrefs, categoryPrefs, conflictedBlockIds } from '../stores/index.js';
 import { setActiveBlock, setActiveEntity } from '../stores/selection.js';
 import { revealDetails } from '../stores/ui.js';
 import { isAllDay, isTimed, isTaskBlock, showsBlockLabel } from '../lib/overlay.js';
@@ -236,6 +236,9 @@ function BlockChip(props: { placed: Placed; day: string; state: () => AxisState;
   const done = () => ['completed', 'skipped'].includes(b().status);
   const isTask = () => isTaskBlock(b());
   const container = () => isContainer(b());
+  // Phase 7 — stranded by a day-type change: alert red, distinct from the amber
+  // overlap ring. A block can be both; the day-type conflict is the louder one.
+  const stranded = () => conflictedBlockIds().has(b().id);
   const frame = () => chipFrame(props.placed, props.container);
   // Labelling is decided separately from interaction: a synced meeting shows its name
   // but is not clickable (there is no task behind it to open).
@@ -275,7 +278,8 @@ function BlockChip(props: { placed: Placed; day: string; state: () => AxisState;
       class="absolute overflow-hidden text-[11px] leading-tight transition-colors select-none"
       classList={{
         'opacity-40': done(),
-        'ring-1 ring-amber-400/70': conflict(),
+        'ring-1 ring-amber-400/70': conflict() && !stranded(),
+        'ring-2 ring-destructive': stranded(),
         'cursor-pointer': true,
         // A container is an outline box wrapping its members — no card fill to paint
         // over them, a 2px edge to read as an enclosure. Same treatment as the

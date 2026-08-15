@@ -16,8 +16,9 @@ import { minutesIntoDay } from '../lib/grid.js';
 import { buildFocusItems, countPastRows, memberPast, itemPast, sectionPast, type BuiltSection } from '../lib/focus-sections.js';
 import { LockToggle } from '../components/LockToggle.js';
 import { SectionAddTask } from '../components/SectionAddTask.js';
+import { DayReflowBanner } from '../components/DayReflowBanner.js';
 import { blockColorVar } from '../lib/textures.js';
-import { categoryPrefs } from '../stores/index.js';
+import { categoryPrefs, conflictedBlockIds } from '../stores/index.js';
 
 /**
  * FOCUS — the pre-Today view: "what am I doing right now, and what's left today?"
@@ -286,6 +287,9 @@ export function Focus() {
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
+  /** Phase 7 — this row's block is stranded outside its direction's windows. */
+  const strandedRow = (e: Entry) => !!e.block && conflictedBlockIds().has(e.block.id);
+
   const dotColor = (e: Entry): string =>
     e.task ? directionColorForTask({ tags: e.task.tags ?? [] }, tags() ?? [], patternPrefs()?.prefs ?? {}) : 'var(--border)';
 
@@ -357,8 +361,9 @@ export function Focus() {
       class="flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-colors"
       classList={{
         'opacity-50': !!props.dim,
-        'border-accent-hi/50 bg-accent-hi/5': isNow(props.entry),
-        'border-border/60': !isNow(props.entry),
+        'border-accent-hi/50 bg-accent-hi/5': isNow(props.entry) && !strandedRow(props.entry),
+        'border-destructive bg-destructive/5': strandedRow(props.entry),
+        'border-border/60': !isNow(props.entry) && !strandedRow(props.entry),
       }}
     >
       <span class="w-16 flex-shrink-0 text-[11px] font-mono tabular-nums text-muted-foreground">
@@ -506,6 +511,9 @@ export function Focus() {
 
       {/* #388: reminders — list, create, delete (the toast keeps Snooze). */}
       <FocusReminders />
+
+      {/* Phase 7 — stranded tasks + the confirmed reflow. */}
+      <DayReflowBanner />
 
       {/* Past tasks — collapsed into one expandable row. */}
       <Show when={past().length > 0}>
