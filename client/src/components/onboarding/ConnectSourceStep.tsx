@@ -1,6 +1,6 @@
 import { createResource, createSignal, Show, For } from 'solid-js';
 import { api } from '../../lib/api.js';
-import { integrations, refetchBlocks, refetchTasks, showToast } from '../../stores/index.js';
+import { integrations, onboardingSampleDataAllowed, refetchBlocks, refetchTasks, showToast } from '../../stores/index.js';
 import { FTUE_RESUME_KEY } from '../../lib/onboarding.js';
 import { GOOGLE_CONNECT_ENABLED } from '../../lib/flags.js';
 
@@ -137,12 +137,12 @@ export function ConnectSourceStep(props: { onNext: () => void; onBack: () => voi
           it inserts a curated set server-side — so a build with Google connect disabled
           must still offer the one path that fills the board. While this sat inside the
           gate, `GOOGLE_CONNECT_ENABLED=false` left this step with no action at all. */}
-      <Show when={gcfg()}>
+      <Show when={onboardingSampleDataAllowed() && gcfg()}>
         <button type="button" class="btn-secondary text-sm" disabled={tryingSample()} onClick={() => void trySampleData()}>
           {tryingSample() ? 'Loading sample data…' : 'Try with sample data'}
         </button>
       </Show>
-      <Show when={gcfg() === null}>
+      <Show when={onboardingSampleDataAllowed() && gcfg() === null}>
         <p class="text-[11px] text-muted-foreground">Sample data is available to an operator account.</p>
       </Show>
 

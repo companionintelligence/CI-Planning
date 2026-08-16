@@ -1,7 +1,7 @@
 import { createSignal, createEffect, Show, createResource, For, onMount } from 'solid-js';
 import { ViewHeader } from '../components/ViewHeader.js';
 import { BellRing, Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, Database, AlertTriangle, Users, KeyRound, ScrollText, Eye, FileJson, FileText, Mail } from 'lucide-solid';
-import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast, texturesEnabled, setTexturesEnabled, plannerAxisState, setPlannerCollapseBounds, integrations, refetchIntegrations, recheckIntegrations, aiAvailable, connections, refetchConnections } from '../stores/index.js';
+import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast, texturesEnabled, setTexturesEnabled, plannerAxisState, setPlannerCollapseBounds, integrations, refetchIntegrations, recheckIntegrations, aiAvailable, connections, refetchConnections, openOnboardingAt } from '../stores/index.js';
 import { api, type PlanningSession } from '../lib/api.js';
 import { sessionToMarkdown, sessionToJson, exportFilename } from '../lib/plan-week-export.js';
 import { FTUE_RESUME_KEY } from '../lib/onboarding.js';
@@ -980,6 +980,17 @@ export function Settings() {
                 </span>
               </div>
             </div>
+          </section>
+
+          {/* Restart FTUE — replays the onboarding wizard from step 1. */}
+          <section class="card">
+            <div class="section-label flex items-center gap-1.5 mb-2"><RefreshCw size={12} /> First-Time Experience</div>
+            <div class="text-[11px] text-muted-foreground mb-3">
+              Replay the initial setup wizard — identity, schedule, connect a source, trust level.
+            </div>
+            <button type="button" class="btn-secondary text-sm" onClick={() => openOnboardingAt(1)}>
+              Restart the First-Time Experience
+            </button>
           </section>
 
         </Show>

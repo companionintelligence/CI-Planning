@@ -1,6 +1,6 @@
 import { Show } from 'solid-js';
 import { Link2 } from 'lucide-solid';
-import { integrations, openOnboardingAt } from '../stores/index.js';
+import { integrations, openQuickConnect } from '../stores/index.js';
 import { shouldShowConnectCTA } from '../lib/onboarding.js';
 
 /**
@@ -17,7 +17,7 @@ export function EmptyStateConnectCTA() {
         <button
           type="button"
           class="btn-secondary text-xs inline-flex items-center gap-1.5"
-          onClick={() => openOnboardingAt(3)}
+          onClick={() => openQuickConnect()}
         >
           <Link2 size={13} /> Connect
         </button>

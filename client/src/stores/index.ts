@@ -619,12 +619,29 @@ export const [onboardingStep, setOnboardingStep] = createSignal<1 | 2 | 3 | 4 | 
 // gate alone can't reopen it. This flag lets `openOnboardingAt` force it back open
 // regardless of `onboarded_at`; `completeOnboarding` clears it again on Finish/Skip.
 export const [onboardingForceOpen, setOnboardingForceOpen] = createSignal(false);
+// "Try with sample data" (ConnectSourceStep) should only appear during a genuine FTUE
+// walkthrough — a real first run, or an explicit restart from Settings — not when a
+// returning owner hits the empty-state "Connect" shortcut mid-usage. Both paths reuse
+// the same wizard/step, so this needs its own signal rather than overloading
+// `onboardingForceOpen`. Defaults true: a real first run (no forceOpen involved at all)
+// and `openOnboardingAt` (restart) both want it visible.
+export const [onboardingSampleDataAllowed, setOnboardingSampleDataAllowed] = createSignal(true);
 /** Jump the (already-mounted, self-gating) onboarding wizard to `step`, reopening it
- *  if onboarding already completed — used by the empty-state CTA to reopen at Connect
- *  (3) without a second competing open signal. */
+ *  if onboarding already completed — used by Settings' "Restart the First-Time
+ *  Experience" (step 1). Sample data stays available; use `openQuickConnect` for the
+ *  empty-state shortcut instead. */
 export function openOnboardingAt(step: 1 | 2 | 3 | 4 | 5): void {
   setOnboardingStep(step);
   setOnboardingForceOpen(true);
+}
+
+/** Reopen the wizard straight at Connect (3), for the empty-state CTA in Today/Focus/
+ *  AllTasks. Unlike `openOnboardingAt`, this is not a real FTUE run — it's a returning
+ *  owner reconnecting a source mid-usage — so it hides "Try with sample data". */
+export function openQuickConnect(): void {
+  setOnboardingStep(3);
+  setOnboardingForceOpen(true);
+  setOnboardingSampleDataAllowed(false);
 }
 
 /** Delegates to the pure helper (client/src/lib/onboarding.ts) so callers don't have
