@@ -75,8 +75,13 @@ export function Tags() {
           one — a Work card with four tags left Home and Community as tall boxes
           of empty space, which reads as a broken or unfinished screen rather
           than as two directions that happen to have one tag each. */}
+      {/* auto-fill/minmax rather than `md:grid-cols-3`: the md: breakpoint is VIEWPORT-based,
+          but the Details drawer eats horizontal space, so three columns were being forced
+          into a ~540px area — 160px cards, of which the category select alone claimed 84px,
+          leaving ~30px of tag name. Sizing off the real container keeps every card readable
+          and drops to fewer columns instead of crushing them. */}
       <Show when={view() === 'patterns'}>
-        <div class="grid gap-4 md:grid-cols-3 items-start">
+        <div class="grid gap-4 grid-cols-[repeat(auto-fill,minmax(230px,1fr))] items-start">
           <For each={groupedDir().groups}>
             {(g) => (
               <DirectionCard
@@ -112,7 +117,7 @@ export function Tags() {
 
       {/* ── Time Block Categories tab ── */}
       <Show when={view() === 'categories'}>
-        <div class="grid gap-4 md:grid-cols-3 items-start">
+        <div class="grid gap-4 grid-cols-[repeat(auto-fill,minmax(230px,1fr))] items-start">
           <For each={groupedCat().groups}>
             {(g) => (
               <DirectionCard
@@ -279,9 +284,14 @@ function Chip(props: { tag: Tag; onMute: (t: Tag) => void; onDelete: (t: Tag) =>
       showToast(name ? `Filed under ${displayTag(name)}` : 'Category cleared', 'success');
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
+  // max-w-full is load-bearing: a flex item defaults to min-width:auto, so a chip wider
+  // than its card could not shrink — flex-wrap gave it its own line and it still
+  // overflowed the card border. Capping it at the container width forces the label (the
+  // only min-w-0 child) to absorb the overflow as an ellipsis, while the select and
+  // buttons stay flex-shrink-0 so the controls never squash.
   return (
-    <span class="badge-neutral text-[11px] flex items-center gap-1 pr-1">
-      <span {...drag} class="cursor-grab select-none">#{props.tag.name}</span>
+    <span class="badge-neutral text-[11px] flex items-center gap-1 pr-1 max-w-full">
+      <span {...drag} class="cursor-grab select-none truncate min-w-0" title={`#${props.tag.name}`}>#{props.tag.name}</span>
       {/* max-w is sized for the longest balance category ("Relationships"). At 72px a
           native select clips mid-word with no ellipsis, so the chip rendered
           "#personal Relationsl", which reads as a typo rather than a truncation. */}
@@ -289,7 +299,7 @@ function Chip(props: { tag: Tag; onMute: (t: Tag) => void; onDelete: (t: Tag) =>
         value={current()}
         onChange={(e) => void setCategory(e.currentTarget.value)}
         onPointerDown={(e) => e.stopPropagation()}
-        class="bg-transparent border-0 text-[10px] text-muted-foreground max-w-[104px] cursor-pointer capitalize focus:outline-none"
+        class="bg-transparent border-0 text-[10px] text-muted-foreground max-w-[104px] flex-shrink-0 cursor-pointer capitalize focus:outline-none"
         title="Category"
       >
         <option value="">—</option>
@@ -297,13 +307,13 @@ function Chip(props: { tag: Tag; onMute: (t: Tag) => void; onDelete: (t: Tag) =>
           {(c) => <option value={c.name} selected={current() === c.name}>{displayTag(c.name)}</option>}
         </For>
       </select>
-      <button onClick={() => props.onMute(props.tag)} class="opacity-60 hover:opacity-100" title={props.tag.muted ? 'Unmute' : 'Mute'}>
+      <button onClick={() => props.onMute(props.tag)} class="opacity-60 hover:opacity-100 flex-shrink-0" title={props.tag.muted ? 'Unmute' : 'Mute'}>
         <Show when={props.tag.muted} fallback={<Volume2 size={11} />}><VolumeX size={11} /></Show>
       </button>
       <button
         onClick={() => !props.tag.used && props.onDelete(props.tag)}
         disabled={props.tag.used}
-        class="opacity-60 hover:opacity-100 disabled:opacity-25 disabled:cursor-not-allowed"
+        class="opacity-60 hover:opacity-100 disabled:opacity-25 disabled:cursor-not-allowed flex-shrink-0"
         title={props.tag.used ? 'In use — cannot delete' : 'Delete'}
       >
         <Trash2 size={11} />
