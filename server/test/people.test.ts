@@ -73,6 +73,32 @@ describe('the motivation projection', () => {
     expect(motivationOf(id)).toEqual({ motivation: null, motivation_source: null });
   });
 
+  // Regression: the projection UPDATEs the row AFTER drizzle's .returning() captured
+  // it, so the RESPONSE (and the SSE payload built from it) trailed the database by one
+  // write — the DB said 'them' while the client was handed the previous value. Asserting
+  // only on the database would not have caught it; this asserts on what the caller sees.
+  it('returns the freshly derived motivation, not the pre-write value', async () => {
+    const mom = await createPerson(OWNER, { display_name: 'Mom' });
+    const self = await selfPersonId(OWNER);
+
+    const created = await api<{ task: { id: string; motivation: string | null } }>(srv.url, '/api/tasks', {
+      method: 'POST', json: { title: 'Fresh on create', beneficiary_ids: [mom.id] },
+    });
+    expect(created.body.task.motivation).toBe('them');
+
+    const patched = await api<{ task: { motivation: string | null } }>(
+      srv.url, `/api/tasks/${created.body.task.id}`,
+      { method: 'PATCH', json: { beneficiary_ids: [self!, mom.id] } },
+    );
+    expect(patched.body.task.motivation).toBe('us');
+
+    const cleared = await api<{ task: { motivation: string | null } }>(
+      srv.url, `/api/tasks/${created.body.task.id}`,
+      { method: 'PATCH', json: { beneficiary_ids: [] } },
+    );
+    expect(cleared.body.task.motivation).toBeNull();
+  });
+
   it('derives motivation through the task PATCH surface', async () => {
     const mom = await createPerson(OWNER, { display_name: 'Mom' });
     const { body } = await api<{ task: { id: string } }>(srv.url, '/api/tasks', {

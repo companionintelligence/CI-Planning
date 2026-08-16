@@ -232,7 +232,14 @@ export async function createTask(ownerId: string, input: CreateTaskInput): Promi
     await setEntityPeople(ownerId, 'task', task.id, 'responsible', input.responsible_ids);
   if (input.beneficiary_ids !== undefined) {
     await setEntityPeople(ownerId, 'task', task.id, 'beneficiary', input.beneficiary_ids);
-    if (input.beneficiary_ids.length > 0) await applyMotivationProjection(ownerId, task.id);
+    if (input.beneficiary_ids.length > 0) {
+      // The projection UPDATEs the row, but `task` was captured by .returning() BEFORE
+      // it ran — so without this the response (and the SSE payload built from it) would
+      // carry a stale motivation, one write behind the database.
+      const projected = await applyMotivationProjection(ownerId, task.id);
+      task.motivation = projected;
+      task.motivationSource = projected === null ? null : 'user';
+    }
   }
   if (Array.isArray(input.depends_on)) {
     try {
@@ -516,6 +523,11 @@ export async function updateTask(
     // projection is the only thing that writes the column now. Runs AFTER the column
     // UPDATE above so it is not overwritten by a `motivation` in the same PATCH.
     const projected = await applyMotivationProjection(ownerId, targetId);
+    // Same staleness trap as createTask: `task` was read before the projection wrote,
+    // so the returned row — and every SSE consumer downstream of it — must be caught up
+    // or the client renders the PREVIOUS value.
+    task.motivation = projected;
+    task.motivationSource = projected === null ? null : 'user';
     await recordCorrection(ownerId, targetId, 'motivation', projected);
   }
 
