@@ -25,7 +25,7 @@ describe('seeded system owner carries no personal identity', () => {
     const db = fresh();
     runMigrations(db);
     // Simulate a pre-fix install: the old 0003 literals survived 0030's id remap.
-    db.prepare(`UPDATE owners SET name = 'Liam', email = 'REDACTED-DEV-EMAIL@example.invalid' WHERE id = ?`).run(SYSTEM_OWNER_ID);
+    db.prepare(`UPDATE owners SET name = 'Liam', email = 'liam.broza@gmail.com' WHERE id = ?`).run(SYSTEM_OWNER_ID);
     scrub(db);
     expect(ownerRow(db)).toEqual({ name: 'System', email: null });
     // Idempotent: a second pass changes nothing.
@@ -41,9 +41,9 @@ describe('seeded system owner carries no personal identity', () => {
     scrub(db);
     expect(ownerRow(db)).toEqual({ name: 'Alex', email: 'alex@example.com' });
     // Same guard when only ONE of the two literals matches (renamed but same email).
-    db.prepare(`UPDATE owners SET name = 'Alex', email = 'REDACTED-DEV-EMAIL@example.invalid' WHERE id = ?`).run(SYSTEM_OWNER_ID);
+    db.prepare(`UPDATE owners SET name = 'Alex', email = 'liam.broza@gmail.com' WHERE id = ?`).run(SYSTEM_OWNER_ID);
     scrub(db);
-    expect(ownerRow(db)).toEqual({ name: 'Alex', email: 'REDACTED-DEV-EMAIL@example.invalid' });
+    expect(ownerRow(db)).toEqual({ name: 'Alex', email: 'liam.broza@gmail.com' });
     db.close();
   });
 });
