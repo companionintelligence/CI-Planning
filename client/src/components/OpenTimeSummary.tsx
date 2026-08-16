@@ -14,6 +14,15 @@ import {
  * so the summary reflects the operator's configured hours instead of assumed ones.
  * Only work and community windows count; home hours are the day's own time.
  */
+/** Single-letter tag for the open-window row — "work"/"community" only feed this
+ *  component (see the doc comment above), but an unrecognized direction still gets a
+ *  sane initial rather than rendering blank. */
+function directionLetter(direction: string): string {
+  if (direction === 'work') return 'W';
+  if (direction === 'community') return 'C';
+  return direction.charAt(0).toUpperCase();
+}
+
 export function OpenTimeSummary(props: { date: string }) {
   // Which day type applies to this date, then that day type's placement windows.
   const [dayType] = createResource(
@@ -90,7 +99,7 @@ export function OpenTimeSummary(props: { date: string }) {
                       afternoon reads as longer at a glance without a second axis. */}
                   <i style={{ width: `${Math.min(100, ((s.end - s.start) / 240) * 100)}%` }} />
                 </span>
-                <span class="open-window-tag" data-direction={s.direction}>{s.direction}</span>
+                <span class="open-window-tag" data-direction={s.direction} title={s.direction}>{directionLetter(s.direction)}</span>
                 <span class="open-window-dur">{formatDuration(s.end - s.start)}</span>
               </div>
             )}
