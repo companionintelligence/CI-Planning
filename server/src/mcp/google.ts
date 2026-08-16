@@ -23,7 +23,16 @@ export interface CalendarEvent {
   start: string; // ISO
   end: string; // ISO
   location?: string;
+  /**
+   * 0151: attendee addresses, rooms/equipment already filtered out. Declared since the
+   * beginning but never POPULATED until the people work — the live mapper dropped them
+   * (and hardcoded `description: ''`), so no attendee data reached the app at all.
+   * Entries may carry a display name: `"Alex Hartman" <alex@example.com>`.
+   */
   attendees?: string[];
+  /** The invite's organizer. If it resolves to somebody other than the owner, they are
+   *  proposed as the lead responsible — a fact from the invite, not a guess. */
+  organizer?: string;
 }
 
 export interface GoogleClient {
@@ -161,9 +170,14 @@ export function createLiveGoogleClient(opts: LiveGoogleClientOpts = {}): GoogleC
       const mapped: CalendarEvent[] = events.map((e) => ({
         id: e.id,
         title: e.title,
-        description: '',
+        // 0151: was hardcoded '', which meant gcal task-extraction only ever saw the
+        // event TITLE — the body (where the actual commitments usually are) never
+        // reached the model. Still defaults to '' when the provider sends none.
+        description: e.description ?? '',
         start: e.start,
         end: e.end,
+        ...(e.attendees?.length ? { attendees: e.attendees } : {}),
+        ...(e.organizer ? { organizer: e.organizer } : {}),
       }));
       return o.limit ? mapped.slice(0, o.limit) : mapped;
     },

@@ -1,5 +1,6 @@
 import { GraphQLError } from 'graphql';
 import { currentOwnerId } from '../lib/context.js';
+import { personToGraphql } from './people-resolvers.js';
 import { broadcast } from '../routes/sse.js';
 import { enqueueOutbound, pushOutboundDeletes } from '../agents/sync.js';
 import { getTask } from '../services/tasks.js';
@@ -10,7 +11,7 @@ import {
   deleteBlock as deleteBlockService,
   moveBlockGroup as moveBlockGroupService,
   promoteBlockToScheduled as promoteBlockToScheduledService,
-  getBlock, listBlockPage, blockCategoryNames,
+  getBlock, listBlockPage, blockCategoryNames, blockPeopleApi,
   type BlockRow, type CreateBlockInput as SvcCreateInput, type UpdateBlockInput as SvcUpdateInput,
 } from '../services/blocks.js';
 import { toNode } from './tag-resolvers.js';
@@ -225,6 +226,10 @@ export const blockResolvers = {
     isAuto: (b: BlockRow) => !!b.isAuto,
     status: (b: BlockRow) => b.status ?? 'planned',
     task: async (b: BlockRow) => (b.taskId ? (await getTask(currentOwnerId(), b.taskId)) ?? null : null),
+    // 0151: own-else-inherit-from-task, each set independently — blockPeopleApi is the
+    // single home for that rule, shared with the REST read path so the two can't drift.
+    responsible: async (b: BlockRow) => (await blockPeopleApi(b.id, b.taskId)).responsible.map(personToGraphql),
+    beneficiaries: async (b: BlockRow) => (await blockPeopleApi(b.id, b.taskId)).beneficiaries.map(personToGraphql),
     parentBlock: async (b: BlockRow) => (b.parentBlockId ? (await getBlock(currentOwnerId(), b.parentBlockId)) ?? null : null),
     // Phase B: first EFFECTIVE category — own entity_categories rows, else the task's,
     // else the legacy category_id column (pre-0135 rows the write path hasn't touched).

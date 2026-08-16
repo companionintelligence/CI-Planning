@@ -99,6 +99,8 @@ export async function syncEntityTags(kind: EntityKind, entityId: string, names: 
  */
 const delEntityCatsCleanup_SQL =
   `DELETE FROM entity_categories WHERE entity_kind = ? AND entity_id = ?`;
+const delEntityPeopleCleanup_SQL =
+  `DELETE FROM entity_people WHERE entity_kind = ? AND entity_id = ?`;
 export async function removeEntityTags(kind: EntityKind, entityId: string): Promise<void> {
   await store().prepare(deleteEntity_SQL).run(kind, entityId);
   // Phase B (0134): entity_categories is the same spans-tables shape as entity_tags,
@@ -106,6 +108,11 @@ export async function removeEntityTags(kind: EntityKind, entityId: string): Prom
   // no delete site can clean tags but orphan categories. (Matches nothing for kinds
   // that never carry categories, e.g. 'routine'.)
   await store().prepare(delEntityCatsCleanup_SQL).run(kind, entityId);
+  // 0151: entity_people is the THIRD store with that shape (no FK on entity_id
+  // because it spans tasks + time_blocks), so it rides the same seam for the same
+  // reason — adding a fourth delete site that remembers tags but forgets people is
+  // exactly the bug this centralisation exists to make impossible.
+  await store().prepare(delEntityPeopleCleanup_SQL).run(kind, entityId);
 }
 
 /** An entity's associated tag names (level-then-name ordered). */

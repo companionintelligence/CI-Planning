@@ -37,6 +37,7 @@ import { calibrationRouter } from './calibration.js';
 import { metricsRouter } from './metrics.js';
 import { googleConfigRouter } from './google-config.js';
 import { accountsRouter } from './accounts.js';
+import { peopleRouter } from './people.js';
 import { prioritiesRouter } from './priorities.js';
 import { planWeekRouter } from './plan-week.js';
 import { connectionsRouter } from './connections.js';
@@ -84,6 +85,7 @@ export function mountRoutes(app: Koa) {
     metricsRouter(),
     googleConfigRouter(),
     accountsRouter(),
+    peopleRouter(),
     prioritiesRouter(),
     planWeekRouter(),
     connectionsRouter(),

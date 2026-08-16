@@ -10,6 +10,7 @@ import { DayTypeManager } from '../components/DayTypeManager.js';
 import { CalibrationPins } from '../components/CalibrationPins.js';
 import { PatternBlockSettings } from '../components/PatternBlockSettings.js';
 import { CategorySettings } from '../components/CategorySettings.js';
+import { PeopleSettings } from '../components/PeopleSettings.js';
 import { enablePush, disablePush, pushState } from '../lib/push.js';
 import { on } from '../lib/sse.js';
 import { GOOGLE_CONNECT_ENABLED } from '../lib/flags.js';
@@ -1123,6 +1124,14 @@ export function Settings() {
           <section class="card">
             <div class="section-label flex items-center gap-1.5 mb-1" title={'Quick "types of time" for time blocks (Personal, Professional, Social + your own). Pick a colour; the defaults can be renamed and recoloured but not deleted. Group their intention tags on the Tags → Time Block Categories tab.'}><Tags size={12} /> Time Block Categories</div>
             <CategorySettings />
+          </section>
+
+          {/* People (0151) — the directory behind Responsible / Beneficiaries. Sits next
+              to the other vocabulary catalogs (tags, categories) because that is what
+              it is: the set of names those two fields pick from. */}
+          <section class="card">
+            <div class="section-label flex items-center gap-1.5 mb-1" title="The people you can name as Responsible or Beneficiaries on a task or time block. Entries detected from calendar invites and email arrive here unconfirmed — rename, merge, or delete them."><Users size={12} /> People</div>
+            <PeopleSettings />
           </section>
 
           {/* Time-Block settings — Plan | Concept */}

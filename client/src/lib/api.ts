@@ -14,6 +14,36 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 // ── Tasks ────────────────────────────────────────────────────────────────────
+/**
+ * People on work (0151) — ONE shape for both fields. `responsible` (who does the work)
+ * and `beneficiaries` (who it is for) differ only by which set they are, never by
+ * shape, which is what lets a single component render both.
+ *
+ * `is_self` is derived server-side (`account_id === owner_id`), never stored.
+ * `account_id` non-null means this person is a permissioned account on this install —
+ * the roster the `us` shortcut pre-fills from. It is NOT a condition on who may be
+ * named: most people have no account, and both shortcuts reach both populations.
+ */
+export interface Person {
+  id: string;
+  display_name: string;
+  account_id: string | null;
+  is_self: boolean;
+  /** false = provisionally created by ingest and never confirmed by you. */
+  confirmed: boolean;
+  source: string | null;
+  emails: string[];
+}
+
+/** A permissioned account, as offered to the `us` shortcut. Minimal by design: no
+ *  email, no role — filling in a people field must not leak either. `person_id` is
+ *  null until the account is picked (which materializes the directory row). */
+export interface AccountRosterEntry {
+  account_id: string;
+  name: string;
+  person_id: string | null;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -48,6 +78,9 @@ export interface Task {
   // "shared" is a positive claim). source: 'user' wins permanently; 'llm' = machine.
   motivation?: 'me' | 'us' | 'them' | null;
   motivation_source?: 'user' | 'llm' | null;
+  // People on work (0151). Position-ordered; index 0 of `responsible` is the lead.
+  responsible?: Person[];
+  beneficiaries?: Person[];
   depends_on?: string[];
   blocked?: boolean;
   // Recurrence (Phase E): a template has recurrence_rule set + no parent; an
@@ -80,8 +113,14 @@ export interface TaskInput {
   categories?: string[];
   texture_enabled?: boolean;
   texture_color_token?: string | null;
-  /** Motivation (0141): a client-set value is user testimony; null un-labels. */
+  /** Motivation (0141): a client-set value is user testimony; null un-labels.
+   *  The wizard no longer sends this — it sends `beneficiary_ids` and the server
+   *  derives the axis from that set. */
   motivation?: 'me' | 'us' | 'them' | null;
+  /** People on work (0151): person ids, array order = position. undefined preserves;
+   *  [] clears. Writing `beneficiary_ids` re-derives `motivation` server-side. */
+  responsible_ids?: string[];
+  beneficiary_ids?: string[];
   depends_on?: string[];
   recurrence_rule?: string | null;
   is_habit?: boolean;
@@ -928,6 +967,26 @@ export const api = {
       request<{ account: OwnerAccount }>('PATCH', `/accounts/${id}`, body),
     delete: (id: string) => request<{ ok: boolean }>('DELETE', `/accounts/${id}`),
   },
+
+  // People on work (0151) — the person directory behind both the Responsible and the
+  // Beneficiaries fields. Available to every signed-in session, unlike `accounts`
+  // above: naming somebody on a task is ordinary use, not administration.
+  people: {
+    list: () => request<{ people: Person[] }>('GET', '/people'),
+    create: (body: { display_name: string; emails?: string[] }) =>
+      request<{ person: Person }>('POST', '/people', body),
+    update: (id: string, body: { display_name?: string; confirmed?: boolean; emails?: string[]; notes?: string | null }) =>
+      request<{ person: Person }>('PATCH', `/people/${id}`, body),
+    delete: (id: string) => request<void>('DELETE', `/people/${id}`),
+    merge: (id: string, mergeId: string) =>
+      request<{ person: Person }>('POST', `/people/${id}/merge`, { merge_id: mergeId }),
+    /** The `us` roster. Pure read — picking is what materializes a directory row. */
+    accounts: () => request<{ accounts: AccountRosterEntry[] }>('GET', '/people/accounts'),
+    /** Find-or-create the directory row for an account. Idempotent; call it freely
+     *  whenever the user picks somebody off the roster. */
+    fromAccount: (accountId: string) =>
+      request<{ person: Person }>('POST', `/people/accounts/${accountId}`),
+  },
 };
 
 /** How an account invite went out: emailed, or handed back as a link (no SMTP). */
@@ -998,6 +1057,10 @@ export interface Block {
   categories?: string[]; // Phase B: EFFECTIVE category names (own rows, else the task's), position order
   texture_enabled?: boolean; // Phase B (0135): per-element texture toggle (default on)
   texture_color_token?: string | null; // Phase B (0135): colour override; null ⇒ derive from categories
+  // People on work (0151). EFFECTIVE sets: the block's own rows, else (task-backed,
+  // none of its own) the task's — each set inherited independently.
+  responsible?: Person[];
+  beneficiaries?: Person[];
   color_token?: string | null; // frozen category color stamped at create-time — forward-only (0069)
   rationale?: string | null; // §A3 "why now" — joined from daily_plan via block_id (AI-authored placements only)
   start_at: string; end_at: string; is_locked: boolean; is_auto: boolean;
@@ -1517,6 +1580,9 @@ export interface PossibleTask {
   confidence?: number | null;
   status: string;
   created_at: string;
+  /** 0151: people ingest RECOGNISED on this suggestion (already in the directory).
+   *  Unknown addresses stay hints until promotion, so they are absent here by design. */
+  detected_people?: { id: string; display_name: string; role: string }[];
 }
 
 // ── Connection-prefs (0145): per-source colour + stripe texture ──

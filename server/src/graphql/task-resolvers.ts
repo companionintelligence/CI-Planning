@@ -1,5 +1,7 @@
 import { GraphQLError } from 'graphql';
 import { currentOwnerId } from '../lib/context.js';
+import { getEntityPeople } from '../services/people.js';
+import { personToGraphql } from './people-resolvers.js';
 import { broadcast } from '../routes/sse.js';
 import { requestReplan } from '../engine/auto-defense.js';
 import { taskToApi } from '../lib/serialize.js';
@@ -63,6 +65,9 @@ function toSvcCreate(input: Record<string, unknown>): SvcCreateInput {
     texture_enabled: input.textureEnabled == null ? undefined : (input.textureEnabled as boolean),
     texture_color_token: input.textureColorToken == null ? undefined : (input.textureColorToken as string),
     depends_on: input.dependsOn == null ? undefined : (input.dependsOn as string[]),
+    // People on work (0151) — same null-means-absent mapping as tags/categories above.
+    responsible_ids: input.responsibleIds == null ? undefined : (input.responsibleIds as string[]),
+    beneficiary_ids: input.beneficiaryIds == null ? undefined : (input.beneficiaryIds as string[]),
   };
 }
 
@@ -96,6 +101,10 @@ function toSvcUpdate(input: Record<string, unknown>): SvcUpdateInput {
   if ('completed' in input) out.completed = input.completed as boolean;
   if ('parentId' in input) out.parent_id = input.parentId as string | null;
   if ('tags' in input) out.tags = input.tags as string[];
+  // People on work (0151): present-means-write, so [] clears — the same 'in' idiom the
+  // rest of this mapper uses for fields where an empty value is a real instruction.
+  if ('responsibleIds' in input && input.responsibleIds != null) out.responsible_ids = input.responsibleIds as string[];
+  if ('beneficiaryIds' in input && input.beneficiaryIds != null) out.beneficiary_ids = input.beneficiaryIds as string[];
   if ('secondaryTags' in input) out.secondary_tags = input.secondaryTags as string[];
   // Phase B: null is treated as absent — clearing is expressed by [] (REST contract).
   if ('categories' in input && input.categories != null) out.categories = input.categories as string[];
@@ -192,6 +201,10 @@ export const taskResolvers = {
       );
     },
     dependsOn: (t: TaskRow) => dependsOnService(currentOwnerId(), t.id),
+    // 0151. Owner-safe for the same reason `tags` is: this resolver only ever runs on
+    // an already-owner-scoped task, so its entity_people rows are the owner's.
+    responsible: async (t: TaskRow) => (await getEntityPeople('task', t.id)).responsible.map(personToGraphql),
+    beneficiaries: async (t: TaskRow) => (await getEntityPeople('task', t.id)).beneficiaries.map(personToGraphql),
     // W4a Taggable forward edge. Owner-safe: this resolver only runs on an
     // already-owner-scoped task (task/tasks/parent/subtasks all go through getTask/
     // listTasks), so its entity_tags are the owner's. id/label/taggedAt map to

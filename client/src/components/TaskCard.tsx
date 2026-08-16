@@ -8,6 +8,7 @@ import { buildPickerRows, leafObjectives, PICKER_SEARCH_THRESHOLD } from '../lib
 import { isPromotableToObjective } from '../lib/objective-promote.js';
 import { directionColorForTask, directionShapeForTask, colorVar, resolveItemColor } from '../lib/pattern-meta.js';
 import { elementTextureStyle } from '../lib/textures.js';
+import { initialsOf } from '../lib/element.js';
 import { ShapeIcon } from './ShapeIcon.js';
 
 const statusClass: Record<string, string> = {
@@ -623,7 +624,7 @@ export function TaskCard(props: Props) {
         {/* Row C — tags, full width. Phase C (batch-3 comment): the visible secondary
             axis is now the task's CATEGORIES (colour-dotted chips, position order) —
             intentions stay in the data (grouping/auto-tag/filters) but off the card. */}
-        <Show when={props.task.tags.length > 0 || (props.task.categories?.length ?? 0) > 0}>
+        <Show when={props.task.tags.length > 0 || (props.task.categories?.length ?? 0) > 0 || (props.task.responsible?.length ?? 0) > 0}>
           <div class="flex flex-wrap gap-1.5 mt-2">
             {/* Primary tags (level 1) — solid badge; includes the home/work/community direction. */}
             <For each={props.task.tags}>
@@ -641,6 +642,25 @@ export function TaskCard(props: Props) {
                 </span>
               )}
             </For>
+            {/* People on work (0151) — initials only. A card has no room for names, and
+                the point here is recognition at a glance: "am I on the hook, or is
+                somebody else". Responsible only; beneficiaries are a detail for the
+                drawer. `title` carries the full names for anyone who needs them. */}
+            <For each={(props.task.responsible ?? []).slice(0, 3)}>
+              {(person) => (
+                <span
+                  class="inline-flex items-center justify-center w-4 h-4 rounded-full border border-border/60 text-[9px] font-semibold text-muted-foreground/90"
+                  title={`Responsible: ${(props.task.responsible ?? []).map((p) => p.display_name).join(', ')}`}
+                >
+                  {initialsOf(person.display_name)}
+                </span>
+              )}
+            </For>
+            <Show when={(props.task.responsible?.length ?? 0) > 3}>
+              <span class="text-[10px] text-muted-foreground/80 self-center">
+                +{(props.task.responsible?.length ?? 0) - 3}
+              </span>
+            </Show>
           </div>
         </Show>
 

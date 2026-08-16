@@ -3,7 +3,7 @@ import { broadcast } from './sse.js';
 import { logger } from '../lib/logger.js';
 import { toApiList, taskToApi } from '../lib/serialize.js';
 import { currentOwnerId } from '../lib/context.js';
-import { listPossibles, promotePossible, dismissPossible } from '../services/possibles.js';
+import { listPossibles, promotePossible, dismissPossible, detectedPeopleByPossible } from '../services/possibles.js';
 import { requiresReview } from '../services/review-gate.js';
 import { autoScheduleOnIngest, placeStartAnchoredTask } from '../engine/autoplan.js';
 
@@ -29,7 +29,15 @@ export function possiblesRouter() {
     const { status = 'pending', review } = ctx.query as Record<string, string>;
     const rows = await listPossibles(currentOwnerId(), status);
     const filtered = review ? rows.filter((r) => requiresReview(r.sourceKind)) : rows;
-    ctx.body = { possibles: toApiList(filtered) };
+    // 0151: who ingest recognised on each suggestion, so the owner sees it BEFORE
+    // approving — the point of detecting at suggestion time rather than after.
+    const people = await detectedPeopleByPossible(filtered.map((r) => r.id));
+    ctx.body = {
+      possibles: toApiList(filtered).map((row) => ({
+        ...row,
+        detected_people: people.get(row.id as string) ?? [],
+      })),
+    };
   });
 
   // POST /api/possible-tasks/:id/promote

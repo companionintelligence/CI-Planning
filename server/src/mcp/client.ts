@@ -732,6 +732,11 @@ function toRemoteEvent(v: unknown): RemoteEvent {
     etag: o.etag === undefined || o.etag === null ? null : String(o.etag),
     ...(o.allDay !== undefined ? { allDay: Boolean(o.allDay) } : {}),
     ...(o.deleted !== undefined ? { deleted: Boolean(o.deleted) } : {}),
+    // 0151: optional throughout — an older MCP child that doesn't send these simply
+    // omits them, and people detection finds nothing rather than erroring.
+    ...(Array.isArray(o.attendees) ? { attendees: (o.attendees as unknown[]).map(String) } : {}),
+    ...(o.organizer !== undefined && o.organizer !== null ? { organizer: String(o.organizer) } : {}),
+    ...(o.description !== undefined && o.description !== null ? { description: String(o.description) } : {}),
   };
 }
 

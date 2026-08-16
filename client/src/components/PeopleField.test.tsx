@@ -1,0 +1,158 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, fireEvent, screen, waitFor } from '@solidjs/testing-library';
+
+/**
+ * People on work (0151) — the shared field behind BOTH Responsible and Beneficiaries.
+ *
+ * The behaviours worth pinning at the DOM seam are the ones the design argument turns
+ * on, not the rendering:
+ *  1. the shortcuts are EXPANSION ACTIONS — each fills the set and every chip stays
+ *     removable afterwards;
+ *  2. `us` = you + others, reaching NAMED people on a single-account install (the
+ *     roster being empty must not make it a synonym for `me`);
+ *  3. `them` excludes you and fills nothing on its own — only the user names the others;
+ *  4. "Create <name>" is always reachable, so the directory is never a prerequisite.
+ */
+
+const createPerson = vi.fn();
+const fromAccount = vi.fn();
+const showToast = vi.fn();
+
+vi.mock('../lib/api.js', () => ({
+  api: {
+    people: {
+      create: (...a: unknown[]) => createPerson(...a),
+      fromAccount: (...a: unknown[]) => fromAccount(...a),
+    },
+  },
+}));
+vi.mock('../stores/index.js', () => ({ showToast: (...a: unknown[]) => showToast(...a) }));
+
+const { PeopleField } = await import('./PeopleField.js');
+
+type Person = Parameters<typeof PeopleField>[0]['value'][number];
+type Props = Parameters<typeof PeopleField>[0];
+
+const person = (over: Partial<Person> = {}): Person => ({
+  id: 'p-self', display_name: 'Alex', account_id: 'own-1', is_self: true,
+  confirmed: true, source: 'account', emails: ['alex@example.com'], ...over,
+});
+
+const SELF = person();
+const WIFE = person({ id: 'p-wife', display_name: 'Wife', account_id: null, is_self: false });
+const COLLEAGUE = person({ id: 'p-col', display_name: 'Chris', account_id: 'own-2', is_self: false });
+
+beforeEach(() => vi.clearAllMocks());
+
+function setup(over: Partial<Props> = {}) {
+  const onChange = vi.fn();
+  const props: Props = {
+    label: 'Responsible',
+    value: [],
+    onChange,
+    directory: [SELF, WIFE],
+    roster: [],
+    onDirectoryChanged: vi.fn(),
+    ...over,
+  };
+  render(() => <PeopleField {...props} />);
+  return { onChange, props };
+}
+
+describe('shortcuts fill the set', () => {
+  it('me sets exactly you', async () => {
+    const { onChange } = setup();
+    fireEvent.click(screen.getByText('me'));
+    await waitFor(() => expect(onChange).toHaveBeenCalled());
+    expect(onChange.mock.calls[0][0]).toEqual([SELF]);
+  });
+
+  it('us reaches NAMED people when the roster is empty (single sign-on account)', async () => {
+    // The correction that matters: `us` means you + another PERSON, not you + another
+    // ACCOUNT. With no roster it seeds you and opens the picker so a named person can
+    // complete the set — it must never quietly resolve to `me`.
+    const { onChange } = setup({ roster: [] });
+    fireEvent.click(screen.getByText('us'));
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith([SELF]));
+
+    // The picker is open, and the named person with no login is offered.
+    await waitFor(() => expect(screen.getByPlaceholderText('Search or type a name…')).toBeTruthy());
+    expect(screen.getByText('Wife')).toBeTruthy();
+  });
+
+  it('us pre-fills every known account alongside you', async () => {
+    fromAccount.mockResolvedValue({ person: COLLEAGUE });
+    const { onChange } = setup({
+      directory: [SELF, WIFE, COLLEAGUE],
+      roster: [{ account_id: 'own-2', name: 'Chris', person_id: 'p-col' }],
+    });
+    fireEvent.click(screen.getByText('us'));
+    await waitFor(() => expect(onChange).toHaveBeenCalled());
+    const last = onChange.mock.calls[onChange.mock.calls.length - 1][0];
+    expect(last.map((p: { id: string }) => p.id)).toEqual(['p-self', 'p-col']);
+  });
+
+  it('them drops you and fills nothing on its own', async () => {
+    const { onChange } = setup({ value: [SELF, WIFE] });
+    fireEvent.click(screen.getByText('them'));
+    await waitFor(() => expect(onChange).toHaveBeenCalled());
+    // Only you are removed; who the "others" are is the user's to say.
+    expect(onChange.mock.calls[0][0]).toEqual([WIFE]);
+  });
+});
+
+describe('the set stays editable after a shortcut', () => {
+  it('removes a single chip without touching the rest', async () => {
+    const { onChange } = setup({ value: [SELF, WIFE] });
+    fireEvent.click(screen.getByLabelText('Remove Wife'));
+    expect(onChange).toHaveBeenCalledWith([SELF]);
+  });
+
+  it('adds someone from the directory', async () => {
+    const { onChange } = setup({ value: [SELF] });
+    fireEvent.click(screen.getByText('Add'));
+    fireEvent.click(await screen.findByText('Wife'));
+    expect(onChange.mock.calls[0][0].map((p: { id: string }) => p.id)).toEqual(['p-self', 'p-wife']);
+  });
+
+  it('never offers somebody already attached', async () => {
+    setup({ value: [WIFE] });
+    fireEvent.click(screen.getByText('Add'));
+    await screen.findByPlaceholderText('Search or type a name…');
+    // 'Wife' appears once — as the attached chip, not as a pickable row.
+    expect(screen.getAllByText('Wife')).toHaveLength(1);
+  });
+});
+
+describe('creating a person inline', () => {
+  it('offers Create for a new name and attaches the result', async () => {
+    createPerson.mockResolvedValue({
+      person: { ...WIFE, id: 'p-new', display_name: 'Neighbour' },
+    });
+    const { onChange, props } = setup();
+    fireEvent.click(screen.getByText('Add'));
+    const input = await screen.findByPlaceholderText('Search or type a name…');
+    fireEvent.input(input, { target: { value: 'Neighbour' } });
+
+    fireEvent.click(await screen.findByText(/Create/));
+    await waitFor(() => expect(createPerson).toHaveBeenCalledWith({ display_name: 'Neighbour' }));
+    expect(onChange.mock.calls[0][0].map((p: { id: string }) => p.id)).toEqual(['p-new']);
+    // The other field shares the directory resource, so it has to be told.
+    expect(props.onDirectoryChanged).toHaveBeenCalled();
+  });
+
+  it('does not offer Create for a name that already exists', async () => {
+    setup();
+    fireEvent.click(screen.getByText('Add'));
+    const input = await screen.findByPlaceholderText('Search or type a name…');
+    fireEvent.input(input, { target: { value: 'wife' } }); // case-insensitive match
+    expect(screen.queryByText(/Create/)).toBeNull();
+  });
+});
+
+describe('provisional people are marked', () => {
+  it('flags an unconfirmed person so a detected guess is never mistaken for a choice', () => {
+    setup({ value: [person({ id: 'p-x', display_name: 'Dana', is_self: false, confirmed: false })] });
+    expect(screen.getByTitle(/Detected automatically/)).toBeTruthy();
+  });
+});

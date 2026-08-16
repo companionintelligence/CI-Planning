@@ -41,6 +41,12 @@ type TimeBlockType implements Node & Taggable {
   # same derive rule as REST's `categories`).
   categories: [String!]!
   tags: [EntityTagType!]!           # W4a: tags applied to this block (entity_tags, all levels)
+  # People on work (0151). A block carries both sets natively; a task-backed block with
+  # none of its own INHERITS its task's (each set independently) — the same
+  # own-else-derive rule categories follow, so re-assigning a task re-labels its blocks
+  # with no engine writes.
+  responsible: [PersonType!]!
+  beneficiaries: [PersonType!]!
 }
 
 type TimeBlockConnection implements Connection {

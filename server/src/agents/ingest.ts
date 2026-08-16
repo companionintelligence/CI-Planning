@@ -7,6 +7,7 @@ import { currentOwnerId } from '../lib/context.js';
 import { newId } from '../lib/ids.js';
 import { logger } from '../lib/logger.js';
 import { promoteAllPending } from '../services/possibles.js';
+import { parseEmail, resolveByEmail, selfPersonId } from '../services/people.js';
 import { dedupePossibles } from './groom.js';
 import { broadcast } from '../routes/sse.js';
 
@@ -195,7 +196,74 @@ export async function upsertPossible(
     .prepare('INSERT OR IGNORE INTO possible_task_tags (possible_task_id, tag_id) VALUES (?, ?)')
     .run(possibleId, await directionTagId(direction));
 
+  await attachDetectedPeople(owner, possibleId, sourceKind, payload);
+
   return outcome;
+}
+
+/**
+ * People on work (0151) — attach the RESPONSIBLE set a source states as fact.
+ *
+ * Scope, deliberately: only 'responsible', never 'beneficiaries'. Who is on an invite
+ * or a mail header is OBSERVABLE; who the work is *for* is a judgment nothing in the
+ * source states. The existing motivation classifier (services/motivation.ts) keeps
+ * answering that question exactly as it does today — and seeding beneficiaries from its
+ * answer would be actively wrong on a single-account install, where expanding 'us' to
+ * {self} would project straight back to 'me' and silently downgrade the label.
+ *
+ * DOES NOT CREATE PEOPLE. Ingest reads far more mail and events than the owner ever
+ * promotes; creating a directory row for every address it passed would turn the
+ * directory into a mailing-list dump within a week. So:
+ *   - an address ALREADY in the directory → a possible_task_people row now, so the
+ *     suggestion can show who it spotted before the owner approves it;
+ *   - an unknown address → stashed on source_payload for promote to resolve-or-create
+ *     ({@link carryPossiblePeople}), i.e. only for items the owner actually accepted.
+ */
+async function attachDetectedPeople(
+  owner: string,
+  possibleId: string,
+  sourceKind: string,
+  payload: unknown,
+): Promise<void> {
+  const p = (payload ?? {}) as { from?: unknown; organizer?: unknown; attendees?: unknown };
+  const raw = [
+    ...(typeof p.organizer === 'string' ? [p.organizer] : []),
+    ...(typeof p.from === 'string' ? [p.from] : []),
+    ...(Array.isArray(p.attendees) ? p.attendees.filter((a): a is string => typeof a === 'string') : []),
+  ];
+  if (raw.length === 0) return;
+
+  const source = sourceKind === 'gmail' ? 'email' : 'calendar';
+  const self = await selfPersonId(owner);
+  const unresolved: string[] = [];
+  const seen = new Set<string>();
+  let position = 0;
+
+  for (const entry of raw) {
+    const email = parseEmail(entry);
+    if (!email || seen.has(email)) continue;
+    seen.add(email);
+    const personId = await resolveByEmail(owner, email);
+    if (!personId) { unresolved.push(entry); continue; }
+    // You are always on your own items; a row for yourself here would be noise.
+    if (personId === self) continue;
+    await store()
+      .prepare(
+        `INSERT OR IGNORE INTO possible_task_people (possible_task_id, person_id, role, source, confidence)
+         VALUES (?, ?, 'responsible', ?, 1.0)`,
+      )
+      .run(possibleId, personId, source);
+    position++;
+  }
+
+  if (unresolved.length) {
+    // Merge into source_payload rather than replacing it — `from`/`subject` are already
+    // there and inferDirection reads them on the next pass.
+    const merged = { ...(p as Record<string, unknown>), people_hints: unresolved };
+    await store()
+      .prepare(`UPDATE possible_tasks SET source_payload = ? WHERE id = ?`)
+      .run(JSON.stringify(merged), possibleId);
+  }
 }
 
 // ─── Gmail watermark cursor + dead-letter (sync_state, resource-keyed) ─────────
@@ -422,7 +490,15 @@ export async function ingestEvents(
       await runExtraction(
         { kind: 'gcal', ref: event.id, subject: event.title, text, at: event.start },
         opts.tier ?? 'quality',
-        { title: event.title, start: event.start },
+        // 0151: the invite's people ride along in the payload so attachDetectedPeople
+        // can resolve them. Absent on a provider (or an older MCP child) that doesn't
+        // send them — detection then simply finds nobody.
+        {
+          title: event.title,
+          start: event.start,
+          ...(event.organizer ? { organizer: event.organizer } : {}),
+          ...(event.attendees?.length ? { attendees: event.attendees } : {}),
+        },
         result
       );
     }

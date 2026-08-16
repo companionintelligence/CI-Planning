@@ -12,6 +12,7 @@ import { ensureTaskPromoted, unpromoteIfEmpty, dropSourceObjective, recomputeObj
 import { rollupStatusFacet } from './objectives.js';
 import { ensureHabitPattern } from './patterns.js';
 import { entityTagLevels, syncLeveledEntityTags, setEntityCategories, categoryIdsForOwner } from './tags.js';
+import { setEntityPeople, applyMotivationProjection } from './people.js';
 import { utcDayBounds, localDateInTZ } from '../lib/tz.js';
 import { localISODate } from '../lib/dates.js';
 import { writeAudit } from '../lib/audit.js';
@@ -147,6 +148,12 @@ export type CreateTaskInput = {
   // LLM overlay) can attribute a create to the machine.
   motivation?: 'me' | 'us' | 'them' | null;
   motivation_source?: 'user' | 'llm';
+  // People on work (0151): person ids, array order = position (index 0 of
+  // `responsible` is the lead). Unknown / other-owner ids drop silently, mirroring
+  // tags and categories. Setting `beneficiary_ids` DERIVES `motivation` — see
+  // applyMotivationProjection — so a caller should send one or the other, not both.
+  responsible_ids?: string[];
+  beneficiary_ids?: string[];
   // AB1: route-level opt-in — POST /api/tasks runs placeStartAnchoredTask after create
   // when true AND scheduled_for is set. Ignored by the service itself (default false;
   // the wizard client creates its own block explicitly, so no unconditional hook).
@@ -217,6 +224,16 @@ export async function createTask(ownerId: string, input: CreateTaskInput): Promi
   // unknown names drop silently (mirrors tag behavior).
   if (input.categories !== undefined)
     await setEntityCategories('task', task.id, await categoryIdsForOwner(input.categories, ownerId));
+  // People on work (0151). Beneficiaries LAST-write the motivation projection, which
+  // overwrites the keyword fallback computed above — deliberately: an explicit
+  // beneficiary set is stronger evidence of who the work is for than a regex over the
+  // title. An absent/empty set leaves the fallback's answer standing.
+  if (input.responsible_ids !== undefined)
+    await setEntityPeople(ownerId, 'task', task.id, 'responsible', input.responsible_ids);
+  if (input.beneficiary_ids !== undefined) {
+    await setEntityPeople(ownerId, 'task', task.id, 'beneficiary', input.beneficiary_ids);
+    if (input.beneficiary_ids.length > 0) await applyMotivationProjection(ownerId, task.id);
+  }
   if (Array.isArray(input.depends_on)) {
     try {
       // W3.1b: scope blockers to the caller's own tasks — a cross-owner id is dropped.
@@ -312,7 +329,15 @@ export type UpdateTaskInput = {
   // Motivation axis (0141, §3b). A PATCH is always the client's testimony: setting a
   // value stamps motivation_source='user' (permanent — machine passes never re-tag);
   // an explicit null clears BOTH columns back to unlabeled.
+  //
+  // Still writable directly for API back-compat, but the WIZARD no longer sends it:
+  // it sends `beneficiary_ids` and the server derives the axis from that set (0151).
   motivation?: 'me' | 'us' | 'them' | null;
+  // People on work (0151). `undefined` = don't touch; `[]` = clear (mirrors tags and
+  // categories). Writing `beneficiary_ids` re-derives `motivation`, INCLUDING to null
+  // when the set is emptied — clearing beneficiaries genuinely means "unlabeled".
+  responsible_ids?: string[];
+  beneficiary_ids?: string[];
   depends_on?: string[];
   recurrence_rule?: string | null;
   recurrence_dtstart?: string | null;
@@ -479,6 +504,19 @@ export async function updateTask(
   }
   if (input.motivation !== undefined) {
     await recordCorrection(ownerId, targetId, 'motivation', input.motivation);
+  }
+
+  // People on work (0151) — same undefined-preserves / []-clears semantics as tags.
+  if (Array.isArray(input.responsible_ids)) {
+    await setEntityPeople(ownerId, 'task', targetId, 'responsible', input.responsible_ids);
+  }
+  if (Array.isArray(input.beneficiary_ids)) {
+    await setEntityPeople(ownerId, 'task', targetId, 'beneficiary', input.beneficiary_ids);
+    // Unconditional, including for []: emptying the set means "unlabeled", and the
+    // projection is the only thing that writes the column now. Runs AFTER the column
+    // UPDATE above so it is not overwritten by a `motivation` in the same PATCH.
+    const projected = await applyMotivationProjection(ownerId, targetId);
+    await recordCorrection(ownerId, targetId, 'motivation', projected);
   }
 
   if (Array.isArray(input.depends_on)) {

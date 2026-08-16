@@ -13,7 +13,7 @@ describe('GET /api/export', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('content-disposition')).toMatch(/attachment.*filename="companion-export/);
     const body = await res.json() as Record<string, unknown>;
-    expect(body.version).toBe('10'); // '10': +entity_categories (category assignments were never exported)
+    expect(body.version).toBe('11'); // '11': +people/person_emails/entity_people/possible_task_people (0151). '10': +entity_categories (category assignments were never exported)
     expect(typeof body.owner_id).toBe('string');
     expect(typeof body.exported_at).toBe('string');
     for (const key of ['tasks', 'patterns', 'tags', 'scheduling_prefs']) {
@@ -401,5 +401,126 @@ describe('export/import round-trip — category assignments', () => {
 
     const rows = sqlite.prepare('SELECT entity_id FROM entity_categories').all() as { entity_id: string }[];
     expect(rows.every((r) => r.entity_id !== 'not-a-task-of-mine')).toBe(true);
+  });
+});
+
+/**
+ * People on work (0151/0152) — the same gap class as entity_categories above, caught
+ * before shipping rather than after. `people` and `person_emails` are owner-scoped
+ * tables; `entity_people` and `possible_task_people` are owner-LESS junctions whose
+ * isolation rides on their parents.
+ *
+ * Unrecoverable if dropped, exactly like categories: an assignment exists nowhere else
+ * once the source database is gone, and the restore would report success.
+ */
+describe('export/import round-trip — people and their assignments', () => {
+  /** A named person (no account) attached to a task in both roles. */
+  function seedPeopledTask(title: string, personName: string) {
+    const ownerId = (sqlite.prepare('SELECT id FROM owners LIMIT 1').get() as { id: string }).id;
+    const personId = (
+      sqlite
+        .prepare(
+          `INSERT INTO people (id, owner_id, display_name, confirmed, source)
+           VALUES (uuid7(), ?, ?, 1, 'manual') RETURNING id`,
+        )
+        .get(ownerId, personName) as { id: string }
+    ).id;
+    sqlite
+      .prepare(`INSERT INTO person_emails (owner_id, person_id, email) VALUES (?, ?, ?)`)
+      .run(ownerId, personId, `${personName.toLowerCase()}@example.com`);
+    const taskId = (
+      sqlite
+        .prepare(`INSERT INTO tasks (id, title, owner_id) VALUES (uuid7(), ?, ?) RETURNING id`)
+        .get(title, ownerId) as { id: string }
+    ).id;
+    // BOTH roles for the same person — the case a naive schema (or a naive export)
+    // collapses into one row.
+    for (const role of ['responsible', 'beneficiary']) {
+      sqlite
+        .prepare(
+          `INSERT INTO entity_people (entity_kind, entity_id, person_id, role, source, position)
+           VALUES ('task', ?, ?, ?, 'user', 0)`,
+        )
+        .run(taskId, personId, role);
+    }
+    return { ownerId, personId, taskId };
+  }
+
+  it('carries people, emails and both role sets through export → wipe → import', async () => {
+    seedPeopledTask('peopled-task', 'Mom');
+
+    const exported = (await (await fetch(`${srv.url}/api/export`)).json()) as Record<string, unknown>;
+
+    // Assert on the PAYLOAD, not just the post-import DB: the failure mode being pinned
+    // is an omission here, which a DB-only assertion would let pass as a silent no-op.
+    expect((exported.people as unknown[]).some((p) => (p as { display_name: string }).display_name === 'Mom')).toBe(true);
+    expect((exported.person_emails as unknown[]).length).toBeGreaterThan(0);
+    expect((exported.entity_people as unknown[]).length).toBe(2);
+
+    resetDb();
+    expect((sqlite.prepare('SELECT count(*) AS n FROM entity_people').get() as { n: number }).n).toBe(0);
+
+    const { status } = await api(srv.url, '/api/import', { method: 'POST', json: exported });
+    expect(status).toBe(200);
+
+    const restored = sqlite
+      .prepare(
+        `SELECT t.title AS title, p.display_name AS person, ep.role AS role
+           FROM entity_people ep
+           JOIN tasks  t ON t.id = ep.entity_id
+           JOIN people p ON p.id = ep.person_id
+          WHERE ep.entity_kind = 'task'
+          ORDER BY ep.role`,
+      )
+      .all() as { title: string; person: string; role: string }[];
+
+    expect(restored).toEqual([
+      { title: 'peopled-task', person: 'Mom', role: 'beneficiary' },
+      { title: 'peopled-task', person: 'Mom', role: 'responsible' },
+    ]);
+    expect(
+      (sqlite.prepare(`SELECT email FROM person_emails`).all() as { email: string }[]).map((r) => r.email),
+    ).toContain('mom@example.com');
+  });
+
+  it('nulls an account_id that names no owner on this install', async () => {
+    // Restoring into a DIFFERENT install: the account link is install-specific, so the
+    // person must survive as a plain named person rather than failing the whole restore
+    // on the FK.
+    seedPeopledTask('ported-task', 'Colleague');
+    const exported = (await (await fetch(`${srv.url}/api/export`)).json()) as Record<string, unknown>;
+    resetDb();
+
+    const forged = {
+      ...exported,
+      people: (exported.people as Record<string, unknown>[]).map((p) =>
+        p.display_name === 'Colleague' ? { ...p, account_id: '99999999-9999-7000-8000-000000000009' } : p,
+      ),
+    };
+
+    const { status } = await api(srv.url, '/api/import', { method: 'POST', json: forged });
+    expect(status).toBe(200);
+    const row = sqlite
+      .prepare(`SELECT account_id FROM people WHERE display_name = 'Colleague'`)
+      .get() as { account_id: string | null };
+    expect(row.account_id).toBeNull();
+  });
+
+  it('drops an entity_people row whose parent task belongs to another owner', async () => {
+    const { personId } = seedPeopledTask('mine-only', 'Neighbour');
+    const exported = (await (await fetch(`${srv.url}/api/export`)).json()) as Record<string, unknown>;
+    resetDb();
+
+    const forged = {
+      ...exported,
+      entity_people: [
+        ...(exported.entity_people as unknown[]),
+        { entity_kind: 'task', entity_id: 'not-a-task-of-mine', person_id: personId, role: 'responsible', source: 'user', position: 0 },
+      ],
+    };
+
+    const { status } = await api(srv.url, '/api/import', { method: 'POST', json: forged });
+    expect(status).toBe(200);
+    expect((sqlite.prepare('SELECT count(*) AS n FROM entity_people').get() as { n: number }).n).toBe(2);
   });
 });

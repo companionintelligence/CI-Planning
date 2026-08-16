@@ -549,6 +549,82 @@ export const possibleTaskTags = sqliteTable('possible_task_tags', {
   tagId: text('tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
 });
 
+// 0151 (People on work): the per-tenant person directory.
+//
+// ⚠️ `ownerId` and `accountId` BOTH reference owners(id) and mean different things:
+//   - ownerId   — TENANCY, exactly as on every other table. Whose directory this is.
+//   - accountId — the permissioned ACCOUNT this person IS, when they have a login here.
+//     NULL for most people (a spouse, a client). Accounts are a convenience that makes a
+//     roster available to pre-fill from, never a condition on who can be named on an item.
+// `accountId === ownerId` marks the user's own row, so "is self" is DERIVED, never
+// stored — the two can't disagree. Uniqueness is per-owner on both name and account,
+// enforced by indexes in the migration (the account one is PARTIAL, so it isn't
+// modelled here — .unique() would emit an inline constraint the migration doesn't use).
+export const people = sqliteTable('people', {
+  id: text('id').primaryKey().$defaultFn(newId),
+  ownerId: text('owner_id').references(() => owners.id, { onDelete: 'cascade' }).notNull(),
+  accountId: text('account_id').references(() => owners.id, { onDelete: 'set null' }),
+  displayName: text('display_name').notNull(),
+  // 0 = provisionally created by ingest at promote-time, never confirmed by the user.
+  // Settings → People surfaces these for merge/rename/delete.
+  confirmed: integer('confirmed', { mode: 'boolean' }).notNull().default(true),
+  source: text('source'),                          // 'manual' | 'account' | 'gcal' | 'gmail' | 'llm'
+  notes: text('notes'),
+  createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+// 0151: the deterministic matching key — an inbound address becomes a person with no
+// model in the loop. Owner-scoped uniqueness, NOT global: the same address may be two
+// different people across two tenants.
+export const personEmails = sqliteTable(
+  'person_emails',
+  {
+    ownerId: text('owner_id').references(() => owners.id, { onDelete: 'cascade' }).notNull(),
+    personId: text('person_id').references(() => people.id, { onDelete: 'cascade' }).notNull(),
+    email: text('email').notNull(),                // lowercased by services/people.ts
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.ownerId, t.email] }) })
+);
+
+// 0151: both people-sets an item carries, distinguished only by `role`. A structural
+// mirror of entity_categories — same entity-spanning idiom, same no-FK-on-entity_id
+// rule, same position, same created_at default.
+//
+// `role` is IN THE PRIMARY KEY because the same person legitimately appears in both
+// sets (you are usually both responsible for and a beneficiary of your own work) —
+// which is exactly why the two fields share one table rather than two shapes.
+// No cardinality constraint on either set: "the lead" is position 0 within
+// 'responsible', a display convention rather than a schema rule.
+export const entityPeople = sqliteTable(
+  'entity_people',
+  {
+    entityKind: text('entity_kind').notNull(),     // 'task' | 'time_block'
+    entityId: text('entity_id').notNull(),         // PK of the entity (no FK — spans tables)
+    personId: text('person_id').references(() => people.id, { onDelete: 'cascade' }).notNull(),
+    role: text('role').notNull(),                  // 'responsible' | 'beneficiary'
+    source: text('source'),                        // 'user' | 'llm' | 'calendar' | 'email'
+    position: integer('position').notNull().default(0),
+    createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.entityKind, t.entityId, t.personId, t.role] }) })
+);
+
+// 0152: people detected on a suggestion, carried onto the task at promote. The people
+// counterpart to possible_task_tags. `confidence` is per-row because the roles are
+// detected differently — responsible comes from attendees/headers (fact), beneficiary
+// from the model (judgment).
+export const possibleTaskPeople = sqliteTable(
+  'possible_task_people',
+  {
+    possibleTaskId: text('possible_task_id').references(() => possibleTasks.id, { onDelete: 'cascade' }).notNull(),
+    personId: text('person_id').references(() => people.id, { onDelete: 'cascade' }).notNull(),
+    role: text('role').notNull(),                  // 'responsible' | 'beneficiary'
+    source: text('source'),                        // 'llm' | 'calendar' | 'email'
+    confidence: real('confidence'),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.possibleTaskId, t.personId, t.role] }) })
+);
+
 export const scheduledJobs = sqliteTable('scheduled_jobs', {
   id: text('id').primaryKey().$defaultFn(newId),
   name: text('name').notNull().unique(),

@@ -67,6 +67,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
     {
       "all_day": true,
       "auto_run_id": null,
+      "beneficiaries": [],
       "block_kind": "timeblock",
       "block_type": "someday",
       "categories": [],
@@ -90,6 +91,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
       "recurrence_exdates": null,
       "recurrence_parent_id": null,
       "recurrence_rule": null,
+      "responsible": [],
       "secondary_tags": [],
       "source_account": null,
       "source_kind": "manual",
@@ -108,6 +110,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
     {
       "all_day": false,
       "auto_run_id": null,
+      "beneficiaries": [],
       "block_kind": "meeting",
       "block_type": null,
       "categories": [],
@@ -131,6 +134,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
       "recurrence_exdates": null,
       "recurrence_parent_id": null,
       "recurrence_rule": null,
+      "responsible": [],
       "secondary_tags": [],
       "source_account": null,
       "source_kind": "gcal",
@@ -149,6 +153,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
     {
       "all_day": false,
       "auto_run_id": null,
+      "beneficiaries": [],
       "block_kind": "timeblock",
       "block_type": "scheduled",
       "categories": [],
@@ -172,6 +177,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
       "recurrence_exdates": null,
       "recurrence_parent_id": null,
       "recurrence_rule": null,
+      "responsible": [],
       "secondary_tags": [],
       "source_account": null,
       "source_kind": "manual",
@@ -190,6 +196,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
     {
       "all_day": false,
       "auto_run_id": null,
+      "beneficiaries": [],
       "block_kind": "task",
       "block_type": null,
       "categories": [],
@@ -213,6 +220,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
       "recurrence_exdates": null,
       "recurrence_parent_id": null,
       "recurrence_rule": null,
+      "responsible": [],
       "secondary_tags": [],
       "source_account": null,
       "source_kind": "manual",
@@ -341,6 +349,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
     {
       "confidence": null,
       "created_at": "<ts>",
+      "detected_people": [],
       "id": "entity#1",
       "promoted_task_id": null,
       "proposed_due_at": null,
@@ -405,6 +414,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
   "tasks": [
     {
       "actual_minutes": 0,
+      "beneficiaries": [],
       "blocked": false,
       "categories": [],
       "completed_at": null,
@@ -435,6 +445,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
       "recurrence_exdates": null,
       "recurrence_parent_id": null,
       "recurrence_rule": "FREQ=DAILY",
+      "responsible": [],
       "scheduled_for": null,
       "secondary_tags": [],
       "source_kind": "manual",
@@ -451,6 +462,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
     },
     {
       "actual_minutes": 0,
+      "beneficiaries": [],
       "blocked": false,
       "categories": [],
       "completed_at": null,
@@ -481,6 +493,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
       "recurrence_exdates": null,
       "recurrence_parent_id": null,
       "recurrence_rule": null,
+      "responsible": [],
       "scheduled_for": null,
       "secondary_tags": [],
       "source_kind": "manual",
@@ -497,6 +510,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
     },
     {
       "actual_minutes": 0,
+      "beneficiaries": [],
       "blocked": false,
       "categories": [],
       "completed_at": "<ts>",
@@ -527,6 +541,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
       "recurrence_exdates": null,
       "recurrence_parent_id": null,
       "recurrence_rule": null,
+      "responsible": [],
       "scheduled_for": null,
       "secondary_tags": [],
       "source_kind": "manual",
@@ -543,6 +558,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
     },
     {
       "actual_minutes": 0,
+      "beneficiaries": [],
       "blocked": true,
       "categories": [],
       "completed_at": null,
@@ -575,6 +591,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
       "recurrence_exdates": null,
       "recurrence_parent_id": null,
       "recurrence_rule": null,
+      "responsible": [],
       "scheduled_for": null,
       "secondary_tags": [],
       "source_kind": "manual",
@@ -593,6 +610,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
     },
     {
       "actual_minutes": 0,
+      "beneficiaries": [],
       "blocked": false,
       "categories": [],
       "completed_at": null,
@@ -623,6 +641,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
       "recurrence_exdates": null,
       "recurrence_parent_id": null,
       "recurrence_rule": null,
+      "responsible": [],
       "scheduled_for": null,
       "secondary_tags": [],
       "source_kind": "manual",
@@ -639,6 +658,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
     },
     {
       "actual_minutes": 0,
+      "beneficiaries": [],
       "blocked": false,
       "categories": [],
       "completed_at": null,
@@ -669,6 +689,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
       "recurrence_exdates": null,
       "recurrence_parent_id": null,
       "recurrence_rule": null,
+      "responsible": [],
       "scheduled_for": "2026-06-22",
       "secondary_tags": [],
       "source_kind": "manual",
@@ -694,6 +715,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
   "tasks": [
     {
       "actual_minutes": 0,
+      "beneficiaries": [],
       "blocked": false,
       "categories": [],
       "completed_at": "<ts>",
@@ -724,6 +746,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
       "recurrence_exdates": null,
       "recurrence_parent_id": null,
       "recurrence_rule": null,
+      "responsible": [],
       "scheduled_for": null,
       "secondary_tags": [],
       "source_kind": "manual",
@@ -979,6 +1002,18 @@ exports[`behavior baseline — schema shape > preserves every table and column n
     "columns": [
       "entity_kind",
       "entity_id",
+      "person_id",
+      "role",
+      "source",
+      "position",
+      "created_at",
+    ],
+    "table": "entity_people",
+  },
+  {
+    "columns": [
+      "entity_kind",
+      "entity_id",
       "tag_id",
       "level",
       "created_at",
@@ -1205,6 +1240,27 @@ exports[`behavior baseline — schema shape > preserves every table and column n
     "columns": [
       "id",
       "owner_id",
+      "account_id",
+      "display_name",
+      "confirmed",
+      "source",
+      "notes",
+      "created_at",
+    ],
+    "table": "people",
+  },
+  {
+    "columns": [
+      "owner_id",
+      "person_id",
+      "email",
+    ],
+    "table": "person_emails",
+  },
+  {
+    "columns": [
+      "id",
+      "owner_id",
       "date",
       "kind",
       "tag",
@@ -1227,6 +1283,16 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "created_at",
     ],
     "table": "planning_sessions",
+  },
+  {
+    "columns": [
+      "possible_task_id",
+      "person_id",
+      "role",
+      "source",
+      "confidence",
+    ],
+    "table": "possible_task_people",
   },
   {
     "columns": [

@@ -8,7 +8,7 @@ import {
 } from '../stores/ui.js';
 import { activeTask, activeBlock, activeEntity, clearActiveEntity, setActiveTask, setActiveBlock, setActiveEntity, type ActiveEntity } from '../stores/selection.js';
 import { blocks, tasks, taskOf, tags, showToast } from '../stores/index.js';
-import { api, type Task, type Block, type Tag } from '../lib/api.js';
+import { api, type Task, type Block, type Tag, type Person } from '../lib/api.js';
 import { displayTag } from '../lib/tag-tax.js';
 import { LockToggle } from './LockToggle.js';
 import { lockAffordance } from '../lib/lock.js';
@@ -105,6 +105,19 @@ function TaskPanel(props: { task: Task }) {
           </Group>
         </Show>
 
+        {/* People on work (0151) — read-only here; the wizard is where they are edited.
+            Rendered ABOVE Context because "who" is a first-class fact about the task,
+            not provenance metadata. `motivation` stays in Context: it is now DERIVED
+            from the beneficiary set, so showing both is showing the working. */}
+        <Show when={(t().responsible ?? []).length > 0 || (t().beneficiaries ?? []).length > 0}>
+          <Group label="People">
+            <div class="flex flex-col gap-1.5">
+              <PeopleRow label="Responsible" people={t().responsible ?? []} />
+              <PeopleRow label="Beneficiaries" people={t().beneficiaries ?? []} />
+            </div>
+          </Group>
+        </Show>
+
         <Show when={t().motivation || t().source_kind}>
           <Group label="Context">
             <dl class="drawer-grid">
@@ -115,6 +128,23 @@ function TaskPanel(props: { task: Task }) {
         </Show>
       </div>
     </>
+  );
+}
+
+/** One people set as chips. Renders nothing when empty, so an item with only one of
+ *  the two sets doesn't show a stray empty label. */
+function PeopleRow(props: { label: string; people: Person[] }) {
+  return (
+    <Show when={props.people.length > 0}>
+      <div class="flex items-baseline gap-2">
+        <span class="text-[10px] uppercase tracking-wider text-muted-foreground flex-shrink-0">{props.label}</span>
+        <div class="flex flex-wrap gap-1">
+          <For each={props.people}>
+            {(p) => <span class="drawer-tag">{p.display_name}</span>}
+          </For>
+        </div>
+      </div>
+    </Show>
   );
 }
 

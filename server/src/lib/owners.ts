@@ -185,6 +185,27 @@ export async function provisionOwner(fields: ProvisionOwnerFields): Promise<stri
     for (const [name, icon, catchAll] of BUILTIN_PATTERN_TYPES) {
       await insPatternType.run(newId(), id, name, icon, catchAll);
     }
+
+    // The owner's own `people` row (0151). Migration 0151 seeds this for owners that
+    // existed when it ran; owners minted afterwards need it here for the same reason
+    // scheduling_prefs is cloned above — a one-time global seed never reaches them.
+    // Without it the "me" shortcut has nothing to point at and both people fields are
+    // unusable for a brand-new account.
+    //
+    // account_id = the owner's own id is what marks the row as self; "is self" is
+    // DERIVED from that equality everywhere, never stored, so the two cannot disagree.
+    const personId = newId();
+    await store()
+      .prepare(
+        `INSERT INTO people (id, owner_id, account_id, display_name, confirmed, source)
+         VALUES (?, ?, ?, ?, 1, 'account')`,
+      )
+      .run(personId, id, id, fields.name);
+    if (fields.email) {
+      await store()
+        .prepare(`INSERT OR IGNORE INTO person_emails (owner_id, person_id, email) VALUES (?, ?, ?)`)
+        .run(id, personId, fields.email.trim().toLowerCase());
+    }
   });
   return id;
 }
@@ -208,6 +229,8 @@ export async function purgeOwnerData(ownerId: string): Promise<void> {
   await run('DELETE FROM push_subscriptions WHERE owner_id = ?', ownerId);
   await run('DELETE FROM reminders WHERE owner_id = ?', ownerId);
   await run(`DELETE FROM possible_task_tags
+       WHERE possible_task_id IN (SELECT id FROM possible_tasks WHERE proposed_owner_id = ?)`, ownerId);
+  await run(`DELETE FROM possible_task_people
        WHERE possible_task_id IN (SELECT id FROM possible_tasks WHERE proposed_owner_id = ?)`, ownerId);
   await run('DELETE FROM possible_tasks WHERE proposed_owner_id = ?', ownerId);
   await run(`DELETE FROM objective_tasks
@@ -242,6 +265,19 @@ export async function purgeOwnerData(ownerId: string): Promise<void> {
          SELECT id FROM tasks WHERE owner_id = ?
          UNION SELECT id FROM time_blocks WHERE owner_id = ?
        )`, ownerId, ownerId);
+  // entity_people (0151) — same no-owner_id, delete-by-entity-membership shape as the
+  // two above. The people FK cascade below reaches it too, but this keeps the purge
+  // order explicit and independent of FK-pragma state.
+  await run(`DELETE FROM entity_people WHERE entity_id IN (
+         SELECT id FROM tasks WHERE owner_id = ?
+         UNION SELECT id FROM time_blocks WHERE owner_id = ?
+       )`, ownerId, ownerId);
+  // people + person_emails (0151). AFTER possible_task_people/entity_people so the
+  // children are already gone, and BEFORE tasks/time_blocks is unnecessary (no FK that
+  // way) but harmless. `people` is portable owner data — a restore brings back the
+  // directory, and leaving stale rows would collide on UNIQUE(owner_id, display_name).
+  await run('DELETE FROM person_emails WHERE owner_id = ?', ownerId);
+  await run('DELETE FROM people WHERE owner_id = ?', ownerId);
   await run('DELETE FROM time_entries WHERE owner_id = ?', ownerId);
   await run('DELETE FROM task_dependencies WHERE task_id IN (SELECT id FROM tasks WHERE owner_id = ?)', ownerId);
   await run('DELETE FROM pattern_tasks WHERE task_id IN (SELECT id FROM tasks WHERE owner_id = ?)', ownerId);
