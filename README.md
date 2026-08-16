@@ -1936,7 +1936,7 @@ All from the repo root:
 | POST | `/api/auto/undo` | Reverse the last placement run in one click |
 | POST | `/api/plan/instruct` | Parse a natural-language planner-bar instruction into pinned blocks / per-tag day windows |
 | GET | `/api/plan/suggestion` | The pending "re-plan with AI?" nudge, if any |
-| POST | `/api/plan/reauthor` \| `/reauthor/dismiss` | Accept (LLM re-authors the day) or dismiss a big-disruption nudge |
+| POST | `/api/plan/reauthor` \| `/api/plan/reauthor/dismiss` | Accept (LLM re-authors the day) or dismiss a big-disruption nudge |
 | GET | `/api/days/:date/conflicts` | Tasks now outside their direction's windows (Phase 7) |
 | GET | `/api/days/:date/reflow/preview` | Exactly what a confirmed reflow would do — read-only |
 | POST | `/api/days/:date/reflow/apply` | The confirmation; the only mutating path of the three |
@@ -1958,14 +1958,14 @@ All from the repo root:
 | GET/PATCH | `/api/prefs` | Scheduling preferences (incl. `recurrence_horizon_days`; a shorten auto-prunes and returns `pruned` count). Also carries `memory_window_days` (1–30) and `email_lookback_days` (1–90); an out-of-range value is **rejected with a 422**, never clamped, so the Settings field can't show a number the server didn't store |
 | POST | `/api/planner/clear` | Preview (`dry_run`) or apply a Clear Date Range — bounded suppresses just that window, open-ended permanently caps the rule; snapshots + audits on apply (Phase P) |
 | GET | `/api/memory/status` | Companion Memory connection + sync state |
-| POST | `/api/memory/connect` \| `/disconnect` | Connect / disconnect the Companion Memory link |
-| GET | `/api/memory/ciportal/start` \| `/callback` | The memory connector's own CI-Portal OAuth loop — distinct from the login callback |
-| POST | `/api/memory/suggest` \| `/sync` | Manually trigger the pull (`memory_suggest`) or push (`push_memory`) side on demand |
+| POST | `/api/memory/connect` \| `/api/memory/disconnect` | Connect / disconnect the Companion Memory link |
+| GET | `/api/memory/ciportal/start` \| `/api/memory/ciportal/callback` | The memory connector's own CI-Portal OAuth loop — distinct from the login callback |
+| POST | `/api/memory/suggest` \| `/api/memory/sync` | Manually trigger the pull (`memory_suggest`) or push (`push_memory`) side on demand |
 | GET | `/api/llm/status` · `/api/integrations` | Ollama & integration health. Both read a probe cached for 30s; `/api/llm/status?fresh=1` forces a live `/api/tags` probe (the Settings **Re-check** path). Gate AI surfaces on `ready`, not `available`. |
-| GET | `/api/auth/config` \| `/me` | Which login modes are available; the signed-in owner (or 401) |
-| POST | `/api/auth/login` \| `/logout` | Local username/password login (`AUTH_MODE=sso` + `DISABLE_OIDC=true`) and session logout |
-| POST | `/api/auth/reset-request` \| `/reset` | Request / complete a local-login password reset |
-| GET | `/api/auth/ciportal/start` \| `/callback` | CI-Portal OIDC login (Authorization Code + PKCE) |
+| GET | `/api/auth/config` \| `/api/auth/me` | Which login modes are available; the signed-in owner (or 401) |
+| POST | `/api/auth/login` \| `/api/auth/logout` | Local username/password login (`AUTH_MODE=sso` + `DISABLE_OIDC=true`) and session logout |
+| POST | `/api/auth/reset-request` \| `/api/auth/reset` | Request / complete a local-login password reset |
+| GET | `/api/auth/ciportal/start` \| `/api/auth/ciportal/callback` | CI-Portal OIDC login (Authorization Code + PKCE) |
 | GET | `/api/oauth/google/start` | Begin the standalone Google OAuth flow (Auth Code + PKCE); returns `{ url }` for the SPA to navigate to. Gated; refused under `AUTH_MODE=test`. |
 | GET | `/api/oauth/google/callback` | Public OAuth redirect target; verifies the `id_token`, exchanges the code, seals tokens into `connection_tokens`. |
 | GET | `/api/connections` | List every connection the owner holds, any provider — one `ConnectionRecord` shape: `{ provider, account, status, createdAt, expiresAt, lastSyncAt, lastError }`, plus `mappedEventCount` on Google rows only (absent, not `0`, elsewhere). `status` is the mapped `connected \| expired \| inactive`; the raw `connection_tokens.status` never leaves the server, and `connected` means the stored token actually decrypted. No secrets. |
