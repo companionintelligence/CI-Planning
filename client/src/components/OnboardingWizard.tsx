@@ -2,7 +2,7 @@ import { createSignal, createResource, createEffect, onMount, For, Show } from '
 import { api } from '../lib/api.js';
 import {
   prefs, refetchPrefs, showToast, onboardingStep, setOnboardingStep, onboardingForceOpen, setOnboardingForceOpen,
-  plannerAxisState, setPlannerCollapseBounds,
+  setOnboardingSampleDataAllowed, plannerAxisState, setPlannerCollapseBounds,
 } from '../stores/index.js';
 import { FTUE_RESUME_KEY } from '../lib/onboarding.js';
 import { topCollapseEnd, bottomCollapseStart } from '../lib/day-axis.js';
@@ -143,6 +143,8 @@ export function OnboardingWizard() {
       } catch { /* best-effort */ }
       setOnboardingForceOpen(false); // reopened-via-CTA case: onboarded_at may already
                                       // have been set, so the force flag is what closes it
+      setOnboardingSampleDataAllowed(true); // don't leak a quick-connect's `false` into
+                                             // the next genuine restart
     } catch (err) {
       showToast((err as Error).message, 'error');
     } finally {
