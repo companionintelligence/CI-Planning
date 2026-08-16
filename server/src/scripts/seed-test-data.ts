@@ -161,6 +161,35 @@ function fillerTitle(i: number): string {
   return pass === 0 ? title : `${title} (${pass + 1})`;
 }
 
+/**
+ * emails.json / calendar.json hardcode dates to the week of Monday 2026-06-01 (see
+ * server/test/fixtures/*.json). Loaded verbatim on any other week, every meeting block
+ * and LLM-derived due date lands there too — the seed reports creating rows, but the
+ * Today view and the Calendar view's current week come up empty because nothing falls
+ * in the week actually being looked at. Shift every fixture timestamp by the gap between
+ * that anchor Monday and the current week's Monday so a fresh seed always lands its
+ * events and due-dates in the week it's run, whatever day that is.
+ *
+ * Week-aligned rather than a flat "now minus original date" delta: shifting by whole
+ * weeks keeps each event on the same weekday it was authored for (the Monday standup
+ * stays a Monday, the Saturday holiday stays a Saturday) instead of drifting onto
+ * whatever weekday the seed happens to run on.
+ */
+const FIXTURE_WEEK_ANCHOR_UTC = Date.UTC(2026, 5, 1); // Monday — the week the fixtures are staged for
+
+function startOfWeekUtc(d: Date): number {
+  const dow = d.getUTCDay(); // 0=Sun..6=Sat
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - ((dow + 6) % 7));
+}
+
+function fixtureDateOffsetMs(now: Date): number {
+  return startOfWeekUtc(now) - FIXTURE_WEEK_ANCHOR_UTC;
+}
+
+function shiftIso(iso: string, offsetMs: number): string {
+  return new Date(new Date(iso).getTime() + offsetMs).toISOString();
+}
+
 /** Parse "- bullet" lines from the notes file, grouping under their ## heading as a tag. */
 function parseNotesBullets(md: string): { title: string; tag: string }[] {
   const out: { title: string; tag: string }[] = [];
@@ -188,6 +217,11 @@ async function main() {
   const llmUp = args.useLlm && (await isReady());
   if (args.useLlm && !llmUp) logger.warn('seed: Ollama unavailable — using deterministic fallback extraction');
 
+  const fixtureOffsetMs = fixtureDateOffsetMs(new Date());
+  if (fixtureOffsetMs !== 0) {
+    logger.info(`seed: shifting fixture dates by ${Math.round(fixtureOffsetMs / 86_400_000)}d to land in the current week`);
+  }
+
   let possiblesCreated = 0;
 
   // 1) Notes bullets — explicit todos, parsed directly (no LLM needed).
@@ -210,7 +244,7 @@ async function main() {
   logger.info(`seed: ${bullets.length} notes bullets ingested`);
 
   // 2) Emails — LLM extraction (fallback to subject-as-task).
-  const emails = await google.listEmails();
+  const emails = (await google.listEmails()).map((e) => ({ ...e, receivedAt: shiftIso(e.receivedAt, fixtureOffsetMs) }));
   await pool(emails, 3, async (email: EmailMessage) => {
     let tasks: ExtractedTask[];
     try {
@@ -228,7 +262,11 @@ async function main() {
   logger.info(`seed: emails processed (${emails.length})`);
 
   // 3) Calendar — meeting blocks + LLM prep-task extraction.
-  const events = await google.listEvents();
+  const events = (await google.listEvents()).map((e) => ({
+    ...e,
+    start: shiftIso(e.start, fixtureOffsetMs),
+    end: shiftIso(e.end, fixtureOffsetMs),
+  }));
   await pool(events, 3, async (event: CalendarEvent) => {
     // Mirror the event as a read-only meeting block.
     const exists = await store().prepare("SELECT id FROM time_blocks WHERE source_kind='gcal' AND source_ref=? AND owner_id=?").get(event.id, SYSTEM_OWNER);
