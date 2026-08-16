@@ -16,11 +16,11 @@
 > - **Two new issues, unrelated to this roadmap's phases — video/product-marketing
 >   pipeline, filed 2026-08-12:**
 >   - **[#517](https://github.com/companionintelligence/CI-Planning/issues/517)** —
->     the Today header shows two different day totals (15h5m vs 10h15m) for the same
+>     the Today header shows two different day totals (15h 5m vs 10h 15m) for the same
 >     fixture day at desktop vs mobile viewport in the acquisition-video capture. Filed
 >     as possibly a **real product bug** in `Today.tsx`'s capacity calc (not just a
->     video defect) — candidate #1 is capture-harness state drift between the two
->     viewport passes, candidate #2 is a genuine responsive-layout data bug. Not
+>     video defect) — candidate #1 is a genuine responsive-layout data bug, candidate #2
+>     is capture-harness state drift between the two viewport passes. Not
 >     resolved by the 2026-08-13 video rewrite (#519/941bad6), which only changed
 >     captions/narration/audio — the underlying plates and `Today.tsx` are untouched.
 >   - **[#518](https://github.com/companionintelligence/CI-Planning/issues/518)** —
