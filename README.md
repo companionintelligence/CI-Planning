@@ -253,7 +253,7 @@ classDiagram
         +string blockType  scheduled|someday
         +string startAt
         +string endAt
-        +bool isLocked  user pin
+        +bool isLocked  user pin, or always-on for inbound-synced blocks
         +bool isAuto  engine-chosen slot
         +string status  planned|completed|skipped|overrun
         +string parentBlockId  container
@@ -461,6 +461,31 @@ classDiagram
         +string computedDate
     }
 
+    class ClassificationLog {
+        +string field  category|motivation
+        +string inputText
+        +string llmValue
+        +string finalValue  null until corrected
+        +string assignedAt
+        +string correctedAt
+    }
+
+    class ClassificationExemplars {
+        +string field
+        +string llmValue  what the model said then
+        +string correctValue  what the owner said
+        +blob embedding  nullable, no embedder at calibration time
+        +string computedDate
+    }
+
+    class ClassificationAccuracy {
+        +string field
+        +string computedDate
+        +int heldOut
+        +int correct
+        +real accuracy  null = nothing measured
+    }
+
     Owner "1" --> "*" Objective : owns
     Owner "1" --> "*" Reflection : writes
     Owner "1" --> "*" DailyRecap : one per day
@@ -469,6 +494,9 @@ classDiagram
     Owner "1" --> "*" CalibrationHistory : append-only trend
     Owner "1" --> "*" TrialityLog : append-only evidence
     Owner "1" --> "*" TrialityWeights : learned, resettable
+    Owner "1" --> "*" ClassificationLog : append-only evidence
+    Owner "1" --> "*" ClassificationExemplars : learned, resettable
+    Owner "1" --> "*" ClassificationAccuracy : measured trend
 
     Objective "1" --> "*" Objective : parent of
     Objective "1" --> "*" ObjectiveTask : progressed by
@@ -476,6 +504,7 @@ classDiagram
     Reflection ..> Task : optional source link
     Reflection ..> Objective : optional source link
     TrialityLog ..> TrialityWeights : weekly calibration
+    ClassificationLog ..> ClassificationExemplars : weekly calibration
 ```
 
 **3. Automation, integrations, and sync** — everything that runs without you:
@@ -646,7 +675,7 @@ no `.sql` files, no external tool.
 Migrations produce the tables below. The authoritative, ordered migration list — and
 therefore the current head — is
 [`server/src/db/migrations/index.ts`](server/src/db/migrations/index.ts); at the time
-of writing (2026-08-13) `main` is at `0147_ingest_windows`.
+of writing (2026-08-15) `main` is at `0150_calibrate_classification_job`.
 
 | Table | Purpose |
 |---|---|
@@ -689,15 +718,20 @@ of writing (2026-08-13) `main` is at `0147_ingest_windows`.
 | `daily_plan` | AI-authored task order for a day — one row per `(owner, date, task)` with a "why now" rationale and `outcome` stamp (0062, 0084) |
 | `plan_hints` | Transient per-tag day windows parsed out of the natural-language planner bar ("mornings for Deep Work") — placement reads them as a hard window, the LLM ordering folds them in as a soft constraint (0071) |
 | `replan_suggestions` | Pending "re-plan with AI?" nudges surfaced on big-disruption reflows (0067) |
+| `planning_sessions` | One row per "Plan my week" onboarding session — the whole conversation as a single JSON `transcript`, no per-turn child table; read by the Settings → Logs tab, exportable/deletable there (FTUE, 0131) |
 | `daily_recap` | One row per `(owner, date)` — the day-briefing cache (`prose`/`stats`/`focus`, keyed by `inputs_hash`) **and** the frozen five-star score (`star_*`/`total`/`frozen_at`); merged from `daily_summaries` + `day_stars` (0096) |
 | `sync_events` | Append-only SSE event log for `Last-Event-ID` catch-up replay (Phase L, 0077) |
 | `reflections` | FOCUS card slots — today focus + up to 3 weekly goals per ISO week, with optional category, done-at stamp, and an optional source link to a Task/Objective (`source_kind`/`source_ref`, 0088); also holds the one-per-day `kind='day_note'` row — no migration, reuses the same table + the PK's existing uniqueness (Phase N, 0080; linked focus 0088) |
 | `objectives` | Hierarchical life goals — Goal › Project › Objective (by tree height); progress derived from task completion; `source_task_id` marks auto-promoted nodes; `version`/`field_ts` for multi-device sync (Phase N, 0081; 0085–0086; sync versioning 0087). **Archive (0129):** `archived_at` soft-delete + `archive_root_id` (cascade unit) + `purge_after` (48h reap deadline) |
 | `objective_tasks` | Links objectives to Tasks; enables progress roll-up (Phase N, 0081) |
 | `estimate_calibration` | Per-owner bias stats (median actual/estimated ratio + quartiles) recomputed nightly (01:30) by the `calibrate_estimates` job (Phase N, 0083; scope columns + the move off a weekly cron, 0107) |
+| `calibration_combo_pins` | Time-Sense (Phase Z) tag-combo confirmations — the system only ever *suggests* a divergent tag combo, computed on demand; a pinned row is the owner's explicit accept, and only pinned refs get a `tag_combo` row in `estimate_calibration` (0107) |
 | `calibration_history` | Append-only calibration trend — one row per (owner, scope, day) written by the same job; the rollup above is regenerable, this table is never recomputed or pruned (0138) |
 | `triality_log` | Append-only Triality outcome log — one row per suggestion **shown**, stamped at most once more when it is opened / staged / dismissed. Each row keeps that pick's full per-component score breakdown as JSON, which is what makes the weekly weight calibration evidence-based rather than guesswork; never recomputed, never pruned (0140). A `confidence` reading is stamped at *show* time (0144) — reported, never fed back into ranking; `NULL` means "shown before that column existed" permanently, and readers must exclude those rows rather than coerce them |
 | `triality_weights` | Learned per-(owner, slot) Triality weights — regenerable, replaced wholesale by the weekly `calibrate_triality` job. A missing row means "score on the defaults", so deleting an owner's rows is the reset switch; the log above survives it (0142) |
+| `classification_log` | Append-only evidence for the parse/classify LLM's `category`/`motivation` picks — what the model said, what the owner ultimately settled on (`NULL` until corrected), and the text judged; never recomputed, never pruned (Phase 8, 0149) |
+| `classification_exemplars` | Regenerable few-shot retrieval index the classify prompt reads, rebuilt wholesale per owner by the weekly `calibrate_classification` job; deleting an owner's rows resets the adaptation without losing the log above (0149) |
+| `classification_accuracy` | One held-out accuracy score per field per calibration run — `NULL` (not `0`) when a run measured nothing, so a trend chart draws a gap rather than a false dip (0149) |
 | `copy_history` | Time-Sense voice-loop anti-repetition log — not included in owner export (0109) |
 
 ## See it in action
@@ -828,6 +862,16 @@ planner place it on your calendar — no cloud round-trip, all on-device.
   opt-out — turning the flag off is the way to stop learning. Tasks can also carry a
   **motivation** — *me* · *us* · *them* (who the work is for). Unlabeled stays unlabeled: a
   task nobody asked for is never recorded as shared
+- **Classification learning** — the same local LLM that best-guesses a task's categories
+  and motivation (above) improves from your own corrections: every judgment is logged with
+  what the model said and what you settled on, and a weekly `calibrate_classification` job
+  rebuilds a per-owner few-shot exemplar index from that history — the same batch-only,
+  never-mid-request contract Triality's learning uses, and read/written through raw SQL
+  only (`classification_log` / `classification_exemplars` / `classification_accuracy`).
+  `GET /api/classification/accuracy` exposes the held-out accuracy trend so "the model got
+  better" is a measured number rather than a claim, and `DELETE /api/classification/exemplars`
+  resets the adaptation without touching the correction log underneath it. No feature flag —
+  an owner who has never corrected anything simply sees an empty trend
 - **Memory enrichment** — a per-task ✨ button (and a nightly `enrich_tasks` job) fills in a
   thin task from your Companion Memory: description, direction, categories. It only ever
   **fills blanks** — it never rewrites your own description or overrides a direction you
@@ -857,6 +901,12 @@ planner place it on your calendar — no cloud round-trip, all on-device.
   staging area; Ritual △ is feature-flagged
 - **Flight-plan staging** — two-step Auto: build a staged list, then schedule; lets you
   curate before committing
+- **Plan my week** — a guided onboarding assistant: a self-contained modal off a fixed
+  3-branch menu (fill gaps · review past data · schedule tasks) that phrases its questions
+  and answer options through the local LLM when available and falls back to fixed
+  deterministic copy when it isn't — the fallback is authored first and the model only ever
+  rephrases it, never invents a fourth option. Every session is logged (`planning_sessions`)
+  and the Settings → Logs tab lets you read, export, or delete your own sessions
 - **Auto-promoted suggestions** — ingestion jobs propose "possible tasks" from email and
   calendar; each carries its source and a confidence score. Suggestions are deduplicated
   inline (embedding-based when available) and **auto-promoted into real tasks** at the
@@ -1250,7 +1300,7 @@ touching the underlying rule.
 
 ### Background jobs
 
-**20 cron rows across 21 executable kinds.** Owner-scoped kinds fan out once per owner
+**21 cron rows across 22 executable kinds.** Owner-scoped kinds fan out once per owner
 (enumerated at run time, so a fresh account is picked up on the next tick); a kind still
 running is never started again by the next tick. Every run writes a `job_runs` row, and
 all of them are listed and manually runnable from the **Jobs** view.
@@ -1276,6 +1326,7 @@ all of them are listed and manually runnable from the **Jobs** view.
 | `prune_sync_events` | `0 3 * * *` | Age out the SSE replay log |
 | `enrich_tasks` | `20 3 * * *` | Fill blank description / direction / categories from Companion Memory |
 | `calibrate_triality` | `50 3 * * 1` | Weekly re-tune of the per-slot Triality weights from the outcome log |
+| `calibrate_classification` | `10 4 * * 1` | Weekly re-tune of the classify/parse LLM's few-shot exemplars from the owner's own corrections; runs after `calibrate_triality` so the two weekly learning passes don't compete for one GPU |
 | `advance_objectives` | `0 5 * * 1` | Stage the next action for each active objective into the flight plan |
 | `promote_possibles` | *(no cron row)* | Runnable on demand only — ingestion auto-promotes, and `nightly_grooming` sweeps stragglers |
 
@@ -1330,12 +1381,47 @@ them at different moments and can produce a corrupt or inconsistent database. Us
 `pnpm snapshot` or Litestream — both open a proper SQLite connection and export a
 consistent snapshot.
 
-## Latest change set — migration 0147
+## Latest change set — migrations 0148–0150
 
 Everything above describes the app **as it runs on `main`**, which is at migration head
-`0147_ingest_windows`. This section is the single narrative description of that change
-set: three related changes to *how work arrives and gets ordered*, plus one real bug
-found on the way. The through-line is arrival time.
+`0150_calibrate_classification_job`. This section is the single narrative description of
+that change set: closing a locking gap on synced calendar blocks, plus a new learning loop
+that lets the parse/classify LLM improve from the owner's own corrections.
+
+### Synced blocks are locked, always — not just going forward
+
+`agents/sync.ts` has stamped `is_locked = 1` on every inbound-mirrored calendar block since
+before the multi-tenant migration, so the ongoing sync path was already correct.
+`0148_lock_synced_blocks` backfills the invariant onto the rows that predate or bypass that
+path: blocks adopted by the pre-Wave-0 gcal-mirror migration (0059), rows restored from an
+older backup, and anything a fixture or seed inserted unlocked. It is scoped to **inbound**
+mappings only — an outbound row is a local block the owner still owns and pushes *to* a
+calendar, so locking those would freeze the owner's own time — and it only ever *sets* the
+flag, never clears it, so a lock applied for another reason survives. `is_locked` therefore
+now means two things: a deliberate user pin, and "the source calendar owns this time" for
+any block mirrored in from outside.
+
+### Classification learning — the parse/classify LLM learns from corrections (Phase 8)
+
+Three new tables (`classification_log` / `classification_exemplars` /
+`classification_accuracy`, listed above), built in the same shape `triality_log` /
+`triality_weights` already established, and — like those, and like `calibration_history` —
+read and written through raw SQL only, never mirrored in `schema.ts`. The new weekly
+`calibrate_classification` job (`10 4 * * 1`, Monday 04:10 — deliberately after
+`calibrate_triality`'s 03:50, so the two weekly learning passes don't compete for one GPU) is
+the only scheduled piece; classification itself stays request-time, never batch. Two
+endpoints expose it: `GET /api/classification/accuracy` (the held-out accuracy trend, newest
+run first — `accuracy: null` on a run that measured nothing, so a chart draws a gap rather
+than a false dip) and `DELETE /api/classification/exemplars` ("reset learning" — the twin of
+`DELETE /api/triality/weights`; the correction log survives, and the next weekly run
+re-earns the adaptation from it rather than losing it). Unlike `routes/triality.ts`, there is
+no feature flag here — an owner who has never corrected anything just has an empty trend and
+an empty exemplar index, which is exactly what a fresh install reports anyway.
+
+The original three-part narrative below (ingestion windows, the Tasks-view section-ordering
+swap, and the `CURRENT_TIMESTAMP` local-time bug) shipped in migration 0147 and is kept as
+history — everything it describes is still true of `main` today, just no longer the newest
+change.
 
 ### Ingestion windows — two settings, pointing in opposite directions
 
@@ -1440,11 +1526,11 @@ every other caller passes.
 - Notifications: a `reminders` store + 1-minute `fire_reminders` dispatcher (exactly-once),
   delivered in-app via SSE and via Web Push (VAPID) to subscribed devices; reminders are
   auto-derived from per-pattern reminder offsets, with a Settings opt-in toggle and snooze
-- Croner jobs: 20 cron-scheduled rows out of 21 executable kinds — Gmail ingest (every
+- Croner jobs: 21 cron-scheduled rows out of 22 executable kinds — Gmail ingest (every
   15m since 0146), Calendar ingest, nightly grooming/dedupe, auto-schedule,
-  `enrich_tasks`, the weekly `calibrate_triality` (Monday 03:50), fire_reminders,
-  purge_objectives, and the rest. Owner-scoped kinds fan out once per owner; a kind still
-  running is never re-started by the next tick. Full table in
+  `enrich_tasks`, the weekly `calibrate_triality` (Monday 03:50) and `calibrate_classification`
+  (Monday 04:10), fire_reminders, purge_objectives, and the rest. Owner-scoped kinds fan out
+  once per owner; a kind still running is never re-started by the next tick. Full table in
   [Scheduling system → Background jobs](#background-jobs). `promote_possibles` is the kind
   with no cron row (runnable on demand only); `place_patterns` was retired by 0026
 - Ollama-backed extraction/summarization with deterministic fallbacks
@@ -1577,6 +1663,7 @@ runs fine and simply hides the AI features. This file is for the self-host path 
 |---|---|---|
 | `PORT` | `3848` | HTTP port (API + UI) |
 | `DB_PATH` | `/data/companion.db` in Docker; `~/Library/Application Support/CompanionPlanning/companion.db` on macOS; **set explicitly on Linux / Windows** | SQLite file path. The containing directory is created automatically. |
+| `DATABASE_URL` / `STORE_BACKEND` | (unset) / `sqlite` | **Internal, in-progress Postgres cutover — not a supported deployment option yet.** Both backends coexist behind `db/store.ts` while ~386 raw-SQL call sites migrate file by file; flipping `STORE_BACKEND=postgres` is the cutover itself and is only correct once every call site uses the facade, so boot fails closed without a `DATABASE_URL` rather than silently serving from a store the data isn't in. SQLite remains the single source of truth described elsewhere in this README until that migration finishes. |
 | `NODE_ENV` | (unset) | `production` enables fail-closed boot guards (e.g. forbids `AUTH_MODE=test`). |
 | `TRUST_PROXY` | `false` | Set when behind a trusted TLS-terminating reverse proxy (e.g. CI-Hub's tunnel): honors `X-Forwarded-Proto` (⇒ Secure session cookies over HTTPS) and `X-Forwarded-For` (⇒ real client IP for login rate-limiting). |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama endpoint. Unreachable ⇒ AI features degrade gracefully (template briefings, dedupe off). |
@@ -1810,13 +1897,16 @@ All from the repo root:
 | `pnpm dev` | Server (`:3848`) + client (`:5173`) concurrently |
 | `pnpm build` | Build the client into `server/public/` |
 | `pnpm start` | Build, then serve API + UI on `:3848` |
-| `pnpm test` | Server vitest suite |
-| `pnpm --filter client test` | Client vitest (unit + jsdom projects) |
-| `pnpm typecheck` | Server `tsc --noEmit` |
+| `pnpm test` | Server **and** client vitest suites, in sequence (`test:server && test:client`) |
+| `pnpm test:server` / `pnpm test:client` | Just one side — the client suite has `unit` + `dom` (jsdom) projects |
+| `pnpm typecheck` | Server **and** client `tsc --noEmit`, in sequence |
+| `pnpm typecheck:server` / `pnpm typecheck:client` | Just one side |
 | `pnpm seed` | Seed ~100 fixture tasks into the dev DB |
 | `pnpm migrate` | Apply migrations explicitly (they also run on every server boot) |
+| `pnpm db:generate` / `pnpm db:migrate` | Root-level convenience wrappers around the server's Drizzle schema-generate / migrate scripts |
 | `pnpm --filter server snapshot` | Point-in-time DB backup into `<DB_DIR>/backups/` |
 | `pnpm --filter server restore -- <file>` | Restore a snapshot (server stopped) |
+| `pnpm --filter server db:check-drift` | Diff `schema.ts` against what the migrations actually produce |
 
 ## HTTP API
 
@@ -1840,22 +1930,48 @@ All from the repo root:
 | POST | `/api/schedule/run` | Run the auto-scheduler for a date |
 | GET/POST/PATCH/DELETE | `/api/patterns` | Routines CRUD |
 | GET/PUT/DELETE | `/api/flight-plan` | Flight-plan staging area |
+| POST | `/api/auto/fill` | Tap 1 — propose up to 20 candidates into the flight plan (schedules nothing) |
+| POST | `/api/auto/run` | Tap 2 — author the day's order once, then place the selected staged tasks |
+| POST | `/api/auto/priority` | Tap 3 — optional priority top-up into leftover workday capacity |
+| POST | `/api/auto/undo` | Reverse the last placement run in one click |
+| POST | `/api/plan/instruct` | Parse a natural-language planner-bar instruction into pinned blocks / per-tag day windows |
+| GET | `/api/plan/suggestion` | The pending "re-plan with AI?" nudge, if any |
+| POST | `/api/plan/reauthor` \| `/reauthor/dismiss` | Accept (LLM re-authors the day) or dismiss a big-disruption nudge |
+| GET | `/api/days/:date/conflicts` | Tasks now outside their direction's windows (Phase 7) |
+| GET | `/api/days/:date/reflow/preview` | Exactly what a confirmed reflow would do — read-only |
+| POST | `/api/days/:date/reflow/apply` | The confirmation; the only mutating path of the three |
+| GET | `/api/plan-week/review?anchor=` | **Plan my week** — deterministic weekly recap (defaults to the week that just ended); LLM-free |
+| GET | `/api/plan-week/candidates` | Candidate tasks/gaps the assistant's branches can offer |
+| POST | `/api/plan-week/next-step` | Phrase the next question + its fixed 3 options through the local LLM, with a deterministic fallback |
+| POST | `/api/plan-week/parse` | Parse a free-text answer within a Plan-my-week session |
+| GET/POST/PATCH/DELETE | `/api/plan-week/sessions` | Plan-my-week session log CRUD — backs the Settings → Logs tab (read/export/delete your own sessions) |
+| POST | `/api/plan-week/sessions/consolidate` | Merge/close stale sessions |
 | GET/POST/PATCH/DELETE | `/api/pattern-blocks` | Direction-scoped scheduling windows |
 | GET | `/api/pattern-prefs` | Per-pattern preferences (fill, reminders, shape, color) |
 | PUT | `/api/pattern-prefs/:patternTagId` | Update a single pattern's preferences |
 | GET | `/api/push/vapid-key` | Web Push public key (empty when VAPID unconfigured) |
 | POST/DELETE | `/api/push/subscribe` | Register / remove a browser push subscription |
 | GET/POST/DELETE | `/api/reminders` · POST `/api/reminders/:id/snooze` | Reminders CRUD + snooze |
-| GET | `/api/jobs` · POST `/api/jobs/:id/run` | List / manually run background jobs. The Jobs view's **Run all** button is client-side sugar — it loops this same per-job endpoint over every listed job; no separate batch route |
+| GET | `/api/jobs` · POST `/api/jobs/:id/run` | List / manually run background jobs (admin-only). The Jobs view's **Run all** button is client-side sugar — it loops this same per-job endpoint over every listed job; no separate batch route |
+| POST | `/api/jobs/run-now` | FTUE onboarding only — synchronously runs the *calling owner's own* ingest and awaits the result (unlike `/:id/run`'s fire-and-forget); not admin-gated, unrelated to the Jobs view's per-job trigger above |
+| POST | `/api/demo/sample-data` | FTUE "Try with sample data" — installs a curated demo task/block set for the signed-in owner. Admin-gated; idempotent (`skipped` on a second call) |
 | GET/PATCH | `/api/prefs` | Scheduling preferences (incl. `recurrence_horizon_days`; a shorten auto-prunes and returns `pruned` count). Also carries `memory_window_days` (1–30) and `email_lookback_days` (1–90); an out-of-range value is **rejected with a 422**, never clamped, so the Settings field can't show a number the server didn't store |
 | POST | `/api/planner/clear` | Preview (`dry_run`) or apply a Clear Date Range — bounded suppresses just that window, open-ended permanently caps the rule; snapshots + audits on apply (Phase P) |
-| GET/POST | `/api/memory` | Companion Memory sync state |
+| GET | `/api/memory/status` | Companion Memory connection + sync state |
+| POST | `/api/memory/connect` \| `/disconnect` | Connect / disconnect the Companion Memory link |
+| GET | `/api/memory/ciportal/start` \| `/callback` | The memory connector's own CI-Portal OAuth loop — distinct from the login callback |
+| POST | `/api/memory/suggest` \| `/sync` | Manually trigger the pull (`memory_suggest`) or push (`push_memory`) side on demand |
 | GET | `/api/llm/status` · `/api/integrations` | Ollama & integration health. Both read a probe cached for 30s; `/api/llm/status?fresh=1` forces a live `/api/tags` probe (the Settings **Re-check** path). Gate AI surfaces on `ready`, not `available`. |
+| GET | `/api/auth/config` \| `/me` | Which login modes are available; the signed-in owner (or 401) |
+| POST | `/api/auth/login` \| `/logout` | Local username/password login (`AUTH_MODE=sso` + `DISABLE_OIDC=true`) and session logout |
+| POST | `/api/auth/reset-request` \| `/reset` | Request / complete a local-login password reset |
+| GET | `/api/auth/ciportal/start` \| `/callback` | CI-Portal OIDC login (Authorization Code + PKCE) |
 | GET | `/api/oauth/google/start` | Begin the standalone Google OAuth flow (Auth Code + PKCE); returns `{ url }` for the SPA to navigate to. Gated; refused under `AUTH_MODE=test`. |
 | GET | `/api/oauth/google/callback` | Public OAuth redirect target; verifies the `id_token`, exchanges the code, seals tokens into `connection_tokens`. |
-| DELETE | `/api/oauth/google/accounts/:account` | Disconnect a Google account (revoke at Google + drop its tokens and queued pushes). Delegates to the shared `disconnectConnection`. |
 | GET | `/api/connections` | List every connection the owner holds, any provider — one `ConnectionRecord` shape: `{ provider, account, status, createdAt, expiresAt, lastSyncAt, lastError }`, plus `mappedEventCount` on Google rows only (absent, not `0`, elsewhere). `status` is the mapped `connected \| expired \| inactive`; the raw `connection_tokens.status` never leaves the server, and `connected` means the stored token actually decrypted. No secrets. |
 | DELETE | `/api/connections/:provider/:account` | Provider-agnostic disconnect (Google also revokes); `404 connection_not_found` when the owner holds none. |
+| GET | `/api/connection-prefs` | Per-`(provider, account)` display config — color token + stripe texture the calendar paints that source's mirrored events with |
+| PUT | `/api/connection-prefs/:provider/:account` | Update a connection's color/texture prefs |
 | GET/PUT/DELETE | `/api/reflections` · `/api/reflections/today` · `/api/reflections/weekly/:pos` | Today goal + weekly goals (Phase N) |
 | POST | `/api/reflections/:kind/:pos/done` | Mark a goal done / undone (`today_goal`/`weekly_goal` only — `day_note` is 422'd here) |
 | PUT | `/api/reflections/note` | Upsert the day's note; empty body deletes (Phase O) |
@@ -1866,13 +1982,20 @@ All from the repo root:
 | POST | `/api/objectives/:id/restore` | Un-archive (root-only — a cascaded member restores from its root) |
 | POST/DELETE | `/api/objectives/:id/purge` | Request / cancel permanent deletion. 48h window, reaped hourly by `purge_objectives` |
 | GET/POST | `/api/priorities` | Life-priorities self-audit — backs `/priorities` + `/balance` |
+| POST | `/api/review/sweep` | Manually run the same missed-task review + backoff the `review_day` job runs nightly — backs the top-bar sweep button |
 | GET | `/api/review/week?period=YYYY-MM-DD` | Weekly review stats — scheduled/focus minutes, capacity, completion %, calibration (Phase N) |
 | GET | `/api/calibration` | Personal estimate bias stats (bias ratio, quartiles, sample count) (Phase N) |
+| GET | `/api/calibration/scopes` | Time-Sense: all scoped calibration rows plus current unpinned tag-combo suggestions. 404 while `time_sense_enabled` is off |
+| GET | `/api/calibration/suggest/:taskId` | Time-Sense: a suggest-only estimate nudge for one task, or `{suggestion: null}`. 404 while the flag is off |
+| POST | `/api/calibration/pins` | Time-Sense: confirm a tag-combo suggestion (`{tag_ids: string[]}`, 2+); recomputes immediately |
+| DELETE | `/api/calibration/pins/:scopeRef` | Time-Sense: unpin a combo — its calibration row is dropped immediately, not at the next nightly run |
 | GET | `/api/metrics/tasks` · `/api/metrics/calibration` | Balance → Metrics: measured counts, timed minutes, mood mix, and estimate bias per direction / category over a 7 / 30 / 90-day window |
 | GET | `/api/triality/next` | The three candidate next actions (Habitual · Contextual · Novel) with every component score, the situation vector actually used, and a labeled "why now" line. Too little history is a typed refusal, not an error. **404 while `triality_enabled` is off** — a disabled feature's surface looks absent, not broken |
 | POST | `/api/triality/feedback` | `{log_id, outcome}` — stamp `opened` / `staged` / `dismissed` on a shown suggestion, at most once (this is the learning evidence). 404 while the flag is off |
 | DELETE | `/api/triality/weights` | Reset learning — drops this owner's learned slot weights, so scoring returns to the shipped defaults. The outcome log is untouched, and the next weekly pass re-derives weights from it: this is a recompute, not a permanent opt-out. 404 while the flag is off |
 | GET | `/api/metrics/triality?days=` | Balance → Metrics: acceptance per slot (a suggestion undecided for **less than 24h** is pending and excluded from the denominator; once it is 24h old and still untouched it counts as *ignored* — a decision, and a weak negative), the Novel uptake trend against the prior window, how under-served categories responded, and the learned weights with their sample counts (`null` until learning has run). 404 while the flag is off |
+| GET | `/api/classification/accuracy?limit=` | The classify/parse LLM's held-out accuracy trend, newest run first, per field (`category`/`motivation`). `accuracy: null` on a run that measured nothing — never a `0`. No feature flag |
+| DELETE | `/api/classification/exemplars` | Reset classification learning — drops this owner's learned few-shot index; the correction log survives and the next weekly `calibrate_classification` pass re-earns it |
 | POST | `/api/sync` | Apply offline op-log entries from a device (Phase L) |
 | GET | `/api/export` | Download all owner data as a JSON file (import-compatible) |
 | POST | `/api/import` | Restore owner data from an export JSON body |
@@ -1882,6 +2005,7 @@ All from the repo root:
 | GET/POST/PATCH/DELETE | `/api/day-types` · `/resolve/:date` · `/week-map` · `/assignments/:date` | Day-type CRUD + per-date resolution |
 | GET/PUT | `/api/category-prefs` | Base **category** tag prefs — the six Balance dimensions (health/career/relationships/growth/leisure/finance, mig 0134) |
 | GET | `/api/health` | Liveness probe (`{"ok":true,"release":string\|null}`) — `release` backs the client's update-available banner |
+| GET | `/api/config/telemetry` | Whether crash reporting is active; the browser bundle checks this before initialising Sentry |
 | GET | `/api/events` | SSE stream (task / block / job / possible / reminder events) |
 | POST | `/api/graphql` | GraphQL endpoint (Apollo, alongside REST; introspection on); gated by the same `requireAuth` as REST (session cookie in `sso` mode, `x-api-key` in `standalone`) (Phase W, done) |
 
