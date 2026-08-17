@@ -1,0 +1,53 @@
+# People on work (0151, docs/people-on-work.md) — the person directory, plus the two
+# peer people-sets a Task or TimeBlock carries.
+#
+# Deliberately ONE type for both fields. `responsible` and `beneficiaries` differ only
+# by which set they are, never by shape, which is what lets the client render them with
+# a single component — the same "one model, two fields" rule the SQL follows.
+#
+# `isSelf` is DERIVED server-side (`account_id = owner_id`), never stored, so it can't
+# disagree with the account link.
+#
+# `accountId` being non-null means this person is a permissioned account on this
+# install — which is what the `us` shortcut pre-fills from. It is NOT a condition on
+# who may be named: most people have no account, and both shortcuts reach both
+# populations.
+
+type PersonType implements Node {
+  id: ID!
+  displayName: String!
+  # The permissioned account this person IS, if any. Null for most people.
+  accountId: ID
+  isSelf: Boolean!
+  # False marks a provisional entry created by ingest at promote-time and never
+  # confirmed by the owner — Settings → People surfaces these for merge/rename/delete.
+  confirmed: Boolean!
+  """How the DIRECTORY ROW came to exist ('manual' | 'account' | 'gcal' | …)."""
+  source: String
+  emails: [String!]!
+  """
+  How this person came to be ON THIS ITEM ('user' | 'llm' | 'calendar' | 'email') —
+  non-null only when reached through a Task's or TimeBlock's sets. This, not "was the
+  field edited recently", is what makes a set a suggestion.
+  """
+  attachmentSource: String
+}
+
+# The roster the `us` shortcut pre-fills from. DELIBERATELY MINIMAL — id and name only.
+# The REST twin (GET /api/people/accounts) exists for the same reason: the admin
+# accounts surface returns email, role and hasPassword, and filling in a people field
+# must not require or leak any of that.
+#
+# `personId` is null until somebody actually picks this account (materializing the
+# directory row) — reading the roster never writes.
+type AccountRosterEntry {
+  accountId: ID!
+  name: String!
+  personId: ID
+}
+
+extend type Query {
+  people: [PersonType!]!
+  person(id: ID!): PersonType
+  accountRoster: [AccountRosterEntry!]!
+}

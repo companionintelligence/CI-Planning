@@ -1,5 +1,6 @@
 import { GraphQLError } from 'graphql';
 import { currentOwnerId } from '../lib/context.js';
+import { personToGraphql } from './people-resolvers.js';
 import { broadcast } from '../routes/sse.js';
 import { enqueueOutbound, pushOutboundDeletes } from '../agents/sync.js';
 import { getTask } from '../services/tasks.js';
@@ -10,7 +11,7 @@ import {
   deleteBlock as deleteBlockService,
   moveBlockGroup as moveBlockGroupService,
   promoteBlockToScheduled as promoteBlockToScheduledService,
-  getBlock, listBlockPage, blockCategoryNames,
+  getBlock, listBlockPage, blockCategoryNames, blockPeopleApi,
   type BlockRow, type CreateBlockInput as SvcCreateInput, type UpdateBlockInput as SvcUpdateInput,
 } from '../services/blocks.js';
 import { toNode } from './tag-resolvers.js';
@@ -40,6 +41,10 @@ function toSvcCreate(input: Record<string, unknown>): SvcCreateInput {
   return {
     title: input.title as string,
     task_id: input.taskId == null ? undefined : (input.taskId as string),
+    // People (0151/0154): THREE states, so the `== null ? undefined` idiom the other
+    // fields use would destroy the null (inherit) arm. Presence is what matters.
+    ...('responsibleIds' in input ? { responsible_ids: input.responsibleIds as string[] | null } : {}),
+    ...('beneficiaryIds' in input ? { beneficiary_ids: input.beneficiaryIds as string[] | null } : {}),
     block_kind: input.blockKind == null ? undefined : (input.blockKind as string),
     tag: input.tag == null ? undefined : (input.tag as string),
     secondary_tags: input.secondaryTags == null ? undefined : (input.secondaryTags as string[]),
@@ -67,6 +72,10 @@ function toSvcCreate(input: Record<string, unknown>): SvcCreateInput {
  *  an explicit null clears a nullable column, exactly as the REST PATCH body does). */
 function toSvcUpdate(input: Record<string, unknown>): SvcUpdateInput {
   const out: SvcUpdateInput = {};
+  // People (0151/0154). Absent preserves, `[]` pins to nobody, `null` resumes
+  // inheriting — all three have to survive the mapping, so this keys on presence.
+  if ('responsibleIds' in input) out.responsible_ids = input.responsibleIds as string[] | null;
+  if ('beneficiaryIds' in input) out.beneficiary_ids = input.beneficiaryIds as string[] | null;
   if ('title' in input) {
     if (input.title === null) throw new GraphQLError('title cannot be null', { extensions: { code: 'BAD_USER_INPUT' } });
     out.title = input.title as string;
@@ -225,6 +234,10 @@ export const blockResolvers = {
     isAuto: (b: BlockRow) => !!b.isAuto,
     status: (b: BlockRow) => b.status ?? 'planned',
     task: async (b: BlockRow) => (b.taskId ? (await getTask(currentOwnerId(), b.taskId)) ?? null : null),
+    // 0151: own-else-inherit-from-task, each set independently — blockPeopleApi is the
+    // single home for that rule, shared with the REST read path so the two can't drift.
+    responsible: async (b: BlockRow) => (await blockPeopleApi(b.id, b.taskId, { responsible: !!b.responsiblePinned, beneficiaries: !!b.beneficiariesPinned })).responsible.map(personToGraphql),
+    beneficiaries: async (b: BlockRow) => (await blockPeopleApi(b.id, b.taskId, { responsible: !!b.responsiblePinned, beneficiaries: !!b.beneficiariesPinned })).beneficiaries.map(personToGraphql),
     parentBlock: async (b: BlockRow) => (b.parentBlockId ? (await getBlock(currentOwnerId(), b.parentBlockId)) ?? null : null),
     // Phase B: first EFFECTIVE category — own entity_categories rows, else the task's,
     // else the legacy category_id column (pre-0135 rows the write path hasn't touched).

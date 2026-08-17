@@ -5,6 +5,8 @@ import {
   Check as CheckIcon,
 } from 'lucide-solid';
 import { MicButton } from './MicButton.js';
+import { TextureTrigger, TextureModal } from './TextureModal.js';
+import { PeopleField } from './PeopleField.js';
 import {
   elementModal, setElementModal, tags, blocks, concepts, tasks, patterns, patternTypes, categoryPrefs, prefs, showToast,
   refetchBlocks, refetchTasks, refetchFlightPlan,
@@ -15,13 +17,13 @@ import {
   nextHalfHour, saveElement, splitBlockTag, mergeTagNames, isoAt, type ElementForm,
 } from '../lib/element.js';
 import { sortCategories, displayTag } from '../lib/tag-tax.js';
-import { PATTERN_COLORS, colorVar } from '../lib/pattern-meta.js';
+import { colorVar } from '../lib/pattern-meta.js';
 import { localISODate, shortDate, clockLabel, addDays, monthGridOf } from '../lib/dates.js';
 import { buildRule, rulePreset, describeRule, WEEKDAYS, DAY_INITIAL, type RepeatPreset } from '../lib/recurrence.js';
 import { proposeSlot, narrowToBand } from '../lib/propose-slot.js';
 import { findSimilarTasks } from '../lib/similar-tasks.js';
 import { inheritedBlockTag } from '../lib/planner.js';
-import { api, type Task } from '../lib/api.js';
+import { api, type Task, type Person } from '../lib/api.js';
 
 const TB_REPEAT: RepeatPreset[] = ['none', 'daily', 'weekly', 'custom'];
 const TASK_REPEAT: RepeatPreset[] = ['none', 'daily', 'weekly', 'custom'];
@@ -138,12 +140,34 @@ export function ElementWizard() {
   // Phase B (0135): per-element texture override (on by default; null colour = derive).
   const [textureEnabled, setTextureEnabled] = createSignal(true);
   const [textureColorToken, setTextureColorToken] = createSignal<string | null>(null);
+  const [textureOpen, setTextureOpen] = createSignal(false);
   // Motivation (0141, §3b): who the work is for. `motivationTouched` is the testimony
   // gate — only a user interaction sends the field on save, so an unrelated edit never
   // re-stamps a machine ('llm') label as user's. Source is display-only ("suggested").
   const [motivation, setMotivation] = createSignal<'me' | 'us' | 'them' | null>(null);
   const [motivationSource, setMotivationSource] = createSignal<'user' | 'llm' | null>(null);
   const [motivationTouched, setMotivationTouched] = createSignal(false);
+  // People on work (0151). TWO sets over one model — who does the work, and who it is
+  // for. Beneficiaries replaces the old "Who is this for?" pills: the server derives
+  // `motivation` from that set, so the wizard no longer sends the axis directly.
+  // `peopleTouched` is the same testimony gate motivationTouched is: a detected set is
+  // shown as "(suggested)" and only sent once the user actually edits it.
+  const [responsible, setResponsible] = createSignal<Person[]>([]);
+  const [beneficiaries, setBeneficiaries] = createSignal<Person[]>([]);
+  // Tracked PER FIELD, not once for both. Sending an untouched field pins it on a time
+  // block (0154), so editing a meeting's attendees would silently stop its beneficiaries
+  // inheriting from the backing task.
+  const [responsibleTouched, setResponsibleTouched] = createSignal(false);
+  const [beneficiariesTouched, setBeneficiariesTouched] = createSignal(false);
+  // 0154: `null` on save means "resume inheriting from the backing task". Tracked
+  // separately from the set itself because an empty set and an inheriting one are
+  // different instructions — that ambiguity is the whole reason the pin exists.
+  const [responsibleInherit, setResponsibleInherit] = createSignal(false);
+  const [beneficiariesInherit, setBeneficiariesInherit] = createSignal(false);
+  const [directory, { refetch: refetchDirectory }] = createResource(async () =>
+    (await api.people.list()).people,
+  );
+  const [roster] = createResource(async () => (await api.people.accounts()).accounts);
   const [locked, setLocked] = createSignal(false);
   const [allDay, setAllDay] = createSignal(false);
   const [depDraft, setDepDraft] = createSignal('');
@@ -375,6 +399,14 @@ export function ElementWizard() {
       seedCategories(b.categories ?? []);
       setTextureEnabled(b.texture_enabled ?? true);
       setTextureColorToken(b.texture_color_token ?? null);
+      setResponsible(b.responsible ?? []);
+      setBeneficiaries(b.beneficiaries ?? []);
+      setResponsibleTouched(false);
+      setBeneficiariesTouched(false);
+      // From the payload, not from what happened this session: the client cannot tell
+      // "nobody" from "inheriting" by looking at an empty set.
+      setResponsibleInherit(!!b.responsible_inherited);
+      setBeneficiariesInherit(!!b.beneficiaries_inherited);
       setLocked(!!b.is_locked);
       const ps = rulePreset(b.recurrence_rule);
       setTbRepeat(TB_REPEAT.includes(ps.preset) ? ps.preset : 'custom');
@@ -401,6 +433,12 @@ export function ElementWizard() {
       setMotivation(t.motivation ?? null);
       setMotivationSource(t.motivation_source ?? null);
       setMotivationTouched(false); // seeded, not testimony — only a tap makes it send
+      setResponsible(t.responsible ?? []);
+      setBeneficiaries(t.beneficiaries ?? []);
+      setResponsibleTouched(false); // same rule: seeded ≠ testimony
+      setBeneficiariesTouched(false);
+      setResponsibleInherit(false);
+      setBeneficiariesInherit(false);
       setNote(t.notes ?? ''); setNoteExpanded(!!t.notes);
       setScheduledFor(t.scheduled_for ?? localISODate());
       setTaskTime(t.task_time ?? '');
@@ -801,6 +839,17 @@ export function ElementWizard() {
     setBarStart(snap15(fracToMinutes((e.clientY - rect.top) / rect.height)));
   };
 
+  /**
+   * True for a time block that is backed by a task — the only case where "stop
+   * overriding, follow the task" has anything to follow. A loose block has nothing to
+   * inherit from, so the affordance is hidden rather than offered and inert.
+   */
+  const backsATask = () => {
+    if (tab() !== 'timeblock' || !isEdit()) return false;
+    const id = m().editTarget?.id;
+    return !!id && !!(blocks() ?? []).find((x) => x.id === id)?.task_id;
+  };
+
   const taskIsSomeday = () => tab() === 'task' && someday();
   const taskDeferred = () => tab() === 'task' && !!deferUntil();
   const timePaneMuted = () => taskIsSomeday() || taskDeferred();
@@ -845,7 +894,20 @@ export function ElementWizard() {
         textureEnabled: textureEnabled(),
         textureColorToken: textureColorToken(),
         // Motivation (0141): only when the user touched the control this session.
+        // Motivation (0141) still goes through when the user set it via quick-add's
+        // overlay; the wizard's own control is now Beneficiaries, and the server
+        // derives the axis from that set whenever it is sent.
         ...(motivationTouched() ? { motivation: motivation() } : {}),
+        // People on work (0151) — only the field the user actually edited, the same
+        // testimony gate motivation uses. A merely-detected set is never re-sent as
+        // though the owner had curated it, and an untouched field is never sent at all
+        // (which on a block would pin it — see 0154).
+        ...(responsibleTouched()
+          ? { responsibleIds: responsibleInherit() ? null : responsible().map((p) => p.id) }
+          : {}),
+        ...(beneficiariesTouched()
+          ? { beneficiaryIds: beneficiariesInherit() ? null : beneficiaries().map((p) => p.id) }
+          : {}),
         scheduledFor: scheduledFor(), taskTime: taskTime() || undefined, estimatedMinutes: estimate(),
         dueAt: dueAt() || undefined, priority: priority(),
         deferUntil: deferUntil() || undefined, dependsOn: dependsOn(),
@@ -1304,63 +1366,55 @@ export function ElementWizard() {
                   </div>
                 </div>
 
-                {/* Motivation (0141, §3b) — who is this for? Three-way; tapping the
-                    active pill again clears back to unset (NULL, distinct from "us").
-                    An 'llm' label renders a "suggested" hint until the user confirms
-                    or changes it — only a tap sends the field on save. Task tab only:
-                    blocks inherit their linked task's motivation (no own column). */}
-                <Show when={tab() !== 'timeblock'}>
-                  <div class="flex flex-col gap-1.5">
-                    <div class={sectionLabel}>Who is this for?
-                      <Show when={motivation() && motivationSource() === 'llm' && !motivationTouched()}>
-                        <span class="normal-case tracking-normal text-muted-foreground"> (suggested)</span>
-                      </Show>
-                    </div>
-                    <div class="flex flex-wrap gap-1.5">
-                      <For each={[['me', '● me'], ['us', '◐ us'], ['them', '○ them']] as const}>
-                        {([val, label]) => (
-                          <button type="button"
-                            onClick={() => { setMotivationTouched(true); setMotivation(motivation() === val ? null : val); }}
-                            class={pill}
-                            classList={{ [chipOn]: motivation() === val, [chipOff]: motivation() !== val }}>
-                            {label}
-                          </button>
-                        )}
-                      </For>
-                    </div>
-                  </div>
-                </Show>
+                {/* People on work (0151) — two peer sets over ONE model, replacing the
+                    old three-pill "Who is this for?" control. Beneficiaries IS that
+                    question, now answered with actual people; the server derives the
+                    Triality motivation axis from the set (empty ⇒ unlabeled, self-only
+                    ⇒ me, self+others ⇒ us, others-only ⇒ them).
 
-                {/* Texture — Phase B (0135): per-element on/off + colour override.
-                    "Auto" (null) derives the colour from the categories above. */}
+                    Both fields render on BOTH tabs: a meeting block having attendees is
+                    the most natural case in the whole feature, and entity_people is
+                    keyed by entity_kind so a block carries them natively.
+
+                    The space comes out even — "Who is this for?" was 2 rows and the
+                    texture swatch grid was 4; these two fields plus the collapsed
+                    texture trigger are 6. */}
+                <PeopleField
+                  label="Responsible"
+                  value={responsible()}
+                  onChange={(next) => { setResponsibleTouched(true); setResponsibleInherit(false); setResponsible(next); }}
+                  directory={directory() ?? []}
+                  roster={roster() ?? []}
+                  onDirectoryChanged={() => void refetchDirectory()}
+                  suggested={!responsibleTouched()}
+                  onInherit={backsATask() ? () => { setResponsibleTouched(true); setResponsibleInherit(true); } : undefined}
+                  onOverride={() => { setResponsibleTouched(true); setResponsibleInherit(false); setResponsible([]); }}
+                  inheriting={responsibleInherit()}
+                />
+                <PeopleField
+                  label="Beneficiaries"
+                  value={beneficiaries()}
+                  onChange={(next) => { setBeneficiariesTouched(true); setBeneficiariesInherit(false); setBeneficiaries(next); }}
+                  directory={directory() ?? []}
+                  roster={roster() ?? []}
+                  onDirectoryChanged={() => void refetchDirectory()}
+                  suggested={!beneficiariesTouched()}
+                  onInherit={backsATask() ? () => { setBeneficiariesTouched(true); setBeneficiariesInherit(true); } : undefined}
+                  onOverride={() => { setBeneficiariesTouched(true); setBeneficiariesInherit(false); setBeneficiaries([]); }}
+                  inheriting={beneficiariesInherit()}
+                />
+
+                {/* Texture — Phase B (0135). Collapsed to a single trigger (0151): the
+                    14-swatch grid wrapped to three rows here, and that space now
+                    carries the two people fields above. Same signals, same payload —
+                    only the presentation moved. */}
                 <div class="flex flex-col gap-1.5">
                   <div class={sectionLabel}>Texture</div>
-                  <div class="flex flex-wrap items-center gap-1.5">
-                    <button type="button" onClick={() => setTextureEnabled(!textureEnabled())}
-                      class={pill}
-                      classList={{ [chipOn]: textureEnabled(), [chipOff]: !textureEnabled() }}>
-                      {textureEnabled() ? 'On' : 'Off'}
-                    </button>
-                    <Show when={textureEnabled()}>
-                      <button type="button" onClick={() => setTextureColorToken(null)}
-                        class={pill}
-                        classList={{ [chipOn]: textureColorToken() === null, [chipOff]: textureColorToken() !== null }}>
-                        Auto
-                      </button>
-                      <For each={PATTERN_COLORS}>
-                        {(col) => (
-                          <button type="button" title={col.label}
-                            onClick={() => setTextureColorToken(col.token)}
-                            class="w-5 h-5 rounded-full border-2 transition-transform flex-shrink-0"
-                            classList={{
-                              'border-foreground scale-110': textureColorToken() === col.token,
-                              'border-transparent hover:scale-105': textureColorToken() !== col.token,
-                            }}
-                            style={{ 'background-color': colorVar(col.token) }} />
-                        )}
-                      </For>
-                    </Show>
-                  </div>
+                  <TextureTrigger
+                    enabled={textureEnabled()}
+                    colorToken={textureColorToken()}
+                    onOpen={() => setTextureOpen(true)}
+                  />
                 </div>
 
                 <Show when={tab() === 'task' ? !!primary() : true}><TagSection /></Show>
@@ -1889,6 +1943,18 @@ export function ElementWizard() {
             </button>
           </div>
         </div>
+
+        {/* Rendered as a sibling of the wizard card, not inside the scrolling left
+            pane — a dialog nested in an `overflow-y-auto` column would clip. */}
+        <Show when={textureOpen()}>
+          <TextureModal
+            enabled={textureEnabled()}
+            colorToken={textureColorToken()}
+            onToggle={setTextureEnabled}
+            onColor={setTextureColorToken}
+            onClose={() => setTextureOpen(false)}
+          />
+        </Show>
       </div>
     </Show>
   );

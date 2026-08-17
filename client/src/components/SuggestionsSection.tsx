@@ -1,5 +1,5 @@
 import { For, Show, createSignal } from 'solid-js';
-import { ChevronDown, ChevronRight, Check, X, Mail } from 'lucide-solid';
+import { ChevronDown, ChevronRight, Check, X, Mail, Users } from 'lucide-solid';
 import { suggestions, refetchSuggestions, mutateSuggestions, refetchTasks, showToast } from '../stores/index.js';
 import { api, type PossibleTask } from '../lib/api.js';
 
@@ -93,6 +93,10 @@ function SuggestionRow(props: {
     return bits.join(' · ');
   };
 
+  // 0151: who ingest recognised, shown BEFORE the owner approves — detecting people at
+  // suggestion time is only useful if the suggestion actually says so.
+  const responsible = () => (props.p.detected_people ?? []).filter((d) => d.role === 'responsible');
+
   return (
     <div class="flex items-start gap-2 rounded-md border border-border px-3 py-2">
       <div class="flex-1 min-w-0">
@@ -102,6 +106,18 @@ function SuggestionRow(props: {
         </Show>
         <Show when={meta()}>
           <div class="text-[11px] text-muted-foreground mt-0.5">{meta()}</div>
+        </Show>
+        <Show when={responsible().length > 0}>
+          <div class="flex items-center gap-1 mt-1 flex-wrap">
+            <Users size={11} class="text-muted-foreground flex-shrink-0" />
+            <For each={responsible()}>
+              {(d) => (
+                <span class="text-[10px] px-1.5 py-0.5 rounded-full border border-border text-muted-foreground">
+                  {d.display_name}
+                </span>
+              )}
+            </For>
+          </div>
         </Show>
       </div>
       <div class="flex items-center gap-1 shrink-0">

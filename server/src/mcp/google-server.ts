@@ -52,9 +52,13 @@ interface GoogleEvent {
   id?: string;
   status?: string;
   summary?: string;
+  description?: string;
   etag?: string;
   start?: { dateTime?: string; date?: string };
   end?: { dateTime?: string; date?: string };
+  // 0151: who is on the invite. `resource` marks a room/equipment rather than a person.
+  attendees?: { email?: string; displayName?: string; resource?: boolean }[];
+  organizer?: { email?: string; displayName?: string };
 }
 
 /** Map a Google Calendar API event into the RemoteEvent-ish shape CP's client expects. */
@@ -66,6 +70,18 @@ export function mapGoogleEvent(ev: GoogleEvent): Record<string, unknown> {
     start: ev.start?.dateTime ?? ev.start?.date ?? '',
     end: ev.end?.dateTime ?? ev.end?.date ?? '',
     etag: ev.etag ?? null,
+    // 0151: carry the description (previously dropped, so gcal extraction only ever saw
+    // the TITLE) plus the invite's people. Rooms and equipment are filtered out —
+    // `resource: true` attendees are not people and must not enter the directory.
+    ...(ev.description ? { description: ev.description } : {}),
+    ...(ev.organizer?.email ? { organizer: ev.organizer.email } : {}),
+    ...(ev.attendees?.length
+      ? {
+          attendees: ev.attendees
+            .filter((a) => !a.resource && a.email)
+            .map((a) => (a.displayName ? `"${a.displayName}" <${a.email}>` : String(a.email))),
+        }
+      : {}),
     ...(allDay ? { allDay: true } : {}),
     // A cancelled event (incremental tombstone) → deleted:true (R3). Such events often
     // carry only { id, status, etag } and no start/end — that's fine, WP5 keys deletes on id.

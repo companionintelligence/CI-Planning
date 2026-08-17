@@ -37,8 +37,10 @@ export function resetDb(): void {
     DELETE FROM push_subscriptions;
     DELETE FROM task_dependencies;
     DELETE FROM possible_task_tags;
+    DELETE FROM possible_task_people;
     DELETE FROM entity_tags;
     DELETE FROM entity_categories;
+    DELETE FROM entity_people;
     DELETE FROM time_entries;
     DELETE FROM outbound_queue;
     DELETE FROM external_events;
@@ -81,6 +83,10 @@ export function resetDb(): void {
   // system owner before). Clear owner-scoped tables first — several `owner_id` FKs are NO-ACTION:
   // scheduling_prefs, tag_prefs (owner_id), patterns and pattern_types. patterns before pattern_types
   // (patterns.type_id), pattern_tasks cascades off patterns.
+  // 0151: keep each owner's SELF row (account_id = owner_id) — it is owner scaffolding
+  // seeded by the migration, exactly like scheduling_prefs, and the "me" shortcut has
+  // nothing to point at without it. Everything a test created goes.
+  sqlite.exec(`DELETE FROM people WHERE account_id IS NULL OR account_id <> owner_id`);
   sqlite.prepare(`DELETE FROM scheduling_prefs WHERE owner_id != ?`).run(SYSTEM_OWNER);
   sqlite.prepare(`DELETE FROM tag_prefs WHERE owner_id != ?`).run(SYSTEM_OWNER);
   sqlite.prepare(`DELETE FROM patterns WHERE owner_id != ?`).run(SYSTEM_OWNER);
@@ -274,6 +280,15 @@ export function createOwner(id: string = SECOND_OWNER_ID, name = 'Owner B', tz =
       )
       .run(...params);
   }
+  // 0151: the owner's own `people` row, mirroring provisionOwner. Without it
+  // selfPersonId() is undefined for this tenant and the motivation projection can't
+  // tell "me" from "them".
+  sqlite
+    .prepare(
+      `INSERT OR IGNORE INTO people (id, owner_id, account_id, display_name, confirmed, source)
+       VALUES (uuid7(), ?, ?, ?, 1, 'account')`,
+    )
+    .run(id, id, name);
   return id;
 }
 

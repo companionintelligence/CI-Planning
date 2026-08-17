@@ -35,7 +35,27 @@ import { httpError } from '../lib/http-error.js';
 // '10': +entity_categories. Category assignments (migration 0134) were in the schema but
 // never in the payload, so every round-trip silently dropped them and reported success.
 // Purely additive — a '9' or older dump restores with the key treated as empty.
-const EXPORT_VERSION = '10';
+// '11': +people, +person_emails, +entity_people, +possible_task_people (0151/0152, the
+// Responsible/Beneficiaries sets). Without these a round-trip silently dropped every
+// person and every assignment — the same gap class as v8/v9/v10, caught before shipping
+// this time. Purely additive: a '10' or older dump restores with the keys treated as
+// empty, and the owner's self row is re-seeded by provisionOwner/0151 regardless.
+// '12': the 0153/0154 per-role people pins on time_blocks. `time_blocks` is exported
+// with SELECT *, so those columns joined the payload the moment the migration landed —
+// giving two different shapes under one version string, which is exactly what the
+// version exists to prevent. Purely additive: an '11' dump restores with the columns
+// defaulted (insertRows intersects with the live table).
+const EXPORT_VERSION = '12';
+
+/**
+ * Older payloads this build can still read. Every change since '6' has been ADDITIVE —
+ * `insertRows` intersects with the live table, so absent keys take column defaults and
+ * retired keys are ignored — which is why old versions stay restorable rather than
+ * ageing out. Append each version as it ships; only remove one when its payload
+ * genuinely cannot be read any more.
+ */
+export const RESTORABLE_VERSIONS = ['6', '7', '8', '9', '10', '11', '12'] as const;
+export { EXPORT_VERSION };
 
 // Owner-scoped tables exported/restored via a direct `WHERE owner_id = ?` query.
 // (Junctions, the tag axis, and full-table dumps are handled explicitly in the payload.)
@@ -54,6 +74,11 @@ const OWNER_TABLES = [
   'time_entries',
   'reminders',
   'push_subscriptions',
+  // 0151: the person directory + its email index. Both carry owner_id, so a direct
+  // query is enough. entity_people / possible_task_people are owner-LESS junctions and
+  // are handled with the others below.
+  'people',
+  'person_emails',
   // Added in v4 (G-EXPORT-MISSING): owner-scoped data that resetDb() clears but the
   // export silently dropped — a round-trip lost the owner's objectives, reflections,
   // day-type calendar, plan order, calibration, and pattern opt-outs. Each carries an
@@ -139,12 +164,30 @@ async function insertRows(table: string, rows: Record<string, unknown>[], ownerI
   }
   const cols = Object.keys(rows[0]).filter((c) => live.has(c));
   if (!cols.length) return 0;
+  // 0151: `people.account_id` names a permissioned account, which is install-specific.
+  // Restoring into the SAME install keeps it; restoring into a DIFFERENT one would
+  // point at an owner that doesn't exist there and fail the whole transaction on the
+  // FK. Null it in that case: the person survives as a plain named person, which is
+  // both truthful (they have no login here) and far better than refusing the restore.
+  const liveOwnerIds =
+    table === 'people' && cols.includes('account_id')
+      ? new Set((await store().prepare(`SELECT id FROM owners`).all<{ id: string }>()).map((o) => o.id))
+      : null;
   const stmt = store().prepare(
     `INSERT OR REPLACE INTO ${table} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`
   );
   for (const row of rows) {
     // Force the owner column to the caller — belt-and-suspenders behind the reject above.
-    await stmt.run(...cols.map((c) => (c === ownerCol ? ownerId : row[c])));
+    await stmt.run(
+      ...cols.map((c) => {
+        if (c === ownerCol) return ownerId;
+        if (liveOwnerIds && c === 'account_id') {
+          const v = row[c];
+          return v != null && liveOwnerIds.has(String(v)) ? v : null;
+        }
+        return row[c];
+      }),
+    );
   }
   return rows.length;
 }
@@ -168,6 +211,7 @@ const JUNCTION_FKS: Record<string, [string, string][]> = {
   pattern_tasks: [['pattern_id', 'patterns'], ['task_id', 'tasks']],
   task_dependencies: [['task_id', 'tasks'], ['depends_on_id', 'tasks']],
   possible_task_tags: [['possible_task_id', 'possible_tasks'], ['tag_id', 'tags']],
+  possible_task_people: [['possible_task_id', 'possible_tasks'], ['person_id', 'people']],
   objective_tasks: [['objective_id', 'objectives'], ['task_id', 'tasks']],
 };
 const ENTITY_KIND_PARENT: Record<string, string> = { task: 'tasks', routine: 'patterns', time_block: 'time_blocks' };
@@ -187,11 +231,17 @@ async function insertJunctionRows(table: string, rows: Record<string, unknown>[]
   for (const row of rows) {
     // The two polymorphic junctions resolve their parent table through entity_kind, so
     // they cannot be expressed in JUNCTION_FKS. They differ only in the tag column.
-    if (table === 'entity_tags' || table === 'entity_categories') {
+    if (table === 'entity_tags' || table === 'entity_categories' || table === 'entity_people') {
       const parent = ENTITY_KIND_PARENT[String(row['entity_kind'])];
       if (!parent) continue;
-      const tagCol = table === 'entity_tags' ? 'tag_id' : 'category_tag_id';
-      if ((await ownsParent(parent, row['entity_id'], ownerId)) && (await ownsParent('tags', row[tagCol], ownerId))) {
+      // 0151 made this THREE polymorphic junctions rather than two. They differ only in
+      // the second FK — entity_people points at `people`, not `tags` — so the ownership
+      // check is the same shape with a different parent table.
+      const [refCol, refParent] =
+        table === 'entity_tags' ? ['tag_id', 'tags']
+        : table === 'entity_categories' ? ['category_tag_id', 'tags']
+        : ['person_id', 'people'];
+      if ((await ownsParent(parent, row['entity_id'], ownerId)) && (await ownsParent(refParent, row[refCol], ownerId))) {
         owned.push(row);
       }
       continue;
@@ -277,6 +327,20 @@ export function backupRouter() {
           .prepare(`SELECT * FROM possible_task_tags WHERE possible_task_id IN (${ptIds.map(() => '?').join(',')})`)
           .all(...ptIds)
       : [];
+    const possibleTaskPeople = ptIds.length
+      ? await store()
+          .prepare(`SELECT * FROM possible_task_people WHERE possible_task_id IN (${ptIds.map(() => '?').join(',')})`)
+          .all(...ptIds)
+      : [];
+
+    // entity_people (0151) is the THIRD member of the entity_tags family — polymorphic,
+    // owner-less, scoped through its parents. Same entity_kinds as entity_categories
+    // ('task' | 'time_block'), so the same id set.
+    const entityPeople = entityCategoryIds.length
+      ? await store()
+          .prepare(`SELECT * FROM entity_people WHERE entity_id IN (${entityCategoryIds.map(() => '?').join(',')})`)
+          .all(...entityCategoryIds)
+      : [];
 
     // objective_tasks has no owner_id — scope via the owner's objectives (both ends of a
     // link belong to the same owner). Carries tombstones (linked=0) too, via SELECT *.
@@ -313,6 +377,15 @@ export function backupRouter() {
       entity_categories: entityCategories,
       possible_tasks: possibleTasks,
       possible_task_tags: possibleTaskTags,
+      // 0151 (v11). `people.account_id` is deliberately carried as-is: restoring into
+      // the SAME install keeps every account link intact, which is the overwhelmingly
+      // common case. Restoring into a DIFFERENT install is handled on the import side,
+      // where an account_id naming an owner that doesn't exist there is nulled — the
+      // person survives as a plain named person rather than failing the whole restore.
+      people: ownerData['people'],
+      person_emails: ownerData['person_emails'],
+      entity_people: entityPeople,
+      possible_task_people: possibleTaskPeople,
       reminders: ownerData['reminders'],
       push_subscriptions: ownerData['push_subscriptions'],
       daily_recap: ownerData['daily_recap'],
@@ -363,7 +436,20 @@ export function backupRouter() {
     // Accept the current version plus prior v6 (pre-Phase-Z, grouping axis kind='pattern'),
     // v7 (pre-v8 tables), and v8 (pre-v9 tables). A v6 dump is remapped below; v7/v8/v9
     // dumps differ only by additive keys, which the restore treats as empty if absent.
-    const SUPPORTED_VERSIONS = ['6', '7', '8', '9', EXPORT_VERSION];
+    // EVERY version whose payload this build can still restore — not "the old ones plus
+    // whatever EXPORT_VERSION happens to be". Deriving only the newest from the constant
+    // meant each bump silently dropped the previous version from the list, so bumping
+    // 10 → 11 → 12 for two purely ADDITIVE changes orphaned every backup a user had
+    // already taken. Additive versions stay restorable forever: insertRows intersects
+    // with the live table, so absent keys take column defaults and retired keys are
+    // ignored. Add each new version here as it ships; only remove one when a payload
+    // genuinely cannot be read any more.
+    // Every readable version, INCLUDING the current one by construction. The literal
+    // list alone was the other half of the same trap: it fixed old versions being
+    // dropped, but removed the guarantee that a fresh export can be re-imported, so the
+    // next bump would have made the app reject its own output. `RESTORABLE_VERSIONS`
+    // is asserted to contain EXPORT_VERSION by a test, so neither half can rot.
+    const SUPPORTED_VERSIONS = [...new Set([...RESTORABLE_VERSIONS, EXPORT_VERSION])];
     if (!SUPPORTED_VERSIONS.includes(String(body['version']))) {
       ctx.status = 400;
       ctx.body = { error: `Unsupported export version '${body['version']}'; expected one of ${SUPPORTED_VERSIONS.join(', ')}` };
@@ -445,6 +531,12 @@ export function backupRouter() {
       counts['entity_categories'] = await insertJunctionRows('entity_categories', g('entity_categories'), ownerId);
       counts['possible_tasks']   = await insertRows('possible_tasks', g('possible_tasks'), ownerId);
       counts['possible_task_tags'] = await insertJunctionRows('possible_task_tags', g('possible_task_tags'), ownerId);
+      // 0151: people BEFORE the two junctions that reference them (defer_foreign_keys is
+      // on, so this is for clarity rather than necessity).
+      counts['people']               = await insertRows('people', g('people'), ownerId);
+      counts['person_emails']        = await insertRows('person_emails', g('person_emails'), ownerId);
+      counts['entity_people']        = await insertJunctionRows('entity_people', g('entity_people'), ownerId);
+      counts['possible_task_people'] = await insertJunctionRows('possible_task_people', g('possible_task_people'), ownerId);
       counts['reminders']        = await insertRows('reminders', g('reminders'), ownerId);
       counts['push_subscriptions'] = await insertRows('push_subscriptions', g('push_subscriptions'), ownerId);
       // v4 owner-scoped tables (G-EXPORT-MISSING). defer_foreign_keys=ON (above) makes the

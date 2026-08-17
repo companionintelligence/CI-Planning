@@ -41,6 +41,12 @@ type TimeBlockType implements Node & Taggable {
   # same derive rule as REST's `categories`).
   categories: [String!]!
   tags: [EntityTagType!]!           # W4a: tags applied to this block (entity_tags, all levels)
+  # People on work (0151). A block carries both sets natively; a task-backed block with
+  # none of its own INHERITS its task's (each set independently) — the same
+  # own-else-derive rule categories follow, so re-assigning a task re-labels its blocks
+  # with no engine writes.
+  responsible: [PersonType!]!
+  beneficiaries: [PersonType!]!
 }
 
 type TimeBlockConnection implements Connection {
@@ -79,6 +85,14 @@ input CreateTimeBlockInput {
   colorToken: String
   textureEnabled: Boolean
   textureColorToken: String
+  """
+  People on work (0151/0154), per role. Omit to leave alone; `[]` pins the block to
+  NOBODY for that role; `null` resumes INHERITING from the backing task. A plain array
+  cannot express the third state, which is why null is meaningful here rather than
+  just "absent".
+  """
+  responsibleIds: [ID!]
+  beneficiaryIds: [ID!]
 }
 
 input UpdateTimeBlockInput {
@@ -105,6 +119,14 @@ input UpdateTimeBlockInput {
   categories: [String!]
   textureEnabled: Boolean
   textureColorToken: String
+  """
+  People on work (0151/0154), per role. Omit to leave alone; `[]` pins the block to
+  NOBODY for that role; `null` resumes INHERITING from the backing task. A plain array
+  cannot express the third state, which is why null is meaningful here rather than
+  just "absent".
+  """
+  responsibleIds: [ID!]
+  beneficiaryIds: [ID!]
 }
 
 # Shift a Plan + all its members by one minute delta, atomically (PR-C). `id` may be the

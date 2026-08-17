@@ -35,6 +35,8 @@ interface BlockTemplate {
   recurrence_exdates: string | null; // JSON string[] of skipped local YYYY-MM-DD
   category_id: string | null;  // 0069: propagated to instances
   color_token: string | null;  // 0069: the FROZEN category stamp, copied verbatim
+  responsible_pinned: number | null;   // 0154: copied so an instance inherits like its template
+  beneficiaries_pinned: number | null;
 }
 
 /** Parse the stored EXDATE JSON (`string[]`), tolerating null/garbage. Mirrors recurrence-ops.ts. */
@@ -110,7 +112,8 @@ export async function ensureRecurringBlocksForRange(owner: string, fromUtcISO: s
   const templates = await store()
     .prepare(
       `SELECT id, title, block_kind, tag, block_type, note, start_at, end_at, is_locked, source_kind,
-              recurrence_rule, recurrence_dtstart, recurrence_exdates, category_id, color_token
+              recurrence_rule, recurrence_dtstart, recurrence_exdates, category_id, color_token,
+              responsible_pinned, beneficiaries_pinned
          FROM time_blocks
         WHERE owner_id = ? AND recurrence_rule IS NOT NULL AND recurrence_parent_id IS NULL`,
     )
@@ -139,6 +142,32 @@ export async function ensureRecurringBlocksForRange(owner: string, fromUtcISO: s
         WHERE entity_kind = 'time_block' AND entity_id = ?`,
   );
 
+  // 0151/0154: carry the people too, and the per-role pins with them. Without this a
+  // recurring meeting had attendees on the TEMPLATE and nobody on any occurrence — and
+  // since these instances are container blocks with no task_id, the own-else-inherit
+  // rule has nothing to fall back to either, so the attendees simply vanished.
+  //
+  // COPY-ON-CREATE ONLY, exactly like copyTags and copyCats above: an instance takes the
+  // template's people the moment it is materialized and keeps them thereafter. Editing a
+  // template therefore reaches occurrences not yet rendered, and NOT ones that already
+  // exist.
+  //
+  // A previous attempt to re-sync untouched instances on every pass was inert — an
+  // instance created by the line below already has rows, so the "no people of its own"
+  // guard excluded it forever — while still costing a query per template on the hottest
+  // read in the app. Propagating template edits properly means driving it from the
+  // template WRITE and deciding what to do with customised occurrences; that is its own
+  // change, tracked separately, not something to bolt onto the read path.
+  const copyPeople = store().prepare(
+    `INSERT OR IGNORE INTO entity_people (entity_kind, entity_id, person_id, role, source, position)
+       SELECT 'time_block', ?, person_id, role, source, position FROM entity_people
+        WHERE entity_kind = 'time_block' AND entity_id = ?`,
+  );
+  // The pins are part of the template's answer: an instance of a template that says
+  // "nobody" must not quietly start inheriting.
+  const copyPins = store().prepare(
+    `UPDATE time_blocks SET responsible_pinned = ?, beneficiaries_pinned = ? WHERE id = ?`,
+  );
   let blocksCreated = 0;
   await store().transaction(async () => {
     for (const t of templates) {
@@ -168,6 +197,8 @@ export async function ensureRecurringBlocksForRange(owner: string, fromUtcISO: s
           blocksCreated++;
           await copyTags.run(row.id, t.id);
           await copyCats.run(row.id, t.id);
+          await copyPeople.run(row.id, t.id);
+          await copyPins.run(t.responsible_pinned ?? 0, t.beneficiaries_pinned ?? 0, row.id);
         }
       }
     }

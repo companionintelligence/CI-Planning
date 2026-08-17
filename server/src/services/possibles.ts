@@ -9,6 +9,7 @@ import { logger } from '../lib/logger.js';
 import { autoScheduleOnIngest, placeStartAnchoredTask } from '../engine/autoplan.js';
 import { dedupePossibles } from '../agents/groom.js';
 import { requiresReview } from './review-gate.js';
+import { attachMachinePeople, resolveOrCreateByEmail, selfPersonId } from './people.js';
 
 /**
  * Possible-task inbox CRUD (Phase W · W9) — extracted from routes/possibles.ts so
@@ -71,6 +72,61 @@ async function carryPossibleTags(possibleId: string, taskId: string): Promise<vo
   }
 }
 
+// 0151: the people twin of carryPossibleTags. Two sources feed it, and the split is the
+// whole provisional-people policy:
+//   - possible_task_people — addresses ingest RESOLVED against the existing directory;
+//   - source_payload.people_hints — addresses it could not, deliberately left as raw
+//     strings so no directory row was created for an item nobody accepted.
+// Promotion is the moment the owner accepts, so it is where the hints become real
+// people (confirmed = 0, reviewable in Settings → People).
+const SQL_POSSIBLE_PEOPLE =
+  `SELECT person_id, role, source FROM possible_task_people WHERE possible_task_id = ?`;
+const SQL_POSSIBLE_PAYLOAD =
+  `SELECT source_payload AS payload, source_kind AS kind FROM possible_tasks WHERE id = ?`;
+
+async function carryPossiblePeople(owner: string, possibleId: string, taskId: string): Promise<void> {
+  const rows = await store()
+    .prepare(SQL_POSSIBLE_PEOPLE)
+    .all<{ person_id: string; role: string; source: string | null }>(possibleId);
+
+  const meta = await store()
+    .prepare(SQL_POSSIBLE_PAYLOAD)
+    .get<{ payload: unknown; kind: string | null }>(possibleId);
+  const source = meta?.kind === 'gmail' ? 'email' : 'calendar';
+
+  const responsible = rows.filter((r) => r.role === 'responsible').map((r) => r.person_id);
+
+  // Resolve-or-create the addresses ingest left as hints.
+  let payload: { people_hints?: unknown } = {};
+  try {
+    payload = typeof meta?.payload === 'string' ? JSON.parse(meta.payload) : ((meta?.payload ?? {}) as object);
+  } catch {
+    payload = {}; // a malformed payload must not block a promote
+  }
+  if (Array.isArray(payload.people_hints)) {
+    for (const hint of payload.people_hints) {
+      if (typeof hint !== 'string') continue;
+      const personId = await resolveOrCreateByEmail(owner, hint, source);
+      if (personId && !responsible.includes(personId)) responsible.push(personId);
+    }
+  }
+
+  if (responsible.length === 0) return;
+
+  // The owner goes FIRST — position 0, the lead. It is their planner: a task promoted
+  // from an invite that listed only the other attendees would leave them off their own
+  // work, so "what am I on the hook for" would not match it. Ingest deliberately skips
+  // self when recording detections precisely because promotion re-adds them here, in
+  // the one place that knows the item is becoming a real task.
+  const self = await selfPersonId(owner);
+  const ordered = self ? [self, ...responsible.filter((id) => id !== self)] : responsible;
+
+  // attachMachinePeople, not setEntityPeople: this is machine testimony, and on the
+  // re-promote path (a straggler sweep re-touching a row) it must not clobber a set the
+  // owner has since curated by hand.
+  await attachMachinePeople(owner, 'task', taskId, 'responsible', ordered, source);
+}
+
 // ── reads (owner-scoped by proposed_owner_id) ─────────────────────────────────
 
 /** The owner's possible tasks in a given status (default 'pending'). */
@@ -79,6 +135,37 @@ export async function listPossibles(owner: string, status = 'pending'): Promise<
     .select()
     .from(possibleTasks)
     .where(and(eq(possibleTasks.proposedOwnerId, owner), eq(possibleTasks.status, status)));
+}
+
+/**
+ * The people ingest DETECTED on each of these suggestions (0151), batched.
+ *
+ * Only rows it could RESOLVE against the existing directory appear — an unknown address
+ * is a hint on source_payload until promotion, deliberately, so scanning never grows
+ * the directory. So this shows "who we recognised", which is exactly the honest thing
+ * to put in front of the owner before they approve.
+ */
+export async function detectedPeopleByPossible(
+  possibleIds: string[],
+): Promise<Map<string, { id: string; display_name: string; role: string }[]>> {
+  const out = new Map<string, { id: string; display_name: string; role: string }[]>();
+  if (possibleIds.length === 0) return out;
+  const rows = await store()
+    .prepare(
+      `SELECT ptp.possible_task_id AS pid, ptp.role AS role, p.id AS id, p.display_name AS display_name
+         FROM possible_task_people ptp
+         JOIN people p ON p.id = ptp.person_id
+        WHERE ptp.possible_task_id IN (${possibleIds.map(() => '?').join(',')})
+        ORDER BY p.display_name COLLATE NOCASE`,
+    )
+    .all<{ pid: string; role: string; id: string; display_name: string }>(...possibleIds);
+  for (const r of rows) {
+    const list = out.get(r.pid);
+    const entry = { id: r.id, display_name: r.display_name, role: r.role };
+    if (list) list.push(entry);
+    else out.set(r.pid, [entry]);
+  }
+  return out;
 }
 
 /** One of the owner's possible tasks by id, or undefined (a cross-owner id is invisible). */
@@ -140,6 +227,7 @@ export async function promotePossible(
     .returning();
 
   await carryPossibleTags(id, task.id);
+  await carryPossiblePeople(owner, id, task.id);
 
   await db
     .update(possibleTasks)

@@ -180,6 +180,12 @@ export interface ElementForm {
   // an unrelated edit must NOT re-stamp a machine label as user testimony); a value
   // sets it as user testimony; explicit null un-labels.
   motivation?: 'me' | 'us' | 'them' | null;
+  // People on work (0151): person ids, array order = position. Same testimony rule as
+  // motivation above — undefined means the user never touched either field, so a
+  // merely-DETECTED set is not re-sent as though they had curated it. Both apply to
+  // tasks AND time blocks. Writing beneficiaryIds re-derives motivation server-side.
+  responsibleIds?: string[] | null;
+  beneficiaryIds?: string[] | null;
   // time-block membership (scheduled only): existing tasks/habits to scatter inside,
   // routines to place inside, and child blocks to detach — all applied on Save.
   attachTaskIds?: string[];
@@ -272,6 +278,9 @@ export async function saveElement(
       // Motivation (0141): only when touched — sending the seeded value on every save
       // would silently convert an 'llm' label into user testimony.
       ...(form.motivation !== undefined ? { motivation: form.motivation } : {}),
+      // People (0151) — same untouched-means-absent rule.
+      ...(form.responsibleIds !== undefined ? { responsible_ids: form.responsibleIds } : {}),
+      ...(form.beneficiaryIds !== undefined ? { beneficiary_ids: form.beneficiaryIds } : {}),
     };
     if (kind === 'habit') body.is_habit = true;
     if (rule) body.recurrence_rule = rule;
@@ -359,6 +368,12 @@ export async function saveElement(
     ...(form.textureEnabled !== undefined ? { texture_enabled: form.textureEnabled } : {}),
     ...(form.textureColorToken !== undefined ? { texture_color_token: form.textureColorToken } : {}),
   };
+  // People (0151). Spread alongside textureOut so BOTH block branches (someday and
+  // scheduled) carry it without restating the conditional in each.
+  const peopleOut: Record<string, unknown> = {
+    ...(form.responsibleIds !== undefined ? { responsible_ids: form.responsibleIds } : {}),
+    ...(form.beneficiaryIds !== undefined ? { beneficiary_ids: form.beneficiaryIds } : {}),
+  };
   let body: Record<string, unknown>;
   if (form.someday) {
     const goal = form.goalDay || localISODate();
@@ -370,6 +385,7 @@ export async function saveElement(
       end_at: new Date(Date.parse(start) + durMin * 60_000).toISOString(),
       ...categoryOut,
       ...textureOut,
+      ...peopleOut,
       ...extra,
     };
   } else {
@@ -386,6 +402,7 @@ export async function saveElement(
       ...(form.recurrenceRule !== undefined ? { recurrence_rule: form.recurrenceRule } : {}),
       ...categoryOut,
       ...textureOut,
+      ...peopleOut,
       ...extra,
     };
   }
@@ -404,4 +421,17 @@ export async function saveElement(
   refetchBlocks(); refetchConcepts(); refetchTags();
   if (form.attachTaskIds?.length || form.attachRoutineIds?.length) { refetchTasks(); refetchPatterns(); }
   return 'Time Block saved';
+}
+
+/**
+ * Initials for an avatar chip: first letters of the first and last words, capped at 2.
+ * "Alex Hartman" → AH, "Mom" → M. Deliberately naive — it is a recognition aid on a
+ * card that already carries a full-name tooltip, not an identity claim.
+ */
+export function initialsOf(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  const first = parts[0][0] ?? '';
+  const last = parts.length > 1 ? parts[parts.length - 1][0] ?? '' : '';
+  return (first + last).toUpperCase().slice(0, 2);
 }

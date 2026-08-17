@@ -29,6 +29,7 @@ const EXPECTED_COLS = [
   'occurrence_date', 'auto_run_id', 'last_moved_at', 'category_id', 'color_token',
   'recurrence_exdates', 'version', 'updated_at', 'field_ts',
   'texture_enabled', 'texture_color_token', // 0135 (Categories Phase B)
+  'responsible_pinned', 'beneficiaries_pinned', // 0153/0154: per-role, own set wins even when empty
 ];
 
 const EXPECTED_INDEXES = [
@@ -299,7 +300,7 @@ describe('backup restore isolation (time_blocks wipe scoping)', () => {
     await api(srv.url, '/api/blocks', { method: 'POST', json: { title: 'A block', start_at: at('10:00'), end_at: at('11:00') } });
     const exported = await api(srv.url, '/api/export');
     expect(exported.status).toBe(200);
-    expect(exported.body.version).toBe('10');
+    expect(exported.body.version).toBe('12'); // 0151 added the people tables
     const imported = await api(srv.url, '/api/import', { method: 'POST', json: exported.body });
     expect(imported.status).toBe(200);
     // The owner-scoped `DELETE FROM time_blocks WHERE owner_id = ?` never touched B.

@@ -48,8 +48,17 @@ type TaskType implements Node & Taggable {
   textureEnabled: Boolean!
   textureColorToken: String
   # Motivation axis (0141): null = unlabeled (≠ US — see the enum note above).
+  #
+  # As of 0151 this is a PROJECTION of `beneficiaries`, not a hand-set field: the
+  # server derives it on every beneficiary write (empty set ⇒ null, self-only ⇒ ME,
+  # self+others ⇒ US, others-only ⇒ THEM). Still writable through updateTask for API
+  # back-compat, but the wizard sends the people set instead.
   motivation: Motivation
   motivationSource: MotivationSource
+  # People on work (0151). Two peer sets over ONE type: who does the work, and who the
+  # work is for. Position-ordered; index 0 of `responsible` is the lead.
+  responsible: [PersonType!]!
+  beneficiaries: [PersonType!]!
   objective: ObjectiveType          # the first objective this task is linked to (objective_tasks, linked=1); null if none
 }
 
@@ -81,6 +90,10 @@ input CreateTaskInput {
   textureColorToken: String
   "Motivation (0141): a caller-supplied value is user testimony (source stamps USER)."
   motivation: Motivation
+  "People on work (0151): person ids, array order = position (index 0 = the lead)."
+  responsibleIds: [ID!]
+  "Person ids. Setting this DERIVES `motivation` — send one or the other, not both."
+  beneficiaryIds: [ID!]
   dependsOn: [ID!]
   # NOTE: no `recurrenceRule` — recurring creation (the REST POST's createRecurringTask
   # branch) is out of scope for W3.3b; omitted so a rule can't be passed-and-ignored.
@@ -108,6 +121,10 @@ input UpdateTaskInput {
   textureColorToken: String
   "Motivation (0141): absent preserves; explicit null un-labels (clears source too)."
   motivation: Motivation
+  "People on work (0151): absent preserves, [] clears (mirrors tags)."
+  responsibleIds: [ID!]
+  "Absent preserves, [] clears — and re-derives `motivation`, including back to null."
+  beneficiaryIds: [ID!]
   dependsOn: [ID!]
 }
 

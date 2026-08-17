@@ -17,6 +17,18 @@ export interface RemoteEvent {
    * (remove the local mirror) rather than an upsert. Absent/false on full listings.
    */
   deleted?: boolean;
+  /**
+   * People on work (0151). Attendee + organizer addresses as the provider reported
+   * them, and the event body. Optional throughout: a provider that doesn't supply them
+   * (or an older MCP child) simply omits them, and detection degrades to "no people
+   * found" rather than failing.
+   *
+   * These are facts on the record, not guesses — which is why `responsible` is resolved
+   * from them deterministically, with no model in the loop.
+   */
+  attendees?: string[];
+  organizer?: string;
+  description?: string;
 }
 
 export interface RemoteEventInput {

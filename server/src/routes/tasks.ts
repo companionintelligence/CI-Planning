@@ -31,10 +31,24 @@ import {
 import { writeAudit } from '../lib/audit.js';
 import { closeTask } from '../services/task-close.js';
 import { classificationInput, logAssignment } from '../services/classification-learning.js';
+import { getEntityPeople, getEntityPeopleBulk } from '../services/people.js';
 
 // Task business logic lives in services/tasks.ts (Phase W step 3.1, shared with the
 // coming GraphQL resolvers). These handlers are thin HTTP shells: parse → call the
 // service → map error→status → serialize (taskToApi + tag/dep reads) → broadcast.
+
+/**
+ * The two people-sets, shaped for spreading into a task payload (0151).
+ *
+ * Single-row: fine inside an async handler, but NOT inside the synchronous `.map()`
+ * the two list endpoints use — those batch through `getEntityPeopleBulk` for the same
+ * reason `dependsById` is resolved up front (an async map callback puts a Promise in
+ * every field and `ctx.body` serializes `{}`).
+ */
+async function peopleFor(taskId: string): Promise<{ responsible: unknown[]; beneficiaries: unknown[] }> {
+  const { responsible, beneficiaries } = await getEntityPeople('task', taskId);
+  return { responsible, beneficiaries };
+}
 
 export function tasksRouter() {
   const router = new Router();
@@ -74,8 +88,11 @@ export function tasksRouter() {
     // would put a Promise in every depends_on field, and ctx.body would serialize `{}`.
     const dependsById = new Map<string, string[]>();
     for (const id of ids) dependsById.set(id, await getDependencies(id));
+    const peopleById = await getEntityPeopleBulk('task', ids); // 0151: batched, same reason
     const withTags = result.map((t) => ({
       ...taskToApi(t),
+      responsible: peopleById.get(t.id)?.responsible ?? [],
+      beneficiaries: peopleById.get(t.id)?.beneficiaries ?? [],
       tags: tagsById.get(t.id) ?? [],
       secondary_tags: secondaryById.get(t.id) ?? [],
       categories: categoriesById.get(t.id) ?? [],
@@ -119,7 +136,7 @@ export function tasksRouter() {
         if (res.error === 'title_required') { ctx.status = 400; ctx.body = { error: 'title is required' }; return; }
         ctx.status = 422; ctx.body = { error: res.message }; return;
       }
-      const out = { ...taskToApi(res.template), tags: body.tags ?? [], secondary_tags: await taskSecondaryTags(res.template.id), categories: await entityCategoryNames('task', res.template.id), depends_on: [] as string[], blocked: false };
+      const out = { ...taskToApi(res.template), tags: body.tags ?? [], secondary_tags: await taskSecondaryTags(res.template.id), categories: await entityCategoryNames('task', res.template.id), depends_on: [] as string[], blocked: false, ...(await peopleFor(res.template.id)) };
       broadcast(owner, 'task:created', out);
       broadcast(owner, 'recurrence:generated', res.generated);
       ctx.status = 201;
@@ -151,6 +168,7 @@ export function tasksRouter() {
 
     const out = {
       ...taskToApi(task),
+      ...(await peopleFor(task.id)),
       tags: body.tags ?? [],
       secondary_tags: await taskSecondaryTags(task.id),
       categories: await entityCategoryNames('task', task.id),
@@ -288,7 +306,7 @@ export function tasksRouter() {
 
     // `tags` reflects the LEVELED result (L1 = directions), not the flat parse — so the
     // response matches what a follow-up GET returns; intentions ride in secondary_tags.
-    const out = { ...taskToApi(task), tags: await taskTagNames(task.id), secondary_tags: await taskSecondaryTags(task.id), depends_on: [] as number[], blocked: false, llm };
+    const out = { ...taskToApi(task), tags: await taskTagNames(task.id), secondary_tags: await taskSecondaryTags(task.id), depends_on: [] as number[], blocked: false, llm, ...(await peopleFor(task.id)) };
     broadcast(currentOwnerId(), 'task:created', out);
     // No writeAudit here — createTask already wrote the 'create' audit row.
     ctx.status = 201;
@@ -310,8 +328,11 @@ export function tasksRouter() {
     const secondaryById = await taskSecondaryTagNamesByIds(ids);
     const objectivesById = await objectiveIdsByTaskIds(currentOwnerId(), ids); // §I: subtasks of a promoted parent are linked too — show their star
     const categoriesById = await entityCategoryNamesByIds('task', ids); // Phase B
+    const peopleById = await getEntityPeopleBulk('task', ids); // 0151: batched, same reason
     const withTags = result.map((t) => ({
       ...taskToApi(t),
+      responsible: peopleById.get(t.id)?.responsible ?? [],
+      beneficiaries: peopleById.get(t.id)?.beneficiaries ?? [],
       tags: tagsById.get(t.id) ?? [],
       secondary_tags: secondaryById.get(t.id) ?? [],
       categories: categoriesById.get(t.id) ?? [],
@@ -333,7 +354,7 @@ export function tasksRouter() {
       ctx.body = { error: res.error === 'not_found' ? 'not found' : 'not a recurring instance' };
       return;
     }
-    const out = { ...taskToApi(res.task), tags: [] as string[], depends_on: [] as number[], blocked: false };
+    const out = { ...taskToApi(res.task), tags: [] as string[], depends_on: [] as number[], blocked: false, ...(await peopleFor(res.task.id)) };
     broadcast(owner, 'task:updated', out);
     ctx.body = { task: out, skipped: res.skipped };
   });
@@ -366,7 +387,7 @@ export function tasksRouter() {
     const owner = currentOwnerId();
     const res = await promoteToHabit(owner, id);
     if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
-    const out = { ...taskToApi(res.task), tags: await taskTagNames(id), depends_on: await getDependencies(id) };
+    const out = { ...taskToApi(res.task), tags: await taskTagNames(id), depends_on: await getDependencies(id), ...(await peopleFor(id)) };
     broadcast(owner, 'task:updated', out);
     broadcast(owner, 'pattern:updated', { id });
     ctx.body = { task: out };
@@ -433,6 +454,7 @@ export function tasksRouter() {
       if (task) {
         broadcast(owner, 'task:updated', {
           ...taskToApi(task),
+          ...(await peopleFor(task.id)),
           tags: await taskTagNames(id),
           secondary_tags: await taskSecondaryTags(id),
           categories: await entityCategoryNames('task', id),
@@ -480,6 +502,7 @@ export function tasksRouter() {
       if (!task) continue;
       broadcast(owner, 'task:updated', {
         ...taskToApi(task),
+        ...(await peopleFor(task.id)),
         tags: await taskTagNames(id),
         secondary_tags: await taskSecondaryTags(id),
         categories: await entityCategoryNames('task', id),
@@ -504,7 +527,7 @@ export function tasksRouter() {
     const res = await recallTask(owner, ctx.params.id);
     if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     const task = res.task;
-    const out = { ...taskToApi(task), tags: await taskTagNames(task.id), secondary_tags: await taskSecondaryTags(task.id), depends_on: [] as string[], blocked: false };
+    const out = { ...taskToApi(task), tags: await taskTagNames(task.id), secondary_tags: await taskSecondaryTags(task.id), depends_on: [] as string[], blocked: false, ...(await peopleFor(task.id)) };
     broadcast(owner, 'task:created', out);
     ctx.status = 201;
     ctx.body = { task: out };
@@ -530,7 +553,7 @@ export function tasksRouter() {
     }
     const { scheduled_for, placement } = await rescheduleTask(id, body.days, owner);
     const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
-    const out = { ...taskToApi(task), tags: await taskTagNames(id), depends_on: await getDependencies(id) };
+    const out = { ...taskToApi(task), tags: await taskTagNames(id), depends_on: await getDependencies(id), ...(await peopleFor(id)) };
     broadcast(owner, 'task:updated', out);
     writeAudit({ ownerId: owner, actor: 'owner', action: 'reschedule', entity: `task:${id}` });
     broadcast(owner, 'block:updated', { rescheduled: id });
@@ -581,6 +604,7 @@ export function tasksRouter() {
 
     const out = {
       ...taskToApi(res.task),
+      ...(await peopleFor(res.task.id)),
       tags: await taskTagNames(res.targetId),
       secondary_tags: await taskSecondaryTags(res.targetId),
       categories: await entityCategoryNames('task', res.targetId),
@@ -603,7 +627,7 @@ export function tasksRouter() {
     const scope = (ctx.query.scope as string) === 'following' ? 'following' : 'instance';
     const res = await deleteTask(owner, id, scope);
     if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
-    const out = { ...taskToApi(res.task), tags: [] as string[] };
+    const out = { ...taskToApi(res.task), tags: [] as string[], ...(await peopleFor(res.task.id)) };
     broadcast(owner, 'task:updated', out);
     for (const blockId of res.cancelledBlockIds) broadcast(owner, 'block:updated', { id: blockId });
     requestReplan('task:deleted'); // B2: a cancelled task frees its slot — re-pack the day
@@ -643,6 +667,7 @@ export function tasksRouter() {
     const [task] = await db.select().from(tasks).where(and(eq(tasks.id, id), eq(tasks.ownerId, owner)));
     const out = {
       ...taskToApi(task),
+      ...(await peopleFor(task.id)),
       tags: await taskTagNames(id),
       secondary_tags: await taskSecondaryTags(id),
       categories: await entityCategoryNames('task', id),
