@@ -137,3 +137,39 @@ describe('blocks inherit from their task', () => {
     expect(mixed.data.timeBlock.beneficiaries.map((p: any) => p.displayName)).toEqual(['Mom']);
   });
 });
+
+/**
+ * Review fixes (PR #574) — a task-backed block must be able to say "nobody".
+ * "No rows" used to mean BOTH "never set, inherit" and "deliberately cleared", so
+ * removing the last chip silently restored the task's people.
+ */
+describe('a block can express nobody', () => {
+  it('inherits by default, keeps an explicit clear, and keeps an explicit set', async () => {
+    const self = await selfPersonId(SYSTEM_OWNER);
+    const chris = await createPerson(SYSTEM_OWNER, { display_name: 'Chris' });
+    const taskId = await seedTask('Backing task');
+    await setEntityPeople(SYSTEM_OWNER, 'task', taskId, 'responsible', [self!]);
+
+    const made = await svcCreateBlock(SYSTEM_OWNER, {
+      title: 'Standup', task_id: taskId,
+      start_at: '2026-06-22T09:00:00.000Z', end_at: '2026-06-22T10:00:00.000Z',
+    });
+    if (!made.ok) throw new Error('block seed failed');
+    // Default: no rows of its own ⇒ inherit.
+    expect((made.api.responsible as { display_name: string }[]).map((p) => p.display_name)).toEqual(['System']);
+
+    const { updateBlock } = await import('../src/services/blocks.js');
+    const cleared = await updateBlock(SYSTEM_OWNER, made.block.id, { responsible_ids: [] });
+    if (!cleared.ok) throw new Error('clear failed');
+    // The fix: an explicit clear STICKS instead of falling back to the task.
+    expect(cleared.api.responsible).toEqual([]);
+
+    const set = await updateBlock(SYSTEM_OWNER, made.block.id, { responsible_ids: [chris.id] });
+    if (!set.ok) throw new Error('set failed');
+    expect((set.api.responsible as { display_name: string }[]).map((p) => p.display_name)).toEqual(['Chris']);
+
+    // And the pin survives a re-read through the list path, not just the write response.
+    const { data } = await gql(`{ timeBlock(id: "${made.block.id}") { responsible { displayName } } }`);
+    expect(data.timeBlock.responsible.map((p: any) => p.displayName)).toEqual(['Chris']);
+  });
+});

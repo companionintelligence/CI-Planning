@@ -22,8 +22,15 @@ type PersonType implements Node {
   # False marks a provisional entry created by ingest at promote-time and never
   # confirmed by the owner — Settings → People surfaces these for merge/rename/delete.
   confirmed: Boolean!
+  """How the DIRECTORY ROW came to exist ('manual' | 'account' | 'gcal' | …)."""
   source: String
   emails: [String!]!
+  """
+  How this person came to be ON THIS ITEM ('user' | 'llm' | 'calendar' | 'email') —
+  non-null only when reached through a Task's or TimeBlock's sets. This, not "was the
+  field edited recently", is what makes a set a suggestion.
+  """
+  attachmentSource: String
 }
 
 # The roster the `us` shortcut pre-fills from. DELIBERATELY MINIMAL — id and name only.

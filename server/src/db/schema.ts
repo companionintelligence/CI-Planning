@@ -185,6 +185,10 @@ export const timeBlocks = sqliteTable('time_blocks', {
   // 0135 (Categories Phase B): per-element striped-texture override, same as tasks.
   textureEnabled: integer('texture_enabled', { mode: 'boolean' }).notNull().default(true),
   textureColorToken: text('texture_color_token'),
+  // 0153: false ⇒ a task-backed block with no entity_people rows of its own INHERITS
+  // its task's people. true ⇒ this block's own set is authoritative even when EMPTY,
+  // which is what lets "nobody is on this block" be expressible at all.
+  peoplePinned: integer('people_pinned', { mode: 'boolean' }).notNull().default(false),
 });
 
 // Reusable Time-Block templates (Phase G): a saved named/tagged container with a

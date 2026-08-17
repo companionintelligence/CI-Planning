@@ -237,7 +237,7 @@ async function attachDetectedPeople(
   const self = await selfPersonId(owner);
   const unresolved: string[] = [];
   const seen = new Set<string>();
-  let position = 0;
+  const resolved: string[] = [];
 
   for (const entry of raw) {
     const email = parseEmail(entry);
@@ -245,25 +245,36 @@ async function attachDetectedPeople(
     seen.add(email);
     const personId = await resolveByEmail(owner, email);
     if (!personId) { unresolved.push(entry); continue; }
-    // You are always on your own items; a row for yourself here would be noise.
+    // Your own attendance is implied — promotion adds you as the lead, so a row here
+    // would only duplicate that.
     if (personId === self) continue;
+    resolved.push(personId);
+  }
+
+  // REPLACE the detected set rather than adding to it. `upsertPossible` re-runs on every
+  // ingest cycle, and an INSERT-only pass would keep an attendee who has since been
+  // uninvited — the suggestion, and the task promoted from it, would name somebody the
+  // event no longer does. Only machine-detected rows live in this table, so a wholesale
+  // replace destroys no user testimony.
+  await store()
+    .prepare(`DELETE FROM possible_task_people WHERE possible_task_id = ? AND role = 'responsible'`)
+    .run(possibleId);
+  for (const personId of resolved) {
     await store()
       .prepare(
         `INSERT OR IGNORE INTO possible_task_people (possible_task_id, person_id, role, source, confidence)
          VALUES (?, ?, 'responsible', ?, 1.0)`,
       )
       .run(possibleId, personId, source);
-    position++;
   }
 
-  if (unresolved.length) {
-    // Merge into source_payload rather than replacing it — `from`/`subject` are already
-    // there and inferDirection reads them on the next pass.
-    const merged = { ...(p as Record<string, unknown>), people_hints: unresolved };
-    await store()
-      .prepare(`UPDATE possible_tasks SET source_payload = ? WHERE id = ?`)
-      .run(JSON.stringify(merged), possibleId);
-  }
+  // Same replace rule for the hints: written even when EMPTY, so an event that lost its
+  // unknown attendees stops carrying them. Merged into source_payload rather than
+  // replacing it — `from`/`subject` are already there and inferDirection reads them.
+  const merged = { ...(p as Record<string, unknown>), people_hints: unresolved };
+  await store()
+    .prepare(`UPDATE possible_tasks SET source_payload = ? WHERE id = ?`)
+    .run(JSON.stringify(merged), possibleId);
 }
 
 // ─── Gmail watermark cursor + dead-letter (sync_state, resource-keyed) ─────────

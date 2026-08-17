@@ -5,7 +5,7 @@ import { startTestServer, resetDb, api, createOwner, type TestServer } from './h
 import {
   projectMotivation, selfPersonId, createPerson, resolveByEmail, resolveOrCreateByEmail,
   setEntityPeople, attachMachinePeople, getEntityPeople, applyMotivationProjection,
-  parseEmail, nameFromEmail, mergePeople, personForAccount, accountRoster,
+  parseEmail, nameFromEmail, mergePeople, personForAccount, accountRoster, getPerson,
 } from '../src/services/people.js';
 import { removeEntityTags } from '../src/services/tags.js';
 
@@ -327,3 +327,67 @@ async function newTask(title: string): Promise<string> {
   const { body } = await api<{ task: { id: string } }>(srv.url, '/api/tasks', { method: 'POST', json: { title } });
   return body.task.id;
 }
+
+/**
+ * Review fixes (PR #574). Each of these pins a defect the first pass shipped — several
+ * of them passed their original tests because those asserted on the database while the
+ * bug lived one layer out.
+ */
+describe('review fixes', () => {
+  it('returns FRESH arrays for an empty result — no shared module state', async () => {
+    // `{ ...EMPTY }` off a module constant is a shallow copy: both callers got the SAME
+    // two arrays, so one mutation poisoned every later empty result process-wide.
+    const a = await getEntityPeople('task', 'no-such-task-a');
+    a.responsible.push({ id: 'x' } as never);
+    const b = await getEntityPeople('task', 'no-such-task-b');
+    expect(b.responsible).toEqual([]);
+    expect(b.beneficiaries).toEqual([]);
+  });
+
+  it('resolves an ACCOUNT address to that account, never a duplicate person', async () => {
+    // person_emails is only seeded when owners.email is set, and it routinely is not —
+    // so the owner's own address was unresolvable and promotion minted a second,
+    // is_self:false "you", which then projected 'them' for their own work.
+    sqlite.prepare(`UPDATE owners SET email = 'me@example.com' WHERE id = ?`).run(OWNER);
+    const self = await selfPersonId(OWNER);
+
+    const resolved = await resolveOrCreateByEmail(OWNER, '"Me" <me@example.com>', 'calendar');
+    expect(resolved).toBe(self);
+    expect(
+      (sqlite.prepare(`SELECT COUNT(*) AS n FROM people WHERE owner_id = ?`).get(OWNER) as { n: number }).n,
+    ).toBe(1); // still just the self row — nobody invented
+  });
+
+  it('does NOT adopt a same-named stranger as an account', async () => {
+    createOwner(SECOND, 'Chris');
+    const neighbour = await createPerson(OWNER, { display_name: 'Chris', emails: ['neighbour@example.com'] });
+
+    const account = await personForAccount(OWNER, SECOND);
+    // A name match is not identity — merging them would retroactively relabel every
+    // task the neighbour was on.
+    expect(account!.id).not.toBe(neighbour.id);
+    expect(account!.display_name).toBe('Chris (2)');
+    expect((await getPerson(OWNER, neighbour.id))!.account_id).toBeNull();
+  });
+
+  it('skips junk that parseEmail rejected instead of storing it', async () => {
+    const p = await createPerson(OWNER, { display_name: 'Junk', emails: ['not an address', 'ok@example.com'] });
+    expect(p.emails).toEqual(['ok@example.com']);
+  });
+
+  it('carries emails and the ATTACHMENT provenance on entity reads', async () => {
+    const mom = await createPerson(OWNER, { display_name: 'Mom', emails: ['mom@example.com'] });
+    const id = await newTask('With provenance');
+    await setEntityPeople(OWNER, 'task', id, 'responsible', [mom.id], 'user');
+    await setEntityPeople(OWNER, 'task', id, 'beneficiary', [mom.id], 'calendar');
+
+    const people = await getEntityPeople('task', id);
+    // emails were always [] here, despite the type (and the GraphQL SDL) promising them.
+    expect(people.responsible[0].emails).toEqual(['mom@example.com']);
+    // The attachment's source is what tells a curated set from a detected one; the
+    // directory row's own `source` cannot.
+    expect(people.responsible[0].attachment_source).toBe('user');
+    expect(people.beneficiaries[0].attachment_source).toBe('calendar');
+    expect(people.responsible[0].source).toBe('manual'); // the row's own origin, unchanged
+  });
+});

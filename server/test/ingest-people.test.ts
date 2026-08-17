@@ -78,7 +78,9 @@ describe('resolving known people (calendar)', () => {
     // intermediate possible, which no longer exists as 'pending'.
     const taskId = (sqlite.prepare(`SELECT id FROM tasks LIMIT 1`).get() as { id: string }).id;
     const people = await getEntityPeople('task', taskId);
-    expect(people.responsible.map((p) => p.id)).toEqual([chris.id]);
+    // The owner leads (position 0) and the detected attendee follows — it is their planner.
+    expect(people.responsible.map((p) => p.display_name)).toEqual(['System', 'Chris']);
+    expect(people.responsible[1].id).toBe(chris.id);
     // Who the work is FOR is never guessed from an invite.
     expect(people.beneficiaries).toEqual([]);
   });
@@ -136,7 +138,7 @@ describe('the review-gated path never grows the directory (email)', () => {
     if (!res.ok) return;
 
     const people = await getEntityPeople('task', res.taskId);
-    expect(people.responsible.map((p) => p.display_name)).toEqual(['Dana Reyes']);
+    expect(people.responsible.map((p) => p.display_name)).toEqual(['System', 'Dana Reyes']);
     const dana = sqlite
       .prepare(`SELECT confirmed, source FROM people WHERE display_name = 'Dana Reyes'`)
       .get() as { confirmed: number; source: string };
@@ -150,8 +152,62 @@ describe('the review-gated path never grows the directory (email)', () => {
     const res = await run(() => promotePossible(SYSTEM_OWNER, possible.id));
     if (!res.ok) throw new Error('promote failed');
 
-    expect((await getEntityPeople('task', res.taskId)).responsible.map((p) => p.id)).toEqual([dana.id]);
+    const resp = (await getEntityPeople('task', res.taskId)).responsible;
+    expect(resp.map((p) => p.display_name)).toEqual(['System', 'Dana R']); // owner leads
+    expect(resp[1].id).toBe(dana.id);
     expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM people WHERE owner_id = ?`).get(SYSTEM_OWNER) as { n: number }).n)
       .toBe(2); // self + Dana, no duplicate
+  });
+});
+
+/**
+ * Review fixes (PR #574).
+ */
+describe('review fixes', () => {
+  it('puts the OWNER first on a promoted task — it is their planner', async () => {
+    // Ingest skips self when recording detections; promotion is where they come back.
+    // Without this a calendar-detected task listed the attendees and left the owner off
+    // their own work, so "what am I on the hook for" would never match it.
+    await createPerson(SYSTEM_OWNER, { display_name: 'Chris', emails: ['chris@example.com'] });
+    await run(() => ingestEvents(fakeClient([event({ attendees: ['chris@example.com'] })])));
+
+    const taskId = (sqlite.prepare(`SELECT id FROM tasks LIMIT 1`).get() as { id: string }).id;
+    const people = await getEntityPeople('task', taskId);
+    expect(people.responsible.map((p) => p.display_name)).toEqual(['System', 'Chris']);
+    expect(people.responsible[0].is_self).toBe(true); // position 0 = the lead
+  });
+
+  it('drops an attendee who was uninvited between ingests', async () => {
+    await createPerson(SYSTEM_OWNER, { display_name: 'Chris', emails: ['chris@example.com'] });
+    await createPerson(SYSTEM_OWNER, { display_name: 'Dana', emails: ['dana@example.com'] });
+
+    // First pass: both on the invite.
+    await run(() => ingestEmails(fakeClient([], [email({ from: 'chris@example.com' })])));
+    let rows = sqlite.prepare(`SELECT COUNT(*) AS n FROM possible_task_people`).get() as { n: number };
+    expect(rows.n).toBe(1);
+
+    // Second pass: the SAME message id now reports a different sender. Detection is
+    // INSERT-only no longer — a stale person must not survive the re-ingest.
+    sqlite.prepare(`DELETE FROM sync_state`).run(); // replay the same window
+    await run(() => ingestEmails(fakeClient([], [email({ from: 'dana@example.com' })])));
+    const names = sqlite
+      .prepare(
+        `SELECT p.display_name AS n FROM possible_task_people ptp JOIN people p ON p.id = ptp.person_id`,
+      )
+      .all() as { n: string }[];
+    expect(names.map((r) => r.n)).toEqual(['Dana']);
+  });
+
+  it('clears stale hints when an event loses its unknown attendees', async () => {
+    await run(() => ingestEmails(fakeClient([], [email({ from: 'stranger@example.com' })])));
+    expect(JSON.parse((sqlite.prepare(`SELECT source_payload AS p FROM possible_tasks LIMIT 1`).get() as { p: string }).p).people_hints)
+      .toEqual(['stranger@example.com']);
+
+    await createPerson(SYSTEM_OWNER, { display_name: 'Known', emails: ['known@example.com'] });
+    sqlite.prepare(`DELETE FROM sync_state`).run();
+    await run(() => ingestEmails(fakeClient([], [email({ from: 'known@example.com' })])));
+    // Written even when EMPTY — otherwise the old hint would be promoted later.
+    expect(JSON.parse((sqlite.prepare(`SELECT source_payload AS p FROM possible_tasks LIMIT 1`).get() as { p: string }).p).people_hints)
+      .toEqual([]);
   });
 });

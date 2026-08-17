@@ -29,6 +29,7 @@ const EXPECTED_COLS = [
   'occurrence_date', 'auto_run_id', 'last_moved_at', 'category_id', 'color_token',
   'recurrence_exdates', 'version', 'updated_at', 'field_ts',
   'texture_enabled', 'texture_color_token', // 0135 (Categories Phase B)
+  'people_pinned', // 0153: own people-set is authoritative even when empty (People on work)
 ];
 
 const EXPECTED_INDEXES = [

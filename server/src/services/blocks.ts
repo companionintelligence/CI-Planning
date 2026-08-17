@@ -142,9 +142,14 @@ export async function blockCategoryNames(blockId: string, taskId: string | null)
 export async function blockPeopleApi(
   blockId: string,
   taskId: string | null,
+  peoplePinned = false,
 ): Promise<{ responsible: EntityPeople['responsible']; beneficiaries: EntityPeople['beneficiaries'] }> {
   const own = await getEntityPeople('time_block', blockId);
-  if (!taskId) return { responsible: own.responsible, beneficiaries: own.beneficiaries };
+  // PINNED (0153) means this block's own set is authoritative even when EMPTY — the
+  // only way "nobody is on this block" can be said at all. Without the flag, clearing
+  // the last chip looked identical to "never set" and the task's people came straight
+  // back, so the clear silently did nothing.
+  if (!taskId || peoplePinned) return { responsible: own.responsible, beneficiaries: own.beneficiaries };
   const fromTask = await getEntityPeople('task', taskId);
   return {
     responsible: own.responsible.length ? own.responsible : fromTask.responsible,
@@ -175,7 +180,8 @@ async function enrichApi(rows: BlockRow[]): Promise<Record<string, unknown>[]> {
     const own = ownCats.get(b.id as string);
     const src = source.get(b.id as string);
     const mine = ownPeople.get(b.id as string);
-    const theirs = b.task_id ? taskPeople.get(b.task_id as string) : undefined;
+    // 0153: a pinned block never inherits — its own (possibly empty) set is the answer.
+    const theirs = b.task_id && !b.people_pinned ? taskPeople.get(b.task_id as string) : undefined;
     out.push({
       ...b,
       secondary_tags: await secondaryTagsOf(b.id as string),
@@ -450,15 +456,22 @@ export async function createBlock(ownerId: string, input: CreateBlockInput): Pro
   // Phase B: category axis (entity_categories, position-ordered).
   if (categoryIds !== undefined) await setEntityCategories('time_block', block.id, categoryIds);
 
-  // People on work (0151) — same position-ordered set semantics as categories.
-  if (input.responsible_ids !== undefined)
-    await setEntityPeople(ownerId, 'time_block', block.id, 'responsible', input.responsible_ids);
-  if (input.beneficiary_ids !== undefined)
-    await setEntityPeople(ownerId, 'time_block', block.id, 'beneficiary', input.beneficiary_ids);
+  // People on work (0151) — same position-ordered set semantics as categories. Any
+  // explicit write PINS the block (0153): the caller has stated this block's people,
+  // including when they stated "nobody".
+  if (input.responsible_ids !== undefined || input.beneficiary_ids !== undefined) {
+    if (input.responsible_ids !== undefined)
+      await setEntityPeople(ownerId, 'time_block', block.id, 'responsible', input.responsible_ids);
+    if (input.beneficiary_ids !== undefined)
+      await setEntityPeople(ownerId, 'time_block', block.id, 'beneficiary', input.beneficiary_ids);
+    await store().prepare(`UPDATE time_blocks SET people_pinned = 1 WHERE id = ? AND owner_id = ?`)
+      .run(block.id, ownerId);
+    block.peoplePinned = true;
+  }
 
   const out = toBlockApi(block, await secondaryTagsOf(block.id));
   out.categories = await blockCategoryNames(block.id, block.taskId);
-  Object.assign(out, await blockPeopleApi(block.id, block.taskId));
+  Object.assign(out, await blockPeopleApi(block.id, block.taskId, !!block.peoplePinned));
 
   // REQ2: a placed task IS scheduled — on create (not just PATCH), mirror the
   // placement onto the task's scheduling-intent fields and flip open → scheduled.
@@ -644,10 +657,15 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
   // People on work (0151) — same undefined-preserves / []-clears semantics. Writing
   // an empty set is meaningful on a task-backed block: it re-enables the inherit rule
   // in blockPeopleApi rather than pinning the block to "nobody".
-  if (Array.isArray(input.responsible_ids))
-    await setEntityPeople(ownerId, 'time_block', id, 'responsible', input.responsible_ids);
-  if (Array.isArray(input.beneficiary_ids))
-    await setEntityPeople(ownerId, 'time_block', id, 'beneficiary', input.beneficiary_ids);
+  if (Array.isArray(input.responsible_ids) || Array.isArray(input.beneficiary_ids)) {
+    if (Array.isArray(input.responsible_ids))
+      await setEntityPeople(ownerId, 'time_block', id, 'responsible', input.responsible_ids);
+    if (Array.isArray(input.beneficiary_ids))
+      await setEntityPeople(ownerId, 'time_block', id, 'beneficiary', input.beneficiary_ids);
+    await store().prepare(`UPDATE time_blocks SET people_pinned = 1 WHERE id = ? AND owner_id = ?`)
+      .run(id, ownerId);
+    block.peoplePinned = true;
+  }
 
   // CON-4 series edit: a rule (or anchor) change drops future-or-today instances
   // of this template + their tag rows; GET re-materializes under the new rule.
@@ -663,7 +681,7 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
 
   const out = toBlockApi(block, await secondaryTagsOf(id));
   out.categories = await blockCategoryNames(id, block.taskId);
-  Object.assign(out, await blockPeopleApi(id, block.taskId));
+  Object.assign(out, await blockPeopleApi(id, block.taskId, !!block.peoplePinned));
 
   // REQ2: a placed task IS scheduled — keep the linked task's scheduling-intent
   // fields (and its done-state) in lockstep with the block. A time change mirrors

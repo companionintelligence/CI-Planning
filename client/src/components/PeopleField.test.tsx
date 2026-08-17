@@ -44,6 +44,17 @@ const COLLEAGUE = person({ id: 'p-col', display_name: 'Chris', account_id: 'own-
 
 beforeEach(() => vi.clearAllMocks());
 
+function baseProps(): Props {
+  return {
+    label: 'Responsible',
+    value: [],
+    onChange: vi.fn(),
+    directory: [SELF, WIFE],
+    roster: [],
+    onDirectoryChanged: vi.fn(),
+  };
+}
+
 function setup(over: Partial<Props> = {}) {
   const onChange = vi.fn();
   const props: Props = {
@@ -90,6 +101,21 @@ describe('shortcuts fill the set', () => {
     await waitFor(() => expect(onChange).toHaveBeenCalled());
     const last = onChange.mock.calls[onChange.mock.calls.length - 1][0];
     expect(last.map((p: { id: string }) => p.id)).toEqual(['p-self', 'p-col']);
+  });
+
+  it('us is ADDITIVE — a named person already on the field survives it', async () => {
+    // The review fix: `us` used to rebuild the set from empty, so tapping it deleted
+    // the wife-with-no-login — exactly the case the two-population design exists for.
+    fromAccount.mockResolvedValue({ person: COLLEAGUE });
+    const { onChange } = setup({
+      value: [WIFE],
+      directory: [SELF, WIFE, COLLEAGUE],
+      roster: [{ account_id: 'own-2', name: 'Chris', person_id: 'p-col' }],
+    });
+    fireEvent.click(screen.getByText('us'));
+    await waitFor(() => expect(onChange).toHaveBeenCalled());
+    const last = onChange.mock.calls[onChange.mock.calls.length - 1][0];
+    expect(last.map((p: { id: string }) => p.id)).toEqual(['p-wife', 'p-self', 'p-col']);
   });
 
   it('them drops you and fills nothing on its own', async () => {
@@ -154,5 +180,22 @@ describe('provisional people are marked', () => {
   it('flags an unconfirmed person so a detected guess is never mistaken for a choice', () => {
     setup({ value: [person({ id: 'p-x', display_name: 'Dana', is_self: false, confirmed: false })] });
     expect(screen.getByTitle(/Detected automatically/)).toBeTruthy();
+  });
+});
+
+describe('the suggested hint reflects provenance, not recency', () => {
+  it('labels a machine-attached set, and leaves a user-curated one alone', () => {
+    const detected = person({ id: 'p-d', display_name: 'Dana', is_self: false, attachment_source: 'calendar' });
+    const { unmount } = render(() => (
+      <PeopleField {...({ ...baseProps(), value: [detected], suggested: true } as Props)} />
+    ));
+    expect(screen.getByText(/\(suggested\)/)).toBeTruthy();
+    unmount();
+
+    // Same field, same "untouched this session" — but the owner picked these, so
+    // calling them a suggestion would be a lie.
+    const curated = person({ id: 'p-c', display_name: 'Chris', is_self: false, attachment_source: 'user' });
+    render(() => <PeopleField {...({ ...baseProps(), value: [curated], suggested: true } as Props)} />);
+    expect(screen.queryByText(/\(suggested\)/)).toBeNull();
   });
 });

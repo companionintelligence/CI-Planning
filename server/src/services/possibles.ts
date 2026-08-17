@@ -9,7 +9,7 @@ import { logger } from '../lib/logger.js';
 import { autoScheduleOnIngest, placeStartAnchoredTask } from '../engine/autoplan.js';
 import { dedupePossibles } from '../agents/groom.js';
 import { requiresReview } from './review-gate.js';
-import { attachMachinePeople, resolveOrCreateByEmail } from './people.js';
+import { attachMachinePeople, resolveOrCreateByEmail, selfPersonId } from './people.js';
 
 /**
  * Possible-task inbox CRUD (Phase W · W9) — extracted from routes/possibles.ts so
@@ -112,10 +112,19 @@ async function carryPossiblePeople(owner: string, possibleId: string, taskId: st
   }
 
   if (responsible.length === 0) return;
+
+  // The owner goes FIRST — position 0, the lead. It is their planner: a task promoted
+  // from an invite that listed only the other attendees would leave them off their own
+  // work, so "what am I on the hook for" would not match it. Ingest deliberately skips
+  // self when recording detections precisely because promotion re-adds them here, in
+  // the one place that knows the item is becoming a real task.
+  const self = await selfPersonId(owner);
+  const ordered = self ? [self, ...responsible.filter((id) => id !== self)] : responsible;
+
   // attachMachinePeople, not setEntityPeople: this is machine testimony, and on the
   // re-promote path (a straggler sweep re-touching a row) it must not clobber a set the
   // owner has since curated by hand.
-  await attachMachinePeople(owner, 'task', taskId, 'responsible', responsible, source);
+  await attachMachinePeople(owner, 'task', taskId, 'responsible', ordered, source);
 }
 
 // ── reads (owner-scoped by proposed_owner_id) ─────────────────────────────────

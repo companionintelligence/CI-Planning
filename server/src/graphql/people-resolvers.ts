@@ -17,6 +17,7 @@ import { listPeople, getPerson, accountRoster, type Person } from '../services/p
 export function personToGraphql(p: Person): {
   id: string; displayName: string; accountId: string | null;
   isSelf: boolean; confirmed: boolean; source: string | null; emails: string[];
+  attachmentSource: string | null;
 } {
   return {
     id: p.id,
@@ -26,6 +27,9 @@ export function personToGraphql(p: Person): {
     confirmed: p.confirmed,
     source: p.source,
     emails: p.emails,
+    // Absent on directory reads (no attachment to describe) → null, not undefined,
+    // so the non-null-able SDL field always has a value to serialize.
+    attachmentSource: p.attachment_source ?? null,
   };
 }
 

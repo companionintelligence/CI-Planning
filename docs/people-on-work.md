@@ -4,7 +4,9 @@
 > or time block — two peer people-sets over one shared model — detected automatically
 > when an item is suggested, with the colour picker collapsed into a modal to make room.
 >
-> Status: **plan only — nothing implemented.** Written 2026-08-16 against `main` @ `91a374e9`.
+> Status: **implemented** (PR #574), migrations 0151–0153. Written 2026-08-16 against
+> `main` @ `91a374e9`; the review-fix notes inline below record where the shipped
+> behaviour differs from the first draft of this plan.
 
 ---
 
@@ -93,6 +95,14 @@ condition on what the axis can express.
 The one state the UI must handle is **us** left holding only you, which derives `me`.
 That is accurate — nobody else ended up on the item — so the fix belongs in the picker
 (stay open until a second person is added), not in the projection.
+
+### Blocks and the "nobody" case
+
+A block with no rows of its own inherits its task's people. "No rows" cannot also mean
+"deliberately cleared" — so `time_blocks.people_pinned` (0153) carries that second bit:
+any explicit write pins the block, and a pinned block's own set is authoritative even
+when empty. Without it, removing the last attendee chip wrote an empty set, the inherit
+rule fired, and the task's people silently reappeared.
 
 ### Time blocks
 
@@ -444,7 +454,7 @@ Behaviour, identical for both fields:
 | Surface | Change |
 |---|---|
 | [SuggestionsSection.tsx:88-105](client/src/components/SuggestionsSection.tsx#L88) | show detected Responsible/Beneficiaries in the meta line **before** approval — the whole point of detecting at suggestion time |
-| [DetailsDrawer.tsx](client/src/components/DetailsDrawer.tsx) | both sets as editable chip rows |
+| [DetailsDrawer.tsx](client/src/components/DetailsDrawer.tsx) | both sets as read-only chip rows, on tasks **and** blocks (editing stays in the wizard) |
 | [TaskCard.tsx](client/src/components/TaskCard.tsx) / [BlockCard.tsx](client/src/components/BlockCard.tsx) | compact initials cluster for Responsible (lead first), no names |
 | [Settings.tsx](client/src/views/Settings.tsx) | new **People** panel: list, rename, merge, delete, review unconfirmed |
 | [AllTasks.tsx](client/src/views/AllTasks.tsx) | filter by person **and by role** — "what am I on the hook for" vs "what I'm doing for Mom" are different questions |

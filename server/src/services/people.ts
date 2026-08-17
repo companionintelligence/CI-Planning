@@ -33,12 +33,6 @@ import { newId, SYSTEM_OWNER_ID } from '../lib/ids.js';
 export type PersonRole = 'responsible' | 'beneficiary';
 export type PersonSource = 'user' | 'llm' | 'calendar' | 'email' | 'manual' | 'account';
 
-export const PERSON_ROLES: readonly PersonRole[] = ['responsible', 'beneficiary'];
-
-export function isPersonRole(v: unknown): v is PersonRole {
-  return typeof v === 'string' && (PERSON_ROLES as readonly string[]).includes(v);
-}
-
 /** API shape (snake_case, like every other serialized row). `is_self` is derived. */
 export interface Person {
   id: string;
@@ -46,8 +40,16 @@ export interface Person {
   account_id: string | null;
   is_self: boolean;
   confirmed: boolean;
+  /** How the DIRECTORY ROW came to exist ('manual' | 'account' | 'gcal' | …). */
   source: string | null;
   emails: string[];
+  /**
+   * How this person came to be ON THIS ITEM ('user' | 'llm' | 'calendar' | 'email') —
+   * present only on entity reads, absent on plain directory reads. Distinct from
+   * `source` above: a hand-created person can be machine-attached and vice versa, and
+   * the UI needs THIS one to decide whether to call a set "suggested".
+   */
+  attachment_source?: string | null;
 }
 
 interface PersonRow {
@@ -59,7 +61,7 @@ interface PersonRow {
   source: string | null;
 }
 
-function toPerson(row: PersonRow, emails: string[] = []): Person {
+function toPerson(row: PersonRow, emails: string[] = [], attachmentSource?: string | null): Person {
   return {
     id: row.id,
     display_name: row.display_name,
@@ -70,11 +72,12 @@ function toPerson(row: PersonRow, emails: string[] = []): Person {
     confirmed: row.confirmed === 1,
     source: row.source,
     emails,
+    ...(attachmentSource !== undefined ? { attachment_source: attachmentSource } : {}),
   };
 }
 
 /** Lowercase + trim. The single normalization for every email that enters the index. */
-export function normalizeEmail(raw: string): string {
+function normalizeEmail(raw: string): string {
   return raw.trim().toLowerCase();
 }
 
@@ -118,31 +121,44 @@ const SQL_LIST =
 const SQL_GET =
   `SELECT id, owner_id, account_id, display_name, confirmed, source FROM people
     WHERE id = ? AND owner_id = ?`;
-const SQL_EMAILS_FOR =
-  `SELECT person_id, email FROM person_emails WHERE owner_id = ?`;
-
-/** Attach each row's addresses in ONE query rather than N (the directory is read hot). */
-async function withEmails(owner: string, rows: PersonRow[]): Promise<Person[]> {
-  if (rows.length === 0) return [];
+/**
+ * person_id → addresses, for exactly the rows asked about. Scoped to the given ids
+ * rather than the whole tenant index: `getPerson` reads one row, and scanning every
+ * address in a directory that calendar ingest keeps growing to answer that is waste on
+ * a path every create/update round-trip crosses.
+ */
+async function emailsByPerson(personIds: string[]): Promise<Map<string, string[]>> {
   const byPerson = new Map<string, string[]>();
-  for (const r of await store().prepare(SQL_EMAILS_FOR).all<{ person_id: string; email: string }>(owner)) {
+  if (personIds.length === 0) return byPerson;
+  const holes = personIds.map(() => '?').join(',');
+  const rows = await store()
+    .prepare(`SELECT person_id, email FROM person_emails WHERE person_id IN (${holes}) ORDER BY email`)
+    .all<{ person_id: string; email: string }>(...personIds);
+  for (const r of rows) {
     const list = byPerson.get(r.person_id);
     if (list) list.push(r.email);
     else byPerson.set(r.person_id, [r.email]);
   }
+  return byPerson;
+}
+
+/** Attach each row's addresses in ONE query rather than N (the directory is read hot). */
+async function withEmails(rows: PersonRow[]): Promise<Person[]> {
+  if (rows.length === 0) return [];
+  const byPerson = await emailsByPerson(rows.map((r) => r.id));
   return rows.map((r) => toPerson(r, byPerson.get(r.id) ?? []));
 }
 
 /** The owner's whole directory. Self first, then alphabetical. */
 export async function listPeople(owner: string): Promise<Person[]> {
-  return withEmails(owner, await store().prepare(SQL_LIST).all<PersonRow>(owner));
+  return withEmails(await store().prepare(SQL_LIST).all<PersonRow>(owner));
 }
 
 /** One person, or undefined. A cross-tenant id is invisible, never a 403. */
 export async function getPerson(owner: string, id: string): Promise<Person | undefined> {
   const row = await store().prepare(SQL_GET).get<PersonRow>(id, owner);
   if (!row) return undefined;
-  return (await withEmails(owner, [row]))[0];
+  return (await withEmails([row]))[0];
 }
 
 /** The owner's own person row. Every install has one (migration 0151 / provisionOwner). */
@@ -201,7 +217,10 @@ export async function addEmails(owner: string, personId: string, emails: string[
     `INSERT OR IGNORE INTO person_emails (owner_id, person_id, email) VALUES (?, ?, ?)`,
   );
   for (const raw of emails) {
-    const email = parseEmail(raw) ?? normalizeEmail(raw);
+    // NO fallback to the raw string: parseEmail is the validation, and `?? raw` would
+    // defeat the very invariant its doc states ("junk never reaches the index").
+    // Unparseable entries are skipped, not stored.
+    const email = parseEmail(raw);
     if (email) await ins.run(owner, personId, email);
   }
 }
@@ -347,18 +366,28 @@ export async function personForAccount(owner: string, accountId: string): Promis
     .get<{ id: string }>(owner, accountId);
   if (existing) return getPerson(owner, existing.id);
 
-  // A directory row created earlier from a calendar invite may already carry this
-  // person's name; adopt it rather than colliding on UNIQUE(owner_id, display_name).
-  const name = (account.name ?? '').trim() || 'Unnamed';
-  const clash = await store()
-    .prepare(`SELECT id FROM people WHERE owner_id = ? AND display_name = ?`)
-    .get<{ id: string }>(owner, name);
-  if (clash) {
+  // A row that already carries this account's ADDRESS is the same human — adopt it, and
+  // upgrade it from a provisional guess to a confirmed account.
+  const byEmail = account.email ? await resolveByEmail(owner, account.email) : undefined;
+  if (byEmail) {
     await store()
       .prepare(`UPDATE people SET account_id = ?, confirmed = 1, source = 'account' WHERE id = ? AND owner_id = ?`)
-      .run(accountId, clash.id, owner);
-    if (account.email) await addEmails(owner, clash.id, [account.email]);
-    return getPerson(owner, clash.id);
+      .run(accountId, byEmail, owner);
+    return getPerson(owner, byEmail);
+  }
+
+  // A NAME match is NOT identity. Adopting a same-named row would silently merge two
+  // different humans — the neighbour "Chris" becoming the colleague account "Chris",
+  // retroactively re-labelling every task the neighbour was on. Disambiguate instead
+  // and leave merging to the explicit, reversible merge action.
+  const base = (account.name ?? '').trim() || 'Unnamed';
+  let name = base;
+  for (let n = 2; n <= 50; n++) {
+    const clash = await store()
+      .prepare(`SELECT id FROM people WHERE owner_id = ? AND display_name = ?`)
+      .get<{ id: string }>(owner, name);
+    if (!clash) break;
+    name = `${base} (${n})`;
   }
   return createPerson(owner, {
     display_name: name,
@@ -366,23 +395,6 @@ export async function personForAccount(owner: string, accountId: string): Promis
     source: 'account',
     emails: account.email ? [account.email] : [],
   });
-}
-
-/**
- * The `us` expansion, server-side: you + every permissioned account, materialized as
- * directory rows. Used by detection; the UI reaches the same result through
- * {@link accountRoster} + {@link personForAccount}.
- */
-export async function expandUs(owner: string): Promise<string[]> {
-  const ids: string[] = [];
-  const self = await selfPersonId(owner);
-  if (self) ids.push(self);
-  for (const entry of await accountRoster(owner)) {
-    if (entry.account_id === owner) continue;
-    const person = await personForAccount(owner, entry.account_id);
-    if (person && !ids.includes(person.id)) ids.push(person.id);
-  }
-  return ids;
 }
 
 // ── Email → person resolution (deterministic, no model) ───────────────────────
@@ -418,6 +430,36 @@ export async function resolveOrCreateByEmail(
   if (!email) return undefined;
   const found = await resolveByEmail(owner, email);
   if (found) return found;
+
+  // Before inventing anybody: does this address belong to an ACCOUNT on this install?
+  //
+  // `person_emails` is only seeded from `owners.email`, and that column is routinely
+  // NULL — so the owner's OWN address is frequently unresolvable. Creating a person for
+  // it would mint a second, provisional, `is_self:false` "you": the motivation
+  // projection would then see no self in a beneficiary set and label your own work
+  // 'them'. Matching against `owners` first closes that, and does the same good turn
+  // for a colleague's account address.
+  // The sentinel is excluded as a PICKABLE account (it is nobody's login), but never
+  // when it is the tenant themselves — under AUTH_MODE=test the sentinel IS the owner,
+  // and excluding it there would reintroduce the duplicate-self bug on exactly the dev
+  // loop most likely to hit it. Self wins the ordering when an address is on two rows.
+  const account = await store()
+    .prepare(
+      `SELECT id FROM owners WHERE lower(email) = ? AND (id = ? OR id <> ?)
+        ORDER BY (id = ?) DESC LIMIT 1`,
+    )
+    .get<{ id: string }>(email, owner, SYSTEM_OWNER_ID, owner);
+  if (account) {
+    // personForAccount refuses the sentinel by design, so the tenant's own row is
+    // resolved directly; anyone else goes through the normal materialize path.
+    const personId =
+      account.id === owner
+        ? await selfPersonId(owner)
+        : (await personForAccount(owner, account.id))?.id;
+    // Index the address so the next sighting resolves without this lookup at all.
+    if (personId) { await addEmails(owner, personId, [email]); return personId; }
+  }
+
   const person = await createPerson(owner, {
     display_name: nameFromEmail(raw),
     emails: [email],
@@ -431,7 +473,7 @@ export async function resolveOrCreateByEmail(
 
 const SQL_PEOPLE_FOR_ENTITY =
   `SELECT p.id, p.owner_id, p.account_id, p.display_name, p.confirmed, p.source AS source,
-          ep.role AS role, ep.position AS position
+          ep.role AS role, ep.position AS position, ep.source AS attachment_source
      FROM entity_people ep
      JOIN people p ON p.id = ep.person_id
     WHERE ep.entity_kind = ? AND ep.entity_id = ?
@@ -443,18 +485,23 @@ export interface EntityPeople {
   beneficiaries: Person[];
 }
 
-const EMPTY: EntityPeople = { responsible: [], beneficiaries: [] };
-
-/** Both sets for one entity. */
+/**
+ * Both sets for one entity, addresses and attachment provenance included.
+ *
+ * Returns FRESH arrays every call — deliberately not `{ ...EMPTY }` off a module-level
+ * constant, which is a shallow copy that hands every caller the same two array
+ * instances: one caller sorting or pushing would then corrupt the "empty" result of
+ * every unrelated entity for the lifetime of the process.
+ */
 export async function getEntityPeople(entityKind: string, entityId: string): Promise<EntityPeople> {
   const rows = await store()
     .prepare(SQL_PEOPLE_FOR_ENTITY)
-    .all<PersonRow & { role: string; position: number }>(entityKind, entityId);
-  if (rows.length === 0) return { ...EMPTY };
-  return {
-    responsible: rows.filter((r) => r.role === 'responsible').map((r) => toPerson(r)),
-    beneficiaries: rows.filter((r) => r.role === 'beneficiary').map((r) => toPerson(r)),
-  };
+    .all<PersonRow & { role: string; position: number; attachment_source: string | null }>(entityKind, entityId);
+  if (rows.length === 0) return { responsible: [], beneficiaries: [] };
+  const byPerson = await emailsByPerson(rows.map((r) => r.id));
+  const build = (role: string) =>
+    rows.filter((r) => r.role === role).map((r) => toPerson(r, byPerson.get(r.id) ?? [], r.attachment_source));
+  return { responsible: build('responsible'), beneficiaries: build('beneficiary') };
 }
 
 /** Both sets for many entities at once — the list read path (N+1 would be brutal). */
@@ -468,17 +515,22 @@ export async function getEntityPeopleBulk(
   const rows = await store()
     .prepare(
       `SELECT ep.entity_id AS entity_id, ep.role AS role, ep.position AS position,
+              ep.source AS attachment_source,
               p.id, p.owner_id, p.account_id, p.display_name, p.confirmed, p.source AS source
          FROM entity_people ep
          JOIN people p ON p.id = ep.person_id
         WHERE ep.entity_kind = ? AND ep.entity_id IN (${holes})
         ORDER BY ep.role, ep.position, p.display_name COLLATE NOCASE`,
     )
-    .all<PersonRow & { entity_id: string; role: string; position: number }>(entityKind, ...entityIds);
+    .all<PersonRow & { entity_id: string; role: string; position: number; attachment_source: string | null }>(
+      entityKind, ...entityIds,
+    );
+  const byPerson = await emailsByPerson([...new Set(rows.map((r) => r.id))]);
   for (const r of rows) {
     let bucket = out.get(r.entity_id);
     if (!bucket) { bucket = { responsible: [], beneficiaries: [] }; out.set(r.entity_id, bucket); }
-    (r.role === 'responsible' ? bucket.responsible : bucket.beneficiaries).push(toPerson(r));
+    const person = toPerson(r, byPerson.get(r.id) ?? [], r.attachment_source);
+    (r.role === 'responsible' ? bucket.responsible : bucket.beneficiaries).push(person);
   }
   return out;
 }
@@ -553,18 +605,6 @@ async function ownedPersonIds(owner: string, ids: string[]): Promise<string[]> {
     .all<{ id: string }>(owner, ...unique);
   const ok = new Set(rows.map((r) => r.id));
   return unique.filter((id) => ok.has(id));
-}
-
-/**
- * Drop every attachment for an entity. `entity_people.entity_id` has NO foreign key
- * (it spans tasks and time_blocks), so referential integrity lives here: every HARD
- * delete of a task or block must call this, exactly as it must call
- * `removeEntityTags` — same rule, same reason.
- */
-export async function removeEntityPeople(entityKind: string, entityId: string): Promise<void> {
-  await store()
-    .prepare(`DELETE FROM entity_people WHERE entity_kind = ? AND entity_id = ?`)
-    .run(entityKind, entityId);
 }
 
 // ── The motivation projection ─────────────────────────────────────────────────

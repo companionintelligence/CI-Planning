@@ -178,6 +178,18 @@ function BlockPanel(props: { block: Block }) {
           </Group>
         )}
       </Show>
+      {/* People on work (0151). A meeting block with attendees is the headline case for
+          the whole feature, so omitting it here left the only view of a block's people
+          inside the wizard. The sets shown are the EFFECTIVE ones — the block's own,
+          else inherited from its task. */}
+      <Show when={(b().responsible ?? []).length > 0 || (b().beneficiaries ?? []).length > 0}>
+        <Group label="People">
+          <div class="flex flex-col gap-1.5">
+            <PeopleRow label="Responsible" people={b().responsible ?? []} />
+            <PeopleRow label="Beneficiaries" people={b().beneficiaries ?? []} />
+          </div>
+        </Group>
+      </Show>
       {/* Phase 1 — lock state is universal: every scheduled item shows it here, and
           the owner's own blocks toggle it. A synced event shows its source instead
           of a control (decision 1). */}

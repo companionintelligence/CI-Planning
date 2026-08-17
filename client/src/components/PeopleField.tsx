@@ -26,6 +26,13 @@ import { showToast } from '../stores/index.js';
 
 export type PeopleShortcut = 'me' | 'us' | 'them';
 
+/** True when this person was put on the item by detection rather than by the owner.
+ *  `attachment_source` is absent on directory reads, so a freshly-picked person (no
+ *  attachment yet) is correctly NOT machine-attached. */
+function isMachineAttached(p: Person): boolean {
+  return p.attachment_source != null && p.attachment_source !== 'user';
+}
+
 export function PeopleField(props: {
   label: string;
   /** Currently attached, in position order. Index 0 of Responsible is the lead. */
@@ -59,15 +66,15 @@ export function PeopleField(props: {
    * Resolve an account to its directory row, creating it on first pick. This is the
    * write that a user action justifies — the roster GET stays pure.
    */
-  async function personForAccount(entry: AccountRosterEntry): Promise<Person | null> {
+  async function personForAccount(entry: AccountRosterEntry): Promise<(Person & { created?: boolean }) | null> {
     if (entry.person_id) {
       const found = props.directory.find((p) => p.id === entry.person_id);
       if (found) return found;
     }
     try {
       const { person } = await api.people.fromAccount(entry.account_id);
-      props.onDirectoryChanged();
-      return person;
+      // Deliberately does NOT refetch here — the caller does it once for the batch.
+      return { ...person, created: true };
     } catch (err) {
       showToast((err as Error).message, 'error');
       return null;
@@ -90,14 +97,24 @@ export function PeopleField(props: {
         setOpen(true);
         return;
       }
-      // `us` — you, plus every account we know about. On a single-account install that
-      // is just you, so the picker stays open for the named people who complete it:
-      // `us` must never quietly resolve to `me`.
-      const resolved: Person[] = me ? [me] : [];
-      for (const entry of props.roster) {
-        const person = await personForAccount(entry);
-        if (person && !person.is_self && !resolved.some((p) => p.id === person.id)) resolved.push(person);
-      }
+      // `us` — you, plus every account we know about, ON TOP of whoever is already
+      // here. ADDITIVE, not a rebuild: a named person the user added by hand (the wife
+      // with no login) must survive tapping `us`, or the shortcut silently deletes the
+      // very case the two-population design exists for.
+      //
+      // On a single-account install the roster is empty, so this seeds you and leaves
+      // the picker open for the named people who complete the set — `us` must never
+      // quietly resolve to `me`.
+      const resolved: Person[] = [...props.value];
+      const add = (person: Person) => {
+        if (!resolved.some((p) => p.id === person.id)) resolved.push(person);
+      };
+      if (me) add(me);
+      // Resolved concurrently, and the directory refetched ONCE afterwards — a
+      // per-account refetch inside the loop is N full directory reads for one tap.
+      const people = await Promise.all(props.roster.map((entry) => personForAccount(entry)));
+      for (const person of people) if (person && !person.is_self) add(person);
+      if (people.some((x) => x?.created)) props.onDirectoryChanged();
       props.onChange(resolved);
       setOpen(true);
     } finally {
@@ -144,7 +161,10 @@ export function PeopleField(props: {
     <div class="flex flex-col gap-1.5">
       <div class="text-[10px] uppercase tracking-wider text-muted-foreground">
         {props.label}
-        <Show when={props.suggested && props.value.length > 0}>
+        {/* Only a set the MACHINE attached reads as a suggestion. Keying this off
+            "untouched this session" relabelled the user's own curated picks as guesses
+            every time the wizard reopened. */}
+        <Show when={props.suggested && props.value.length > 0 && props.value.every(isMachineAttached)}>
           <span class="normal-case tracking-normal text-muted-foreground"> (suggested)</span>
         </Show>
       </div>

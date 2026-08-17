@@ -31,8 +31,16 @@ export interface Person {
   is_self: boolean;
   /** false = provisionally created by ingest and never confirmed by you. */
   confirmed: boolean;
+  /** How the DIRECTORY ROW came to exist ('manual' | 'account' | 'gcal' | …). */
   source: string | null;
   emails: string[];
+  /**
+   * How this person came to be ON THIS ITEM ('user' | 'llm' | 'calendar' | 'email').
+   * Present only on entity reads (a task's or block's sets), absent on directory reads.
+   * This — not "did the user touch the field this session" — is what makes a set a
+   * suggestion.
+   */
+  attachment_source?: string | null;
 }
 
 /** A permissioned account, as offered to the `us` shortcut. Minimal by design: no
