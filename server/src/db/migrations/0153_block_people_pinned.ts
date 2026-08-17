@@ -21,6 +21,11 @@ export const id = '0153_block_people_pinned';
  * it. Deliberately a plain flag rather than a sentinel row, so the invariant is legible
  * in the schema instead of hidden in a magic person id.
  *
+ * SUPERSEDED BY 0154, which splits this single flag into one per role and drops this
+ * column. Kept intact rather than edited because it has already been applied and the
+ * runner keys on migration id — an edit here would never re-run. On a fresh database
+ * the pair adds this column and immediately drops it; read them together.
+ *
  * Idempotent via the B0 addColumn-if-missing pattern.
  */
 export function up(db: Database): void {

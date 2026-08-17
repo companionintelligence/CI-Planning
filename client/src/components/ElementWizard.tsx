@@ -159,6 +159,11 @@ export function ElementWizard() {
   // inheriting from the backing task.
   const [responsibleTouched, setResponsibleTouched] = createSignal(false);
   const [beneficiariesTouched, setBeneficiariesTouched] = createSignal(false);
+  // 0154: `null` on save means "resume inheriting from the backing task". Tracked
+  // separately from the set itself because an empty set and an inheriting one are
+  // different instructions — that ambiguity is the whole reason the pin exists.
+  const [responsibleInherit, setResponsibleInherit] = createSignal(false);
+  const [beneficiariesInherit, setBeneficiariesInherit] = createSignal(false);
   const [directory, { refetch: refetchDirectory }] = createResource(async () =>
     (await api.people.list()).people,
   );
@@ -394,6 +399,12 @@ export function ElementWizard() {
       seedCategories(b.categories ?? []);
       setTextureEnabled(b.texture_enabled ?? true);
       setTextureColorToken(b.texture_color_token ?? null);
+      setResponsible(b.responsible ?? []);
+      setBeneficiaries(b.beneficiaries ?? []);
+      setResponsibleTouched(false);
+      setBeneficiariesTouched(false);
+      setResponsibleInherit(false);
+      setBeneficiariesInherit(false);
       setLocked(!!b.is_locked);
       const ps = rulePreset(b.recurrence_rule);
       setTbRepeat(TB_REPEAT.includes(ps.preset) ? ps.preset : 'custom');
@@ -424,6 +435,8 @@ export function ElementWizard() {
       setBeneficiaries(t.beneficiaries ?? []);
       setResponsibleTouched(false); // same rule: seeded ≠ testimony
       setBeneficiariesTouched(false);
+      setResponsibleInherit(false);
+      setBeneficiariesInherit(false);
       setNote(t.notes ?? ''); setNoteExpanded(!!t.notes);
       setScheduledFor(t.scheduled_for ?? localISODate());
       setTaskTime(t.task_time ?? '');
@@ -824,6 +837,17 @@ export function ElementWizard() {
     setBarStart(snap15(fracToMinutes((e.clientY - rect.top) / rect.height)));
   };
 
+  /**
+   * True for a time block that is backed by a task — the only case where "stop
+   * overriding, follow the task" has anything to follow. A loose block has nothing to
+   * inherit from, so the affordance is hidden rather than offered and inert.
+   */
+  const backsATask = () => {
+    if (tab() !== 'timeblock' || !isEdit()) return false;
+    const id = m().editTarget?.id;
+    return !!id && !!(blocks() ?? []).find((x) => x.id === id)?.task_id;
+  };
+
   const taskIsSomeday = () => tab() === 'task' && someday();
   const taskDeferred = () => tab() === 'task' && !!deferUntil();
   const timePaneMuted = () => taskIsSomeday() || taskDeferred();
@@ -876,8 +900,12 @@ export function ElementWizard() {
         // testimony gate motivation uses. A merely-detected set is never re-sent as
         // though the owner had curated it, and an untouched field is never sent at all
         // (which on a block would pin it — see 0154).
-        ...(responsibleTouched() ? { responsibleIds: responsible().map((p) => p.id) } : {}),
-        ...(beneficiariesTouched() ? { beneficiaryIds: beneficiaries().map((p) => p.id) } : {}),
+        ...(responsibleTouched()
+          ? { responsibleIds: responsibleInherit() ? null : responsible().map((p) => p.id) }
+          : {}),
+        ...(beneficiariesTouched()
+          ? { beneficiaryIds: beneficiariesInherit() ? null : beneficiaries().map((p) => p.id) }
+          : {}),
         scheduledFor: scheduledFor(), taskTime: taskTime() || undefined, estimatedMinutes: estimate(),
         dueAt: dueAt() || undefined, priority: priority(),
         deferUntil: deferUntil() || undefined, dependsOn: dependsOn(),
@@ -1352,20 +1380,24 @@ export function ElementWizard() {
                 <PeopleField
                   label="Responsible"
                   value={responsible()}
-                  onChange={(next) => { setResponsibleTouched(true); setResponsible(next); }}
+                  onChange={(next) => { setResponsibleTouched(true); setResponsibleInherit(false); setResponsible(next); }}
                   directory={directory() ?? []}
                   roster={roster() ?? []}
                   onDirectoryChanged={() => void refetchDirectory()}
                   suggested={!responsibleTouched()}
+                  onInherit={backsATask() ? () => { setResponsibleTouched(true); setResponsibleInherit(true); setResponsible([]); } : undefined}
+                  inheriting={responsibleInherit()}
                 />
                 <PeopleField
                   label="Beneficiaries"
                   value={beneficiaries()}
-                  onChange={(next) => { setBeneficiariesTouched(true); setBeneficiaries(next); }}
+                  onChange={(next) => { setBeneficiariesTouched(true); setBeneficiariesInherit(false); setBeneficiaries(next); }}
                   directory={directory() ?? []}
                   roster={roster() ?? []}
                   onDirectoryChanged={() => void refetchDirectory()}
                   suggested={!beneficiariesTouched()}
+                  onInherit={backsATask() ? () => { setBeneficiariesTouched(true); setBeneficiariesInherit(true); setBeneficiaries([]); } : undefined}
+                  inheriting={beneficiariesInherit()}
                 />
 
                 {/* Texture — Phase B (0135). Collapsed to a single trigger (0151): the

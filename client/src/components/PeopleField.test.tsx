@@ -199,3 +199,27 @@ describe('the suggested hint reflects provenance, not recency', () => {
     expect(screen.queryByText(/\(suggested\)/)).toBeNull();
   });
 });
+
+describe('the inherit affordance', () => {
+  it('offers "Use task’s" only when the field can give up an override', () => {
+    const onInherit = vi.fn();
+    // Currently overriding → the escape hatch is offered.
+    const { unmount } = render(() => (
+      <PeopleField {...({ ...baseProps(), value: [WIFE], onInherit, inheriting: false } as Props)} />
+    ));
+    fireEvent.click(screen.getByText("Use task's"));
+    expect(onInherit).toHaveBeenCalled();
+    unmount();
+
+    // Already inheriting → nothing to undo, so it is hidden rather than inert.
+    render(() => (
+      <PeopleField {...({ ...baseProps(), value: [WIFE], onInherit, inheriting: true } as Props)} />
+    ));
+    expect(screen.queryByText("Use task's")).toBeNull();
+  });
+
+  it('is absent entirely when the item has no task to inherit from', () => {
+    render(() => <PeopleField {...({ ...baseProps(), value: [WIFE] } as Props)} />);
+    expect(screen.queryByText("Use task's")).toBeNull();
+  });
+});

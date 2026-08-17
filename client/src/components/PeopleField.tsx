@@ -45,6 +45,15 @@ export function PeopleField(props: {
   onDirectoryChanged: () => void;
   /** Renders a "(suggested)" hint until the user touches the field. */
   suggested?: boolean;
+  /**
+   * Offered on a task-backed time block: clears this role's own set and lets it track
+   * the task again. Without an affordance the server's unpin arm is unreachable, so a
+   * block that once had people could never go back to inheriting — the API being
+   * capable of it is not the same as the user being able to do it.
+   */
+  onInherit?: () => void;
+  /** True when this role is currently showing the task's people rather than its own. */
+  inheriting?: boolean;
 }) {
   const [open, setOpen] = createSignal(false);
   const [query, setQuery] = createSignal('');
@@ -215,6 +224,19 @@ export function PeopleField(props: {
         >
           <Plus size={11} /> Add
         </button>
+
+        {/* Only offered once the block has a set of its own to give up — while it is
+            already inheriting there is nothing to undo. */}
+        <Show when={props.onInherit && !props.inheriting}>
+          <button
+            type="button"
+            onClick={() => props.onInherit!()}
+            class="text-xs px-2 py-1 rounded-full border border-dashed border-border text-muted-foreground hover:text-foreground transition-colors"
+            title="Stop overriding, and follow the linked task's people"
+          >
+            Use task's
+          </button>
+        </Show>
       </div>
 
       <Show when={open()}>

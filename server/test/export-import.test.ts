@@ -524,3 +524,28 @@ describe('export/import round-trip — people and their assignments', () => {
     expect((sqlite.prepare('SELECT count(*) AS n FROM entity_people').get() as { n: number }).n).toBe(2);
   });
 });
+
+/**
+ * Review fix (PR #574, round 3). SUPPORTED_VERSIONS derived only the newest entry from
+ * EXPORT_VERSION, so each bump silently dropped the previous version — two additive
+ * bumps orphaned every backup taken before the PR. Restorability of an additive payload
+ * must not depend on how many times the version has moved since.
+ */
+describe('older additive export versions stay restorable', () => {
+  it('accepts every version this build can still read', async () => {
+    const current = (await (await fetch(`${srv.url}/api/export`)).json()) as Record<string, unknown>;
+    for (const version of ['10', '11', '12']) {
+      const { status } = await api(srv.url, '/api/import', {
+        method: 'POST',
+        json: { ...current, version },
+      });
+      expect(status, `version ${version} should import`).toBe(200);
+    }
+  });
+
+  it('still rejects a version it genuinely cannot read', async () => {
+    const current = (await (await fetch(`${srv.url}/api/export`)).json()) as Record<string, unknown>;
+    const { status } = await api(srv.url, '/api/import', { method: 'POST', json: { ...current, version: '99' } });
+    expect(status).toBe(400);
+  });
+});

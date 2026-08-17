@@ -117,7 +117,13 @@ The write API is therefore three-state, per role:
 | `null` | resume **inheriting** from the backing task (unpins) |
 
 The `null` arm is what makes a pin reversible — without it a block that once had people
-could never track its task again.
+could never track its task again. It is reachable from the UI as **"Use task's"**, shown
+on a task-backed block once it has an override to give up; an API that can express it
+is not the same as a user being able to do it.
+
+Recurring instances re-sync from their template on every materialisation pass, but only
+where the instance still has no people of its own and is not pinned — so a template edit
+reaches every untouched occurrence and leaves a deliberately customised one alone.
 
 Recurring block instances copy their template's people and pins, alongside the tags and
 categories they already copied.

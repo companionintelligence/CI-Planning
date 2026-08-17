@@ -41,6 +41,10 @@ function toSvcCreate(input: Record<string, unknown>): SvcCreateInput {
   return {
     title: input.title as string,
     task_id: input.taskId == null ? undefined : (input.taskId as string),
+    // People (0151/0154): THREE states, so the `== null ? undefined` idiom the other
+    // fields use would destroy the null (inherit) arm. Presence is what matters.
+    ...('responsibleIds' in input ? { responsible_ids: input.responsibleIds as string[] | null } : {}),
+    ...('beneficiaryIds' in input ? { beneficiary_ids: input.beneficiaryIds as string[] | null } : {}),
     block_kind: input.blockKind == null ? undefined : (input.blockKind as string),
     tag: input.tag == null ? undefined : (input.tag as string),
     secondary_tags: input.secondaryTags == null ? undefined : (input.secondaryTags as string[]),
@@ -68,6 +72,10 @@ function toSvcCreate(input: Record<string, unknown>): SvcCreateInput {
  *  an explicit null clears a nullable column, exactly as the REST PATCH body does). */
 function toSvcUpdate(input: Record<string, unknown>): SvcUpdateInput {
   const out: SvcUpdateInput = {};
+  // People (0151/0154). Absent preserves, `[]` pins to nobody, `null` resumes
+  // inheriting — all three have to survive the mapping, so this keys on presence.
+  if ('responsibleIds' in input) out.responsible_ids = input.responsibleIds as string[] | null;
+  if ('beneficiaryIds' in input) out.beneficiary_ids = input.beneficiaryIds as string[] | null;
   if ('title' in input) {
     if (input.title === null) throw new GraphQLError('title cannot be null', { extensions: { code: 'BAD_USER_INPUT' } });
     out.title = input.title as string;

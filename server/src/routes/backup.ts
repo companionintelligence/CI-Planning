@@ -426,7 +426,15 @@ export function backupRouter() {
     // Accept the current version plus prior v6 (pre-Phase-Z, grouping axis kind='pattern'),
     // v7 (pre-v8 tables), and v8 (pre-v9 tables). A v6 dump is remapped below; v7/v8/v9
     // dumps differ only by additive keys, which the restore treats as empty if absent.
-    const SUPPORTED_VERSIONS = ['6', '7', '8', '9', EXPORT_VERSION];
+    // EVERY version whose payload this build can still restore — not "the old ones plus
+    // whatever EXPORT_VERSION happens to be". Deriving only the newest from the constant
+    // meant each bump silently dropped the previous version from the list, so bumping
+    // 10 → 11 → 12 for two purely ADDITIVE changes orphaned every backup a user had
+    // already taken. Additive versions stay restorable forever: insertRows intersects
+    // with the live table, so absent keys take column defaults and retired keys are
+    // ignored. Add each new version here as it ships; only remove one when a payload
+    // genuinely cannot be read any more.
+    const SUPPORTED_VERSIONS = ['6', '7', '8', '9', '10', '11', '12'];
     if (!SUPPORTED_VERSIONS.includes(String(body['version']))) {
       ctx.status = 400;
       ctx.body = { error: `Unsupported export version '${body['version']}'; expected one of ${SUPPORTED_VERSIONS.join(', ')}` };

@@ -145,8 +145,14 @@ export async function blockPeopleApi(
   pinned: { responsible?: boolean; beneficiaries?: boolean } = {},
 ): Promise<{ responsible: EntityPeople['responsible']; beneficiaries: EntityPeople['beneficiaries'] }> {
   const own = await getEntityPeople('time_block', blockId);
-  if (!taskId) return { responsible: own.responsible, beneficiaries: own.beneficiaries };
-  const fromTask = await getEntityPeople('task', taskId);
+  // Nothing to inherit FROM, or nothing that could inherit: skip the second read
+  // entirely. Restructuring for per-role pins had moved this above the pin checks, so a
+  // fully pinned block paid for a lookup whose result was always discarded.
+  const canInherit =
+    !!taskId &&
+    ((!pinned.responsible && !own.responsible.length) || (!pinned.beneficiaries && !own.beneficiaries.length));
+  if (!canInherit) return { responsible: own.responsible, beneficiaries: own.beneficiaries };
+  const fromTask = await getEntityPeople('task', taskId!);
   // PINNED (0153/0154) means this block's own set for that ROLE is authoritative even
   // when EMPTY — the only way "nobody is on this" can be said at all, since "no rows"
   // otherwise reads as "never set, inherit". Resolved per role so a meeting can carry

@@ -3,7 +3,8 @@ import { startTestServer, resetDb, createOwner, SECOND_OWNER_ID, type TestServer
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { createTask as svcCreateTask } from '../src/services/tasks.js';
 import { createBlock as svcCreateBlock } from '../src/services/blocks.js';
-import { createPerson, selfPersonId, setEntityPeople } from '../src/services/people.js';
+import { createPerson, selfPersonId, setEntityPeople, getEntityPeople } from '../src/services/people.js';
+import { sqlite } from '../src/db/index.js';
 
 /**
  * People on work (0151) over GraphQL — the SDL wiring for one model exposed as two
@@ -220,5 +221,98 @@ describe('a block can express nobody', () => {
     // And the pin survives a re-read through the list path, not just the write response.
     const { data } = await gql(`{ timeBlock(id: "${made.block.id}") { responsible { displayName } } }`);
     expect(data.timeBlock.responsible.map((p: any) => p.displayName)).toEqual(['Chris']);
+  });
+});
+
+/**
+ * Review fixes (PR #574, round 3) — GraphQL could READ a block's people but had no
+ * input to write them, so a GraphQL-only client had to fall back to REST.
+ */
+describe('block people over GraphQL', () => {
+  it('writes both sets on create, and expresses all three states on update', async () => {
+    const self = await selfPersonId(SYSTEM_OWNER);
+    const chris = await createPerson(SYSTEM_OWNER, { display_name: 'Chris' });
+    const taskId = await seedTask('Backing');
+    await setEntityPeople(SYSTEM_OWNER, 'task', taskId, 'responsible', [self!]);
+
+    const made = await gql(`mutation {
+      createTimeBlock(input: {
+        title: "Standup"
+        taskId: "${taskId}"
+        startAt: "2026-06-22T09:00:00.000Z"
+        endAt: "2026-06-22T10:00:00.000Z"
+        responsibleIds: ["${chris.id}"]
+      }) { timeBlock { id responsible { displayName } beneficiaries { displayName } } success }
+    }`);
+    expect(made.errors).toBeUndefined();
+    const blockId = made.data.createTimeBlock.timeBlock.id;
+    expect(made.data.createTimeBlock.timeBlock.responsible.map((p: any) => p.displayName)).toEqual(['Chris']);
+
+    // [] pins to nobody.
+    const cleared = await gql(
+      `mutation { updateTimeBlock(input: { id: "${blockId}", responsibleIds: [] }) { timeBlock { responsible { displayName } } success } }`,
+    );
+    expect(cleared.errors).toBeUndefined();
+    expect(cleared.data.updateTimeBlock.timeBlock.responsible).toEqual([]);
+
+    // null resumes inheriting — the third state a plain array cannot carry.
+    const inherited = await gql(
+      `mutation { updateTimeBlock(input: { id: "${blockId}", responsibleIds: null }) { timeBlock { responsible { displayName } } success } }`,
+    );
+    expect(inherited.errors).toBeUndefined();
+    expect(inherited.data.updateTimeBlock.timeBlock.responsible.map((p: any) => p.displayName)).toEqual(['System']);
+  });
+});
+
+/**
+ * Review fix (round 3) — instances are materialized once, so a copy-on-create alone
+ * froze the template's people at whatever they were the first time a day was rendered.
+ */
+describe('recurring instances track their template', () => {
+  it('propagates a template people edit to untouched instances, sparing customised ones', async () => {
+    const { ensureRecurringBlocksForRange } = await import('../src/engine/blocks-recur.js');
+    const chris = await createPerson(SYSTEM_OWNER, { display_name: 'Chris' });
+    const dana = await createPerson(SYSTEM_OWNER, { display_name: 'Dana' });
+
+    // Materialization deliberately does no backfill (only today-or-future days), so the
+    // series has to start ahead of the clock.
+    const day = (n: number) => {
+      const d = new Date();
+      d.setUTCDate(d.getUTCDate() + n);
+      d.setUTCHours(9, 0, 0, 0);
+      return d.toISOString();
+    };
+    const tmpl = await svcCreateBlock(SYSTEM_OWNER, {
+      title: 'Weekly standup', block_kind: 'timeblock',
+      start_at: day(1), end_at: day(1),
+      recurrence_rule: 'FREQ=DAILY;COUNT=3',
+    });
+    if (!tmpl.ok) throw new Error('template failed');
+    await setEntityPeople(SYSTEM_OWNER, 'time_block', tmpl.block.id, 'responsible', [chris.id]);
+
+    const from = day(0), to = day(5);
+    await ensureRecurringBlocksForRange(SYSTEM_OWNER, from, to);
+    const instances = sqlite
+      .prepare(`SELECT id FROM time_blocks WHERE recurrence_parent_id = ? ORDER BY start_at`)
+      .all(tmpl.block.id) as { id: string }[];
+    expect(instances.length).toBeGreaterThan(0);
+    expect((await getEntityPeople('time_block', instances[0].id)).responsible.map((p) => p.display_name))
+      .toEqual(['Chris']);
+
+    // Customise ONE instance, then change the template.
+    await setEntityPeople(SYSTEM_OWNER, 'time_block', instances[0].id, 'responsible', [dana.id]);
+    await setEntityPeople(SYSTEM_OWNER, 'time_block', tmpl.block.id, 'responsible', [chris.id, dana.id]);
+    // Wipe an untouched instance's rows to represent one that predates the edit.
+    if (instances[1]) sqlite.prepare(`DELETE FROM entity_people WHERE entity_id = ?`).run(instances[1].id);
+    await ensureRecurringBlocksForRange(SYSTEM_OWNER, from, to);
+
+    // The customised instance is left exactly as the owner set it...
+    expect((await getEntityPeople('time_block', instances[0].id)).responsible.map((p) => p.display_name))
+      .toEqual(['Dana']);
+    // ...while an untouched one picks the template's current set up.
+    if (instances[1]) {
+      expect((await getEntityPeople('time_block', instances[1].id)).responsible.map((p) => p.display_name).sort())
+        .toEqual(['Chris', 'Dana']);
+    }
   });
 });
