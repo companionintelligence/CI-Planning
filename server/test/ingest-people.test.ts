@@ -198,6 +198,23 @@ describe('review fixes', () => {
     expect(names.map((r) => r.n)).toEqual(['Dana']);
   });
 
+  it('drops detected people when the event loses ALL of them', async () => {
+    // The first attempt at the replace-fix returned early on an empty attendee list —
+    // above the DELETE — so the one case it most needed to handle still leaked.
+    await createPerson(SYSTEM_OWNER, { display_name: 'Chris', emails: ['chris@example.com'] });
+    await run(() => ingestEvents(fakeClient([event({ attendees: ['chris@example.com'] })])));
+    const taskId = (sqlite.prepare(`SELECT id FROM tasks LIMIT 1`).get() as { id: string }).id;
+    expect((await getEntityPeople('task', taskId)).responsible.map((p) => p.display_name))
+      .toEqual(['System', 'Chris']);
+
+    // Same event id, attendees now gone entirely.
+    sqlite.prepare(`DELETE FROM entity_people WHERE entity_id = ?`).run(taskId);
+    await run(() => ingestEvents(fakeClient([event({ attendees: [] })])));
+    expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM possible_task_people`).get() as { n: number }).n).toBe(0);
+    const payload = sqlite.prepare(`SELECT source_payload AS p FROM possible_tasks LIMIT 1`).get() as { p: string };
+    expect(JSON.parse(payload.p).people_hints).toEqual([]);
+  });
+
   it('clears stale hints when an event loses its unknown attendees', async () => {
     await run(() => ingestEmails(fakeClient([], [email({ from: 'stranger@example.com' })])));
     expect(JSON.parse((sqlite.prepare(`SELECT source_payload AS p FROM possible_tasks LIMIT 1`).get() as { p: string }).p).people_hints)

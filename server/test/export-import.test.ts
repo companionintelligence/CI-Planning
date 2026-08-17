@@ -13,7 +13,7 @@ describe('GET /api/export', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('content-disposition')).toMatch(/attachment.*filename="companion-export/);
     const body = await res.json() as Record<string, unknown>;
-    expect(body.version).toBe('11'); // '11': +people/person_emails/entity_people/possible_task_people (0151). '10': +entity_categories (category assignments were never exported)
+    expect(body.version).toBe('12'); // '11': +people/person_emails/entity_people/possible_task_people (0151). '10': +entity_categories (category assignments were never exported)
     expect(typeof body.owner_id).toBe('string');
     expect(typeof body.exported_at).toBe('string');
     for (const key of ['tasks', 'patterns', 'tags', 'scheduling_prefs']) {

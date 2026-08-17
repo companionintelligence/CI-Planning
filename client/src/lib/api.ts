@@ -127,8 +127,8 @@ export interface TaskInput {
   motivation?: 'me' | 'us' | 'them' | null;
   /** People on work (0151): person ids, array order = position. undefined preserves;
    *  [] clears. Writing `beneficiary_ids` re-derives `motivation` server-side. */
-  responsible_ids?: string[];
-  beneficiary_ids?: string[];
+  responsible_ids?: string[] | null;
+  beneficiary_ids?: string[] | null;
   depends_on?: string[];
   recurrence_rule?: string | null;
   is_habit?: boolean;

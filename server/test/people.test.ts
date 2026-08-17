@@ -391,3 +391,30 @@ describe('review fixes', () => {
     expect(people.responsible[0].source).toBe('manual'); // the row's own origin, unchanged
   });
 });
+
+describe('review fixes, round 2', () => {
+  it('materializes an account even when 50 name variants are taken', async () => {
+    // The disambiguation loop used to fall through to createPerson with a colliding
+    // name — and that helper returns the EXISTING row and ignores account_id, so
+    // personForAccount reported success for an account it never linked.
+    createOwner(SECOND, 'Chris');
+    await createPerson(OWNER, { display_name: 'Chris' });
+    for (let n = 2; n <= 50; n++) await createPerson(OWNER, { display_name: `Chris (${n})` });
+
+    const account = await personForAccount(OWNER, SECOND);
+    expect(account).toBeDefined();
+    expect(account!.account_id).toBe(SECOND); // the link is what matters, not the name
+    expect(account!.display_name).not.toBe('Chris');
+  });
+
+  it('scopes address lookups to the owner on the entity read path', async () => {
+    createOwner(SECOND, 'Owner B');
+    const mine = await createPerson(OWNER, { display_name: 'Mine', emails: ['a@example.com'] });
+    await createPerson(SECOND, { display_name: 'Theirs', emails: ['b@example.com'] });
+    const id = await newTask('Scoped');
+    await setEntityPeople(OWNER, 'task', id, 'responsible', [mine.id]);
+
+    const people = await getEntityPeople('task', id);
+    expect(people.responsible[0].emails).toEqual(['a@example.com']);
+  });
+});

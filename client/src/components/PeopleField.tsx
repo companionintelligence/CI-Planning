@@ -105,15 +105,18 @@ export function PeopleField(props: {
       // On a single-account install the roster is empty, so this seeds you and leaves
       // the picker open for the named people who complete the set — `us` must never
       // quietly resolve to `me`.
+      // `collect`, not `add` — the component-level `add` commits through onChange, and
+      // shadowing it here with different semantics is how a later edit silently drops a
+      // write.
       const resolved: Person[] = [...props.value];
-      const add = (person: Person) => {
+      const collect = (person: Person) => {
         if (!resolved.some((p) => p.id === person.id)) resolved.push(person);
       };
-      if (me) add(me);
+      if (me) collect(me);
       // Resolved concurrently, and the directory refetched ONCE afterwards — a
       // per-account refetch inside the loop is N full directory reads for one tap.
       const people = await Promise.all(props.roster.map((entry) => personForAccount(entry)));
-      for (const person of people) if (person && !person.is_self) add(person);
+      for (const person of people) if (person && !person.is_self) collect(person);
       if (people.some((x) => x?.created)) props.onDirectoryChanged();
       props.onChange(resolved);
       setOpen(true);

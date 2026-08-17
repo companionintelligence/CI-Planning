@@ -231,8 +231,9 @@ async function attachDetectedPeople(
     ...(typeof p.from === 'string' ? [p.from] : []),
     ...(Array.isArray(p.attendees) ? p.attendees.filter((a): a is string => typeof a === 'string') : []),
   ];
-  if (raw.length === 0) return;
-
+  // NO early return on an empty `raw`. That is precisely the case this has to handle:
+  // an event whose attendees were ALL removed must lose them here too, and bailing out
+  // before the replace below is what let stale people survive the re-ingest.
   const source = sourceKind === 'gmail' ? 'email' : 'calendar';
   const self = await selfPersonId(owner);
   const unresolved: string[] = [];

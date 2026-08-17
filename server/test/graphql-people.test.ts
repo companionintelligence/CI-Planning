@@ -143,6 +143,55 @@ describe('blocks inherit from their task', () => {
  * "No rows" used to mean BOTH "never set, inherit" and "deliberately cleared", so
  * removing the last chip silently restored the task's people.
  */
+describe('per-role pinning (0154)', () => {
+  it('pinning one role leaves the OTHER still inheriting', async () => {
+    // The 0153 regression: one flag for the whole block meant stating a meeting's
+    // attendees also pinned its empty beneficiary set, silently ending inheritance for
+    // a field the user never touched.
+    const self = await selfPersonId(SYSTEM_OWNER);
+    const mom = await createPerson(SYSTEM_OWNER, { display_name: 'Mom' });
+    const chris = await createPerson(SYSTEM_OWNER, { display_name: 'Chris' });
+    const taskId = await seedTask('Backing');
+    await setEntityPeople(SYSTEM_OWNER, 'task', taskId, 'responsible', [self!]);
+    await setEntityPeople(SYSTEM_OWNER, 'task', taskId, 'beneficiary', [mom.id]);
+
+    const made = await svcCreateBlock(SYSTEM_OWNER, {
+      title: 'Standup', task_id: taskId,
+      start_at: '2026-06-22T09:00:00.000Z', end_at: '2026-06-22T10:00:00.000Z',
+      responsible_ids: [chris.id], // ONLY responsible stated
+    });
+    if (!made.ok) throw new Error('seed failed');
+    expect((made.api.responsible as { display_name: string }[]).map((p) => p.display_name)).toEqual(['Chris']);
+    // Beneficiaries were never mentioned, so they still track the task.
+    expect((made.api.beneficiaries as { display_name: string }[]).map((p) => p.display_name)).toEqual(['Mom']);
+  });
+
+  it('null resumes inheriting — a pin is reversible', async () => {
+    // Without an unpin path a block that once had people could never track its task
+    // again, and 0153's own doc promised otherwise.
+    const self = await selfPersonId(SYSTEM_OWNER);
+    const chris = await createPerson(SYSTEM_OWNER, { display_name: 'Chris' });
+    const taskId = await seedTask('Backing');
+    await setEntityPeople(SYSTEM_OWNER, 'task', taskId, 'responsible', [self!]);
+
+    const made = await svcCreateBlock(SYSTEM_OWNER, {
+      title: 'Standup', task_id: taskId,
+      start_at: '2026-06-22T09:00:00.000Z', end_at: '2026-06-22T10:00:00.000Z',
+      responsible_ids: [chris.id],
+    });
+    if (!made.ok) throw new Error('seed failed');
+
+    const { updateBlock } = await import('../src/services/blocks.js');
+    const cleared = await updateBlock(SYSTEM_OWNER, made.block.id, { responsible_ids: [] });
+    if (!cleared.ok) throw new Error('clear failed');
+    expect(cleared.api.responsible).toEqual([]); // nobody — pinned
+
+    const unpinned = await updateBlock(SYSTEM_OWNER, made.block.id, { responsible_ids: null });
+    if (!unpinned.ok) throw new Error('unpin failed');
+    expect((unpinned.api.responsible as { display_name: string }[]).map((p) => p.display_name)).toEqual(['System']);
+  });
+});
+
 describe('a block can express nobody', () => {
   it('inherits by default, keeps an explicit clear, and keeps an explicit set', async () => {
     const self = await selfPersonId(SYSTEM_OWNER);

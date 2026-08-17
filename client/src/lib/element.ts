@@ -184,8 +184,8 @@ export interface ElementForm {
   // motivation above — undefined means the user never touched either field, so a
   // merely-DETECTED set is not re-sent as though they had curated it. Both apply to
   // tasks AND time blocks. Writing beneficiaryIds re-derives motivation server-side.
-  responsibleIds?: string[];
-  beneficiaryIds?: string[];
+  responsibleIds?: string[] | null;
+  beneficiaryIds?: string[] | null;
   // time-block membership (scheduled only): existing tasks/habits to scatter inside,
   // routines to place inside, and child blocks to detach — all applied on Save.
   attachTaskIds?: string[];

@@ -185,10 +185,13 @@ export const timeBlocks = sqliteTable('time_blocks', {
   // 0135 (Categories Phase B): per-element striped-texture override, same as tasks.
   textureEnabled: integer('texture_enabled', { mode: 'boolean' }).notNull().default(true),
   textureColorToken: text('texture_color_token'),
-  // 0153: false ⇒ a task-backed block with no entity_people rows of its own INHERITS
-  // its task's people. true ⇒ this block's own set is authoritative even when EMPTY,
-  // which is what lets "nobody is on this block" be expressible at all.
-  peoplePinned: integer('people_pinned', { mode: 'boolean' }).notNull().default(false),
+  // 0153/0154: PER-ROLE. false ⇒ a task-backed block with no rows of its own in that
+  // role INHERITS its task's; true ⇒ this block's own set is authoritative even when
+  // EMPTY, which is what lets "nobody" be expressible. Per-role because the two sets
+  // are independent — a meeting can carry its own attendees while still inheriting who
+  // the underlying task is for.
+  responsiblePinned: integer('responsible_pinned', { mode: 'boolean' }).notNull().default(false),
+  beneficiariesPinned: integer('beneficiaries_pinned', { mode: 'boolean' }).notNull().default(false),
 });
 
 // Reusable Time-Block templates (Phase G): a saved named/tagged container with a

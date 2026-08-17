@@ -13,7 +13,7 @@ import { ensureRecurringBlocksForRange, excludeBlockOccurrence } from '../engine
 import { truncateSeriesFrom } from '../engine/series-scope.js';
 import { placeTasksInBlock, type PlaceTasksResult } from '../engine/blocks-place.js';
 import { removeEntityTags, splitTagString, syncLeveledEntityTags, entityTagLevels, setEntityCategories, categoryIdsForOwner, entityCategoryNames, entityCategoryNamesByIds } from './tags.js';
-import { setEntityPeople, getEntityPeople, getEntityPeopleBulk, type EntityPeople } from './people.js';
+import { setEntityPeople, getEntityPeople, getEntityPeopleBulk, type EntityPeople, type PersonRole } from './people.js';
 import { getCategoryPrefs } from './category-prefs.js';
 import { syncTaskFromBlock, mirrorBlockStatusToTask, applyTaskPlacementStatus, revertTaskPlacementStatus, TERMINAL_BLOCK_STATUS_SQL } from './block-task-sync.js';
 import { resolveAutoNestParent } from './auto-nest.js';
@@ -142,19 +142,48 @@ export async function blockCategoryNames(blockId: string, taskId: string | null)
 export async function blockPeopleApi(
   blockId: string,
   taskId: string | null,
-  peoplePinned = false,
+  pinned: { responsible?: boolean; beneficiaries?: boolean } = {},
 ): Promise<{ responsible: EntityPeople['responsible']; beneficiaries: EntityPeople['beneficiaries'] }> {
   const own = await getEntityPeople('time_block', blockId);
-  // PINNED (0153) means this block's own set is authoritative even when EMPTY — the
-  // only way "nobody is on this block" can be said at all. Without the flag, clearing
-  // the last chip looked identical to "never set" and the task's people came straight
-  // back, so the clear silently did nothing.
-  if (!taskId || peoplePinned) return { responsible: own.responsible, beneficiaries: own.beneficiaries };
+  if (!taskId) return { responsible: own.responsible, beneficiaries: own.beneficiaries };
   const fromTask = await getEntityPeople('task', taskId);
+  // PINNED (0153/0154) means this block's own set for that ROLE is authoritative even
+  // when EMPTY — the only way "nobody is on this" can be said at all, since "no rows"
+  // otherwise reads as "never set, inherit". Resolved per role so a meeting can carry
+  // its own attendees while still inheriting who the underlying task is for.
+  const pick = (role: 'responsible' | 'beneficiaries', isPinned: boolean | undefined) =>
+    isPinned || own[role].length ? own[role] : fromTask[role];
   return {
-    responsible: own.responsible.length ? own.responsible : fromTask.responsible,
-    beneficiaries: own.beneficiaries.length ? own.beneficiaries : fromTask.beneficiaries,
+    responsible: pick('responsible', pinned.responsible),
+    beneficiaries: pick('beneficiaries', pinned.beneficiaries),
   };
+}
+
+/**
+ * Apply one role's people write to a block, and set that role's pin accordingly.
+ *
+ * THREE states, which is what the inherit rule needs and a plain array cannot express:
+ *   undefined → not mentioned; leave the role exactly as it is
+ *   null      → resume INHERITING from the backing task (unpin, and drop own rows)
+ *   []        → NOBODY is on this block for this role (pin to empty)
+ *   [ids]     → these people (pin)
+ *
+ * Without the `null` arm a block could be pinned but never un-pinned, so a block that
+ * once had people could never go back to tracking its task again.
+ */
+async function applyBlockRole(
+  ownerId: string,
+  blockId: string,
+  role: PersonRole,
+  ids: string[] | null | undefined,
+): Promise<boolean> {
+  if (ids === undefined) return false;
+  const column = role === 'responsible' ? 'responsible_pinned' : 'beneficiaries_pinned';
+  await setEntityPeople(ownerId, 'time_block', blockId, role, ids ?? []);
+  await store()
+    .prepare(`UPDATE time_blocks SET ${column} = ? WHERE id = ? AND owner_id = ?`)
+    .run(ids === null ? 0 : 1, blockId, ownerId);
+  return true;
 }
 
 /** Serialize + enrich raw block rows into the snake_case API dicts (secondary tags +
@@ -180,8 +209,10 @@ async function enrichApi(rows: BlockRow[]): Promise<Record<string, unknown>[]> {
     const own = ownCats.get(b.id as string);
     const src = source.get(b.id as string);
     const mine = ownPeople.get(b.id as string);
-    // 0153: a pinned block never inherits — its own (possibly empty) set is the answer.
-    const theirs = b.task_id && !b.people_pinned ? taskPeople.get(b.task_id as string) : undefined;
+    const theirs = b.task_id ? taskPeople.get(b.task_id as string) : undefined;
+    // 0154: per-role — a pinned role never inherits, its own (possibly empty) set wins.
+    const inherit = (role: 'responsible' | 'beneficiaries', isPinned: unknown) =>
+      (isPinned || mine?.[role].length ? mine?.[role] : theirs?.[role]) ?? [];
     out.push({
       ...b,
       secondary_tags: await secondaryTagsOf(b.id as string),
@@ -189,8 +220,8 @@ async function enrichApi(rows: BlockRow[]): Promise<Record<string, unknown>[]> {
       categories: (own?.length ? own : taskCats.get(b.task_id as string)) ?? [],
       // Each set derives independently — a meeting block may carry its own attendees
       // while still inheriting who the backing task is for.
-      responsible: (mine?.responsible.length ? mine.responsible : theirs?.responsible) ?? [],
-      beneficiaries: (mine?.beneficiaries.length ? mine.beneficiaries : theirs?.beneficiaries) ?? [],
+      responsible: inherit('responsible', b.responsible_pinned),
+      beneficiaries: inherit('beneficiaries', b.beneficiaries_pinned),
       // Which connection mirrored this block in, so the client can colour/texture it
       // per source and tell a synced event apart from a local one. null for anything
       // the owner created here. `source_kind` already says 'google', but NOT which
@@ -337,11 +368,11 @@ export type CreateBlockInput = {
   // Phase B (0135): per-element texture override (omitted ⇒ column defaults).
   texture_enabled?: boolean;
   texture_color_token?: string | null;
-  // People on work (0151): person ids, array order = position. Blocks carry BOTH sets
-  // natively (entity_people is keyed by entity_kind) — no motivation projection here,
-  // that axis is tasks-only.
-  responsible_ids?: string[];
-  beneficiary_ids?: string[];
+  // People on work (0151/0154): person ids, array order = position. Blocks carry BOTH
+  // sets natively (entity_people is keyed by entity_kind) — no motivation projection
+  // here, that axis is tasks-only. `null` means "inherit from the backing task".
+  responsible_ids?: string[] | null;
+  beneficiary_ids?: string[] | null;
 };
 
 export type CreateBlockResult =
@@ -456,22 +487,17 @@ export async function createBlock(ownerId: string, input: CreateBlockInput): Pro
   // Phase B: category axis (entity_categories, position-ordered).
   if (categoryIds !== undefined) await setEntityCategories('time_block', block.id, categoryIds);
 
-  // People on work (0151) — same position-ordered set semantics as categories. Any
-  // explicit write PINS the block (0153): the caller has stated this block's people,
-  // including when they stated "nobody".
-  if (input.responsible_ids !== undefined || input.beneficiary_ids !== undefined) {
-    if (input.responsible_ids !== undefined)
-      await setEntityPeople(ownerId, 'time_block', block.id, 'responsible', input.responsible_ids);
-    if (input.beneficiary_ids !== undefined)
-      await setEntityPeople(ownerId, 'time_block', block.id, 'beneficiary', input.beneficiary_ids);
-    await store().prepare(`UPDATE time_blocks SET people_pinned = 1 WHERE id = ? AND owner_id = ?`)
-      .run(block.id, ownerId);
-    block.peoplePinned = true;
-  }
+  // People on work (0151/0154) — position-ordered like categories, pinned PER ROLE so
+  // stating a block's attendees never silently stops its beneficiaries inheriting.
+  if (await applyBlockRole(ownerId, block.id, 'responsible', input.responsible_ids))
+    block.responsiblePinned = input.responsible_ids !== null;
+  if (await applyBlockRole(ownerId, block.id, 'beneficiary', input.beneficiary_ids))
+    block.beneficiariesPinned = input.beneficiary_ids !== null;
 
   const out = toBlockApi(block, await secondaryTagsOf(block.id));
   out.categories = await blockCategoryNames(block.id, block.taskId);
-  Object.assign(out, await blockPeopleApi(block.id, block.taskId, !!block.peoplePinned));
+  Object.assign(out, await blockPeopleApi(block.id, block.taskId,
+    { responsible: !!block.responsiblePinned, beneficiaries: !!block.beneficiariesPinned }));
 
   // REQ2: a placed task IS scheduled — on create (not just PATCH), mirror the
   // placement onto the task's scheduling-intent fields and flip open → scheduled.
@@ -511,9 +537,10 @@ export type UpdateBlockInput = Partial<{
   // Phase B (0135): per-element texture override columns.
   texture_enabled: boolean;
   texture_color_token: string | null;
-  // People on work (0151). `undefined` = don't touch; `[]` = clear (mirrors tags).
-  responsible_ids: string[];
-  beneficiary_ids: string[];
+  // People on work (0151/0154). undefined = don't touch; [] = nobody (pins);
+  // null = resume inheriting from the backing task (unpins).
+  responsible_ids: string[] | null;
+  beneficiary_ids: string[] | null;
 }>;
 
 export type UpdateBlockResult =
@@ -654,18 +681,13 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
   // Phase B: category axis — `undefined` preserves, `[]` clears (mirrors tags).
   if (categoryIds !== undefined) await setEntityCategories('time_block', id, categoryIds);
 
-  // People on work (0151) — same undefined-preserves / []-clears semantics. Writing
-  // an empty set is meaningful on a task-backed block: it re-enables the inherit rule
-  // in blockPeopleApi rather than pinning the block to "nobody".
-  if (Array.isArray(input.responsible_ids) || Array.isArray(input.beneficiary_ids)) {
-    if (Array.isArray(input.responsible_ids))
-      await setEntityPeople(ownerId, 'time_block', id, 'responsible', input.responsible_ids);
-    if (Array.isArray(input.beneficiary_ids))
-      await setEntityPeople(ownerId, 'time_block', id, 'beneficiary', input.beneficiary_ids);
-    await store().prepare(`UPDATE time_blocks SET people_pinned = 1 WHERE id = ? AND owner_id = ?`)
-      .run(id, ownerId);
-    block.peoplePinned = true;
-  }
+  // People on work (0151/0154). Three states, per role: absent preserves, `[]` pins to
+  // NOBODY, `null` resumes inheriting from the backing task. An empty array does NOT
+  // re-enable inheritance — that ambiguity was the bug 0153 existed to fix.
+  if (await applyBlockRole(ownerId, id, 'responsible', input.responsible_ids))
+    block.responsiblePinned = input.responsible_ids !== null;
+  if (await applyBlockRole(ownerId, id, 'beneficiary', input.beneficiary_ids))
+    block.beneficiariesPinned = input.beneficiary_ids !== null;
 
   // CON-4 series edit: a rule (or anchor) change drops future-or-today instances
   // of this template + their tag rows; GET re-materializes under the new rule.
@@ -681,7 +703,8 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
 
   const out = toBlockApi(block, await secondaryTagsOf(id));
   out.categories = await blockCategoryNames(id, block.taskId);
-  Object.assign(out, await blockPeopleApi(id, block.taskId, !!block.peoplePinned));
+  Object.assign(out, await blockPeopleApi(id, block.taskId,
+    { responsible: !!block.responsiblePinned, beneficiaries: !!block.beneficiariesPinned }));
 
   // REQ2: a placed task IS scheduled — keep the linked task's scheduling-intent
   // fields (and its done-state) in lockstep with the block. A time change mirrors

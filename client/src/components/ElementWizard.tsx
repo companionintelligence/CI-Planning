@@ -154,7 +154,11 @@ export function ElementWizard() {
   // shown as "(suggested)" and only sent once the user actually edits it.
   const [responsible, setResponsible] = createSignal<Person[]>([]);
   const [beneficiaries, setBeneficiaries] = createSignal<Person[]>([]);
-  const [peopleTouched, setPeopleTouched] = createSignal(false);
+  // Tracked PER FIELD, not once for both. Sending an untouched field pins it on a time
+  // block (0154), so editing a meeting's attendees would silently stop its beneficiaries
+  // inheriting from the backing task.
+  const [responsibleTouched, setResponsibleTouched] = createSignal(false);
+  const [beneficiariesTouched, setBeneficiariesTouched] = createSignal(false);
   const [directory, { refetch: refetchDirectory }] = createResource(async () =>
     (await api.people.list()).people,
   );
@@ -418,7 +422,8 @@ export function ElementWizard() {
       setMotivationTouched(false); // seeded, not testimony — only a tap makes it send
       setResponsible(t.responsible ?? []);
       setBeneficiaries(t.beneficiaries ?? []);
-      setPeopleTouched(false);     // same rule: seeded ≠ testimony
+      setResponsibleTouched(false); // same rule: seeded ≠ testimony
+      setBeneficiariesTouched(false);
       setNote(t.notes ?? ''); setNoteExpanded(!!t.notes);
       setScheduledFor(t.scheduled_for ?? localISODate());
       setTaskTime(t.task_time ?? '');
@@ -867,15 +872,12 @@ export function ElementWizard() {
         // overlay; the wizard's own control is now Beneficiaries, and the server
         // derives the axis from that set whenever it is sent.
         ...(motivationTouched() ? { motivation: motivation() } : {}),
-        // People on work (0151) — only once the user actually edited a field, the same
+        // People on work (0151) — only the field the user actually edited, the same
         // testimony gate motivation uses. A merely-detected set is never re-sent as
-        // though the owner had curated it.
-        ...(peopleTouched()
-          ? {
-              responsibleIds: responsible().map((p) => p.id),
-              beneficiaryIds: beneficiaries().map((p) => p.id),
-            }
-          : {}),
+        // though the owner had curated it, and an untouched field is never sent at all
+        // (which on a block would pin it — see 0154).
+        ...(responsibleTouched() ? { responsibleIds: responsible().map((p) => p.id) } : {}),
+        ...(beneficiariesTouched() ? { beneficiaryIds: beneficiaries().map((p) => p.id) } : {}),
         scheduledFor: scheduledFor(), taskTime: taskTime() || undefined, estimatedMinutes: estimate(),
         dueAt: dueAt() || undefined, priority: priority(),
         deferUntil: deferUntil() || undefined, dependsOn: dependsOn(),
@@ -1350,20 +1352,20 @@ export function ElementWizard() {
                 <PeopleField
                   label="Responsible"
                   value={responsible()}
-                  onChange={(next) => { setPeopleTouched(true); setResponsible(next); }}
+                  onChange={(next) => { setResponsibleTouched(true); setResponsible(next); }}
                   directory={directory() ?? []}
                   roster={roster() ?? []}
                   onDirectoryChanged={() => void refetchDirectory()}
-                  suggested={!peopleTouched()}
+                  suggested={!responsibleTouched()}
                 />
                 <PeopleField
                   label="Beneficiaries"
                   value={beneficiaries()}
-                  onChange={(next) => { setPeopleTouched(true); setBeneficiaries(next); }}
+                  onChange={(next) => { setBeneficiariesTouched(true); setBeneficiaries(next); }}
                   directory={directory() ?? []}
                   roster={roster() ?? []}
                   onDirectoryChanged={() => void refetchDirectory()}
-                  suggested={!peopleTouched() && motivationSource() === 'llm'}
+                  suggested={!beneficiariesTouched()}
                 />
 
                 {/* Texture — Phase B (0135). Collapsed to a single trigger (0151): the

@@ -127,13 +127,20 @@ const SQL_GET =
  * address in a directory that calendar ingest keeps growing to answer that is waste on
  * a path every create/update round-trip crosses.
  */
-async function emailsByPerson(personIds: string[]): Promise<Map<string, string[]>> {
+async function emailsByPerson(personIds: string[], owner?: string): Promise<Map<string, string[]>> {
   const byPerson = new Map<string, string[]>();
   if (personIds.length === 0) return byPerson;
   const holes = personIds.map(() => '?').join(',');
+  // The owner predicate is kept even though person ids are globally unique and every
+  // caller sources them from owner-scoped reads: the entity read path joins
+  // entity_people → people with no owner filter of its own, so this is the one place
+  // left restating the tenancy guarantee rather than assuming the write path held it.
   const rows = await store()
-    .prepare(`SELECT person_id, email FROM person_emails WHERE person_id IN (${holes}) ORDER BY email`)
-    .all<{ person_id: string; email: string }>(...personIds);
+    .prepare(
+      `SELECT person_id, email FROM person_emails
+        WHERE person_id IN (${holes})${owner ? ' AND owner_id = ?' : ''} ORDER BY email`,
+    )
+    .all<{ person_id: string; email: string }>(...personIds, ...(owner ? [owner] : []));
   for (const r of rows) {
     const list = byPerson.get(r.person_id);
     if (list) list.push(r.email);
@@ -145,7 +152,7 @@ async function emailsByPerson(personIds: string[]): Promise<Map<string, string[]
 /** Attach each row's addresses in ONE query rather than N (the directory is read hot). */
 async function withEmails(rows: PersonRow[]): Promise<Person[]> {
   if (rows.length === 0) return [];
-  const byPerson = await emailsByPerson(rows.map((r) => r.id));
+  const byPerson = await emailsByPerson(rows.map((r) => r.id), rows[0].owner_id);
   return rows.map((r) => toPerson(r, byPerson.get(r.id) ?? []));
 }
 
@@ -387,14 +394,23 @@ export async function personForAccount(owner: string, accountId: string): Promis
       .prepare(`SELECT id FROM people WHERE owner_id = ? AND display_name = ?`)
       .get<{ id: string }>(owner, name);
     if (!clash) break;
-    name = `${base} (${n})`;
+    // Past the cap, fall back to something that CANNOT collide rather than looping
+    // forever or handing back a name that does.
+    name = n === 50 ? `${base} (${accountId.slice(0, 8)})` : `${base} (${n})`;
   }
-  return createPerson(owner, {
-    display_name: name,
-    account_id: accountId,
-    source: 'account',
-    emails: account.email ? [account.email] : [],
-  });
+
+  // INSERT directly, not via createPerson: that helper returns the EXISTING row for a
+  // duplicate name and ignores account_id, so a residual collision would silently yield
+  // a person with no account link while this function reported success.
+  const personId = newId();
+  await store()
+    .prepare(
+      `INSERT INTO people (id, owner_id, account_id, display_name, confirmed, source)
+       VALUES (?, ?, ?, ?, 1, 'account')`,
+    )
+    .run(personId, owner, accountId, name);
+  if (account.email) await addEmails(owner, personId, [account.email]);
+  return getPerson(owner, personId);
 }
 
 // ── Email → person resolution (deterministic, no model) ───────────────────────
@@ -498,7 +514,7 @@ export async function getEntityPeople(entityKind: string, entityId: string): Pro
     .prepare(SQL_PEOPLE_FOR_ENTITY)
     .all<PersonRow & { role: string; position: number; attachment_source: string | null }>(entityKind, entityId);
   if (rows.length === 0) return { responsible: [], beneficiaries: [] };
-  const byPerson = await emailsByPerson(rows.map((r) => r.id));
+  const byPerson = await emailsByPerson(rows.map((r) => r.id), rows[0].owner_id);
   const build = (role: string) =>
     rows.filter((r) => r.role === role).map((r) => toPerson(r, byPerson.get(r.id) ?? [], r.attachment_source));
   return { responsible: build('responsible'), beneficiaries: build('beneficiary') };
@@ -525,7 +541,7 @@ export async function getEntityPeopleBulk(
     .all<PersonRow & { entity_id: string; role: string; position: number; attachment_source: string | null }>(
       entityKind, ...entityIds,
     );
-  const byPerson = await emailsByPerson([...new Set(rows.map((r) => r.id))]);
+  const byPerson = await emailsByPerson([...new Set(rows.map((r) => r.id))], rows[0]?.owner_id);
   for (const r of rows) {
     let bucket = out.get(r.entity_id);
     if (!bucket) { bucket = { responsible: [], beneficiaries: [] }; out.set(r.entity_id, bucket); }

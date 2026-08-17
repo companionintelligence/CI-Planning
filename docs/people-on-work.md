@@ -99,10 +99,28 @@ That is accurate — nobody else ended up on the item — so the fix belongs in 
 ### Blocks and the "nobody" case
 
 A block with no rows of its own inherits its task's people. "No rows" cannot also mean
-"deliberately cleared" — so `time_blocks.people_pinned` (0153) carries that second bit:
-any explicit write pins the block, and a pinned block's own set is authoritative even
-when empty. Without it, removing the last attendee chip wrote an empty set, the inherit
-rule fired, and the task's people silently reappeared.
+"deliberately cleared" — so a **per-role pin** carries that second bit
+(`responsible_pinned` / `beneficiaries_pinned`, 0153 → 0154). A pinned role's own set is
+authoritative even when empty; without it, removing the last attendee chip wrote an empty
+set, the inherit rule fired, and the task's people silently reappeared.
+
+Per ROLE, not per block: the two sets are independent, so stating a meeting's attendees
+must not also pin its untouched beneficiary set and quietly end inheritance there.
+
+The write API is therefore three-state, per role:
+
+| Sent | Means |
+|---|---|
+| absent | leave this role exactly as it is |
+| `[]` | **nobody** is on this item for this role (pins) |
+| `[ids]` | these people (pins) |
+| `null` | resume **inheriting** from the backing task (unpins) |
+
+The `null` arm is what makes a pin reversible — without it a block that once had people
+could never track its task again.
+
+Recurring block instances copy their template's people and pins, alongside the tags and
+categories they already copied.
 
 ### Time blocks
 

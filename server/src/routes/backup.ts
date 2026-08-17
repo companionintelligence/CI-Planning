@@ -40,7 +40,12 @@ import { httpError } from '../lib/http-error.js';
 // person and every assignment — the same gap class as v8/v9/v10, caught before shipping
 // this time. Purely additive: a '10' or older dump restores with the keys treated as
 // empty, and the owner's self row is re-seeded by provisionOwner/0151 regardless.
-const EXPORT_VERSION = '11';
+// '12': the 0153/0154 per-role people pins on time_blocks. `time_blocks` is exported
+// with SELECT *, so those columns joined the payload the moment the migration landed —
+// giving two different shapes under one version string, which is exactly what the
+// version exists to prevent. Purely additive: an '11' dump restores with the columns
+// defaulted (insertRows intersects with the live table).
+const EXPORT_VERSION = '12';
 
 // Owner-scoped tables exported/restored via a direct `WHERE owner_id = ?` query.
 // (Junctions, the tag axis, and full-table dumps are handled explicitly in the payload.)
