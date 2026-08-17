@@ -1069,6 +1069,10 @@ export interface Block {
   // none of its own) the task's — each set inherited independently.
   responsible?: Person[];
   beneficiaries?: Person[];
+  // Whether the set above is the TASK's rather than this block's own. Not derivable
+  // client-side: an empty set means "nobody" when pinned and "inherit" when not.
+  responsible_inherited?: boolean;
+  beneficiaries_inherited?: boolean;
   color_token?: string | null; // frozen category color stamped at create-time — forward-only (0069)
   rationale?: string | null; // §A3 "why now" — joined from daily_plan via block_id (AI-authored placements only)
   start_at: string; end_at: string; is_locked: boolean; is_auto: boolean;

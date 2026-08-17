@@ -52,8 +52,13 @@ export function PeopleField(props: {
    * capable of it is not the same as the user being able to do it.
    */
   onInherit?: () => void;
-  /** True when this role is currently showing the task's people rather than its own. */
+  /** True when this role is currently showing the task's people rather than its own.
+   *  Comes from the SERVER (`*_inherited`), not from what the user did this session —
+   *  an empty set means "nobody" when pinned and "inherit" when not, so the client
+   *  cannot tell them apart on its own. */
   inheriting?: boolean;
+  /** Stop following the task and start an override. The inverse of {@link onInherit}. */
+  onOverride?: () => void;
 }) {
   const [open, setOpen] = createSignal(false);
   const [query, setQuery] = createSignal('');
@@ -181,6 +186,33 @@ export function PeopleField(props: {
         </Show>
       </div>
 
+      {/* An inheriting field is NOT an empty one, and must not read as though nobody is
+          on the item — collapsing those two states in the UI would undo exactly what
+          the per-role pin exists to separate. The people shown are the task's. */}
+      <Show when={props.inheriting}>
+        <div class="flex flex-wrap items-center gap-1.5" data-inheriting="true">
+          <span class="text-[11px] px-2 py-1 rounded-full border border-dashed border-border text-muted-foreground">
+            Following the linked task
+          </span>
+          <For each={props.value}>
+            {(person) => (
+              <span class="text-xs px-2.5 py-1 rounded-full border border-border text-muted-foreground/70 italic">
+                {person.display_name}
+              </span>
+            )}
+          </For>
+          <button
+            type="button"
+            onClick={() => props.onOverride?.()}
+            class="text-xs px-2 py-1 rounded-full border border-dashed border-border text-muted-foreground hover:text-foreground transition-colors"
+            title="Set this block's own people instead of following the task"
+          >
+            Override
+          </button>
+        </div>
+      </Show>
+
+      <Show when={!props.inheriting}>
       <div class="flex flex-wrap items-center gap-1.5">
         {/* Shortcuts. `us` is shown even with one account — see the header note. */}
         <For each={['me', 'us', 'them'] as const}>
@@ -239,7 +271,9 @@ export function PeopleField(props: {
         </Show>
       </div>
 
-      <Show when={open()}>
+      </Show>
+
+      <Show when={open() && !props.inheriting}>
         <div class="rounded-md border border-border bg-popover p-2 flex flex-col gap-1.5">
           <input
             class="w-full bg-transparent border border-border rounded px-2 py-1 text-xs outline-none focus:border-primary"

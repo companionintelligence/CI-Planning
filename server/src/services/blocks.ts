@@ -143,25 +143,41 @@ export async function blockPeopleApi(
   blockId: string,
   taskId: string | null,
   pinned: { responsible?: boolean; beneficiaries?: boolean } = {},
-): Promise<{ responsible: EntityPeople['responsible']; beneficiaries: EntityPeople['beneficiaries'] }> {
+): Promise<{
+  responsible: EntityPeople['responsible'];
+  beneficiaries: EntityPeople['beneficiaries'];
+  // Whether each set is currently the TASK's rather than the block's own. The client
+  // cannot derive this — an empty set means "nobody" when pinned and "inherit" when not
+  // — so it is reported rather than guessed from what the user did this session.
+  responsible_inherited: boolean;
+  beneficiaries_inherited: boolean;
+}> {
   const own = await getEntityPeople('time_block', blockId);
   // Nothing to inherit FROM, or nothing that could inherit: skip the second read
   // entirely. Restructuring for per-role pins had moved this above the pin checks, so a
   // fully pinned block paid for a lookup whose result was always discarded.
-  const canInherit =
-    !!taskId &&
-    ((!pinned.responsible && !own.responsible.length) || (!pinned.beneficiaries && !own.beneficiaries.length));
-  if (!canInherit) return { responsible: own.responsible, beneficiaries: own.beneficiaries };
+  const inherits = (role: 'responsible' | 'beneficiaries', isPinned: boolean | undefined) =>
+    !!taskId && !isPinned && !own[role].length;
+  const rInherits = inherits('responsible', pinned.responsible);
+  const bInherits = inherits('beneficiaries', pinned.beneficiaries);
+  if (!rInherits && !bInherits) {
+    return {
+      responsible: own.responsible,
+      beneficiaries: own.beneficiaries,
+      responsible_inherited: false,
+      beneficiaries_inherited: false,
+    };
+  }
   const fromTask = await getEntityPeople('task', taskId!);
   // PINNED (0153/0154) means this block's own set for that ROLE is authoritative even
   // when EMPTY — the only way "nobody is on this" can be said at all, since "no rows"
   // otherwise reads as "never set, inherit". Resolved per role so a meeting can carry
   // its own attendees while still inheriting who the underlying task is for.
-  const pick = (role: 'responsible' | 'beneficiaries', isPinned: boolean | undefined) =>
-    isPinned || own[role].length ? own[role] : fromTask[role];
   return {
-    responsible: pick('responsible', pinned.responsible),
-    beneficiaries: pick('beneficiaries', pinned.beneficiaries),
+    responsible: rInherits ? fromTask.responsible : own.responsible,
+    beneficiaries: bInherits ? fromTask.beneficiaries : own.beneficiaries,
+    responsible_inherited: rInherits,
+    beneficiaries_inherited: bInherits,
   };
 }
 
@@ -217,8 +233,10 @@ async function enrichApi(rows: BlockRow[]): Promise<Record<string, unknown>[]> {
     const mine = ownPeople.get(b.id as string);
     const theirs = b.task_id ? taskPeople.get(b.task_id as string) : undefined;
     // 0154: per-role — a pinned role never inherits, its own (possibly empty) set wins.
-    const inherit = (role: 'responsible' | 'beneficiaries', isPinned: unknown) =>
-      (isPinned || mine?.[role].length ? mine?.[role] : theirs?.[role]) ?? [];
+    const inherits = (role: 'responsible' | 'beneficiaries', isPinned: unknown) =>
+      !!b.task_id && !isPinned && !mine?.[role].length;
+    const rInherits = inherits('responsible', b.responsible_pinned);
+    const bInherits = inherits('beneficiaries', b.beneficiaries_pinned);
     out.push({
       ...b,
       secondary_tags: await secondaryTagsOf(b.id as string),
@@ -226,8 +244,10 @@ async function enrichApi(rows: BlockRow[]): Promise<Record<string, unknown>[]> {
       categories: (own?.length ? own : taskCats.get(b.task_id as string)) ?? [],
       // Each set derives independently — a meeting block may carry its own attendees
       // while still inheriting who the backing task is for.
-      responsible: inherit('responsible', b.responsible_pinned),
-      beneficiaries: inherit('beneficiaries', b.beneficiaries_pinned),
+      responsible: (rInherits ? theirs?.responsible : mine?.responsible) ?? [],
+      beneficiaries: (bInherits ? theirs?.beneficiaries : mine?.beneficiaries) ?? [],
+      responsible_inherited: rInherits,
+      beneficiaries_inherited: bInherits,
       // Which connection mirrored this block in, so the client can colour/texture it
       // per source and tell a synced event apart from a local one. null for anything
       // the owner created here. `source_kind` already says 'google', but NOT which

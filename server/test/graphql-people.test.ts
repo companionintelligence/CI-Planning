@@ -265,17 +265,15 @@ describe('block people over GraphQL', () => {
 });
 
 /**
- * Review fix (round 3) — instances are materialized once, so a copy-on-create alone
- * froze the template's people at whatever they were the first time a day was rendered.
+ * Recurring instances take the template's people at materialisation and keep them —
+ * copy-on-create, exactly like tags and categories. Pinned so the copy itself cannot
+ * regress; the KNOWN limitation (a template edit does not reach already-materialised
+ * occurrences) is documented in blocks-recur.ts rather than papered over here.
  */
-describe('recurring instances track their template', () => {
-  it('propagates a template people edit to untouched instances, sparing customised ones', async () => {
+describe('recurring instances carry their template’s people', () => {
+  it('copies people and pins onto each new instance', async () => {
     const { ensureRecurringBlocksForRange } = await import('../src/engine/blocks-recur.js');
     const chris = await createPerson(SYSTEM_OWNER, { display_name: 'Chris' });
-    const dana = await createPerson(SYSTEM_OWNER, { display_name: 'Dana' });
-
-    // Materialization deliberately does no backfill (only today-or-future days), so the
-    // series has to start ahead of the clock.
     const day = (n: number) => {
       const d = new Date();
       d.setUTCDate(d.getUTCDate() + n);
@@ -290,29 +288,56 @@ describe('recurring instances track their template', () => {
     if (!tmpl.ok) throw new Error('template failed');
     await setEntityPeople(SYSTEM_OWNER, 'time_block', tmpl.block.id, 'responsible', [chris.id]);
 
-    const from = day(0), to = day(5);
-    await ensureRecurringBlocksForRange(SYSTEM_OWNER, from, to);
+    await ensureRecurringBlocksForRange(SYSTEM_OWNER, day(0), day(5));
     const instances = sqlite
       .prepare(`SELECT id FROM time_blocks WHERE recurrence_parent_id = ? ORDER BY start_at`)
       .all(tmpl.block.id) as { id: string }[];
     expect(instances.length).toBeGreaterThan(0);
-    expect((await getEntityPeople('time_block', instances[0].id)).responsible.map((p) => p.display_name))
-      .toEqual(['Chris']);
-
-    // Customise ONE instance, then change the template.
-    await setEntityPeople(SYSTEM_OWNER, 'time_block', instances[0].id, 'responsible', [dana.id]);
-    await setEntityPeople(SYSTEM_OWNER, 'time_block', tmpl.block.id, 'responsible', [chris.id, dana.id]);
-    // Wipe an untouched instance's rows to represent one that predates the edit.
-    if (instances[1]) sqlite.prepare(`DELETE FROM entity_people WHERE entity_id = ?`).run(instances[1].id);
-    await ensureRecurringBlocksForRange(SYSTEM_OWNER, from, to);
-
-    // The customised instance is left exactly as the owner set it...
-    expect((await getEntityPeople('time_block', instances[0].id)).responsible.map((p) => p.display_name))
-      .toEqual(['Dana']);
-    // ...while an untouched one picks the template's current set up.
-    if (instances[1]) {
-      expect((await getEntityPeople('time_block', instances[1].id)).responsible.map((p) => p.display_name).sort())
-        .toEqual(['Chris', 'Dana']);
+    // Every occurrence carries the attendees — the defect was that none of them did.
+    for (const inst of instances) {
+      expect((await getEntityPeople('time_block', inst.id)).responsible.map((p) => p.display_name))
+        .toEqual(['Chris']);
     }
+  });
+});
+
+/**
+ * Review fix (round 4) — the client cannot tell "nobody" from "inheriting" by looking
+ * at an empty set, so the server reports which it is instead of the UI guessing from
+ * session state.
+ */
+describe('blocks report whether each set is inherited', () => {
+  it('flags inherited, own, and pinned-to-nobody distinctly, per role', async () => {
+    const self = await selfPersonId(SYSTEM_OWNER);
+    const mom = await createPerson(SYSTEM_OWNER, { display_name: 'Mom' });
+    const chris = await createPerson(SYSTEM_OWNER, { display_name: 'Chris' });
+    const taskId = await seedTask('Backing');
+    await setEntityPeople(SYSTEM_OWNER, 'task', taskId, 'responsible', [self!]);
+    await setEntityPeople(SYSTEM_OWNER, 'task', taskId, 'beneficiary', [mom.id]);
+
+    const made = await svcCreateBlock(SYSTEM_OWNER, {
+      title: 'Standup', task_id: taskId,
+      start_at: '2026-06-22T09:00:00.000Z', end_at: '2026-06-22T10:00:00.000Z',
+    });
+    if (!made.ok) throw new Error('seed failed');
+    // Nothing stated yet → both inherited.
+    expect(made.api.responsible_inherited).toBe(true);
+    expect(made.api.beneficiaries_inherited).toBe(true);
+
+    const { updateBlock } = await import('../src/services/blocks.js');
+    const own = await updateBlock(SYSTEM_OWNER, made.block.id, { responsible_ids: [chris.id] });
+    if (!own.ok) throw new Error('set failed');
+    expect(own.api.responsible_inherited).toBe(false);
+    expect(own.api.beneficiaries_inherited).toBe(true); // the other role is untouched
+
+    const nobody = await updateBlock(SYSTEM_OWNER, made.block.id, { responsible_ids: [] });
+    if (!nobody.ok) throw new Error('clear failed');
+    // Empty AND not inherited — the distinction the flag exists to carry.
+    expect(nobody.api.responsible).toEqual([]);
+    expect(nobody.api.responsible_inherited).toBe(false);
+
+    const back = await updateBlock(SYSTEM_OWNER, made.block.id, { responsible_ids: null });
+    if (!back.ok) throw new Error('unpin failed');
+    expect(back.api.responsible_inherited).toBe(true);
   });
 });

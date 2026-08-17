@@ -146,6 +146,18 @@ export async function ensureRecurringBlocksForRange(owner: string, fromUtcISO: s
   // recurring meeting had attendees on the TEMPLATE and nobody on any occurrence — and
   // since these instances are container blocks with no task_id, the own-else-inherit
   // rule has nothing to fall back to either, so the attendees simply vanished.
+  //
+  // COPY-ON-CREATE ONLY, exactly like copyTags and copyCats above: an instance takes the
+  // template's people the moment it is materialized and keeps them thereafter. Editing a
+  // template therefore reaches occurrences not yet rendered, and NOT ones that already
+  // exist.
+  //
+  // A previous attempt to re-sync untouched instances on every pass was inert — an
+  // instance created by the line below already has rows, so the "no people of its own"
+  // guard excluded it forever — while still costing a query per template on the hottest
+  // read in the app. Propagating template edits properly means driving it from the
+  // template WRITE and deciding what to do with customised occurrences; that is its own
+  // change, tracked separately, not something to bolt onto the read path.
   const copyPeople = store().prepare(
     `INSERT OR IGNORE INTO entity_people (entity_kind, entity_id, person_id, role, source, position)
        SELECT 'time_block', ?, person_id, role, source, position FROM entity_people
@@ -156,23 +168,6 @@ export async function ensureRecurringBlocksForRange(owner: string, fromUtcISO: s
   const copyPins = store().prepare(
     `UPDATE time_blocks SET responsible_pinned = ?, beneficiaries_pinned = ? WHERE id = ?`,
   );
-  // Instances are materialized ONCE, so a copy-on-create alone would freeze the
-  // template's people at whichever set existed the first time each day was rendered —
-  // and people change on a recurring meeting far more often than its tags do.
-  //
-  // So re-sync, but ONLY onto instances that still carry no people of their own and are
-  // not pinned. That propagates a template edit to every untouched occurrence while
-  // leaving a deliberately customised one (its own attendees, or an explicit "nobody")
-  // exactly as the owner left it. Tags and categories keep their copy-on-create
-  // behaviour; this is the one axis where the staleness is worth the extra statement.
-  const resyncable = store().prepare(
-    `SELECT b.id AS id FROM time_blocks b
-      WHERE b.recurrence_parent_id = ? AND b.owner_id = ?
-        AND b.responsible_pinned = 0 AND b.beneficiaries_pinned = 0
-        AND NOT EXISTS (SELECT 1 FROM entity_people ep
-                         WHERE ep.entity_kind = 'time_block' AND ep.entity_id = b.id)`,
-  );
-
   let blocksCreated = 0;
   await store().transaction(async () => {
     for (const t of templates) {
@@ -205,12 +200,6 @@ export async function ensureRecurringBlocksForRange(owner: string, fromUtcISO: s
           await copyPeople.run(row.id, t.id);
           await copyPins.run(t.responsible_pinned ?? 0, t.beneficiaries_pinned ?? 0, row.id);
         }
-      }
-      // After this template's occurrences are placed, push its CURRENT people onto any
-      // untouched instance — including ones materialized on an earlier pass, which the
-      // copy-on-create above can never reach.
-      for (const inst of await resyncable.all<{ id: string }>(t.id, owner)) {
-        await copyPeople.run(inst.id, t.id);
       }
     }
   });

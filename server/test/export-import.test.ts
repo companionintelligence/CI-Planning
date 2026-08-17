@@ -549,3 +549,12 @@ describe('older additive export versions stay restorable', () => {
     expect(status).toBe(400);
   });
 });
+
+it('accepts the version it currently emits — the two must not drift', async () => {
+  // The literal list fixed old versions being orphaned but removed the guarantee the
+  // derived form had: that a fresh export can always be re-imported. Bumping
+  // EXPORT_VERSION without touching RESTORABLE_VERSIONS would make the app reject its
+  // own output, which is worse than the bug that motivated the list.
+  const { EXPORT_VERSION, RESTORABLE_VERSIONS } = await import('../src/routes/backup.js');
+  expect(RESTORABLE_VERSIONS as readonly string[]).toContain(EXPORT_VERSION);
+});

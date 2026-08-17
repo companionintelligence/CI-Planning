@@ -403,8 +403,10 @@ export function ElementWizard() {
       setBeneficiaries(b.beneficiaries ?? []);
       setResponsibleTouched(false);
       setBeneficiariesTouched(false);
-      setResponsibleInherit(false);
-      setBeneficiariesInherit(false);
+      // From the payload, not from what happened this session: the client cannot tell
+      // "nobody" from "inheriting" by looking at an empty set.
+      setResponsibleInherit(!!b.responsible_inherited);
+      setBeneficiariesInherit(!!b.beneficiaries_inherited);
       setLocked(!!b.is_locked);
       const ps = rulePreset(b.recurrence_rule);
       setTbRepeat(TB_REPEAT.includes(ps.preset) ? ps.preset : 'custom');
@@ -1385,7 +1387,8 @@ export function ElementWizard() {
                   roster={roster() ?? []}
                   onDirectoryChanged={() => void refetchDirectory()}
                   suggested={!responsibleTouched()}
-                  onInherit={backsATask() ? () => { setResponsibleTouched(true); setResponsibleInherit(true); setResponsible([]); } : undefined}
+                  onInherit={backsATask() ? () => { setResponsibleTouched(true); setResponsibleInherit(true); } : undefined}
+                  onOverride={() => { setResponsibleTouched(true); setResponsibleInherit(false); setResponsible([]); }}
                   inheriting={responsibleInherit()}
                 />
                 <PeopleField
@@ -1396,7 +1399,8 @@ export function ElementWizard() {
                   roster={roster() ?? []}
                   onDirectoryChanged={() => void refetchDirectory()}
                   suggested={!beneficiariesTouched()}
-                  onInherit={backsATask() ? () => { setBeneficiariesTouched(true); setBeneficiariesInherit(true); setBeneficiaries([]); } : undefined}
+                  onInherit={backsATask() ? () => { setBeneficiariesTouched(true); setBeneficiariesInherit(true); } : undefined}
+                  onOverride={() => { setBeneficiariesTouched(true); setBeneficiariesInherit(false); setBeneficiaries([]); }}
                   inheriting={beneficiariesInherit()}
                 />
 

@@ -200,6 +200,28 @@ describe('the suggested hint reflects provenance, not recency', () => {
   });
 });
 
+describe('an inheriting field is distinguishable from an empty one', () => {
+  it('says it is following the task and shows those people, rather than looking empty', () => {
+    render(() => (
+      <PeopleField {...({ ...baseProps(), value: [WIFE], inheriting: true, onOverride: vi.fn() } as Props)} />
+    ));
+    // Collapsing "inheriting" and "nobody" into the same empty field would undo exactly
+    // what the per-role pin exists to separate.
+    expect(screen.getByText('Following the linked task')).toBeTruthy();
+    expect(screen.getByText('Wife')).toBeTruthy();
+    expect(screen.getByText('Override')).toBeTruthy();
+  });
+
+  it('offers Override to stop following, which is the inverse of Use task’s', () => {
+    const onOverride = vi.fn();
+    render(() => (
+      <PeopleField {...({ ...baseProps(), value: [WIFE], inheriting: true, onOverride } as Props)} />
+    ));
+    fireEvent.click(screen.getByText('Override'));
+    expect(onOverride).toHaveBeenCalled();
+  });
+});
+
 describe('the inherit affordance', () => {
   it('offers "Use task’s" only when the field can give up an override', () => {
     const onInherit = vi.fn();

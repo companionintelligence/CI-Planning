@@ -118,12 +118,23 @@ The write API is therefore three-state, per role:
 
 The `null` arm is what makes a pin reversible — without it a block that once had people
 could never track its task again. It is reachable from the UI as **"Use task's"**, shown
-on a task-backed block once it has an override to give up; an API that can express it
-is not the same as a user being able to do it.
+on a task-backed block once it has an override to give up; an API that can express it is
+not the same as a user being able to do it.
 
-Recurring instances re-sync from their template on every materialisation pass, but only
-where the instance still has no people of its own and is not pinned — so a template edit
-reaches every untouched occurrence and leaves a deliberately customised one alone.
+An inheriting field renders differently from an empty one — "Following the linked task"
+plus the task's people, italicised, and an **Override** button — because collapsing those
+two states back into one empty field would undo exactly what the pin exists to separate.
+Which state a block is in is reported by the server (`responsible_inherited` /
+`beneficiaries_inherited`), not inferred client-side: an empty set means "nobody" when
+pinned and "inherit" when not, and the client cannot tell those apart.
+
+Recurring instances take the template's people at materialisation and keep them —
+copy-on-create, exactly like tags and categories. **Known limitation:** editing a
+recurring meeting's attendees reaches occurrences not yet rendered, not ones that already
+exist. A re-sync pass was tried and reverted: an instance created with people never
+matched its "no people of its own" guard, so it was inert while still costing a query per
+template on every planner read. Doing it properly means driving propagation from the
+template WRITE and deciding what happens to customised occurrences — tracked separately.
 
 Recurring block instances copy their template's people and pins, alongside the tags and
 categories they already copied.

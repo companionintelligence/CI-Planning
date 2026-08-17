@@ -47,6 +47,16 @@ import { httpError } from '../lib/http-error.js';
 // defaulted (insertRows intersects with the live table).
 const EXPORT_VERSION = '12';
 
+/**
+ * Older payloads this build can still read. Every change since '6' has been ADDITIVE —
+ * `insertRows` intersects with the live table, so absent keys take column defaults and
+ * retired keys are ignored — which is why old versions stay restorable rather than
+ * ageing out. Append each version as it ships; only remove one when its payload
+ * genuinely cannot be read any more.
+ */
+export const RESTORABLE_VERSIONS = ['6', '7', '8', '9', '10', '11', '12'] as const;
+export { EXPORT_VERSION };
+
 // Owner-scoped tables exported/restored via a direct `WHERE owner_id = ?` query.
 // (Junctions, the tag axis, and full-table dumps are handled explicitly in the payload.)
 const OWNER_TABLES = [
@@ -434,7 +444,12 @@ export function backupRouter() {
     // with the live table, so absent keys take column defaults and retired keys are
     // ignored. Add each new version here as it ships; only remove one when a payload
     // genuinely cannot be read any more.
-    const SUPPORTED_VERSIONS = ['6', '7', '8', '9', '10', '11', '12'];
+    // Every readable version, INCLUDING the current one by construction. The literal
+    // list alone was the other half of the same trap: it fixed old versions being
+    // dropped, but removed the guarantee that a fresh export can be re-imported, so the
+    // next bump would have made the app reject its own output. `RESTORABLE_VERSIONS`
+    // is asserted to contain EXPORT_VERSION by a test, so neither half can rot.
+    const SUPPORTED_VERSIONS = [...new Set([...RESTORABLE_VERSIONS, EXPORT_VERSION])];
     if (!SUPPORTED_VERSIONS.includes(String(body['version']))) {
       ctx.status = 400;
       ctx.body = { error: `Unsupported export version '${body['version']}'; expected one of ${SUPPORTED_VERSIONS.join(', ')}` };
