@@ -403,7 +403,7 @@ export function Focus() {
   );
 
   return (
-    <div class="view-container page-enter max-w-2xl mx-auto">
+    <div class="view-container page-enter">
       {/* Header — the Today-style card container (backlog-3 parity, 2026-07-21): same
           rounded card + right-column button cluster (Brief · Focus goals · day note).
           No day-stepper on purpose: FOCUS is today-only by design (see the view doc

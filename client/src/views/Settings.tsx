@@ -694,7 +694,7 @@ export function Settings() {
   );
 
   return (
-    <div class="view-container page-enter max-w-2xl mx-auto">
+    <div class="view-container page-enter">
       <ViewHeader title="Settings" />
 
       {/* Tab bar */}
