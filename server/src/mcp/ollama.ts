@@ -4,6 +4,7 @@ import { ConnectorUnavailable } from '../lib/connector-error.js';
 import {
   resolveModel,
   resolveEmbedModel,
+  resolveThinking,
   explainModel,
   explainEmbedModel,
   explainModelDefault,
@@ -93,6 +94,16 @@ export const CALL_POLICY = {
 /** The name a call site uses instead of numbers. */
 export type CallPurpose = keyof typeof CALL_POLICY;
 
+/**
+ * Floor applied to `timeoutMs` when thinking is on (0155) — CALL_POLICY's numbers are
+ * measured against non-thinking calls and are too tight for a reasoning pass, which
+ * pays a full model load (tens of seconds for a large model, see lib/models.ts's
+ * measurement note) before it emits a token. A floor, not a replacement: an explicit
+ * `timeoutMs` above this still wins (Math.max), so a purpose that already asks for
+ * longer is never shortened.
+ */
+const THINKING_TIMEOUT_FLOOR_MS = 120_000;
+
 interface GenerateOpts {
   /** Name a row of {@link CALL_POLICY} instead of re-typing tier/temperature/timeout. */
   purpose?: CallPurpose;
@@ -104,6 +115,8 @@ interface GenerateOpts {
   temperature?: number;
   /** Abort if the request takes longer than this (ms). */
   timeoutMs?: number;
+  /** Override the owner's Settings toggle for this one call (tests, forced callers). */
+  think?: boolean;
 }
 
 /**
@@ -166,19 +179,27 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
 export async function generate(prompt: string, opts: GenerateOpts = {}): Promise<string> {
   const call = resolveCall(opts);
   const model = opts.model ?? (await modelFor(call.tier));
+  const thinking = opts.think ?? (await resolveThinking());
   const body = {
     model,
     prompt,
     stream: false,
+    // Explicit either way — never left for Ollama's per-model default, which is what
+    // let a thinking-capable model silently divert its whole answer into a separate
+    // `thinking` field with `response` empty (see lib/models.ts's auto-select note).
+    think: thinking,
     ...(opts.json ? { format: 'json' } : {}),
     ...(opts.system ? { system: opts.system } : {}),
     options: { temperature: call.temperature },
   };
+  // A thinking pass needs materially more time than CALL_POLICY budgets for a direct
+  // answer — see THINKING_TIMEOUT_FLOOR_MS. An explicit opts.timeoutMs still wins.
+  const timeoutMs = thinking ? Math.max(call.timeoutMs, THINKING_TIMEOUT_FLOOR_MS) : call.timeoutMs;
 
   const res = await fetchWithTimeout(
     `${config.ollamaUrl}/api/generate`,
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
-    call.timeoutMs
+    timeoutMs
   );
 
   if (!res.ok) throw await ollamaError('generate', res, model);

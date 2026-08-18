@@ -34,6 +34,7 @@ interface SettingsForm {
   concept_default_minutes: number; concept_autosurface: boolean; concept_horizon_days: number;
   timezone: string; planning_horizon_days: number; recurrence_horizon_days: number;
   fast_model: string; quality_model: string; embed_model: string;
+  llm_thinking_enabled: boolean; // 0155 — opt-in Ollama "thinking" pass, off by default
   memory_sync_enabled: boolean; memory_sync_completed: boolean;
   memory_sync_habits: boolean; memory_sync_reflections: boolean;
   memory_pull_enabled: boolean; // Phase AA — pull memory graph into suggestions
@@ -49,7 +50,7 @@ interface SettingsForm {
 /** The boolean fields of the form — for the reusable Toggle. */
 type BoolField =
   | 'auto_fill_workday' | 'plan_allday_always' | 'plan_daylong_for_promoted' | 'plan_autofill_gaps' | 'concept_autosurface' | 'recall_keeps_pattern' | 'time_sense_enabled'
-  | 'focus_ritual_enabled' | 'haptic_cues_enabled' | 'ambient_color_enabled' | 'calibration_loop_enabled' | 'triality_enabled';
+  | 'focus_ritual_enabled' | 'haptic_cues_enabled' | 'ambient_color_enabled' | 'calibration_loop_enabled' | 'triality_enabled' | 'llm_thinking_enabled';
 
 const DEFAULTS: SettingsForm = {
   auto_fill_workday: true,
@@ -59,7 +60,7 @@ const DEFAULTS: SettingsForm = {
   plan_allday_always: false, plan_daylong_for_promoted: false, plan_autofill_gaps: true,
   concept_default_minutes: 60, concept_autosurface: true, concept_horizon_days: 30,
   timezone: BROWSER_TZ, planning_horizon_days: 3, recurrence_horizon_days: 7,
-  fast_model: '', quality_model: '', embed_model: '',
+  fast_model: '', quality_model: '', embed_model: '', llm_thinking_enabled: false,
   memory_sync_enabled: false, memory_sync_completed: true,
   memory_sync_habits: true, memory_sync_reflections: true,
   memory_pull_enabled: false,
@@ -210,6 +211,7 @@ export function Settings() {
       fast_model:                 p.fast_model ?? '',
       quality_model:              p.quality_model ?? '',
       embed_model:                p.embed_model ?? '',
+      llm_thinking_enabled:       p.llm_thinking_enabled ?? false,
       recall_keeps_pattern:       p.recall_keeps_pattern ?? false,
       time_sense_enabled:         p.time_sense_enabled ?? false,
       focus_ritual_enabled:       p.focus_ritual_enabled ?? true,
@@ -1510,6 +1512,8 @@ export function Settings() {
                   <ModelSelect label="Fast model" hint="extraction & triage" field="fast_model" fallback={integrations()!.ollama.fastModel} />
                   <ModelSelect label="Quality model" hint="briefings" field="quality_model" fallback={integrations()!.ollama.qualityModel} />
                   <ModelSelect label="Embedding model" hint="dedupe" field="embed_model" fallback={integrations()!.ollama.embedModel} />
+                  <Toggle field="llm_thinking_enabled" label="Enable thinking"
+                    hint="Only matters for a reasoning model you've picked above — auto-selected models never think. Slower (longer timeout) and some models still answer empty; off is safer." />
                   <p class="text-[11px] text-muted-foreground">Changes apply on Save.</p>
                 </Show>
               </div>

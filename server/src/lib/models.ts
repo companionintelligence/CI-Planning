@@ -74,12 +74,29 @@ interface ModelPrefs {
   fast_model: string | null;
   quality_model: string | null;
   embed_model: string | null;
+  llm_thinking_enabled: number | null;
 }
 
 async function modelPrefs(owner: string): Promise<ModelPrefs | undefined> {
   return await store()
-    .prepare(`SELECT fast_model, quality_model, embed_model FROM scheduling_prefs WHERE owner_id = ?`)
+    .prepare(`SELECT fast_model, quality_model, embed_model, llm_thinking_enabled FROM scheduling_prefs WHERE owner_id = ?`)
     .get(owner) as ModelPrefs | undefined;
+}
+
+/**
+ * Whether this owner opted in to Ollama's "thinking" pass on generation calls (0155).
+ * Off by default — see the migration's header for why this is opt-in rather than
+ * auto-detected: it needs a materially wider timeout, and some thinking models return
+ * an empty response under `format:json` no matter what `think` is set to, so this can
+ * only help the calls it doesn't hurt, never the reverse.
+ *
+ * Same shape as {@link resolveModel}: no internal try/catch, because `generate()` (the
+ * only caller) only ever runs inside a request, where the default `currentOwnerId()`
+ * resolves fine — a boot-time caller with no owner context would already fail the
+ * same way resolving the model itself.
+ */
+export async function resolveThinking(owner: string = currentOwnerId()): Promise<boolean> {
+  return !!(await modelPrefs(owner))?.llm_thinking_enabled;
 }
 
 /** One entry of Ollama's `/api/tags`, reduced to what selection needs. */
