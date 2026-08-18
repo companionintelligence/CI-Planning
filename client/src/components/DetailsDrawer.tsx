@@ -1,13 +1,13 @@
 import { Show, For, Switch, Match, createSignal, createEffect, createResource, on, onCleanup } from 'solid-js';
 import { useLocation } from '@solidjs/router';
 import { Planner } from './Planner.js';
-import { X, PanelRight, Inbox } from 'lucide-solid';
+import { X, PanelRight, Inbox, Pencil, Sparkles } from 'lucide-solid';
 import {
   detailsOpen, detailsWidth, setDetailsOpen, setDetailsWidth,
   drawerTab, setDrawerTab, DETAILS_MIN_W, DETAILS_MAX_W, DETAILS_DEFAULT_W,
 } from '../stores/ui.js';
 import { activeTask, activeBlock, activeEntity, clearActiveEntity, setActiveTask, setActiveBlock, setActiveEntity, type ActiveEntity } from '../stores/selection.js';
-import { blocks, tasks, taskOf, tags, showToast } from '../stores/index.js';
+import { blocks, tasks, taskOf, tags, showToast, refetchTasks, setElementModal } from '../stores/index.js';
 import { api, type Task, type Block, type Tag, type Person } from '../lib/api.js';
 import { displayTag } from '../lib/tag-tax.js';
 import { LockToggle } from './LockToggle.js';
@@ -57,15 +57,48 @@ function TaskPanel(props: { task: Task }) {
     ...((t().secondary_tags ?? []) as string[]).map((n) => ({ name: n, secondary: true })),
   ];
 
+  // D4 — same on-demand memory enrichment as TaskCard/PlannerEntityCard; only fills
+  // blanks server-side, never rewrites a description or direction the user already chose.
+  const [enriching, setEnriching] = createSignal(false);
+  async function enrich() {
+    setEnriching(true);
+    try {
+      const r = await api.tasks.enrich(t().id);
+      if (r.enriched) {
+        const bits = [
+          r.description && 'description',
+          r.direction && `direction (${r.direction})`,
+          r.categories?.length && `categories (${r.categories.join(', ')})`,
+        ].filter(Boolean);
+        showToast(`Filled in ${bits.join(' + ')}`, 'success');
+        refetchTasks();
+      } else {
+        showToast(r.reason ?? 'Nothing to add', 'default');
+      }
+    } catch (err) { showToast((err as Error).message, 'error'); }
+    finally { setEnriching(false); }
+  }
+  function edit() {
+    setElementModal({ open: true, mode: 'edit', kind: t().is_habit ? 'habit' : 'task', editTarget: { kind: t().is_habit ? 'habit' : 'task', id: t().id } });
+  }
+
   return (
     <>
       <div class="drawer-body">
-        <div class="flex gap-1.5 flex-wrap">
-          <span class="drawer-pill" data-status={blocked() ? 'blocked' : t().status}>
-            {blocked() ? 'Blocked' : t().status}
-          </span>
-          <Show when={t().subtype === 'habit' || t().is_habit}><span class="drawer-pill">Habit</span></Show>
-          <Show when={t().is_fast_task}><span class="drawer-pill">Fast task</span></Show>
+        <div class="flex items-center justify-between gap-2">
+          <div class="flex gap-1.5 flex-wrap">
+            <span class="drawer-pill" data-status={blocked() ? 'blocked' : t().status}>
+              {blocked() ? 'Blocked' : t().status}
+            </span>
+            <Show when={t().subtype === 'habit' || t().is_habit}><span class="drawer-pill">Habit</span></Show>
+            <Show when={t().is_fast_task}><span class="drawer-pill">Fast task</span></Show>
+          </div>
+          <div class="flex gap-1 flex-shrink-0">
+            <button onClick={enrich} disabled={enriching()} class="btn-icon" title="Fill in details from memory">
+              <Sparkles size={13} classList={{ 'animate-pulse': enriching() }} />
+            </button>
+            <button onClick={edit} class="btn-icon" title="Edit"><Pencil size={13} /></button>
+          </div>
         </div>
 
         <Group label="Planning">
