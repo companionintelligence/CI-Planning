@@ -244,6 +244,25 @@ on('possible:suggested', () => refetchSuggestions());
 on('possible:promoted', () => { refetchTasks(); refetchSuggestions(); });
 on('possible:dismissed', () => refetchSuggestions());
 
+// A suggestion can be acted on from two surfaces at once — the "Suggested from
+// email" row (SuggestionsSection) and the Details Drawer (SuggestionPanel), opened
+// on the same suggestion — and promote/dismiss aren't idempotent server-side, so an
+// in-flight action on one surface must disable the other. ONE shared set, not a
+// local signal per component, so both read the same answer to "is this busy?".
+const [suggestionsBusy, setSuggestionsBusy] = createSignal<Set<string>>(new Set());
+export { suggestionsBusy };
+export function isSuggestionBusy(id: string): boolean {
+  return suggestionsBusy().has(id);
+}
+export function setSuggestionBusy(id: string, on: boolean): void {
+  setSuggestionsBusy((prev) => {
+    const next = new Set(prev);
+    if (on) next.add(id);
+    else next.delete(id);
+    return next;
+  });
+}
+
 // ── Phase G: flight-plan, patterns, pattern types ──────────────────────────────
 // The flight-plan is the persisted, owner-scoped staging area the two-step Auto
 // runs over. It survives reloads; Reset clears it. SSE keeps every device in sync.

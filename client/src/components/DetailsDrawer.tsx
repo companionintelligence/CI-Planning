@@ -1,14 +1,17 @@
 import { Show, For, Switch, Match, createSignal, createEffect, createResource, on, onCleanup } from 'solid-js';
 import { useLocation } from '@solidjs/router';
 import { Planner } from './Planner.js';
-import { X, PanelRight, Inbox, Pencil, Sparkles } from 'lucide-solid';
+import { X, PanelRight, Inbox, Pencil, Sparkles, Check } from 'lucide-solid';
 import {
   detailsOpen, detailsWidth, setDetailsOpen, setDetailsWidth,
   drawerTab, setDrawerTab, DETAILS_MIN_W, DETAILS_MAX_W, DETAILS_DEFAULT_W,
 } from '../stores/ui.js';
 import { activeTask, activeBlock, activeEntity, clearActiveEntity, setActiveTask, setActiveBlock, setActiveEntity, type ActiveEntity } from '../stores/selection.js';
-import { blocks, tasks, taskOf, tags, objectives, showToast, refetchTasks, setElementModal } from '../stores/index.js';
-import { api, type Task, type Block, type Tag, type Person } from '../lib/api.js';
+import {
+  blocks, tasks, taskOf, tags, objectives, suggestions, refetchSuggestions,
+  isSuggestionBusy, setSuggestionBusy, connections, showToast, refetchTasks, setElementModal,
+} from '../stores/index.js';
+import { api, type Task, type Block, type Tag, type Person, type PossibleTask } from '../lib/api.js';
 import { displayTag } from '../lib/tag-tax.js';
 import { LockToggle } from './LockToggle.js';
 import { lockAffordance } from '../lib/lock.js';
@@ -617,6 +620,118 @@ function DimensionPanel(props: { dimension: string }) {
   );
 }
 
+/** "Name <email>" → "email"; a bare address passes through unchanged. */
+function extractEmail(raw: string): string {
+  const m = /<([^>]+)>/.exec(raw);
+  return (m ? m[1] : raw).trim();
+}
+
+/**
+ * An unpromoted email suggestion, shown with the same depth as a real task — plus
+ * where it came from. "From"/"Subject" come straight off source_payload, which
+ * ingest already writes for every gmail-sourced row (agents/ingest.ts) — just not
+ * surfaced until now.
+ *
+ * "Connected account" names whichever Google account is CURRENTLY linked in
+ * Settings — not necessarily the mailbox that received THIS message. Ingest never
+ * captures a per-message "To" (see EmailMessage in mcp/google.ts), a pending
+ * suggestion has no expiry, and disconnecting/reconnecting a different account
+ * doesn't touch already-ingested possible_tasks — so an old pending suggestion can
+ * outlive the account it actually came from. Worded as "connected", not "received
+ * at", so it never claims a per-message guarantee it can't back up.
+ */
+function SuggestionPanel(props: { possible: PossibleTask }) {
+  const p = () => props.possible;
+  const busy = () => isSuggestionBusy(p().id);
+  const connectedGoogleEmail = () =>
+    (connections() ?? []).find((c) => c.provider === 'google' && c.status === 'connected')?.account;
+  const responsible = () => (p().detected_people ?? []).filter((d) => d.role === 'responsible');
+
+  // Shared with SuggestionsSection's list row (stores/index.ts) — the same
+  // suggestion can be open here AND listed there, and neither promote nor dismiss
+  // is idempotent server-side, so an in-flight action on one surface must disable
+  // the other rather than risk a duplicate task from a near-simultaneous click.
+  async function promote() {
+    if (busy()) return;
+    setSuggestionBusy(p().id, true);
+    try {
+      const r = await api.possibles.promote(p().id);
+      showToast('Added to your tasks', 'success');
+      // Awaited: setActiveTask below hands the drawer to this id immediately, and
+      // task()/taskOf() only see it once the tasks() resource has actually
+      // refreshed — firing-and-forgetting the refetch flashed an empty drawer.
+      await Promise.all([refetchTasks(), refetchSuggestions()]);
+      setActiveTask(r.task.id);
+    } catch (err) { showToast((err as Error).message, 'error'); }
+    finally { setSuggestionBusy(p().id, false); }
+  }
+  async function dismiss() {
+    if (busy()) return;
+    setSuggestionBusy(p().id, true);
+    try {
+      await api.possibles.dismiss(p().id);
+      showToast('Suggestion dismissed', 'default');
+      refetchSuggestions();
+      clearActiveEntity();
+    } catch (err) { showToast((err as Error).message, 'error'); }
+    finally { setSuggestionBusy(p().id, false); }
+  }
+
+  return (
+    <div class="drawer-body">
+      <div class="flex items-center justify-between gap-2">
+        <span class="drawer-pill">Pending review</span>
+        <div class="flex gap-1 flex-shrink-0">
+          <button onClick={promote} disabled={busy()} class="btn-icon" title="Add this as a task">
+            <Check size={13} classList={{ 'animate-pulse': busy() }} />
+          </button>
+          <button onClick={dismiss} disabled={busy()} class="btn-icon hover:text-red-400" title="Dismiss this suggestion">
+            <X size={13} classList={{ 'animate-pulse': busy() }} />
+          </button>
+        </div>
+      </div>
+
+      <Group label="Planning">
+        <dl class="drawer-grid">
+          <Field label="Priority" when={p().proposed_priority}>P{p().proposed_priority}</Field>
+          <Field label="Estimate" when={p().proposed_estimated_minutes}>{p().proposed_estimated_minutes}m</Field>
+          <Field label="Due" when={p().proposed_due_at}>{new Date(p().proposed_due_at!).toLocaleDateString()}</Field>
+          <Field label="Scheduled" when={p().proposed_scheduled_for}>
+            {p().proposed_scheduled_for}
+            <Show when={p().proposed_task_time}><span class="text-muted-foreground"> at {p().proposed_task_time}</span></Show>
+          </Field>
+          <Field label="Confidence" when={p().confidence != null}>{Math.round((p().confidence ?? 0) * 100)}%</Field>
+        </dl>
+      </Group>
+
+      <Show when={p().raw_summary}>
+        <Group label="Notes">
+          <p class="drawer-note">{p().raw_summary}</p>
+        </Group>
+      </Show>
+
+      <Show when={responsible().length > 0}>
+        <Group label="People">
+          <div class="flex flex-wrap gap-1.5">
+            <For each={responsible()}>{(d) => <span class="drawer-tag">{d.display_name}</span>}</For>
+          </div>
+        </Group>
+      </Show>
+
+      <Show when={p().source_kind}>
+        <Group label="Source">
+          <dl class="drawer-grid">
+            <Field label="Type" when={true}>{p().source_kind}</Field>
+            <Field label="Connected account" when={p().source_kind === 'gmail' && connectedGoogleEmail()}>{connectedGoogleEmail()}</Field>
+            <Field label="From" when={p().source_payload?.from}>{extractEmail(p().source_payload!.from!)}</Field>
+            <Field label="Subject" when={p().source_payload?.subject}>{p().source_payload!.subject}</Field>
+          </dl>
+        </Group>
+      </Show>
+    </div>
+  );
+}
+
 function EmptyPanel(props: { where: string }) {
   return (
     <div class="drawer-empty">
@@ -659,10 +774,26 @@ export function DetailsDrawer() {
     if (e.kind === 'direction' || e.kind === 'category') return (tags() ?? []).find((t) => t.name === e.id);
     return undefined;
   };
+  const suggestion = (): PossibleTask | undefined => {
+    const e = entity();
+    if (e?.kind !== 'suggestion') return undefined;
+    return (suggestions() ?? []).find((p) => p.id === e.id);
+  };
+  // A selected suggestion can vanish out from under the drawer without going
+  // through SuggestionPanel's own promote/dismiss — another tab/device acting on
+  // it fires the same possible:promoted/possible:dismissed SSE events that
+  // refetchSuggestions() everywhere, including here. Without this, the header (kind
+  // ()/title() below, driven off entity().kind alone) keeps reading "Suggestion"
+  // over a body that's already fallen through to the generic empty state. Reconcile
+  // by clearing the stale reference outright, the same "vanished ⇒ deselect" rule
+  // the per-view selection-memory effect already applies on route changes.
+  createEffect(() => {
+    if (entity()?.kind === 'suggestion' && !suggestion()) clearActiveEntity();
+  });
 
   const KIND_LABEL: Record<string, string> = {
     tag: 'Tag', direction: 'Direction', category: 'Category',
-    day: 'Day', job: 'Scheduled job', dimension: 'Life dimension',
+    day: 'Day', job: 'Scheduled job', dimension: 'Life dimension', suggestion: 'Suggestion',
   };
   const title = () => {
     const t = task(); if (t) return t.title;
@@ -674,6 +805,7 @@ export function DetailsDrawer() {
       return Number.isNaN(d.getTime()) ? e.id : d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
     }
     if (e.kind === 'dimension') return displayTag(e.id);
+    if (e.kind === 'suggestion') return suggestion()?.raw_title ?? KIND_LABEL.suggestion;
     const g = entityTag();
     return g ? displayTag(g.name) : KIND_LABEL[e.kind];
   };
@@ -685,7 +817,7 @@ export function DetailsDrawer() {
     '/': 'a task or a scheduled block',
     '/focus': 'a task from the list',
     '/calendar': 'a block or a day header',
-    '/tasks': 'a task',
+    '/tasks': 'a task or a suggestion',
     '/balance': 'a life dimension',
     '/tags': 'a tag or a direction',
     '/jobs': 'a scheduled job',
@@ -829,6 +961,7 @@ export function DetailsDrawer() {
             <Match when={entity()?.kind === 'day' && entity()}>{(e) => <DayPanel date={e().id} />}</Match>
             <Match when={entity()?.kind === 'job' && entity()}>{(e) => <JobPanel id={e().id} />}</Match>
             <Match when={entity()?.kind === 'dimension' && entity()}>{(e) => <DimensionPanel dimension={e().id} />}</Match>
+            <Match when={entity()?.kind === 'suggestion' && suggestion()}>{(s) => <SuggestionPanel possible={s()} />}</Match>
           </Switch>
         </Show>
       </aside>

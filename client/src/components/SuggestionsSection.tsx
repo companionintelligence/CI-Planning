@@ -1,6 +1,11 @@
 import { For, Show, createSignal } from 'solid-js';
 import { ChevronDown, ChevronRight, Check, X, Mail, Users } from 'lucide-solid';
-import { suggestions, refetchSuggestions, mutateSuggestions, refetchTasks, showToast } from '../stores/index.js';
+import {
+  suggestions, refetchSuggestions, mutateSuggestions, refetchTasks, showToast,
+  isSuggestionBusy, setSuggestionBusy,
+} from '../stores/index.js';
+import { setActiveEntity } from '../stores/selection.js';
+import { revealDetails } from '../stores/ui.js';
 import { api, type PossibleTask } from '../lib/api.js';
 
 /**
@@ -18,22 +23,21 @@ import { api, type PossibleTask } from '../lib/api.js';
  */
 export function SuggestionsSection() {
   const [open, setOpen] = createSignal(true);
-  const [busy, setBusy] = createSignal<Set<string>>(new Set());
 
   const items = () => suggestions() ?? [];
 
-  const setRowBusy = (id: string, on: boolean) =>
-    setBusy((prev) => {
-      const next = new Set(prev);
-      if (on) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-
-  /** Optimistically drop the row, then reconcile. On failure put the list back. */
+  /**
+   * Optimistically drop the row, then reconcile. On failure put the list back.
+   *
+   * Busy state is a SHARED store-level set (stores/index.ts), not a local signal:
+   * the same suggestion can also be open in the Details Drawer's SuggestionPanel,
+   * which promotes/dismisses through this identical API — and neither promote nor
+   * dismiss is idempotent server-side, so acting on one surface must disable the
+   * other or the two can race into a duplicate task.
+   */
   async function act(id: string, kind: 'approve' | 'dismiss') {
-    if (busy().has(id)) return;
-    setRowBusy(id, true);
+    if (isSuggestionBusy(id)) return;
+    setSuggestionBusy(id, true);
     const before = items();
     mutateSuggestions(before.filter((p) => p.id !== id));
     try {
@@ -49,7 +53,7 @@ export function SuggestionsSection() {
       mutateSuggestions(before); // the row must not vanish on a failed write
       showToast((err as Error).message, 'error');
     } finally {
-      setRowBusy(id, false);
+      setSuggestionBusy(id, false);
       refetchSuggestions();
     }
   }
@@ -72,7 +76,7 @@ export function SuggestionsSection() {
 
         <Show when={open()}>
           <div class="flex flex-col gap-2 mt-3">
-            <For each={items()}>{(p) => <SuggestionRow p={p} busy={busy().has(p.id)} onAct={act} />}</For>
+            <For each={items()}>{(p) => <SuggestionRow p={p} busy={isSuggestionBusy(p.id)} onAct={act} />}</For>
           </div>
         </Show>
       </div>
@@ -98,7 +102,14 @@ function SuggestionRow(props: {
   const responsible = () => (props.p.detected_people ?? []).filter((d) => d.role === 'responsible');
 
   return (
-    <div class="flex items-start gap-2 rounded-md border border-border px-3 py-2">
+    <div
+      class="flex items-start gap-2 rounded-md border border-border px-3 py-2 cursor-pointer hover:border-ring/60 transition-colors"
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest('button')) return;
+        setActiveEntity('suggestion', props.p.id);
+        revealDetails();
+      }}
+    >
       <div class="flex-1 min-w-0">
         <div class="text-sm text-foreground truncate">{props.p.raw_title}</div>
         <Show when={props.p.raw_summary}>

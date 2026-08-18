@@ -19,6 +19,10 @@ const refetchSuggestionsMock = vi.fn();
 const toastMock = vi.fn();
 
 const [items, setItems] = createSignal<unknown[]>([]);
+// Mirrors the real shared busy-set (stores/index.ts) — the drawer's SuggestionPanel
+// and this list read/write the SAME set, so a suggestion open in both places can't
+// be promoted/dismissed twice at once.
+const [busyIds, setBusyIds] = createSignal<Set<string>>(new Set());
 
 vi.mock('../lib/api.js', () => ({
   api: {
@@ -35,6 +39,14 @@ vi.mock('../stores/index.js', () => ({
   refetchSuggestions: () => refetchSuggestionsMock(),
   refetchTasks: () => refetchTasksMock(),
   showToast: (m: string, k?: string) => toastMock(m, k),
+  isSuggestionBusy: (id: string) => busyIds().has(id),
+  setSuggestionBusy: (id: string, on: boolean) =>
+    setBusyIds((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    }),
 }));
 
 const { SuggestionsSection } = await import('./SuggestionsSection.js');
@@ -46,6 +58,7 @@ function suggestion(id: string, title: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   setItems([]);
+  setBusyIds(new Set<string>());
 });
 
 describe('SuggestionsSection', () => {

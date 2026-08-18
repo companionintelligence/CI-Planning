@@ -47,13 +47,15 @@ const [activeBlock, setActiveBlockId] = createSignal<string | null>(null);
 
 /**
  * Non-task/block entities the details drawer can describe (drawer layout, Phase W
- * of the UI work): tags, tag groups, calendar days, jobs, life dimensions. Kept in
- * the same store as activeTask/activeBlock so there is still exactly one answer to
- * "what is selected?" — setting any one of the three clears the other two.
+ * of the UI work): tags, tag groups, calendar days, jobs, life dimensions, and
+ * unpromoted email suggestions. Kept in the same store as activeTask/activeBlock so
+ * there is still exactly one answer to "what is selected?" — setting any one of the
+ * three clears the other two.
  * `id` is the tag id for 'tag', the group NAME for direction/category, the ISO
- * date for 'day', the job id for 'job', and the category key for 'dimension'.
+ * date for 'day', the job id for 'job', the category key for 'dimension', and the
+ * possible_tasks id for 'suggestion'.
  */
-export type EntityKind = 'tag' | 'direction' | 'category' | 'day' | 'job' | 'dimension';
+export type EntityKind = 'tag' | 'direction' | 'category' | 'day' | 'job' | 'dimension' | 'suggestion';
 export interface ActiveEntity { kind: EntityKind; id: string }
 const [activeEntity, setActiveEntitySignal] = createSignal<ActiveEntity | null>(null);
 

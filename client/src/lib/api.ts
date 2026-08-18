@@ -1596,6 +1596,10 @@ export interface PossibleTask {
   proposed_task_time?: string | null;
   source_kind?: string | null;
   source_ref?: string | null;
+  /** Producer-specific extras (Drizzle json-mode column, already parsed server-side —
+   *  never a string over the wire). For source_kind 'gmail': the sender + subject line
+   *  ingest read off the raw message. Other producers may populate different keys. */
+  source_payload?: { from?: string; subject?: string } | null;
   confidence?: number | null;
   status: string;
   created_at: string;
