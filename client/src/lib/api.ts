@@ -386,16 +386,19 @@ export const api = {
       request<{ tagged: number; total: number; log: string }>('POST', '/tasks/auto-tag', taskIds ? { task_ids: taskIds } : {}),
     update: (
       id: string,
-      // due_at / scheduled_for / task_time accept null so a "clear" sends an explicit
-      // null (JSON.stringify drops `undefined`, so undefined would no-op server-side).
+      // due_at / scheduled_for / task_time / defer_until accept null so a "clear" sends
+      // an explicit null (JSON.stringify drops `undefined`, so undefined would no-op
+      // server-side — services/tasks.ts's `input.defer_until !== undefined` guard is
+      // what makes a real null clear it there, same as the other three).
       body: Partial<
-        Omit<TaskInput, 'due_at' | 'scheduled_for' | 'task_time'> & {
+        Omit<TaskInput, 'due_at' | 'scheduled_for' | 'task_time' | 'defer_until'> & {
           status: string;
           completed: boolean;
           completed_at?: string | null;
           due_at?: string | null;
           scheduled_for?: string | null;
           task_time?: string | null;
+          defer_until?: string | null;
         }
       >,
       scope?: 'instance' | 'series',

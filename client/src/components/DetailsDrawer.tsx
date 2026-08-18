@@ -7,11 +7,14 @@ import {
   drawerTab, setDrawerTab, DETAILS_MIN_W, DETAILS_MAX_W, DETAILS_DEFAULT_W,
 } from '../stores/ui.js';
 import { activeTask, activeBlock, activeEntity, clearActiveEntity, setActiveTask, setActiveBlock, setActiveEntity, type ActiveEntity } from '../stores/selection.js';
-import { blocks, tasks, taskOf, tags, showToast, refetchTasks, setElementModal } from '../stores/index.js';
+import { blocks, tasks, taskOf, tags, objectives, showToast, refetchTasks, setElementModal } from '../stores/index.js';
 import { api, type Task, type Block, type Tag, type Person } from '../lib/api.js';
 import { displayTag } from '../lib/tag-tax.js';
 import { LockToggle } from './LockToggle.js';
 import { lockAffordance } from '../lib/lock.js';
+import { PriorityToggle, DateField } from './TaskCard.js';
+import { flattenObjectives } from '../lib/objectives.js';
+import { describeRule } from '../lib/recurrence.js';
 
 const PRIORITY_NAME: Record<number, string> = { 1: 'High', 2: 'Medium', 3: 'Low' };
 
@@ -20,6 +23,13 @@ function fmtClock(iso: string): string {
   return Number.isNaN(d.getTime())
     ? '—'
     : d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+}
+
+function fmtDate(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? '—'
+    : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 /**
@@ -49,8 +59,8 @@ function Group(props: { label: string; children?: any }) {
   );
 }
 
-function TaskPanel(props: { task: Task }) {
-  const t = () => props.task;
+function TaskPanel(props: { task: () => Task }) {
+  const t = () => props.task();
   const blocked = () => t().status === 'blocked' || !!t().blocked;
   const tagList = () => [
     ...((t().tags ?? []) as string[]).map((n) => ({ name: n, secondary: false })),
@@ -82,6 +92,77 @@ function TaskPanel(props: { task: Task }) {
     setElementModal({ open: true, mode: 'edit', kind: t().is_habit ? 'habit' : 'task', editTarget: { kind: t().is_habit ? 'habit' : 'task', id: t().id } });
   }
 
+  // Scalar fields (title/priority/dates/estimate/notes) edit inline, right here.
+  // Anything relational — tags/direction, people, categories, recurrence, routine
+  // membership — still routes through Edit → the wizard, which already has the
+  // pickers for those; duplicating them here would be a second place to keep in sync.
+  async function patch(body: Parameters<typeof api.tasks.update>[1]) {
+    try { await api.tasks.update(t().id, body); refetchTasks(); }
+    catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
+  const [editingTitle, setEditingTitle] = createSignal(false);
+  const [titleDraft, setTitleDraft] = createSignal('');
+  function startTitle() { setTitleDraft(t().title); setEditingTitle(true); }
+  function commitTitle() {
+    setEditingTitle(false);
+    const v = titleDraft().trim();
+    if (v && v !== t().title) patch({ title: v });
+  }
+
+  const [editingEstimate, setEditingEstimate] = createSignal(false);
+  const [estimateDraft, setEstimateDraft] = createSignal('');
+  function startEstimate() { setEstimateDraft(String(t().estimated_minutes ?? '')); setEditingEstimate(true); }
+  function commitEstimate() {
+    setEditingEstimate(false);
+    const n = Math.round(Number(estimateDraft()));
+    if (Number.isFinite(n) && n > 0 && n !== t().estimated_minutes) patch({ estimated_minutes: n });
+  }
+
+  const [editingNotes, setEditingNotes] = createSignal(false);
+  const [notesDraft, setNotesDraft] = createSignal('');
+  function startNotes() { setNotesDraft(t().notes ?? t().description ?? ''); setEditingNotes(true); }
+  function commitNotes() {
+    setEditingNotes(false);
+    const v = notesDraft().trim();
+    // Matches the wizard's own note field: omitting on empty (rather than sending an
+    // explicit clear) means an emptied note doesn't erase an existing one server-side —
+    // same partial-PATCH contract saveElement already relies on.
+    if (v !== (t().notes ?? t().description ?? '')) patch({ notes: v || undefined });
+  }
+
+  // Priority / dates: confirm-then-write, matching TaskCard's inline edits (T-TASKS-2).
+  function setPriority(v: number) {
+    if (v === t().priority) return;
+    if (!confirm(`Change priority to ${PRIORITY_NAME[v] ?? `P${v}`}?`)) return;
+    patch({ priority: v });
+  }
+  function setDue(v: string) {
+    if (!confirm(v ? `Set the due date to ${v}?` : 'Clear the due date?')) return;
+    patch({ due_at: v || null });
+  }
+  function setScheduled(v: string) {
+    if (!confirm(v ? `Set the start date to ${v}?` : 'Clear the start date? This unschedules the task.')) return;
+    patch({ scheduled_for: v || null });
+  }
+  function setDefer(v: string) {
+    if (!confirm(v ? `Defer this task until ${v}?` : 'Clear the deferred-until date?')) return;
+    // defer_until stores a full ISO instant (unlike due_at/scheduled_for) — same
+    // midnight-local conversion saveElement uses for it.
+    patch({ defer_until: v ? new Date(v + 'T00:00:00').toISOString() : null });
+  }
+
+  // Read-only relational facts, resolved from stores already loaded app-wide.
+  const objectiveNames = () => {
+    const ids = t().objective_ids?.length ? t().objective_ids! : t().objective_id ? [t().objective_id!] : [];
+    if (!ids.length) return [];
+    const flat = flattenObjectives(objectives() ?? []);
+    return ids.map((id) => flat.find((o) => o.id === id)?.title).filter((x): x is string => !!x);
+  };
+  const dependsOnTasks = () => (t().depends_on ?? []).map((id) => taskOf(id)).filter((x): x is Task => !!x);
+  const parentTask = () => (t().parent_id ? taskOf(t().parent_id) : undefined);
+  const recurringParent = () => (t().recurrence_parent_id ? taskOf(t().recurrence_parent_id) : undefined);
+
   return (
     <>
       <div class="drawer-body">
@@ -97,25 +178,68 @@ function TaskPanel(props: { task: Task }) {
             <button onClick={enrich} disabled={enriching()} class="btn-icon" title="Fill in details from memory">
               <Sparkles size={13} classList={{ 'animate-pulse': enriching() }} />
             </button>
-            <button onClick={edit} class="btn-icon" title="Edit"><Pencil size={13} /></button>
+            <button onClick={edit} class="btn-icon" title="Edit tags, people, recurrence & more"><Pencil size={13} /></button>
           </div>
         </div>
 
+        {/* Title — the header above still shows it read-only for orientation while the
+            drawer is scrolled past this row. */}
+        <Show
+          when={editingTitle()}
+          fallback={
+            <button type="button" class="text-left text-sm font-medium text-foreground hover:text-primary transition-colors" onClick={startTitle} title="Edit title">
+              {t().title}
+            </button>
+          }
+        >
+          <input
+            class="w-full bg-transparent border border-border rounded px-1.5 py-1 text-sm outline-none focus:border-primary"
+            value={titleDraft()}
+            autofocus
+            onInput={(e) => setTitleDraft(e.currentTarget.value)}
+            onBlur={commitTitle}
+            onKeyDown={(e) => { if (e.key === 'Enter') commitTitle(); if (e.key === 'Escape') setEditingTitle(false); }}
+          />
+        </Show>
+
         <Group label="Planning">
           <dl class="drawer-grid">
-            <Field label="Priority" when={t().priority}>
-              {PRIORITY_NAME[t().priority] ?? '—'}
-              <span class="text-muted-foreground"> · P{t().priority}</span>
+            <Field label="Priority" when={true}>
+              <PriorityToggle value={t().priority} onPick={setPriority} />
             </Field>
-            <Field label="Estimate" when={t().estimated_minutes}>
-              {t().estimated_minutes}m
-              <Show when={t().actual_minutes}>
-                <span class="text-muted-foreground"> · {t().actual_minutes}m logged</span>
+            <Field label="Estimate" when={true}>
+              <Show
+                when={editingEstimate()}
+                fallback={
+                  <button type="button" class="hover:text-primary transition-colors" onClick={startEstimate}>
+                    {t().estimated_minutes ? `${t().estimated_minutes}m` : <span class="text-muted-foreground">Not estimated</span>}
+                    <Show when={t().actual_minutes}>
+                      <span class="text-muted-foreground"> · {t().actual_minutes}m logged</span>
+                    </Show>
+                  </button>
+                }
+              >
+                <input
+                  type="number" min="1" step="5"
+                  class="w-16 bg-transparent border border-border rounded px-1.5 py-0.5 text-sm outline-none focus:border-primary"
+                  value={estimateDraft()}
+                  autofocus
+                  onInput={(e) => setEstimateDraft(e.currentTarget.value)}
+                  onBlur={commitEstimate}
+                  onKeyDown={(e) => { if (e.key === 'Enter') commitEstimate(); if (e.key === 'Escape') setEditingEstimate(false); }}
+                /> m
               </Show>
             </Field>
-            <Field label="Scheduled" when={true}>{t().scheduled_for ?? <span class="text-muted-foreground">Unscheduled</span>}</Field>
-            <Field label="Due" when={true}>{t().due_at ?? <span class="text-muted-foreground">No due date</span>}</Field>
-            <Field label="Deferred to" when={t().defer_until}>{t().defer_until}</Field>
+            <Field label="Dates" when={true}>
+              <div class="flex flex-wrap gap-1.5">
+                <DateField label="Due" value={t().due_at} onSet={setDue} />
+                <DateField label="Start" value={t().scheduled_for} onSet={setScheduled} />
+                <DateField label="Defer" value={t().defer_until} onSet={setDefer} />
+              </div>
+              <Show when={t().task_time}>
+                <div class="text-muted-foreground mt-1">at {t().task_time}</div>
+              </Show>
+            </Field>
           </dl>
         </Group>
 
@@ -132,11 +256,35 @@ function TaskPanel(props: { task: Task }) {
           </Show>
         </Group>
 
-        <Show when={t().description || t().notes}>
-          <Group label="Notes">
-            <p class="drawer-note">{t().notes ?? t().description}</p>
+        <Show when={(t().categories ?? []).length > 0}>
+          <Group label="Categories">
+            <div class="flex flex-wrap gap-1.5">
+              <For each={t().categories}>{(c) => <span class="drawer-tag">{c}</span>}</For>
+            </div>
           </Group>
         </Show>
+
+        <Group label="Notes">
+          <Show
+            when={editingNotes()}
+            fallback={
+              <button type="button" class="text-left w-full" onClick={startNotes} title="Edit notes">
+                <Show when={t().notes || t().description} fallback={<span class="text-xs text-muted-foreground">No notes — click to add</span>}>
+                  <p class="drawer-note hover:text-primary transition-colors">{t().notes ?? t().description}</p>
+                </Show>
+              </button>
+            }
+          >
+            <textarea
+              class="w-full bg-transparent border border-border rounded px-1.5 py-1 text-sm outline-none focus:border-primary resize-y min-h-[4.5rem]"
+              value={notesDraft()}
+              autofocus
+              onInput={(e) => setNotesDraft(e.currentTarget.value)}
+              onBlur={commitNotes}
+              onKeyDown={(e) => { if (e.key === 'Escape') setEditingNotes(false); }}
+            />
+          </Show>
+        </Group>
 
         {/* People on work (0151) — read-only here; the wizard is where they are edited.
             Rendered ABOVE Context because "who" is a first-class fact about the task,
@@ -151,11 +299,66 @@ function TaskPanel(props: { task: Task }) {
           </Group>
         </Show>
 
+        <Show when={dependsOnTasks().length > 0}>
+          <Group label="Depends on">
+            <div class="flex flex-col gap-1 items-start">
+              <For each={dependsOnTasks()}>
+                {(dep) => (
+                  <button type="button" class="drawer-tag text-left cursor-pointer hover:border-ring" onClick={() => setActiveTask(dep.id)}>
+                    {dep.title}
+                  </button>
+                )}
+              </For>
+            </div>
+          </Group>
+        </Show>
+
+        <Show when={parentTask() || recurringParent() || t().recurrence_rule}>
+          <Group label="Relationships">
+            <dl class="drawer-grid">
+              <Field label="Subtask of" when={parentTask()}>
+                <button type="button" class="drawer-tag text-left cursor-pointer hover:border-ring" onClick={() => setActiveTask(parentTask()!.id)}>
+                  {parentTask()!.title}
+                </button>
+              </Field>
+              <Field label="Recurring" when={t().recurrence_rule}>{describeRule(t().recurrence_rule!)}</Field>
+              <Field label="Instance of" when={recurringParent()}>
+                <button type="button" class="drawer-tag text-left cursor-pointer hover:border-ring" onClick={() => setActiveTask(recurringParent()!.id)}>
+                  {recurringParent()!.title}
+                </button>
+                <Show when={t().occurrence_date}><span class="text-muted-foreground"> · {t().occurrence_date}</span></Show>
+              </Field>
+            </dl>
+          </Group>
+        </Show>
+
+        <Show when={objectiveNames().length > 0}>
+          <Group label="Objective">
+            <div class="flex flex-wrap gap-1.5">
+              <For each={objectiveNames()}>{(name) => <span class="drawer-tag">{name}</span>}</For>
+            </div>
+          </Group>
+        </Show>
+
+        <Show when={t().completion_mood || t().completion_note}>
+          <Group label="Reflection">
+            <dl class="drawer-grid">
+              <Field label="Mood" when={t().completion_mood}>{t().completion_mood}</Field>
+              <Field label="Note" when={t().completion_note}>{t().completion_note}</Field>
+            </dl>
+          </Group>
+        </Show>
+
         <Show when={t().motivation || t().source_kind}>
           <Group label="Context">
             <dl class="drawer-grid">
-              <Field label="Motivation" when={t().motivation}>{t().motivation}</Field>
+              <Field label="Motivation" when={t().motivation}>
+                {t().motivation}
+                <Show when={t().motivation_source === 'llm'}><span class="text-muted-foreground"> · detected</span></Show>
+              </Field>
               <Field label="Source" when={t().source_kind}>{t().source_kind}</Field>
+              <Field label="Created" when={t().created_at}>{fmtDate(t().created_at)}</Field>
+              <Field label="Completed" when={t().completed_at}>{fmtDate(t().completed_at!)}</Field>
             </dl>
           </Group>
         </Show>
@@ -609,7 +812,15 @@ export function DetailsDrawer() {
           fallback={<div class="drawer-body drawer-body-flush"><Planner /></div>}
         >
           <Switch fallback={<EmptyPanel where={emptyWhere()} />}>
-            <Match when={task()}>{(t) => <TaskPanel task={t()} />}</Match>
+            {/* Truthiness-only match, passing the stable `task` accessor rather than a
+                snapshotted value: the callback-children form of Match is KEYED — it
+                remounts its children on every reference change to `task()`, which
+                happens on every tasks() refetch (SSE task:updated, background jobs)
+                even when THIS task's data hasn't changed. TaskPanel now holds local
+                draft state for inline editing, so a remount there silently discarded
+                whatever the user was mid-typing. Reading through a stable accessor
+                keeps the component mounted (and its drafts alive) across refetches. */}
+            <Match when={!!task()}><TaskPanel task={() => task()!} /></Match>
             <Match when={block()}>{(b) => <BlockPanel block={b()} />}</Match>
             <Match when={entity()?.kind === 'tag' && entityTag()}>{(g) => <TagPanel tag={g()} />}</Match>
             <Match when={(entity()?.kind === 'direction' || entity()?.kind === 'category') && entityTag()}>

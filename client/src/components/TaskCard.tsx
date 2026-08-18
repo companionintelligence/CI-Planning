@@ -29,7 +29,7 @@ const PRIO: { label: string; value: number; bg: string; fg: string }[] = [
   { label: 'Later', value: 4, bg: '#244859', fg: '#fff' },
 ];
 
-function PriorityToggle(props: { value: number; onPick: (v: number) => void }) {
+export function PriorityToggle(props: { value: number; onPick: (v: number) => void }) {
   const isSel = (optVal: number) => (optVal === 4 ? props.value >= 4 : props.value === optVal);
   return (
     <div class="inline-flex h-8 rounded-lg border border-border overflow-hidden text-[10px] font-semibold flex-shrink-0" role="group" title="Priority">
@@ -53,7 +53,7 @@ function PriorityToggle(props: { value: number; onPick: (v: number) => void }) {
 // Compact inline date field: a calendar-icon BUTTON that opens the native date
 // picker, plus a clear (×) button to reset the date. Matches the Today/Settings
 // "pick a day" pattern but with an explicit trigger + reset.
-function DateField(props: {
+export function DateField(props: {
   label: string;
   value?: string | null;
   overdue?: boolean;
