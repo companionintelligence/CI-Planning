@@ -447,7 +447,11 @@ export async function ingestEmails(
       await runExtraction(
         { kind: 'gmail', ref: email.id, subject: email.subject, text: email.body, at: email.receivedAt },
         opts.tier ?? 'quality',
-        { from: email.from, subject: email.subject },
+        // Fixture mode (no real account connected) reads canned sample mail — marked so
+        // the review-gated read (routes/possibles.ts `?review=1`) can keep it out of
+        // "Suggested from email": that queue must never show a suggestion that didn't
+        // come from a real inbox.
+        { from: email.from, subject: email.subject, ...(client.mode === 'fixture' ? { fixture: true } : {}) },
         result
       );
     } catch (err) {

@@ -25,10 +25,18 @@ export function possiblesRouter() {
   // `review=1` narrows to the review-gated sources (email) — the queue the client's
   // suggestions surface renders. Without it the response is unchanged, so every
   // existing consumer (and the characterization snapshot) sees exactly what it did.
+  //
+  // Also excludes fixture-sourced rows (agents/ingest.ts stamps source_payload.fixture
+  // when GOOGLE_MODE=fixture — no real account connected): with no real inbox behind it
+  // there is nothing genuine to suggest, and this queue must never present canned sample
+  // mail as if it were a real suggestion. Fixture rows still exist in possible_tasks
+  // (seed/test tooling reads them directly) — only this review-gated surface hides them.
   router.get('/api/possible-tasks', async (ctx) => {
     const { status = 'pending', review } = ctx.query as Record<string, string>;
     const rows = await listPossibles(currentOwnerId(), status);
-    const filtered = review ? rows.filter((r) => requiresReview(r.sourceKind)) : rows;
+    const filtered = review
+      ? rows.filter((r) => requiresReview(r.sourceKind) && !(r.sourcePayload as { fixture?: boolean } | null)?.fixture)
+      : rows;
     // 0151: who ingest recognised on each suggestion, so the owner sees it BEFORE
     // approving — the point of detecting at suggestion time rather than after.
     const people = await detectedPeopleByPossible(filtered.map((r) => r.id));

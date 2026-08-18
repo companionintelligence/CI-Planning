@@ -22,6 +22,15 @@ function insertPossible(rawTitle: string, owner = OWNER, status = 'pending'): st
     .prepare(`INSERT INTO possible_tasks (id, raw_title, status, proposed_owner_id) VALUES (uuid7(), ?, ?, ?) RETURNING id`)
     .get(rawTitle, status, owner) as { id: string }).id;
 }
+/** A gmail-sourced possible, optionally stamped with the fixture-mode source_payload marker. */
+function insertEmailPossible(rawTitle: string, opts: { fixture?: boolean } = {}, owner = OWNER): string {
+  return (sqlite
+    .prepare(
+      `INSERT INTO possible_tasks (id, raw_title, source_kind, source_ref, source_payload, status, proposed_owner_id)
+       VALUES (uuid7(), ?, 'gmail', ?, ?, 'pending', ?) RETURNING id`,
+    )
+    .get(rawTitle, rawTitle, opts.fixture ? JSON.stringify({ fixture: true }) : null, owner) as { id: string }).id;
+}
 function possibleStatus(id: string): string | undefined {
   return (sqlite.prepare(`SELECT status FROM possible_tasks WHERE id = ?`).get(id) as { status: string } | undefined)?.status;
 }
@@ -286,5 +295,48 @@ describe('promoteAllPending (AF-3)', () => {
     expect(placementSeqs.length).toBeGreaterThan(0); // fixture really triggered placement
     for (const p of promotedSeqs) for (const s of placementSeqs) expect(p).toBeLessThan(s);
     expect([possibleStatus(p1), possibleStatus(p2)]).toEqual(['promoted', 'promoted']);
+  });
+});
+
+describe('possibles REST — review-gated read excludes fixture suggestions', () => {
+  // "Suggested from email" (client SuggestionsSection.tsx) is fed by GET
+  // /api/possible-tasks?review=1. With no real account connected, GOOGLE_MODE=fixture
+  // ingest (agents/ingest.ts) still populates possible_tasks from committed sample mail
+  // so the pipeline is exercisable offline — those rows are stamped
+  // source_payload.fixture=true and must never reach this queue: there is nothing genuine
+  // behind them, so presenting them as suggestions would be fabricating tasks.
+  it('a fixture-marked email possible is invisible to ?review=1 …', async () => {
+    insertEmailPossible('Confirm the wire', { fixture: true });
+
+    const res = await api(srv.url, '/api/possible-tasks?review=1');
+
+    expect(res.body.possibles).toEqual([]);
+  });
+
+  it('… but a genuine (non-fixture) email possible still surfaces', async () => {
+    const id = insertEmailPossible('Reply to the vendor');
+
+    const res = await api(srv.url, '/api/possible-tasks?review=1');
+
+    expect(res.body.possibles.map((p: any) => p.id)).toEqual([id]);
+  });
+
+  it('the unfiltered read is unaffected — fixture rows still exist for seed/test tooling', async () => {
+    const fixtureId = insertEmailPossible('Confirm the wire', { fixture: true });
+    const realId = insertEmailPossible('Reply to the vendor');
+
+    const res = await api(srv.url, '/api/possible-tasks');
+
+    expect(res.body.possibles.map((p: any) => p.id).sort()).toEqual([fixtureId, realId].sort());
+  });
+
+  it('a mix of fixture and genuine email possibles: only the genuine one is suggested', async () => {
+    insertEmailPossible('Confirm the wire', { fixture: true });
+    insertEmailPossible('Book the follow-on sync', { fixture: true });
+    const realId = insertEmailPossible('Reply to the vendor');
+
+    const res = await api(srv.url, '/api/possible-tasks?review=1');
+
+    expect(res.body.possibles.map((p: any) => p.id)).toEqual([realId]);
   });
 });
