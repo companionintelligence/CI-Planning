@@ -7,7 +7,7 @@ import {
 } from '../stores/index.js';
 import { activeTask, activeBlock, clearActiveEntity } from '../stores/selection.js';
 import { detailsOpen } from '../stores/ui.js';
-import { api, type Block, type Task, type RecurringScope } from '../lib/api.js';
+import { api, type Block, type Task, type Person, type RecurringScope } from '../lib/api.js';
 import { directionColorForTask, BASE_TAG_DEFAULTS } from '../lib/pattern-meta.js';
 import { isPromotableToObjective } from '../lib/objective-promote.js';
 import { blockColorVar } from '../lib/textures.js';
@@ -121,6 +121,16 @@ export function PlannerEntityCard(props: {
     return t?.tags?.[0] ? [`#${t.tags[0]}`] : [];
   };
   const secondary = () => task()?.secondary_tags ?? blockSel()?.secondary_tags ?? [];
+  // People on work (0151) — the block's EFFECTIVE sets (own, else inherited from its
+  // task; resolved server-side) when scheduled, else the bare task's own sets when
+  // not scheduled today. Mirrors DetailsDrawer's BlockPanel/TaskPanel split so a task
+  // reads the same set of people everywhere it's viewed.
+  const people = (): { responsible: Person[]; beneficiaries: Person[] } => {
+    const b = block();
+    if (b) return { responsible: b.responsible ?? [], beneficiaries: b.beneficiaries ?? [] };
+    const t = task();
+    return { responsible: t?.responsible ?? [], beneficiaries: t?.beneficiaries ?? [] };
+  };
   const durationMin = () => {
     const b = block();
     return b ? Math.round((Date.parse(b.end_at) - Date.parse(b.start_at)) / 60000) : undefined;
@@ -344,6 +354,22 @@ export function PlannerEntityCard(props: {
             <div class="flex flex-wrap items-center gap-1">
               <For each={groupLabels()}>{(lbl) => <span class="text-[11px] px-1.5 py-0.5 rounded-full" style={{ color: accent(), 'background-color': `color-mix(in srgb, ${accent()} 14%, transparent)` }}>{lbl}</span>}</For>
               <For each={secondary()}>{(name) => <span class="text-[10px] px-1.5 py-0.5 rounded-full border border-border/60 text-muted-foreground">{name}</span>}</For>
+            </div>
+          </Show>
+          <Show when={people().responsible.length > 0 || people().beneficiaries.length > 0}>
+            <div class="flex flex-col gap-1">
+              <Show when={people().responsible.length > 0}>
+                <div class="flex items-baseline gap-1.5 flex-wrap">
+                  <span class="text-[10px] uppercase tracking-wide text-muted-foreground flex-shrink-0">Responsible</span>
+                  <For each={people().responsible}>{(p) => <span class="text-[10px] px-1.5 py-0.5 rounded-full border border-border/60 text-muted-foreground">{p.display_name}</span>}</For>
+                </div>
+              </Show>
+              <Show when={people().beneficiaries.length > 0}>
+                <div class="flex items-baseline gap-1.5 flex-wrap">
+                  <span class="text-[10px] uppercase tracking-wide text-muted-foreground flex-shrink-0">Beneficiaries</span>
+                  <For each={people().beneficiaries}>{(p) => <span class="text-[10px] px-1.5 py-0.5 rounded-full border border-border/60 text-muted-foreground">{p.display_name}</span>}</For>
+                </div>
+              </Show>
             </div>
           </Show>
           <Show when={rationale()}>
