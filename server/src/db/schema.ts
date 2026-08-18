@@ -302,6 +302,10 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   fastModel: text('fast_model'),       // extraction / triage
   qualityModel: text('quality_model'), // briefings
   embedModel: text('embed_model'),     // dedupe embeddings
+  // Opt-in "thinking" pass on generation calls (0155) — off by default, since it needs a
+  // wider timeout and some thinking models return an empty response under format:json
+  // regardless. See mcp/ollama.ts generate() and lib/models.ts's auto-select exclusion.
+  llmThinkingEnabled: integer('llm_thinking_enabled', { mode: 'boolean' }).default(false),
   // Companion Memory sync (one-way push; off by default). 0012.
   memorySyncEnabled: integer('memory_sync_enabled', { mode: 'boolean' }).default(false),
   memorySyncCompleted: integer('memory_sync_completed', { mode: 'boolean' }).default(true),

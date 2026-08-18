@@ -1287,6 +1287,10 @@ export interface Prefs {
   recurrence_horizon_days?: number; // Phase P: how far ahead recurrence materializes (7/15/30/60/90/180)
   // Ollama model overrides (null/'' = use env default).
   fast_model?: string | null; quality_model?: string | null; embed_model?: string | null;
+  // Opt-in "thinking" pass on generation calls (0155); default false. See
+  // server/src/mcp/ollama.ts generate() — needs a wider timeout, and some thinking
+  // models return an empty response under format:json regardless of this setting.
+  llm_thinking_enabled?: boolean;
   // Companion Memory sync.
   memory_sync_enabled?: boolean; memory_sync_completed?: boolean;
   memory_sync_habits?: boolean; memory_sync_reflections?: boolean;

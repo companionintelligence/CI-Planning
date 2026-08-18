@@ -1457,6 +1457,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "triality_enabled",
       "memory_window_days",
       "email_lookback_days",
+      "llm_thinking_enabled",
     ],
     "table": "scheduling_prefs",
   },

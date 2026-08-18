@@ -154,6 +154,28 @@ export function PlannerEntityCard(props: {
     if (t) { setElementModal({ open: true, mode: 'edit', kind: t.is_habit ? 'habit' : 'task', editTarget: { kind: t.is_habit ? 'habit' : 'task', id: t.id } }); return; }
     showToast('Nothing to edit on this block', 'default');
   }
+  // D4 — same on-demand memory enrichment as TaskCard; only fills blanks server-side,
+  // never rewrites a description or direction the user already chose.
+  const [enriching, setEnriching] = createSignal(false);
+  async function enrich() {
+    const t = task(); if (!t) return;
+    setEnriching(true);
+    try {
+      const r = await api.tasks.enrich(t.id);
+      if (r.enriched) {
+        const bits = [
+          r.description && 'description',
+          r.direction && `direction (${r.direction})`,
+          r.categories?.length && `categories (${r.categories.join(', ')})`,
+        ].filter(Boolean);
+        showToast(`Filled in ${bits.join(' + ')}`, 'success');
+        refetchTasks();
+      } else {
+        showToast(r.reason ?? 'Nothing to add', 'default');
+      }
+    } catch (err) { showToast((err as Error).message, 'error'); }
+    finally { setEnriching(false); }
+  }
   async function promoteHabit() {
     const t = task(); if (!t) return;
     try { await api.tasks.promoteHabit(t.id); showToast(`"${t.title}" is now a habit`, 'success'); }
@@ -371,6 +393,11 @@ export function PlannerEntityCard(props: {
         {/* Actions */}
         <div class="flex flex-wrap items-center gap-1 px-2.5 py-2 border-t border-border bg-card/40">
           <button onClick={edit} class="btn-ghost text-xs px-2 py-1"><Pencil size={13} /> Edit</button>
+          <Show when={task() && !isContainer()}>
+            <button onClick={enrich} disabled={enriching()} class="btn-ghost text-xs px-2 py-1" title="Fill in details from memory">
+              <Sparkles size={13} classList={{ 'animate-pulse': enriching() }} /> Enrich
+            </button>
+          </Show>
           <Show when={isContainer()}>
             {/* §L: quick-add a routine's tasks into this Plan. */}
             <div class="relative">
