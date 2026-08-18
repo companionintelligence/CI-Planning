@@ -95,12 +95,12 @@ export const CALL_POLICY = {
 export type CallPurpose = keyof typeof CALL_POLICY;
 
 /**
- * Floor applied to `timeoutMs` when thinking is on (0155) — CALL_POLICY's numbers are
- * measured against non-thinking calls and are too tight for a reasoning pass, which
- * pays a full model load (tens of seconds for a large model, see lib/models.ts's
- * measurement note) before it emits a token. A floor, not a replacement: an explicit
- * `timeoutMs` above this still wins (Math.max), so a purpose that already asks for
- * longer is never shortened.
+ * Floor applied to a PURPOSE's `timeoutMs` when thinking is on (0155) — CALL_POLICY's
+ * numbers are measured against non-thinking calls and are too tight for a reasoning
+ * pass, which pays a full model load (tens of seconds for a large model, see
+ * lib/models.ts's measurement note) before it emits a token. Only ever raises the
+ * policy default: a caller that passed its OWN `opts.timeoutMs` (a real deadline —
+ * e.g. triality-rationale's remaining time-box) is never touched, in generate().
  */
 const THINKING_TIMEOUT_FLOOR_MS = 120_000;
 
@@ -193,8 +193,14 @@ export async function generate(prompt: string, opts: GenerateOpts = {}): Promise
     options: { temperature: call.temperature },
   };
   // A thinking pass needs materially more time than CALL_POLICY budgets for a direct
-  // answer — see THINKING_TIMEOUT_FLOOR_MS. An explicit opts.timeoutMs still wins.
-  const timeoutMs = thinking ? Math.max(call.timeoutMs, THINKING_TIMEOUT_FLOOR_MS) : call.timeoutMs;
+  // answer — see THINKING_TIMEOUT_FLOOR_MS. But `call.timeoutMs` already folds in an
+  // explicit opts.timeoutMs (resolveCall), so gate the floor on opts.timeoutMs being
+  // ABSENT — otherwise a caller with its own real budget (e.g. triality-rationale's
+  // remaining time-box, passed as timeoutMs) would get silently stretched to 120s
+  // instead of the deliberately tighter deadline it asked for.
+  const timeoutMs = thinking && opts.timeoutMs === undefined
+    ? Math.max(call.timeoutMs, THINKING_TIMEOUT_FLOOR_MS)
+    : call.timeoutMs;
 
   const res = await fetchWithTimeout(
     `${config.ollamaUrl}/api/generate`,
