@@ -18,7 +18,7 @@ import { placeFlightPlan, placeStartAnchoredTask } from '../src/engine/autoplan.
 import { reviewAndReschedule, rescheduleTask } from '../src/engine/review.js';
 import { sweepMissedBlocks } from '../src/engine/auto-defense.js';
 import { updateTouchesSchedule, updateTask } from '../src/services/tasks.js';
-import { resetDb, startTestServer, type TestServer } from './helpers.js';
+import { resetDb, startTestServer, type TestServer, seedFallbackFillWindow } from './helpers.js';
 
 const OWNER = SYSTEM_OWNER;
 
@@ -55,9 +55,10 @@ beforeAll(async () => { srv = await startTestServer(); });
 afterAll(async () => { await srv.close(); });
 beforeEach(() => {
   resetDb();
+  seedFallbackFillWindow(); // 0156: Auto's fallback fill needs work/community windows
   sqlite.exec(`DELETE FROM flight_plan`);
   sqlite.exec(`DELETE FROM daily_plan WHERE owner_id = '${OWNER}'`);
-  sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC', workday_start = '09:00', workday_end = '18:00', auto_fill_workday = 1, max_focus_block_minutes = 90, min_break_minutes = 10 WHERE owner_id = ?`).run(OWNER);
+  sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC', auto_fill_workday = 1, max_focus_block_minutes = 90, min_break_minutes = 10 WHERE owner_id = ?`).run(OWNER);
 });
 
 // ─── H1 — narrowed replan trigger ──────────────────────────────────────────────

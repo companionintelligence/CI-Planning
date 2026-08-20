@@ -94,14 +94,6 @@ export function OnboardingWizard() {
   const liveName = () => (nameEl?.value ?? name()) || name();
   const liveEmail = () => (emailEl?.value ?? email()) || email();
 
-  // Step 2 — time + place. Defaults only matter pre-completion (nothing saved yet);
-  // once onboarding has finished, `openOnboardingAt` can reopen this same wizard
-  // (the empty-state CTA), and Back/Next through this step must not silently
-  // resubmit these hardcoded defaults over whatever the owner already saved — so,
-  // like the identity effect above, hydrate from `prefs()` whenever it resolves.
-  const [workdayStart, setWorkdayStart] = createSignal('09:00');
-  const [workdayEnd, setWorkdayEnd] = createSignal('18:00');
-
   /**
    * Wake / bed times drive the planner's night collapse — the hours the day grid folds
    * away so the useful part of the day fills the screen. They are the SAME setting as
@@ -113,10 +105,6 @@ export function OnboardingWizard() {
    */
   const [wakeTime, setWakeTime] = createSignal(minutesToHHMM(topCollapseEnd(plannerAxisState())));
   const [bedTime, setBedTime] = createSignal(minutesToHHMM(bottomCollapseStart(plannerAxisState())));
-  createEffect(() => {
-    const p = prefs();
-    if (p) { setWorkdayStart(p.workday_start); setWorkdayEnd(p.workday_end); }
-  });
 
   // Step 4 — trust dial (Balanced preselected pre-completion, matching
   // docs/ftue-plan.md §4; hydrated from prefs() for the same reopen reason as above).
@@ -182,7 +170,7 @@ export function OnboardingWizard() {
     return advance(async () => {
       // Apply in-memory first so the planner behind the wizard updates immediately.
       setPlannerCollapseBounds(topEndMin, bottomStartMin);
-      // Then write BOTH prefs in one awaited PATCH.
+      // Then write timezone + view_prefs in one awaited PATCH.
       //
       // Deliberately not leaning on the store's view_prefs persist effect: that path is
       // debounced 400ms and fire-and-forget (`.catch(() => {})`), so a user who clicks
@@ -192,8 +180,6 @@ export function OnboardingWizard() {
       const existing = prefs()?.view_prefs ?? {};
       await api.prefs.update({
         timezone: BROWSER_TZ,
-        workday_start: workdayStart(),
-        workday_end: workdayEnd(),
         view_prefs: { ...existing, planner: buildPlannerViewPrefs({ ...plannerAxisState(), topEndMin, bottomStartMin }) },
       });
     }, 3);
@@ -293,16 +279,6 @@ export function OnboardingWizard() {
                 The planner folds the hours outside this away, so your real day fills the screen.
                 Change it any time in Settings → Planner display.
               </p>
-              <div class="flex gap-3">
-                <label class="flex flex-col gap-1 text-sm flex-1">
-                  <span class="text-xs text-muted-foreground">Workday start</span>
-                  <input class="input" type="time" value={workdayStart()} onInput={(e) => setWorkdayStart(e.currentTarget.value)} />
-                </label>
-                <label class="flex flex-col gap-1 text-sm flex-1">
-                  <span class="text-xs text-muted-foreground">Workday end</span>
-                  <input class="input" type="time" value={workdayEnd()} onInput={(e) => setWorkdayEnd(e.currentTarget.value)} />
-                </label>
-              </div>
               <div class="flex justify-between items-center pt-1">
                 <button type="button" class="btn-ghost text-xs" disabled={busy()} onClick={() => void completeOnboarding()}>Skip</button>
                 <div class="flex gap-2">

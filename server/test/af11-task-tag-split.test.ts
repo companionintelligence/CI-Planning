@@ -82,7 +82,7 @@ afterAll(async () => { await srv.close(); });
 beforeEach(() => {
   resetDb();
   sqlite.exec(`DELETE FROM flight_plan; DELETE FROM tag_categories; DELETE FROM category_direction_optouts; DELETE FROM pattern_blocks;`);
-  sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC', workday_start = '09:00', workday_end = '18:00', auto_fill_workday = 0 WHERE owner_id = ?`).run(OWNER);
+  sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC', auto_fill_workday = 0 WHERE owner_id = ?`).run(OWNER);
 });
 
 // ── Slice 1 — reader compensation (D1: L1 ∪ L2) ──────────────────────────────
@@ -166,6 +166,15 @@ describe('direction-only passes stay level-1 / kind=direction', () => {
     sqlite
       .prepare(`INSERT INTO pattern_blocks (id, owner_id, direction_tag_id, day_type, start_time, end_time) VALUES (uuid7(), ?, ?, 'workday', '10:00', '12:00')`)
       .run(OWNER, dirId);
+    // 0156: the fallback fill an undirected task falls through to now reads the
+    // work+community pattern_blocks union (replaces the removed flat workday_start/
+    // workday_end) — give 'community' its own separate, non-overlapping window so the
+    // undirected task below lands somewhere unambiguous, not squeezed into whatever's
+    // left of 'work's narrow direction-specific window after `anchored` occupies it.
+    const communityId = tagId('community', 'direction');
+    sqlite
+      .prepare(`INSERT INTO pattern_blocks (id, owner_id, direction_tag_id, day_type, start_time, end_time) VALUES (uuid7(), ?, ?, 'workday', '14:00', '16:00')`)
+      .run(OWNER, communityId);
 
     const anchored = insertTask('Anchored', { direction: 'work', intentionsL2: ['email'], est: 60 });
     sqlite.prepare(`UPDATE tasks SET scheduled_for = ? WHERE id = ?`).run(DAY, anchored);
@@ -173,12 +182,12 @@ describe('direction-only passes stay level-1 / kind=direction', () => {
     expect(placed.placed).toBe(true);
     expect((placed as { startAt?: string }).startAt).toBe(at('10:00')); // the direction window
 
-    // Same setup but only an L2 intention → falls through to the workday gap, not a window.
+    // Same setup but only an L2 intention → falls through to the fallback-fill gap, not a window.
     const loose = insertTask('Loose', { intentionsL2: ['email'], est: 60 });
     sqlite.prepare(`UPDATE tasks SET scheduled_for = ? WHERE id = ?`).run(DAY, loose);
     const placed2 = await placeStartAnchoredTask(OWNER, loose, { silent: true });
     expect(placed2.placed).toBe(true);
-    expect((placed2 as { startAt?: string }).startAt).toBe(at('09:00')); // workday start fallback
+    expect((placed2 as { startAt?: string }).startAt).toBe(at('14:00')); // fallback-fill window, not the 'work' direction's
   });
 });
 

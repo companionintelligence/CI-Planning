@@ -1257,7 +1257,7 @@ export interface ViewPrefs {
 }
 
 export interface Prefs {
-  id: string; owner_id: string; workday_start: string; workday_end: string;
+  id: string; owner_id: string;
   auto_fill_workday?: boolean; // gates the workday fallback fill (0028)
   // Trust dial (0070) — governs auto-blocking/planning. The top-bar Suggest/Schedule
   // toggle maps Schedule ⇔ 'hands_off' (auto-schedule on ingest) and Suggest ⇔
@@ -1308,6 +1308,9 @@ export interface Prefs {
   // Onboarding Priorities Wizard (0128): weekly hours reserved for sleep (unschedulable,
   // attributed to Health). Default 63 = 9h/night × 7; schedulable pool = 168 − this.
   sleep_hours_per_week?: number;
+  // 0156: replaces workday_start/workday_end as the source for the AI-authoring
+  // "capacity today" hint. Default 56 = 8h/day × 7.
+  capacity_hours_per_week?: number;
   // Cross-device calendar view-state (0111); null/absent = use built-in defaults.
   view_prefs?: ViewPrefs | null;
   // FTUE · T11 (0132): null = onboarding wizard not yet completed/skipped; non-null

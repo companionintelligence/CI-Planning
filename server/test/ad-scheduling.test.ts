@@ -3,7 +3,7 @@ import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { placeFlightPlan } from '../src/engine/autoplan.js';
 import { placeTasksInBlock } from '../src/engine/blocks-place.js';
-import { resetDb, startTestServer, type TestServer } from './helpers.js';
+import { resetDb, startTestServer, type TestServer, seedFallbackFillWindow } from './helpers.js';
 
 /**
  * Phase AD server slices.
@@ -35,6 +35,7 @@ beforeAll(async () => {
 afterAll(async () => { await srv.close(); vi.useRealTimers(); });
 beforeEach(() => {
   resetDb();
+  seedFallbackFillWindow(); // 0156: Auto's fallback fill needs work/community windows
   sqlite.exec(`DELETE FROM flight_plan;`);
 });
 

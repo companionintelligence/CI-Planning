@@ -16,8 +16,7 @@ import {
   startTestServer,
   ollamaAvailable,
   primeInstalledModels,
-  type TestServer,
-} from './helpers.js';
+  type TestServer, seedFallbackFillWindow } from './helpers.js';
 import { authorPlanOrder } from '../src/agents/plan.js';
 import { placeFlightPlan } from '../src/engine/autoplan.js';
 
@@ -56,12 +55,13 @@ beforeAll(async () => { srv = await startTestServer(); });
 afterAll(async () => { await srv.close(); });
 beforeEach(() => {
   resetDb();
+  seedFallbackFillWindow(); // 0156: Auto's fallback fill needs work/community windows
   sqlite.exec(`DELETE FROM flight_plan;`);
   // resetDb() already clears daily_plan; here for explicitness
   sqlite.exec(`DELETE FROM daily_plan WHERE owner_id = '${OWNER}';`);
   // fill_order='overdue' = deadline-first (the Phase-M default); the deterministic
   // ordering tests below assert deadline-first behaviour explicitly.
-  sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC', workday_start = '09:00', workday_end = '18:00', planning_mode = 'basic', fill_order = 'overdue' WHERE owner_id = ?`).run(OWNER);
+  sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC', planning_mode = 'basic', fill_order = 'overdue' WHERE owner_id = ?`).run(OWNER);
 });
 
 // ─── Tests ──────────────────────────────────────────────────────────────────

@@ -9,7 +9,7 @@ import { TextureTrigger, TextureModal } from './TextureModal.js';
 import { PeopleField } from './PeopleField.js';
 import {
   elementModal, setElementModal, tags, blocks, concepts, tasks, patterns, patternTypes, categoryPrefs, prefs, showToast,
-  refetchBlocks, refetchTasks, refetchFlightPlan,
+  refetchBlocks, refetchTasks, refetchFlightPlan, patternBlocks,
   type ElementKind,
 } from '../stores/index.js';
 import {
@@ -555,8 +555,17 @@ export function ElementWizard() {
         const now = new Date();
         const isToday = targetDay === localISODate();
         const nowMin = isToday ? now.getHours() * 60 + now.getMinutes() : null;
-        const workStartMin = hhmmToMin(prefs()?.workday_start ?? '09:00') ?? 540;
-        const workEndMin = hhmmToMin(prefs()?.workday_end ?? '18:00') ?? 1080;
+        // 0156: work+community pattern_blocks union replaces workday_start/workday_end —
+        // best-effort day-of-week guess (server re-validates at create time anyway, so an
+        // approximate day-type here costs nothing but preview accuracy).
+        const isWeekendDay = [0, 6].includes(new Date(`${targetDay}T00:00:00`).getDay());
+        const dirIds = new Set(
+          (tags() ?? []).filter((t) => t.kind === 'direction' && (t.name === 'work' || t.name === 'community')).map((t) => t.id),
+        );
+        const dayWindows = (isWeekendDay ? patternBlocks()?.weekend : patternBlocks()?.workday) ?? {};
+        const fallbackRanges = [...dirIds].flatMap((id) => dayWindows[id] ?? []);
+        const workStartMin = fallbackRanges.length ? Math.min(...fallbackRanges.map((r) => hhmmToMin(r.start_time) ?? 0)) : 0;
+        const workEndMin = fallbackRanges.length ? Math.max(...fallbackRanges.map((r) => hhmmToMin(r.end_time) ?? 1440)) : 1440;
         // D3: bias the search to the enrichment's best-time band. narrowToBand hands the
         // full window back when the band can't fit, so a hint never costs a proposal.
         const band = narrowToBand({ startMin: workStartMin, endMin: workEndMin }, parsed.timeOfDay === 'any' ? undefined : parsed.timeOfDay, dur);

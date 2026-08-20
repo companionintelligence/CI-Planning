@@ -38,7 +38,7 @@ vi.mock('../src/mcp/ollama.js', async (importActual) => {
 
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
+import { resetDb, startTestServer, api, type TestServer, seedFallbackFillWindow } from './helpers.js';
 import { authorPlanOrder } from '../src/agents/plan.js';
 import { placeFlightPlan } from '../src/engine/autoplan.js';
 import { reflow } from '../src/engine/auto-defense.js';
@@ -71,6 +71,7 @@ beforeAll(async () => { srv = await startTestServer(); });
 afterAll(async () => { await srv.close(); });
 beforeEach(() => {
   resetDb();
+  seedFallbackFillWindow(); // 0156: Auto's fallback fill needs work/community windows
   sqlite.exec(`DELETE FROM flight_plan`);
   sqlite.exec(`DELETE FROM daily_plan WHERE owner_id = '${OWNER}'`);
   sqlite.prepare(`UPDATE scheduling_prefs SET planning_mode = 'smart', timezone = 'UTC' WHERE owner_id = ?`).run(OWNER);

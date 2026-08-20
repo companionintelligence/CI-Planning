@@ -12,7 +12,11 @@
  * Reuses the same `buildGaps` / `pickGap` / `splitIntoSessions` math the
  * flight-plan's Auto step-2 uses (see `engine/autoplan.ts:84-164`). Window
  * setup mirrors `placeFlightPlan`: a block's range when `blockId` is given,
- * otherwise the workday from `scheduling_prefs`.
+ * otherwise (0156) the work+community pattern_blocks fallback-fill union,
+ * collapsed to one earliest-start/latest-end span — unlike autoplan.ts's Pass
+ * 2b (which places task-by-task across each disjoint range), a free-placed
+ * routine lays out CONTIGUOUSLY in a single gap, so it needs one window, not a
+ * set of them.
  */
 import { store } from '../db/store.js';
 import { broadcast } from '../routes/sse.js';
@@ -22,6 +26,8 @@ import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from 
 import { occurrencesBetween, parseRule } from './recurrence.js';
 import { taskTagNames, routineDerivedTags, syncLeveledEntityTags } from '../services/tags.js';
 import { syncTaskFromBlock, applyTaskPlacementStatus } from '../services/block-task-sync.js';
+import { directionWindowsByName, FALLBACK_FILL_DIRECTION_NAMES } from '../services/pattern-blocks.js';
+import { resolveDayType } from '../services/day-types.js';
 
 const DEFAULT_EST_MIN = 30;
 const MIN_SESSION_MS = 15 * MS_PER_MIN;
@@ -37,8 +43,6 @@ export interface PlacePatternResult {
 
 interface PrefsRow {
   timezone: string | null;
-  workday_start: string | null;
-  workday_end: string | null;
   min_break_minutes: number | null;
   max_focus_block_minutes: number | null;
 }
@@ -130,11 +134,11 @@ export async function placePatternOnDay(
     }
 
     const prefs = await store()
-      .prepare(`SELECT timezone, workday_start, workday_end, min_break_minutes, max_focus_block_minutes FROM scheduling_prefs WHERE owner_id = ?`)
+      .prepare(`SELECT timezone, min_break_minutes, max_focus_block_minutes FROM scheduling_prefs WHERE owner_id = ?`)
       .get<PrefsRow>(owner);
     const tz = prefs?.timezone || serverTimezone();
 
-    // Window (block's range or the workday).
+    // Window (block's range or the fallback-fill union).
     let windowStartMs: number;
     let windowEndMs: number;
     let blockTag: string | null = null;
@@ -150,8 +154,13 @@ export async function placePatternOnDay(
       windowEndMs = Date.parse(block.end_at);
       blockTag = block.tag;
     } else {
-      windowStartMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_start ?? '09:00', tz));
-      windowEndMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_end ?? '18:00', tz));
+      // 0156: work+community pattern_blocks union, collapsed to one span (see file
+      // header) — empty when neither direction has configured windows, which the
+      // windowEndMs<=windowStartMs check below turns into a clean unplaced no-op.
+      const dayType = await resolveDayType(owner, date);
+      const ranges = await directionWindowsByName(owner, dayType, FALLBACK_FILL_DIRECTION_NAMES);
+      windowStartMs = ranges.length ? Math.min(...ranges.map((r) => Date.parse(zonedWallTimeToUTC(date, r.start_time, tz)))) : 0;
+      windowEndMs = ranges.length ? Math.max(...ranges.map((r) => Date.parse(zonedWallTimeToUTC(date, r.end_time, tz)))) : 0;
     }
     if (windowEndMs <= windowStartMs) {
       return { patternId, date, blocksCreated: 0, placed: 0, unplaced: 0, skippedAlreadyPlaced: false };

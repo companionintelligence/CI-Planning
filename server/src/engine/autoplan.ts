@@ -31,7 +31,7 @@ import { localISODate } from '../lib/dates.js';
 import { newId } from '../lib/ids.js';
 import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
 import { mirrorEnginePlacement, revertTaskPlacementStatus, applyTaskPlacementStatus, TERMINAL_BLOCK_STATUS_SQL } from '../services/block-task-sync.js';
-import { getPatternBlocks } from '../services/pattern-blocks.js';
+import { getPatternBlocks, directionWindowsByName, FALLBACK_FILL_DIRECTION_NAMES, HOME_DIRECTION_NAME } from '../services/pattern-blocks.js';
 import { resolveDayType } from '../services/day-types.js';
 import { getPatternPrefs } from '../services/pattern-prefs.js';
 import { nestCandidatesInRange, preferredContainers, taskNestCoords } from '../services/auto-nest.js';
@@ -65,8 +65,6 @@ interface StagedTask {
 }
 interface PrefsRow {
   timezone: string | null;
-  workday_start: string | null;
-  workday_end: string | null;
   min_break_minutes: number | null;
   max_focus_block_minutes: number | null;
   auto_fill_workday: number | null;
@@ -159,7 +157,7 @@ async function recordRun(owner: string, runId: string, blocksCreated: number): P
 
 async function prefsOf(owner: string): Promise<PrefsRow | undefined> {
   return await store()
-    .prepare(`SELECT timezone, workday_start, workday_end, min_break_minutes, max_focus_block_minutes, auto_fill_workday, fill_order, default_time_block_minutes FROM scheduling_prefs WHERE owner_id = ?`)
+    .prepare(`SELECT timezone, min_break_minutes, max_focus_block_minutes, auto_fill_workday, fill_order, default_time_block_minutes FROM scheduling_prefs WHERE owner_id = ?`)
     .get(owner) as PrefsRow | undefined;
 }
 
@@ -569,15 +567,51 @@ async function pinTaskAt(
 }
 
 /**
+ * 0156 — union of one or more direction tags' pattern_blocks windows for `date`,
+ * converted to UTC ms. Replaces the flat workday_start/workday_end fallback:
+ * `directionWindowsByName` does the name→id lookup + DB read (shared with
+ * patterns-place.ts/triality-vector.ts), this just adds the per-date wall-clock
+ * conversion every caller here needs. Empty when no matching tag/window exists —
+ * never a hardcoded default.
+ */
+async function directionWindowsMs(
+  owner: string,
+  dayType: string,
+  date: string,
+  tz: string,
+  names: readonly string[],
+): Promise<{ start: number; end: number }[]> {
+  const ranges = await directionWindowsByName(owner, dayType, names);
+  return ranges.map((r) => ({
+    start: Date.parse(zonedWallTimeToUTC(date, r.start_time, tz)),
+    end: Date.parse(zonedWallTimeToUTC(date, r.end_time, tz)),
+  }));
+}
+
+/** Collapses a set of ranges to one earliest-start/latest-end pair, or null when empty. */
+function outerBound(ranges: { start: number; end: number }[]): { start: number; end: number } | null {
+  if (ranges.length === 0) return null;
+  return { start: Math.min(...ranges.map((r) => r.start)), end: Math.max(...ranges.map((r) => r.end)) };
+}
+
+/**
  * Phase M A4 — place tasks constrained by natural-language tag-window hints.
  *
  * `tag_before T` / `tag_after T` (from `plan_hints`, persisted by `/api/plan/instruct`)
- * become a transient per-tag clock window for TODAY: `tag_before`→`[workdayStart,T]`,
- * `tag_after`→`[T,workdayEnd]`, intersected when several hints touch one task. A hinted
- * task is placed ONLY within its window. The returned `constrainedIds` are the tasks any
- * hint touched — the caller MUST exclude these from its unconstrained workday fill so a
- * hinted task is never dropped outside its window (HARD enforcement: a full/empty window
- * leaves the task unplaced, not force-filled). `batch` imposes no window — contiguity is
+ * become a transient per-tag clock window for TODAY: `tag_before`→`[bound.start,T]`,
+ * `tag_after`→`[T,bound.end]`, intersected when several hints touch one task. `bound`
+ * is the work+community pattern-window union (0156, replacing the old flat
+ * workday_start/end), widened to also include the home direction's union for a task
+ * that itself carries the home tag — but only on the side no explicit hint narrowed
+ * (an explicit "before 3pm" still caps the end even for a home-tagged task). Falls
+ * back to the full day when the union is empty, so an owner with no configured
+ * pattern_blocks can still use NL hints at all — this mirrors parseInstruction's own
+ * degrade (agents/plan.ts), which must agree with this bound or a hint the LLM
+ * parsed as valid could come back unplaceable here. A hinted task is placed ONLY
+ * within its window. The returned `constrainedIds` are the tasks any hint touched —
+ * the caller MUST exclude these from its unconstrained workday fill so a hinted task
+ * is never dropped outside its window (HARD enforcement: a full/empty window leaves
+ * the task unplaced, not force-filled). `batch` imposes no window — contiguity is
  * the §A2 authored-order concern. `candidates` should already be in daily_plan order so
  * same-tag tasks pack contiguously. No-op (empty sets) when the day has no timed hints.
  */
@@ -600,25 +634,34 @@ async function placeHintWindows(
   const timed = hintRows.filter((h) => (h.kind === 'tag_before' || h.kind === 'tag_after') && h.time);
   if (timed.length === 0) return { placedTaskIds, constrainedIds, blocksCreated };
 
-  const wsMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_start ?? '09:00', tz));
-  const weMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_end ?? '18:00', tz));
-  const tagWindow = new Map<string, { start: number; end: number }>(); // tag → intersected [start,end]
+  const dayType = await resolveDayType(owner, date);
+  const fullDay = { start: Date.parse(zonedWallTimeToUTC(date, '00:00', tz)), end: Date.parse(zonedWallTimeToUTC(date, '24:00', tz)) };
+  const baseBound = outerBound(await directionWindowsMs(owner, dayType, date, tz, FALLBACK_FILL_DIRECTION_NAMES)) ?? fullDay;
+  const homeBound = outerBound(await directionWindowsMs(owner, dayType, date, tz, [HOME_DIRECTION_NAME]));
+
+  // tag → explicit per-side hint bound only; null = "no hint on this side", so a
+  // per-task default (base or home-widened) can still apply there.
+  const tagWindow = new Map<string, { start: number | null; end: number | null }>();
   for (const h of timed) {
     const tMs = Date.parse(zonedWallTimeToUTC(date, h.time!, tz));
-    const cur = tagWindow.get(h.tag) ?? { start: wsMs, end: weMs };
-    if (h.kind === 'tag_before') cur.end = Math.min(cur.end, tMs);
-    else cur.start = Math.max(cur.start, tMs);
+    const cur = tagWindow.get(h.tag) ?? { start: null, end: null };
+    if (h.kind === 'tag_before') cur.end = cur.end === null ? tMs : Math.min(cur.end, tMs);
+    else cur.start = cur.start === null ? tMs : Math.max(cur.start, tMs);
     tagWindow.set(h.tag, cur);
   }
 
   for (const t of candidates) {
-    let start = wsMs, end = weMs, matched = false;
+    const isHome = homeBound !== null && t.tags.includes(HOME_DIRECTION_NAME);
+    const dflt = isHome
+      ? { start: Math.min(baseBound.start, homeBound!.start), end: Math.max(baseBound.end, homeBound!.end) }
+      : baseBound;
+    let start = dflt.start, end = dflt.end, matched = false;
     for (const tag of t.tags) {
       const w = tagWindow.get(tag);
       if (!w) continue;
       matched = true;
-      start = Math.max(start, w.start);
-      end = Math.min(end, w.end);
+      if (w.start !== null) start = Math.max(start, w.start);
+      if (w.end !== null) end = Math.min(end, w.end);
     }
     if (!matched) continue;
     constrainedIds.add(t.task_id); // hard: caller excludes these from the unconstrained fill
@@ -998,12 +1041,18 @@ export async function placeFlightPlan(
         // Keyed on the owner's real today, not `date`, so planning ahead still honors it.
         : fillOrder === 'new_today' ? orderByNewToday(remaining, await ownerToday(owner), tz)
         : orderForPlan(remaining);
-      const wsMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_start ?? '09:00', tz));
-      const weMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_end ?? '18:00', tz));
-      const r = await placeIntoWindow(owner, ordered, wsMs, weMs, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs });
-      r.placedTaskIds.forEach((id) => placedIds.add(id));
-      blocksCreated += r.blocksCreated;
-      placedInWorkday = r.placedTaskIds.size;
+      // 0156: the fallback-fill union (work+community pattern_blocks) replaces the
+      // flat workday_start/workday_end window. Placed range-by-range (not collapsed
+      // to one min/max span) so a gap between two configured windows is honored;
+      // each range only gets tasks the previous range didn't already place.
+      for (const range of await directionWindowsMs(owner, dayType, date, tz, FALLBACK_FILL_DIRECTION_NAMES)) {
+        const stillOpen = ordered.filter((t) => !placedIds.has(t.task_id));
+        if (stillOpen.length === 0) break;
+        const r = await placeIntoWindow(owner, stillOpen, range.start, range.end, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs });
+        r.placedTaskIds.forEach((id) => placedIds.add(id));
+        blocksCreated += r.blocksCreated;
+        placedInWorkday += r.placedTaskIds.size;
+      }
     }
   }
 
@@ -1078,8 +1127,6 @@ export async function fillByPriority(owner: string = currentOwnerId(), opts: { d
     return { step: 'place', blocksCreated: 0, placed: 0, unplaced: 0, placedInPlans: 0, placedInWorkday: 0 };
   }
 
-  const wsMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_start ?? '09:00', tz));
-  const weMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_end ?? '18:00', tz));
   // orderForPlan with no weights sorts priority-first (P1 first). includePlans flows
   // around Plans and the tag-matched blocks tap 2 already created.
   const runId = newId();
@@ -1087,10 +1134,21 @@ export async function fillByPriority(owner: string = currentOwnerId(), opts: { d
   // its window (or left unplaced) and excluded from the unconstrained priority fill, so the
   // explicit top-up can't leak "no errands before noon" past its window.
   const hintPass = await placeHintWindows(owner, date, remaining, prefs, tz, runId, notBeforeMs);
-  const unconstrained = remaining.filter((t) => !hintPass.constrainedIds.has(t.task_id));
-  const r = await placeIntoWindow(owner, orderForPlan(unconstrained), wsMs, weMs, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs });
-  const filled = new Set([...hintPass.placedTaskIds, ...r.placedTaskIds]);
-  const blocksCreated = hintPass.blocksCreated + r.blocksCreated;
+  const unconstrained = orderForPlan(remaining.filter((t) => !hintPass.constrainedIds.has(t.task_id)));
+  // 0156: fallback-fill union (work+community pattern_blocks) replaces the flat
+  // workday_start/workday_end window — same range-by-range placement as Pass 2b.
+  const dayType = await resolveDayType(owner, date);
+  const placedByFill = new Set<string>();
+  let fillBlocksCreated = 0;
+  for (const range of await directionWindowsMs(owner, dayType, date, tz, FALLBACK_FILL_DIRECTION_NAMES)) {
+    const stillOpen = unconstrained.filter((t) => !placedByFill.has(t.task_id));
+    if (stillOpen.length === 0) break;
+    const r = await placeIntoWindow(owner, stillOpen, range.start, range.end, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs });
+    r.placedTaskIds.forEach((id) => placedByFill.add(id));
+    fillBlocksCreated += r.blocksCreated;
+  }
+  const filled = new Set([...hintPass.placedTaskIds, ...placedByFill]);
+  const blocksCreated = hintPass.blocksCreated + fillBlocksCreated;
   await recordRun(owner, runId, blocksCreated);
   const placed = filled.size;
   broadcast(owner, 'auto:placed', { blocksCreated, placed, unplaced: remaining.length - placed });
@@ -1385,11 +1443,11 @@ export async function placeStartAnchoredTask(
     }
   }
 
-  // Workday-gap fallback on that date.
-  const s = await earliestFit(
-    Date.parse(zonedWallTimeToUTC(date, prefs?.workday_start ?? '09:00', tz)),
-    Date.parse(zonedWallTimeToUTC(date, prefs?.workday_end ?? '18:00', tz)),
-  );
-  if (s !== null) return create(s, s + durMs);
+  // 0156: fallback-fill union (work+community pattern_blocks) on that date, replacing
+  // the flat workday_start/workday_end window — same shared helper as Pass 2b.
+  for (const range of await directionWindowsMs(owner, dayType, date, tz, FALLBACK_FILL_DIRECTION_NAMES)) {
+    const s = await earliestFit(range.start, range.end);
+    if (s !== null) return create(s, s + durMs);
+  }
   return { placed: false, reason: 'day_full' };
 }

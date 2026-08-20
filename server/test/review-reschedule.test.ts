@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
+import { resetDb, startTestServer, api, type TestServer, seedFallbackFillWindow } from './helpers.js';
 import { reviewAndReschedule, rescheduleTask, backoffDays } from '../src/engine/review.js';
 
 /**
@@ -42,7 +42,7 @@ const planOutcome = (taskId: string): string | null =>
 let srv: TestServer;
 beforeAll(async () => { srv = await startTestServer(); });
 afterAll(async () => { await srv.close(); });
-beforeEach(() => { resetDb(); });
+beforeEach(() => { resetDb(); seedFallbackFillWindow(); });
 
 describe('backoffDays', () => {
   it('escalates 0→1, 1→3, 2+→7', () => {

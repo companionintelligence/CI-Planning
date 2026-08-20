@@ -21,12 +21,22 @@ const WEEKEND = '2026-06-21';
 function seedDirections(kind: string = 'direction'): Record<string, string> {
   const ids: Record<string, string> = {};
   for (const name of ['home', 'work', 'community']) {
-    ids[name] = (
-      sqlite
-        .prepare(`INSERT INTO tags (id, name, kind, is_base, owner_id) VALUES (uuid7(), ?, ?, 1, ?) RETURNING id`)
-        .get(name, kind, OWNER) as { id: string }
-    ).id;
+    // 0156: a sibling file may already own the 'work'/'community' tag names
+    // (UNIQUE(owner_id, name) forbids a duplicate) — reuse when present so every test
+    // in this file keeps full control over the exact windows.
+    const existing = sqlite.prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = ?`).get(OWNER, name) as { id: string } | undefined;
+    ids[name] = existing
+      ? existing.id
+      : (
+          sqlite
+            .prepare(`INSERT INTO tags (id, name, kind, is_base, owner_id) VALUES (uuid7(), ?, ?, 1, ?) RETURNING id`)
+            .get(name, kind, OWNER) as { id: string }
+        ).id;
   }
+  // Clear whatever pattern_blocks windows already exist for these three tags, so each
+  // test's own seedPatternBlock calls define the windows exactly, same as before 0156.
+  const placeholders = Object.values(ids).map(() => '?').join(',');
+  sqlite.prepare(`DELETE FROM pattern_blocks WHERE owner_id = ? AND direction_tag_id IN (${placeholders})`).run(OWNER, ...Object.values(ids));
   return ids;
 }
 
@@ -145,6 +155,9 @@ describe('GET /api/pattern-blocks', () => {
   });
 
   it('returns empty objects when no pattern_blocks exist', async () => {
+    // 0156: clear any work+community fallback-fill windows a sibling test seeded, so
+    // this test's "nothing configured" premise holds.
+    sqlite.prepare(`DELETE FROM pattern_blocks WHERE owner_id = ?`).run(OWNER);
     const r = await api(srv.url, '/api/pattern-blocks');
     expect(r.status).toBe(200);
     expect(r.body.workday).toEqual({});
@@ -269,11 +282,14 @@ describe('direction-aware Auto placement', () => {
     expect(inMorning || inEvening).toBe(true);
   });
 
-  it('direction-less task falls back to workday_start/end when direction windows exist', async () => {
+  it('direction-less task falls back to the work+community window when a DIFFERENT direction has its own window', async () => {
+    // 0156: the flat workday_start/workday_end fallback is gone — replaced by the
+    // work+community pattern_blocks union. home has an early window; the
+    // direction-less task carries neither direction tag, so it should ignore home's
+    // window and use work's instead.
     const dirs = seedDirections();
-    // home has an early window; the direction-less task should ignore it and use 09:00–18:00
     seedPatternBlock(dirs.home, 'workday', '07:00', '08:00');
-    sqlite.prepare(`UPDATE scheduling_prefs SET workday_start='09:00', workday_end='18:00' WHERE owner_id=?`).run(OWNER);
+    seedPatternBlock(dirs.work, 'workday', '09:00', '18:00');
 
     const t = insertTask('Untagged work', 30); // no direction tag
     stageTask(t);
@@ -287,9 +303,12 @@ describe('direction-aware Auto placement', () => {
     expect(wb.end_at <= `${WEEKDAY}T18:00:00.000Z`).toBe(true);
   });
 
-  it('no pattern_blocks → classic workday window (backward-compatible)', async () => {
-    // pattern_blocks table is empty (resetDb cascades tag deletes)
-    sqlite.prepare(`UPDATE scheduling_prefs SET workday_start='10:00', workday_end='16:00' WHERE owner_id=?`).run(OWNER);
+  it('no work/community pattern_blocks → a direction-less task stays unplaced (no flat fallback anymore)', async () => {
+    // 0156: this used to backward-compatibly fall back to a flat workday_start/
+    // workday_end default. That flat pref is gone; with no work/community windows
+    // configured, the fallback-fill union is empty and there's nowhere left to place
+    // an undirected task — it's a deliberate behavior change, not a bug.
+    seedDirections(); // clears any pattern_blocks the shared resetDb baseline seeded
 
     const t = insertTask('Classic task', 30);
     stageTask(t);
@@ -297,10 +316,7 @@ describe('direction-aware Auto placement', () => {
     await api(srv.url, '/api/auto/run', { method: 'POST', json: { date: WEEKDAY } });
     await api(srv.url, '/api/auto/priority', { method: 'POST', json: { date: WEEKDAY } }); // D5: explicit workday fill
 
-    const wb = placedBlocks().find((b) => b.title === 'Classic task')!;
-    expect(wb).toBeTruthy();
-    expect(wb.start_at >= `${WEEKDAY}T10:00:00.000Z`).toBe(true);
-    expect(wb.end_at <= `${WEEKDAY}T16:00:00.000Z`).toBe(true);
+    expect(placedBlocks().find((b) => b.title === 'Classic task')).toBeUndefined();
   });
 
   it('weekend date uses the weekend pattern windows', async () => {

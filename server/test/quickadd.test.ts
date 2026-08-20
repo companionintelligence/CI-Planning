@@ -3,7 +3,7 @@ import { flushAudits } from '../src/lib/audit.js';
 import { sqlite } from '../src/db/index.js';
 import { parseQuick, type ParsedQuick } from '../src/engine/quickadd.js';
 import { mergeEnrichment } from '../src/agents/quickadd.js';
-import { resetDb, startTestServer, api } from './helpers.js';
+import { resetDb, startTestServer, api, seedFallbackFillWindow } from './helpers.js';
 
 // Fixed reference so chrono is deterministic (its non-determinism risk).
 const REF = new Date('2026-06-15T17:00:00.000Z'); // a Monday
@@ -178,7 +178,11 @@ describe('mergeEnrichment — constrained classification overlay (2026-07-20)', 
 });
 
 describe('POST /api/tasks/quick/parse — T14 parse-only preview twin', () => {
-  beforeEach(() => resetDb());
+  // 0156: deliberately NOT seeding the fallback-fill window here — these tests assert
+  // NO direction gets enrichment-assigned, which depends on the owner having no
+  // direction-tag vocabulary at all (an enrichQuick call against a non-empty vocab
+  // will actually pick one, which is what the placement test below wants instead).
+  beforeEach(() => { resetDb(); });
 
   it('returns the parse and writes NOTHING (no task, no audit row)', async () => {
     const srv = await startTestServer();
@@ -218,7 +222,10 @@ describe('POST /api/tasks/quick/parse — T14 parse-only preview twin', () => {
 });
 
 describe('POST /api/tasks/quick', () => {
-  beforeEach(() => resetDb());
+  // 0156: same reasoning as the parse-only block above — most of these tests need NO
+  // direction vocabulary so enrichQuick can't assign one. The one test that needs the
+  // fallback-fill window seeds it itself, locally.
+  beforeEach(() => { resetDb(); });
 
   it('creates a task from the deterministic parse, regardless of Ollama', async () => {
     const srv = await startTestServer();
@@ -306,6 +313,10 @@ describe('POST /api/tasks/quick', () => {
   });
 
   it('a time-LESS scheduled quick-add places into that day (workday gap when no direction window)', async () => {
+    // 0156: this test's own placement assertion needs the work+community fallback-fill
+    // window; seeded locally (not in the shared beforeEach) so it doesn't hand
+    // enrichQuick a real direction vocabulary to pick from in every other test here.
+    seedFallbackFillWindow();
     const srv = await startTestServer();
     try {
       const res = await api<{ task: { id: string; scheduled_for: string | null; task_time: string | null } }>(

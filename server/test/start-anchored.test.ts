@@ -3,7 +3,7 @@ import { sqlite } from '../src/db/index.js';
 import { ALL_SCOPES, SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
 import { placeStartAnchoredTask, fillFlightPlanCandidates } from '../src/engine/autoplan.js';
 import { upsertPossible } from '../src/agents/ingest.js';
-import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
+import { resetDb, startTestServer, api, type TestServer, seedFallbackFillWindow } from './helpers.js';
 
 /**
  * Phase AB · AB1 — start-anchored placement. `scheduled_for` (+ optional `task_time`)
@@ -34,6 +34,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   resetDb();
+  seedFallbackFillWindow(); // 0156: Auto's fallback fill needs work/community windows
 });
 
 /** UTC calendar date n days ahead. */
@@ -148,8 +149,12 @@ describe('placeStartAnchoredTask — no task_time (engine picks the time on THAT
     expect(res).toMatchObject({ placed: true, startAt: `${date}T10:00:00.000Z`, endAt: `${date}T11:00:00.000Z` });
   });
 
-  it('no direction window → earliest workday gap on that date', async () => {
-    const date = dPlus(3);
+  it('no direction window → earliest fallback-fill gap on that date', async () => {
+    // 0156: the fallback fill now reads the work+community pattern_blocks union
+    // (replaces the removed flat workday_start/workday_end); the beforeEach's
+    // seedFallbackFillWindow() seeds 09:00-18:00 for both builtin day types.
+    // futureWeekday resolves deterministically to 'workday' via the default heuristic.
+    const date = futureWeekday(3);
     const id = await createTask({ scheduled_for: date, estimated_minutes: 45 });
     const res = await placeStartAnchoredTask(OWNER, id);
     expect(res).toMatchObject({ placed: true, startAt: `${date}T09:00:00.000Z`, endAt: `${date}T09:45:00.000Z` });

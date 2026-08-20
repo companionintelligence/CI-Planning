@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
+import { resetDb, startTestServer, api, type TestServer, seedFallbackFillWindow } from './helpers.js';
 import { patternsRecurringOnDate, ensurePatternsForRange } from '../src/engine/patterns-place.js';
 import { localISODate } from '../src/lib/dates.js';
 
@@ -45,6 +45,7 @@ beforeAll(async () => { srv = await startTestServer(); });
 afterAll(async () => { await srv.close(); });
 beforeEach(() => {
   resetDb();
+  seedFallbackFillWindow(); // 0156: Auto's fallback fill needs work/community windows
   sqlite.exec(`DELETE FROM flight_plan; DELETE FROM pattern_tasks; DELETE FROM patterns WHERE id > 0;`);
   // Default timezone for determinism; recurrence anchors are sensitive to tz.
   // enable_routines is OFF by default (0073), which gates recurring Routine

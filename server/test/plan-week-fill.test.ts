@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { startTestServer, resetDb, api, createOwner, SECOND_OWNER_ID, type TestServer } from './helpers.js';
+import { startTestServer, resetDb, api, createOwner, SECOND_OWNER_ID, type TestServer, seedFallbackFillWindow } from './helpers.js';
 import type { PlanWeekCandidates } from '../src/services/planning-sessions.js';
 import { localDateInTZ } from '../src/lib/tz.js';
 
@@ -31,7 +31,7 @@ describe('GET /api/plan-week/candidates', () => {
   let server: TestServer;
   beforeAll(async () => { server = await startTestServer(); });
   afterAll(() => server.close());
-  beforeEach(() => { resetDb(); cnt = 0; });
+  beforeEach(() => { resetDb(); seedFallbackFillWindow(); cnt = 0; });
 
   const get = (q = `horizon=7&start=${TODAY}`, headers?: Record<string, string>) =>
     api<PlanWeekCandidates>(server.url, `/api/plan-week/candidates?${q}`, headers ? { headers } : undefined);

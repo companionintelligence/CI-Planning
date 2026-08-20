@@ -22,6 +22,15 @@ import * as schema from '../src/db/schema.js';
  * constraints / indexes are out of scope); DB-only tables not modeled in schema.ts (e.g.
  * migration bookkeeping, sqlite internals) are intentionally not asserted here.
  */
+// 0156 — workday_start/workday_end were removed from scheduling_prefs' schema.ts
+// mirror (and every app read/write) but the column itself was deliberately left
+// undropped: no destructive migration was bundled with the behavior change. That is
+// an intentional, temporary drift this generic parity check would otherwise flag.
+// Remove this exception in the same follow-up migration that finally drops the columns.
+const STAGED_REMOVED_COLUMNS: Record<string, string[]> = {
+  scheduling_prefs: ['workday_start', 'workday_end'],
+};
+
 describe('Drizzle ↔ DB schema parity (golden shape)', () => {
   // Every SQLiteTable exported from schema.ts (skips enums, view objects, helpers, types).
   const tables = Object.values(schema).filter((v): v is SQLiteTable => is(v, SQLiteTable));
@@ -33,8 +42,10 @@ describe('Drizzle ↔ DB schema parity (golden shape)', () => {
   for (const table of tables) {
     const name = getTableName(table);
     it(`${name} — Drizzle columns match the live DB exactly`, () => {
+      const staged = new Set(STAGED_REMOVED_COLUMNS[name] ?? []);
       const dbCols = (sqlite.prepare(`PRAGMA table_info(${name})`).all() as { name: string }[])
         .map((c) => c.name)
+        .filter((n) => !staged.has(n))
         .sort();
       // A table modeled in schema.ts but absent from the DB yields an empty PRAGMA result —
       // the mismatch below then fails loudly (rather than a confusing pass).

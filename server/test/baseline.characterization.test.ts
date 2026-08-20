@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { startTestServer, resetDb, api, type TestServer } from './helpers.js';
+import { startTestServer, resetDb, api, type TestServer, seedFallbackFillWindow } from './helpers.js';
 import { placeFlightPlan, fillByPriority } from '../src/engine/autoplan.js';
 import { makeNormalizer } from './normalize.js';
 
@@ -59,6 +59,7 @@ beforeAll(async () => { srv = await startTestServer(); });
 afterAll(async () => { await srv.close(); });
 beforeEach(() => {
   resetDb();
+  seedFallbackFillWindow(); // 0156: Auto's fallback fill needs work/community windows
   // resetDb keeps owner/prefs/scheduled_jobs/pattern_types. Make the rest hermetic
   // so suite ordering can't perturb the baseline: clear staging/grouping tables,
   // drop any custom pattern types other tests leaked (keep the built-ins), and pin
@@ -69,13 +70,16 @@ beforeEach(() => {
   // day in this tz; NULL falls back to the *system* tz, which makes the block-count
   // boundary (a concept at midnight-UTC) env-dependent. Pin it so CI == local.
   sqlite.prepare(
-    `UPDATE scheduling_prefs SET timezone = 'UTC', workday_start = '09:00', workday_end = '18:00', auto_fill_workday = 1, enable_rituals = 0 WHERE owner_id = ?`,
+    `UPDATE scheduling_prefs SET timezone = 'UTC', auto_fill_workday = 1, enable_rituals = 0 WHERE owner_id = ?`,
   ).run(OWNER);
 });
 
 // A representative dataset touching every FK + serializer CON-1 will migrate.
 function seedApiFixture(): void {
-  const work = insert('tags', { owner_id: OWNER, name: 'work' });
+  // 0156: the beforeEach's seedFallbackFillWindow() already owns the 'work' tag name
+  // (UNIQUE(owner_id, name)), seeded as a direction for the fallback-fill window —
+  // reuse it instead of inserting a second row.
+  const work = (sqlite.prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = 'work'`).get(OWNER) as { id: string }).id;
   const errands = insert('tags', { owner_id: OWNER, name: 'errands' });
 
   const spec = insert('tasks', { title: 'Write spec', owner_id: OWNER, status: 'open', priority: 2, estimated_minutes: 45, scheduled_for: DAY });
@@ -130,10 +134,15 @@ describe('behavior baseline — read API serialization', () => {
 
 describe('behavior baseline — Auto placement engine', () => {
   it('places Plans-first (tap 2), then the explicit priority fill, deterministically', async () => {
-    sqlite.prepare(`UPDATE scheduling_prefs SET timezone='UTC', workday_start='09:00', workday_end='18:00', auto_fill_workday=1 WHERE owner_id=?`).run(OWNER);
-
+    sqlite.prepare(`UPDATE scheduling_prefs SET timezone='UTC', auto_fill_workday=1 WHERE owner_id=?`).run(OWNER);
+    // 0156: the explicit priority fill (fillByPriority) now reads the work+community
+    // pattern_blocks union, not the removed flat workday_start/workday_end. The
+    // beforeEach's seedFallbackFillWindow() seeds 09:00-18:00 for both directions/day
+    // types, and already owns the 'work' tag name (UNIQUE(owner_id, name)) — reuse it
+    // below instead of inserting a second row. DAY (2026-06-22) is a Monday, so
+    // 'workday' is the day-type the default heuristic resolves to.
     const plan = insert('time_blocks', { owner_id: OWNER, title: 'work plan', block_kind: 'timeblock', block_type: 'scheduled', tag: 'work', start_at: at('09:00'), end_at: at('12:00'), is_auto: 0, source_kind: 'manual', status: 'planned' });
-    const work = insert('tags', { owner_id: OWNER, name: 'work' });
+    const work = (sqlite.prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = 'work'`).get(OWNER) as { id: string }).id;
     const code = insert('tasks', { title: 'Write code', owner_id: OWNER, status: 'open', estimated_minutes: 60, priority: 2 });
     const milk = insert('tasks', { title: 'Buy milk', owner_id: OWNER, status: 'open', estimated_minutes: 30, priority: 3 });
     const loose = insert('tasks', { title: 'Loose end', owner_id: OWNER, status: 'open', estimated_minutes: 45, priority: 4 });

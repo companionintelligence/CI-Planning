@@ -34,6 +34,8 @@ import { writeAudit } from '../lib/audit.js';
 import { serverTimezone, zonedWallTimeToUTC, utcDayBounds, localDateInTZ, todayInTZ } from '../lib/tz.js';
 import { graphData, MemoryUnavailable, type MemoryGraph } from '../connectors/memory.js';
 import { memoryConnectorAvailable } from '../services/memory.js';
+import { resolveDayType } from '../services/day-types.js';
+import { directionWindowsByName, FALLBACK_FILL_DIRECTION_NAMES } from '../services/pattern-blocks.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -61,8 +63,9 @@ export interface PlanTask {
 
 interface PlanningPrefs {
   planning_mode: string;
-  workday_start: string;
-  workday_end: string;
+  /** 0156 — replaces workday_start/workday_end as the source for the AI-authoring
+   *  "capacity today" hint. Stored weekly (matches sleep_hours_per_week); default 56. */
+  capacity_hours_per_week: number;
   /** §C2 — day-of-week → theme tag map. Null/undefined = no theming. */
   day_theme?: Record<string, string> | null;
   /**
@@ -77,9 +80,9 @@ interface PlanningPrefs {
 
 async function loadPlanningPrefs(owner: string): Promise<PlanningPrefs> {
   const row = await store()
-    .prepare(`SELECT planning_mode, trust_mode, workday_start, workday_end, day_theme, fill_order FROM scheduling_prefs WHERE owner_id = ?`)
+    .prepare(`SELECT planning_mode, trust_mode, capacity_hours_per_week, day_theme, fill_order FROM scheduling_prefs WHERE owner_id = ?`)
     .get<PlanningPrefs & { trust_mode: string | null; day_theme: string | null; fill_order: string | null }>(owner);
-  if (!row) return { planning_mode: 'basic', workday_start: '09:00', workday_end: '18:00', fill_order: 'overdue' };
+  if (!row) return { planning_mode: 'basic', capacity_hours_per_week: 56, fill_order: 'overdue' };
   let day_theme: Record<string, string> | null = null;
   if (row.day_theme) {
     try { day_theme = JSON.parse(row.day_theme) as Record<string, string>; } catch { /* ignore malformed */ }
@@ -88,8 +91,7 @@ async function loadPlanningPrefs(owner: string): Promise<PlanningPrefs> {
   const planning_mode = row.trust_mode === 'hands_off' ? 'smart' : row.planning_mode;
   return {
     planning_mode,
-    workday_start: row.workday_start,
-    workday_end: row.workday_end,
+    capacity_hours_per_week: row.capacity_hours_per_week ?? 56,
     day_theme,
     fill_order: row.fill_order ?? 'overdue',
   };
@@ -384,11 +386,9 @@ function safeOrder(raw: unknown, tasks: PlanTask[]): number[] {
   return out;
 }
 
-/** Workday capacity in minutes (wall-clock end − start). */
-function workdayMinutes(start: string, end: string): number {
-  const [sh, sm] = start.split(':').map(Number);
-  const [eh, em] = end.split(':').map(Number);
-  return Math.max(0, eh * 60 + em - (sh * 60 + sm));
+/** 0156 — capacity_hours_per_week spread evenly across the week, in minutes/day. */
+function capacityMinutesPerDay(hoursPerWeek: number): number {
+  return Math.round((hoursPerWeek * 60) / 7);
 }
 
 function taskLine(t: PlanTask, i: number): string {
@@ -731,7 +731,7 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
   }
 
   const lines = staged.map(taskLine);
-  const capacityMin = workdayMinutes(prefs.workday_start, prefs.workday_end);
+  const capacityMin = capacityMinutesPerDay(prefs.capacity_hours_per_week);
   // §A4: fold any persisted NL hints into a soft constraint line for the generator.
   const constraint = constraintLine(await loadPlanHints(owner, date));
   // AA3a: the memory-context nudge (empty string when nothing is related).
@@ -947,14 +947,22 @@ export async function parseInstruction(owner: string, date: string, text: string
   // then fail deeper with a confusing model-not-found error. It now 503s cleanly with
   // "AI is unavailable" — the same answer the client's own readiness gate already gives.
   if (!(await isReady())) throw new InstructError('unavailable', 'AI is unavailable');
-  const prefs = await loadPlanningPrefs(owner);
   const tz = await ownerTimezone(owner);
   const tagSet = await allTagNames(owner);
+  // 0156: the work+community pattern-window union replaces the flat workday_start/
+  // workday_end bound the LLM used to parse "before 3pm"/"after 9am" against. This
+  // MUST agree with placeHintWindows' own bound (engine/autoplan.ts) — including its
+  // same full-day degrade when nothing is configured — or a hint the LLM parses as
+  // valid here could come back unplaceable at enforcement time.
+  const dayType = await resolveDayType(owner, date);
+  const fallbackRanges = await directionWindowsByName(owner, dayType, FALLBACK_FILL_DIRECTION_NAMES);
+  const ws = fallbackRanges.length ? fallbackRanges[0].start_time : '00:00';
+  const we = fallbackRanges.length ? fallbackRanges.reduce((m, r) => (r.end_time > m ? r.end_time : m), fallbackRanges[0].end_time) : '24:00';
   // This surface owes the user a REASON, so it keeps its own branch — but on `llmOrNull`,
   // not a bare catch: a transport failure or unparseable reply is the 503, while a genuine
   // bug propagates instead of being dressed up as "AI is unavailable".
   const raw = await llmOrNull('parseInstruction', () =>
-    generateJson(instructPrompt(text, date, prefs.workday_start, prefs.workday_end, [...tagSet]), {
+    generateJson(instructPrompt(text, date, ws, we, [...tagSet]), {
       purpose: 'plan_instruct',
       system: instructSystem(),
     }),

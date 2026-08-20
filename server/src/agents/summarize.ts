@@ -10,6 +10,8 @@ import { addDays } from '../lib/dates.js';
 import { detectComboSuggestions, scopeLabel, CONFIDENCE_FLOOR, type ComboSuggestion, type ScopeKind } from '../services/calibration.js';
 import { graphData, graphContext, nodeStartTime, MemoryUnavailable, type MemoryNode } from '../connectors/memory.js';
 import { memoryConnectorAvailable, memoryWindowMs } from '../services/memory.js';
+import { resolveDayType } from '../services/day-types.js';
+import { directionWindowsByName, WORK_DIRECTION_NAME } from '../services/pattern-blocks.js';
 
 interface TaskRow {
   id: string;
@@ -297,7 +299,7 @@ function buildFocus(g: Awaited<ReturnType<typeof gather>>): FocusItem[] {
   return out;
 }
 
-async function buildCapacity(g: Awaited<ReturnType<typeof gather>>, focus: FocusItem[]): Promise<Capacity> {
+async function buildCapacity(g: Awaited<ReturnType<typeof gather>>, focus: FocusItem[], date: string): Promise<Capacity> {
   const scheduled_minutes = g.blocks.reduce((sum, b) => {
     const ms = new Date(b.end_at).getTime() - new Date(b.start_at).getTime();
     return sum + Math.max(0, Math.round(ms / 60_000));
@@ -315,13 +317,18 @@ async function buildCapacity(g: Awaited<ReturnType<typeof gather>>, focus: Focus
     }
   }
 
-  const prefRow = await store()
-    .prepare(`SELECT workday_start, workday_end FROM scheduling_prefs WHERE owner_id = ?`)
-    .get<{ workday_start: string | null; workday_end: string | null }>(currentOwnerId());
-
-  const [sh, sm] = (prefRow?.workday_start ?? '09:00').split(':').map(Number);
-  const [eh, em] = (prefRow?.workday_end ?? '18:00').split(':').map(Number);
-  const workday_minutes = Math.max(0, (eh * 60 + em) - (sh * 60 + sm));
+  // 0156: workday_minutes is now total WORK-direction pattern_blocks minutes for the
+  // day (not the removed flat workday_start/workday_end, and not the wider
+  // work+community fallback-fill union used elsewhere) — 0 when no `work` direction
+  // tag/windows exist, rather than a silent 9-6 default.
+  const owner = currentOwnerId();
+  const dayType = await resolveDayType(owner, date);
+  const workRanges = await directionWindowsByName(owner, dayType, [WORK_DIRECTION_NAME]);
+  const workday_minutes = workRanges.reduce((sum, r) => {
+    const [sh, sm] = r.start_time.split(':').map(Number);
+    const [eh, em] = r.end_time.split(':').map(Number);
+    return sum + Math.max(0, (eh * 60 + em) - (sh * 60 + sm));
+  }, 0);
 
   return { scheduled_minutes, focus_minutes, workday_minutes };
 }
@@ -352,7 +359,7 @@ export async function summarizeDay(date: string, opts: { refresh?: boolean } = {
     blocks: g.blocks.length,
   };
   const focus = buildFocus(g);
-  const capacity = await buildCapacity(g, focus);
+  const capacity = await buildCapacity(g, focus, date);
   // AA2 — computed once and threaded into the hash + both generation paths. '' when the
   // flag is off / connector is down, keeping the hash + prose byte-identical to pre-AA2.
   const memoryExcerpt = await memoryBriefExcerpt(currentOwnerId(), date);

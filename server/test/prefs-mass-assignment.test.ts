@@ -61,7 +61,7 @@ describe('PATCH /api/prefs — mass assignment', () => {
 
     await api(srv.url, '/api/prefs', {
       method: 'PATCH',
-      json: { owner_id: SECOND_OWNER_ID, workday_start: '00:00' },
+      json: { owner_id: SECOND_OWNER_ID, capacity_hours_per_week: 40 },
     });
 
     // scheduling_prefs.owner_id carries no UNIQUE constraint, so a successful hijack
@@ -86,17 +86,17 @@ describe('PATCH /api/prefs — mass assignment', () => {
     // The allowlist must not become a silent no-op for legitimate writes.
     const { status } = await api(srv.url, '/api/prefs', {
       method: 'PATCH',
-      json: { timezone: 'America/New_York', workday_start: '08:30', workday_end: '17:15' },
+      json: { timezone: 'America/New_York', capacity_hours_per_week: 40, max_focus_block_minutes: 75 },
     });
     expect(status).toBe(200);
 
     const row = sqlite
-      .prepare('SELECT timezone, workday_start, workday_end FROM scheduling_prefs WHERE owner_id = ?')
-      .get(SYSTEM_OWNER) as { timezone: string; workday_start: string; workday_end: string };
+      .prepare('SELECT timezone, capacity_hours_per_week, max_focus_block_minutes FROM scheduling_prefs WHERE owner_id = ?')
+      .get(SYSTEM_OWNER) as { timezone: string; capacity_hours_per_week: number; max_focus_block_minutes: number };
     expect(row).toEqual({
       timezone: 'America/New_York',
-      workday_start: '08:30',
-      workday_end: '17:15',
+      capacity_hours_per_week: 40,
+      max_focus_block_minutes: 75,
     });
   });
 });

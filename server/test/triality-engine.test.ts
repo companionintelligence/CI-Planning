@@ -16,7 +16,7 @@ import {
   buildSituationVector, CAT_KEYS, DIM_REGISTRY,
   type DimName, type SituationVector, type Ternary,
 } from '../src/services/triality-vector.js';
-import { createOwner, resetDb, SECOND_OWNER_ID } from './helpers.js';
+import { createOwner, resetDb, SECOND_OWNER_ID, seedFallbackFillWindow } from './helpers.js';
 
 /**
  * Triality T3 — the deterministic scoring engine (design §1, §4, §5).
@@ -104,6 +104,7 @@ function setPriorities(rows: Array<{ category: string; importance: number; satis
 
 beforeEach(() => {
   resetDb();
+  seedFallbackFillWindow(); // 0156: Auto's fallback fill needs work/community windows
 });
 
 describe('refusal floor (§4)', () => {
@@ -1033,6 +1034,10 @@ describe('E12–E16 — the situation, the isolation, and what gets written', ()
     // it always reads 0.
     expect(DIM_REGISTRY.length).toBe(13);
 
+    // 0156: work hours now come from the work+community pattern_blocks union, not the
+    // removed workday_start/workday_end prefs. The beforeEach's seedFallbackFillWindow()
+    // seeds a 09:00-18:00 'workday' window for the 'work' direction tag — NOW
+    // (Wednesday 14:00Z) sits inside it.
     const withHours = await buildSituationVector(OWNER, NOW);
     expect(withHours.meta.active).not.toContain('memory_context');
     expect(withHours.meta.active.length).toBe(12);
@@ -1042,7 +1047,9 @@ describe('E12–E16 — the situation, the isolation, and what gets written', ()
 
     // FIRM_AT/TENTATIVE_AT are chosen so the bands mean the same DIM COUNT at both
     // denominators — which is only worth anything if 11 is genuinely reachable.
-    sqlite.prepare(`UPDATE scheduling_prefs SET workday_start = NULL, workday_end = NULL WHERE owner_id = ?`).run(OWNER);
+    // Clear the seeded fallback-fill windows entirely (both directions, both day
+    // types) so no work hours are known at all.
+    sqlite.prepare(`DELETE FROM pattern_blocks WHERE owner_id = ?`).run(OWNER);
     const noHours = await buildSituationVector(OWNER, NOW);
     expect(noHours.meta.active).not.toContain('in_work_hours');
     expect(noHours.meta.active.length).toBe(11);

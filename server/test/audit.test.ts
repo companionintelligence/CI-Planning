@@ -200,7 +200,7 @@ describe('tags route', () => {
 describe('prefs route', () => {
   it('writes audit row on PATCH /api/prefs (update)', async () => {
     const before = await auditCount('update', 'prefs:owner');
-    await api(srv.url, '/api/prefs', { method: 'PATCH', json: { workday_start: '08:00' } });
+    await api(srv.url, '/api/prefs', { method: 'PATCH', json: { capacity_hours_per_week: 40 } });
     expect(await auditCount('update', 'prefs:owner')).toBe(before + 1);
     const row = await lastAudit('prefs:owner');
     expect(row?.actor).toBe('owner');
