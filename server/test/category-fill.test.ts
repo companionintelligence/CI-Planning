@@ -55,7 +55,7 @@ afterAll(async () => { await srv.close(); });
 beforeEach(() => {
   resetDb();
   sqlite.exec(`DELETE FROM flight_plan; DELETE FROM tag_categories; DELETE FROM category_direction_optouts;`);
-  sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC', workday_start = '09:00', workday_end = '18:00', auto_fill_workday = 0 WHERE owner_id = ?`).run(OWNER);
+  sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC', auto_fill_workday = 0 WHERE owner_id = ?`).run(OWNER);
 });
 
 describe('category-Plan fill (0069)', () => {

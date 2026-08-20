@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
+import { resetDb, startTestServer, api, type TestServer, seedFallbackFillWindow } from './helpers.js';
 
 /**
  * Plan-as-container / grouped movement (PR-C). A task block scheduled into a Plan
@@ -43,7 +43,7 @@ const ms = (iso: string) => Date.parse(iso);
 let srv: TestServer;
 beforeAll(async () => { srv = await startTestServer(); });
 afterAll(async () => { await srv.close(); });
-beforeEach(() => { resetDb(); sqlite.exec(`DELETE FROM flight_plan;`); });
+beforeEach(() => { resetDb(); seedFallbackFillWindow(); sqlite.exec(`DELETE FROM flight_plan;`); });
 
 describe('Auto places members into a Plan', () => {
   it('sets parent_block_id = the Plan on each task placed into its tagged window', async () => {

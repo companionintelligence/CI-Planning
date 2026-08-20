@@ -116,8 +116,7 @@ beforeEach(() => {
   // broken pass 2a would still look "placed".
   sqlite
     .prepare(
-      `UPDATE scheduling_prefs SET timezone = 'UTC', workday_start = '09:00', workday_end = '18:00',
-              auto_fill_workday = 0 WHERE owner_id = ?`,
+      `UPDATE scheduling_prefs SET timezone = 'UTC', auto_fill_workday = 0 WHERE owner_id = ?`,
     )
     .run(OWNER);
 });

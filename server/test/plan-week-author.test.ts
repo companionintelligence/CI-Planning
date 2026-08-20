@@ -39,7 +39,7 @@ vi.mock('../src/mcp/ollama.js', async (importActual) => {
 
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
+import { resetDb, startTestServer, api, type TestServer, seedFallbackFillWindow } from './helpers.js';
 import { authorPlanOrder } from '../src/agents/plan.js';
 
 const OWNER = SYSTEM_OWNER;
@@ -64,12 +64,25 @@ function countOn(date: string): number {
   return (sqlite.prepare(`SELECT COUNT(*) c FROM time_blocks WHERE block_kind = 'task' AND is_auto = 1 AND start_at LIKE ?`).get(date + '%') as { c: number }).c;
 }
 function setSmartMode(): void {
-  // Workday shrunk to fit exactly one 45-min task (sched-horizon.test.ts's exact window),
-  // so a 5-task staged set genuinely fans across the 3-day horizon instead of draining
-  // on day 0 — the only way to observe day 1/2 authoring at all.
   sqlite
-    .prepare(`UPDATE scheduling_prefs SET planning_mode = 'smart', timezone = 'UTC', workday_start = '09:00', workday_end = '10:00' WHERE owner_id = ?`)
+    .prepare(`UPDATE scheduling_prefs SET planning_mode = 'smart', timezone = 'UTC' WHERE owner_id = ?`)
     .run(OWNER);
+  // 0156: the undirected fallback fill now reads the work+community pattern_blocks
+  // union, not the removed flat workday_start/workday_end. Shrunk to fit exactly one
+  // 45-min task (sched-horizon.test.ts's exact window), so a 5-task staged set
+  // genuinely fans across the 3-day horizon instead of draining on day 0 — the only
+  // way to observe day 1/2 authoring at all. The beforeEach's seedFallbackFillWindow()
+  // lays down a wide 09:00-18:00 window for 'work'; replace it with the narrow one.
+  const workId = (
+    sqlite.prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = 'work' AND kind = 'direction'`).get(OWNER) as { id: string }
+  ).id;
+  sqlite.prepare(`DELETE FROM pattern_blocks WHERE owner_id = ?`).run(OWNER);
+  sqlite
+    .prepare(
+      `INSERT INTO pattern_blocks (id, owner_id, direction_tag_id, day_type, start_time, end_time)
+       VALUES (uuid7(), ?, ?, 'workday', '09:00', '10:00')`,
+    )
+    .run(OWNER, workId);
 }
 const stageFive = () => ['S1', 'S2', 'S3', 'S4', 'S5'].forEach((t) => stage(insertTask(t)));
 
@@ -78,6 +91,7 @@ beforeAll(async () => { srv = await startTestServer(); });
 afterAll(async () => { await srv.close(); });
 beforeEach(() => {
   resetDb();
+  seedFallbackFillWindow(); // 0156: Auto's fallback fill needs work/community windows
   setSmartMode();
   ollamaUp = true;
   judgeOverall = 0.9;

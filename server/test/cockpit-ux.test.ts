@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
+import { resetDb, startTestServer, api, type TestServer, seedFallbackFillWindow } from './helpers.js';
 import { fillFlightPlanCandidates, placeFlightPlan, undoLastAuto } from '../src/engine/autoplan.js';
 
 /**
@@ -38,8 +38,9 @@ beforeAll(async () => { srv = await startTestServer(); });
 afterAll(async () => { await srv.close(); });
 beforeEach(() => {
   resetDb();
+  seedFallbackFillWindow(); // 0156: Auto's fallback fill needs work/community windows
   sqlite.exec(`DELETE FROM flight_plan;`);
-  sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC', workday_start = '09:00', workday_end = '18:00', auto_fill_workday = 1, fill_order = 'priority' WHERE owner_id = ?`).run(OWNER);
+  sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC', auto_fill_workday = 1, fill_order = 'priority' WHERE owner_id = ?`).run(OWNER);
 });
 
 // ── 1. Fill Flight Plan only fills, never places ──────────────────────────────
@@ -215,8 +216,12 @@ describe('fill_order toggle', () => {
 // ── 4. Per-direction fill setting ─────────────────────────────────────────────
 describe('per-direction fill gate', () => {
   it('fill off for one direction stops its tasks from being placed; others unaffected', async () => {
-    // Create two direction-tagged tasks; turn off auto_fill for 'work' direction
-    const workTag = (sqlite.prepare(`INSERT INTO tags (id, name, kind, owner_id) VALUES (uuid7(), 'work', 'direction', ?) RETURNING id`).get(OWNER) as { id: string }).id;
+    // Create two direction-tagged tasks; turn off auto_fill for 'work' direction.
+    // 0156: the beforeEach's seedFallbackFillWindow() already owns the 'work' tag name
+    // (UNIQUE(owner_id, name)) — reuse it instead of inserting a second row, and
+    // clear its pre-seeded fallback-fill window so only this test's own range applies.
+    const workTag = (sqlite.prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = 'work'`).get(OWNER) as { id: string }).id;
+    sqlite.prepare(`DELETE FROM pattern_blocks WHERE owner_id = ? AND direction_tag_id = ?`).run(OWNER, workTag);
     const homeTag = (sqlite.prepare(`INSERT INTO tags (id, name, kind, owner_id) VALUES (uuid7(), 'home', 'direction', ?) RETURNING id`).get(OWNER) as { id: string }).id;
     // Pattern prefs: work fill = off, home fill = on
     sqlite.prepare(`INSERT OR REPLACE INTO tag_prefs (id, owner_id, tag_id, kind, auto_fill) VALUES (uuid7(), ?, ?, 'direction', 0)`).run(OWNER, workTag);

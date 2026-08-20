@@ -51,7 +51,7 @@ afterAll(async () => { await srv.close(); });
 beforeEach(() => {
   resetDb();
   sqlite.exec(`DELETE FROM flight_plan;`);
-  sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC', workday_start = '09:00', workday_end = '18:00', auto_fill_workday = 0 WHERE owner_id = ?`).run(OWNER);
+  sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC', auto_fill_workday = 0 WHERE owner_id = ?`).run(OWNER);
 });
 
 describe('Phase 5 — block secondary tags (write + read)', () => {

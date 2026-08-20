@@ -11,7 +11,6 @@
 # Grouping (owner-approved default from docs/W-graphql-crud.md's W11 bullet +
 # docs/W-graphql-schema.md §4/§5): the DB stays exactly one flat table — this is a
 # GraphQL-side read/write SHAPE only. Groups landed:
-#   workday  — workday_start/workday_end
 #   limits   — the *_minutes duration/count bounds (focus block, break, time block
 #              bounds, concept default) that aren't tied to a single feature area
 #   planning — planning_horizon_days / recurrence_horizon_days (the two lookahead
@@ -20,20 +19,19 @@
 #   models   — the three Ollama per-owner model overrides
 #   memory   — the Companion Memory sync toggles + connection state
 # Everything else (timezone, feature flags, Time-Sense cues, concept/plan toggles,
-# trust/fill-order enums, view_prefs, day_theme, deep_work_windows, concept_tags)
-# stays top-level: each is either a single freestanding flag or already reads fine
-# flat, and forcing a group would cost a type for no clarity gain (see PR body for
-# the "flat felt more honest here" cases).
+# trust/fill-order enums, view_prefs, day_theme, deep_work_windows, concept_tags,
+# capacityHoursPerWeek) stays top-level: each is either a single freestanding flag
+# or already reads fine flat, and forcing a group would cost a type for no clarity
+# gain (see PR body for the "flat felt more honest here" cases).
+#
+# 0156 — capacityHoursPerWeek replaces the removed workday group entirely (the
+# workday_start/workday_end pair it fronted no longer exists as a preference; the
+# engine derives fallback-fill windows from pattern_blocks directions instead).
 #
 # z_experiment_arm is NOT exposed: it's server-assigned only (lib/experiment.ts) —
 # never a valid input field, so there's nothing to strip (unlike the REST route,
 # which strips it from an untyped snake_case body). Skipped as a read-only
 # diagnostic too, per the ticket's "optional, skip unless trivial."
-
-type WorkdayPrefs {
-  start: String!
-  end: String!
-}
 
 type LimitPrefs {
   maxFocusBlockMinutes: Int!
@@ -69,7 +67,6 @@ type SchedulingPrefsType implements Node {
   timezone: String
   timeSenseEnabled: Boolean!
   viewPrefs: JSON                  # null or a plain object (parsed from the stored JSON-TEXT)
-  workday: WorkdayPrefs!
   limits: LimitPrefs!
   planning: PlanningPrefs!
   models: ModelPrefs!
@@ -92,6 +89,7 @@ type SchedulingPrefsType implements Node {
   # UPCOMING events, so its window looks forward; an inbox is only read backwards.
   memoryWindowDays: Int!            # days AHEAD the Companion Memory pull reads (1–30)
   emailLookbackDays: Int!           # days BACK a Gmail ingest may reach (1–90)
+  capacityHoursPerWeek: Int!        # 0156 — AI-authoring "capacity today" hint, weekly hours (default 56)
   focusRitualEnabled: Boolean!
   hapticCuesEnabled: Boolean!
   ambientColorEnabled: Boolean!
@@ -99,11 +97,6 @@ type SchedulingPrefsType implements Node {
   deepWorkWindows: JSON             # [{ start, end }] or null
   dayTheme: JSON                    # Record<string,string> or null
   conceptTags: JSON                 # [{ name, minutes }] or null
-}
-
-input WorkdayPrefsInput {
-  start: String
-  end: String
 }
 
 input LimitPrefsInput {
@@ -143,7 +136,6 @@ input UpdateSchedulingPrefsInput {
   timezone: String
   timeSenseEnabled: Boolean
   viewPrefs: JSON
-  workday: WorkdayPrefsInput
   limits: LimitPrefsInput
   planning: PlanningPrefsInput
   models: ModelPrefsInput
@@ -163,6 +155,7 @@ input UpdateSchedulingPrefsInput {
   conceptHorizonDays: Int
   memoryWindowDays: Int             # 1–30, else BAD_USER_INPUT
   emailLookbackDays: Int            # 1–90, else BAD_USER_INPUT
+  capacityHoursPerWeek: Int
   focusRitualEnabled: Boolean
   hapticCuesEnabled: Boolean
   ambientColorEnabled: Boolean

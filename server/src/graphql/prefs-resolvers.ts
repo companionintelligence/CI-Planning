@@ -40,8 +40,6 @@ function toNode(row: Row): Row & { id: string } {
 
 // ---- output field mapping (camelCase groups <- flat Drizzle row) --------------
 
-const workday = (p: Row) => ({ start: p.workdayStart ?? '09:00', end: p.workdayEnd ?? '18:00' });
-
 const limits = (p: Row) => ({
   maxFocusBlockMinutes: p.maxFocusBlockMinutes ?? 90,
   minBreakMinutes: p.minBreakMinutes ?? 10,
@@ -70,7 +68,6 @@ const memory = (p: Row) => ({
 // ---- input mapping (GraphQL grouped input -> flat snake_case PATCH body) ------
 
 type Grouped = Record<string, unknown> & {
-  workday?: { start?: string | null; end?: string | null } | null;
   limits?: Record<string, number | null | undefined> | null;
   planning?: { horizonDays?: number | null; recurrenceHorizonDays?: number | null } | null;
   models?: { fast?: string | null; quality?: string | null; embed?: string | null } | null;
@@ -102,6 +99,7 @@ const FLAT_PASSTHROUGH: [gqlKey: string, snakeKey: string][] = [
   // across two different sources, which no single group would capture.
   ['memoryWindowDays', 'memory_window_days'],
   ['emailLookbackDays', 'email_lookback_days'],
+  ['capacityHoursPerWeek', 'capacity_hours_per_week'],
   ['focusRitualEnabled', 'focus_ritual_enabled'],
   ['hapticCuesEnabled', 'haptic_cues_enabled'],
   ['ambientColorEnabled', 'ambient_color_enabled'],
@@ -119,10 +117,6 @@ function toPatchBody(input: Grouped): Record<string, unknown> {
   const body: Record<string, unknown> = {};
   for (const [gqlKey, snakeKey] of FLAT_PASSTHROUGH) {
     if (input[gqlKey] !== undefined) body[snakeKey] = input[gqlKey];
-  }
-  if (input.workday) {
-    if (input.workday.start !== undefined) body.workday_start = input.workday.start;
-    if (input.workday.end !== undefined) body.workday_end = input.workday.end;
   }
   if (input.limits) {
     const l = input.limits;
@@ -245,7 +239,6 @@ export const prefsResolvers = {
         return null;
       }
     },
-    workday,
     limits,
     planning,
     models,
@@ -264,6 +257,7 @@ export const prefsResolvers = {
     conceptHorizonDays: (p: Row) => p.conceptHorizonDays ?? 30,
     memoryWindowDays: (p: Row) => p.memoryWindowDays ?? 2,
     emailLookbackDays: (p: Row) => p.emailLookbackDays ?? 7,
+    capacityHoursPerWeek: (p: Row) => p.capacityHoursPerWeek ?? 56,
     focusRitualEnabled: (p: Row) => !!p.focusRitualEnabled,
     hapticCuesEnabled: (p: Row) => !!p.hapticCuesEnabled,
     ambientColorEnabled: (p: Row) => !!p.ambientColorEnabled,

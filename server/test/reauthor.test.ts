@@ -17,7 +17,7 @@ vi.mock('../src/routes/sse.js', async (importActual) => {
 
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
+import { resetDb, startTestServer, api, type TestServer, seedFallbackFillWindow } from './helpers.js';
 import { broadcast } from '../src/routes/sse.js';
 import { placeFlightPlan } from '../src/engine/autoplan.js';
 import {
@@ -80,9 +80,10 @@ beforeAll(async () => { srv = await startTestServer(); });
 afterAll(async () => { await srv.close(); });
 beforeEach(async () => {
   resetDb();
+  seedFallbackFillWindow(); // 0156: Auto's fallback fill needs work/community windows
   sqlite.exec(`DELETE FROM flight_plan`);
   sqlite.exec(`DELETE FROM daily_plan WHERE owner_id = '${OWNER}'`);
-  sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC', workday_start = '09:00', workday_end = '18:00', planning_mode = 'basic' WHERE owner_id = ?`).run(OWNER);
+  sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC', planning_mode = 'basic' WHERE owner_id = ?`).run(OWNER);
   await _resetReplanState();
   mockBroadcast.mockClear();
 });

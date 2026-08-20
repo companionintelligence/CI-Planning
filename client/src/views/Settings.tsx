@@ -45,6 +45,9 @@ interface SettingsForm {
   focus_ritual_enabled: boolean; haptic_cues_enabled: boolean; // Phase Z · Z5 per-cue matrix
   ambient_color_enabled: boolean; calibration_loop_enabled: boolean;
   triality_enabled: boolean; // Triality master flag (0139) — ships dark
+  // 0156: replaces workday_start/workday_end as the source for the AI-authoring
+  // "capacity today" hint. Stored weekly (matches sleep_hours_per_week); default 56.
+  capacity_hours_per_week: number;
 }
 
 /** The boolean fields of the form — for the reusable Toggle. */
@@ -70,6 +73,7 @@ const DEFAULTS: SettingsForm = {
   focus_ritual_enabled: true, haptic_cues_enabled: true,
   ambient_color_enabled: true, calibration_loop_enabled: true,
   triality_enabled: false,
+  capacity_hours_per_week: 56,
 };
 
 export function Settings() {
@@ -226,6 +230,7 @@ export function Settings() {
       memory_window_days:         p.memory_window_days ?? 2,
       email_lookback_days:        p.email_lookback_days ?? 7,
       triality_enabled:           p.triality_enabled ?? false,
+      capacity_hours_per_week:    p.capacity_hours_per_week ?? 56,
     });
   });
 
@@ -1015,6 +1020,24 @@ export function Settings() {
                 label="Fill work hours for undirected tasks"
                 hint="Auto Schedule fills open workday time with tasks that have no direction tag. Per-direction fill (above) is independent."
               />
+            </div>
+            {/* 0156: replaces workday_start/workday_end as the source for the AI-authoring
+                "capacity today" hint — not a placement window, just a weekly total. */}
+            <div class="mt-4 pt-3 border-t border-border">
+              <label class="flex items-center justify-between gap-3">
+                <div>
+                  <div class="text-sm text-foreground leading-tight">Weekly capacity (hours)</div>
+                  <div class="text-[11px] text-muted-foreground">How much room the AI planner assumes exists across a week when ordering your day. Also shown on Balance.</div>
+                </div>
+                <input type="number" class="input py-1 text-sm w-20 flex-shrink-0" min={1} max={168} step={1}
+                  value={form().capacity_hours_per_week}
+                  onInput={(e) => setField('capacity_hours_per_week', Number(e.currentTarget.value))}
+                  onChange={(e) => {
+                    const v = Math.max(1, Math.min(168, Number(e.currentTarget.value) || 1));
+                    setField('capacity_hours_per_week', v);
+                    void api.prefs.update({ capacity_hours_per_week: v }).then(() => refetchPrefs()).catch((err) => showToast((err as Error).message, 'error'));
+                  }} />
+              </label>
             </div>
             {/* T-SCHED-2: Schedule-mode planning horizon. Reuses planning_horizon_days
                 (also the task candidate window — same value as "Planning horizon" below). */}

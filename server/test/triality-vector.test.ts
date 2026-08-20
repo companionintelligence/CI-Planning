@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, beforeAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { resetDb } from './helpers.js';
+import { resetDb, seedFallbackFillWindow } from './helpers.js';
 import {
   buildSituationVector, DIM_REGISTRY, CAT_KEYS,
   type DimContext, type DimName,
@@ -84,6 +84,11 @@ function assignDay(date: string, key: string): void {
   sqlite.prepare(`INSERT INTO day_assignments (owner_id, date, day_type_key) VALUES (?, ?, ?)`).run(OWNER, date, key);
 }
 
+// 0156: `workHours` now reads the work+community pattern_blocks union (replaces the
+// removed workday_start/workday_end prefs). The beforeEach's seedFallbackFillWindow()
+// seeds 09:00-18:00 for both builtin day types, matching the old flat default, so
+// NOW/EVENING's "inside"/"outside work hours" fixtures need no local seed.
+
 const hasMotivationColumn = (): boolean =>
   (sqlite.prepare(`PRAGMA table_info(tasks)`).all() as { name: string }[]).some((c) => c.name === 'motivation');
 
@@ -119,7 +124,7 @@ function mkCtx(overrides: Partial<DimContext> = {}): DimContext {
   };
 }
 
-beforeEach(() => resetDb());
+beforeEach(() => { resetDb(); seedFallbackFillWindow(); });
 
 // ── tasks.motivation guard ─────────────────────────────────────────────────────────
 // MUST stay the first describe in this file: the service latches a POSITIVE column

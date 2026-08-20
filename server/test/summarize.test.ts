@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { summarizeDay } from '../src/agents/summarize.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { resetDb } from './helpers.js';
+import { resetDb, seedFallbackFillWindow } from './helpers.js';
 
 const TODAY = '2026-05-30';
 
@@ -15,9 +15,13 @@ function insertTask(title: string, dueAt: string | null, priority = 3, status = 
 describe('summarize agent', () => {
   beforeEach(() => {
     resetDb();
+    seedFallbackFillWindow(); // 0156: Auto's fallback fill needs work/community windows
     // Pin the zone so the day window matches the UTC wall-clock fixtures below,
     // independent of the host's timezone. (TZ correctness is covered in tz.test.ts.)
     sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC' WHERE owner_id = ?`).run(SYSTEM_OWNER);
+    // 0156: workday_minutes is now the `work` direction's pattern_blocks total for the
+    // day (seedFallbackFillWindow() above seeds 09:00-18:00 for both builtin day
+    // types), not the removed flat workday_start/workday_end.
   });
 
   it('produces prose + accurate stats (works with or without LLM)', async () => {

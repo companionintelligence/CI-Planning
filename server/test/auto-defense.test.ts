@@ -14,7 +14,7 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { resetDb, startTestServer, type TestServer } from './helpers.js';
+import { resetDb, startTestServer, type TestServer, seedFallbackFillWindow } from './helpers.js';
 import { reflow, recoverStaleFreezeLocks } from '../src/engine/auto-defense.js';
 import { placeFlightPlan } from '../src/engine/autoplan.js';
 
@@ -78,11 +78,11 @@ beforeAll(async () => { srv = await startTestServer(); });
 afterAll(async () => { await srv.close(); });
 beforeEach(() => {
   resetDb();
+  seedFallbackFillWindow(); // 0156: Auto's fallback fill needs work/community windows
   sqlite.exec(`DELETE FROM flight_plan`);
   sqlite.exec(`DELETE FROM daily_plan WHERE owner_id = '${OWNER}'`);
   sqlite.prepare(
-    `UPDATE scheduling_prefs SET timezone = 'UTC', workday_start = '09:00', workday_end = '18:00',
-     auto_fill_workday = 1, max_focus_block_minutes = 90, min_break_minutes = 10 WHERE owner_id = ?`
+    `UPDATE scheduling_prefs SET timezone = 'UTC', auto_fill_workday = 1, max_focus_block_minutes = 90, min_break_minutes = 10 WHERE owner_id = ?`
   ).run(OWNER);
 });
 

@@ -222,8 +222,6 @@ export const timeEntries = sqliteTable('time_entries', {
 export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   id: text('id').primaryKey().$defaultFn(newId),
   ownerId: text('owner_id').references(() => owners.id),
-  workdayStart: text('workday_start').default('09:00'),
-  workdayEnd: text('workday_end').default('18:00'),
   deepWorkWindows: text('deep_work_windows', { mode: 'json' }).$type<{ start: string; end: string }[]>(),
   maxFocusBlockMinutes: integer('max_focus_block_minutes').default(90),
   minBreakMinutes: integer('min_break_minutes').default(10),
@@ -335,6 +333,9 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   // FTUE · T11 (0132): NULL = the owner hasn't completed/skipped the first-run
   // onboarding wizard yet; non-NULL ISO-8601 is both the "done" flag and its timestamp.
   onboardedAt: text('onboarded_at'),
+  // 0156: replaces the removed workday_start/workday_end as the source for the
+  // AI-authoring "capacity today" hint. Default 56 = 8h/day × 7.
+  capacityHoursPerWeek: integer('capacity_hours_per_week').notNull().default(56),
 });
 
 export const tags = sqliteTable('tags', {

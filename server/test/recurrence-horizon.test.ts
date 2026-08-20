@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
+import { resetDb, startTestServer, api, type TestServer, seedFallbackFillWindow } from './helpers.js';
 
 /**
  * Phase P · P1 — recurrence_horizon_days. The two lazy engines materialize at most
@@ -55,7 +55,8 @@ beforeAll(async () => {
 });
 afterAll(async () => { await srv.close(); vi.useRealTimers(); });
 beforeEach(() => {
-  resetDb(); // pins timezone='UTC' + recurrence_horizon_days=7
+  resetDb();
+  seedFallbackFillWindow(); // 0156: Auto's fallback fill needs work/community windows // pins timezone='UTC' + recurrence_horizon_days=7
   sqlite.exec(`DELETE FROM pattern_day_optouts; DELETE FROM pattern_tasks; DELETE FROM patterns; DELETE FROM flight_plan;`);
   sqlite.prepare(`UPDATE scheduling_prefs SET enable_routines = 1 WHERE owner_id = ?`).run(OWNER);
 });

@@ -60,16 +60,12 @@ vi.mock('../lib/api.js', () => ({
 }));
 
 type PrefsLike =
-  | { onboarded_at: string | null; workday_start?: string; workday_end?: string; trust_mode?: 'cautious' | 'balanced' | 'hands_off' }
+  | { onboarded_at: string | null; trust_mode?: 'cautious' | 'balanced' | 'hands_off' }
   | null | undefined;
-// Matches the real Prefs shape's non-null defaults (Drizzle: workday_start/workday_end
-// default '09:00'/'18:00') so tests that don't care about T12's reopen-hydration fix
-// don't have to spell these out every time.
-const DEFAULT_PREFS_FIELDS = { workday_start: '09:00', workday_end: '18:00' } as const;
 const [prefsValue, setPrefsValue] = createSignal<PrefsLike>(undefined);
-const setPrefs = (p: PrefsLike) => setPrefsValue(p ? { ...DEFAULT_PREFS_FIELDS, ...p } : p);
+const setPrefs = (p: PrefsLike) => setPrefsValue(p);
 const refetchPrefsMock = vi.fn(async () => {
-  setPrefsValue((p) => ({ ...DEFAULT_PREFS_FIELDS, ...(p ?? {}), onboarded_at: '2026-07-19T00:00:00.000Z' }) as PrefsLike);
+  setPrefsValue((p) => ({ ...(p ?? {}), onboarded_at: '2026-07-19T00:00:00.000Z' }) as PrefsLike);
 });
 const [onboardingStepValue, setOnboardingStepValue] = createSignal<1 | 2 | 3 | 4 | 5>(1);
 const [onboardingForceOpenValue, setOnboardingForceOpenValue] = createSignal(false);
@@ -97,6 +93,11 @@ vi.mock('../stores/index.js', () => ({
   setOnboardingStep: (s: 1 | 2 | 3 | 4 | 5) => setOnboardingStepValue(s),
   onboardingForceOpen: () => onboardingForceOpenValue(),
   setOnboardingForceOpen: (v: boolean) => setOnboardingForceOpenValue(v),
+  // Pre-existing mock gap (unrelated to 0156): ConnectSourceStep reads this real store
+  // signal (stores/index.ts) to gate the "Try with sample data" affordance; the mock
+  // never provided it, so every test reaching Step 3 crashed on render regardless of
+  // what it was testing. Default true matches the real signal's default.
+  onboardingSampleDataAllowed: () => true,
   integrations: () => integrationsValue(),
   refetchIntegrations: () => refetchIntegrationsMock(),
   refetchTasks: () => refetchTasksMock(),
@@ -342,7 +343,7 @@ describe('OnboardingWizard', () => {
       expect((screen.getByLabelText(/Usually go to bed/) as HTMLInputElement).value).toBe('22:00');
     });
 
-    it('Step 2 Next calls prefs.update with timezone + workday_start + workday_end, then lands on Connect', async () => {
+    it('Step 2 Next calls prefs.update with timezone (0156: no workday_start/workday_end), then lands on Connect', async () => {
       setPrefs({ onboarded_at: null });
       mount();
       await advanceToStep2();
@@ -350,8 +351,11 @@ describe('OnboardingWizard', () => {
       fireEvent.click(screen.getByText('Next'));
 
       await waitFor(() => expect(prefsUpdateMock).toHaveBeenCalledWith(
-        expect.objectContaining({ workday_start: '09:00', workday_end: '18:00', timezone: expect.any(String) }),
+        expect.objectContaining({ timezone: expect.any(String) }),
       ));
+      expect(prefsUpdateMock).not.toHaveBeenCalledWith(
+        expect.objectContaining({ workday_start: expect.anything() }),
+      );
       await screen.findByText('Connect a source');
     });
 
@@ -592,19 +596,16 @@ describe('OnboardingWizard', () => {
   // already completed is a T12-only path (T11 never showed the wizard post-completion
   // at all), and it exercised two real bugs.
   describe('reopen after completion (adversarial-review fixes)', () => {
-    it('Time+place and Trust dial hydrate from the owner\'s real saved prefs, not the pre-completion defaults', async () => {
-      setPrefs({ onboarded_at: '2020-01-01T00:00:00.000Z', workday_start: '07:30', workday_end: '16:00', trust_mode: 'hands_off' });
+    it('Trust dial hydrates from the owner\'s real saved prefs on reopen, not the pre-completion default', async () => {
+      setPrefs({ onboarded_at: '2020-01-01T00:00:00.000Z', trust_mode: 'hands_off' });
       setOnboardingStepValue(2);
       setOnboardingForceOpenValue(true);
       mount();
 
-      await waitFor(() => expect((screen.getByLabelText(/Workday start/) as HTMLInputElement).value).toBe('07:30'));
-      expect((screen.getByLabelText(/Workday end/) as HTMLInputElement).value).toBe('16:00');
-
-      // Advancing must resubmit the REAL saved values, not '09:00'/'18:00'.
+      await screen.findByText('Time and place');
       fireEvent.click(screen.getByText('Next'));
       await waitFor(() => expect(prefsUpdateMock).toHaveBeenCalledWith(
-        expect.objectContaining({ workday_start: '07:30', workday_end: '16:00' }),
+        expect.objectContaining({ timezone: expect.any(String) }),
       ));
 
       // Wait for the Connect step to actually render before clicking on: Next is

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
+import { resetDb, startTestServer, api, type TestServer, seedFallbackFillWindow } from './helpers.js';
 
 /**
  * T-SCHED-2 — Schedule-mode planning horizon. POST /api/auto/run loops the existing
@@ -26,18 +26,35 @@ function stage(id: string): void {
 const countOn = (date: string): number =>
   (sqlite.prepare(`SELECT COUNT(*) c FROM time_blocks WHERE block_kind = 'task' AND is_auto = 1 AND start_at LIKE ?`).get(date + '%') as { c: number }).c;
 const stagedCount = (): number => (sqlite.prepare(`SELECT COUNT(*) c FROM flight_plan WHERE owner_id = ?`).get(OWNER) as { c: number }).c;
-// Shrink the workday to a one-task window + set the mode/horizon for the test.
+// Shrink the fallback-fill window to a one-task window + set the mode/horizon for the test.
 function setMode(mode: 'suggest' | 'schedule', horizon: number): void {
   // TM-4: the N-day horizon gate moved from auto_mode='schedule' to trust_mode='hands_off'.
   const trust = mode === 'schedule' ? 'hands_off' : 'balanced';
-  sqlite.prepare(`UPDATE scheduling_prefs SET trust_mode = ?, planning_horizon_days = ?, workday_start = '09:00', workday_end = '10:00' WHERE owner_id = ?`).run(trust, horizon, OWNER);
+  sqlite.prepare(`UPDATE scheduling_prefs SET trust_mode = ?, planning_horizon_days = ? WHERE owner_id = ?`).run(trust, horizon, OWNER);
+  // 0156: the undirected fallback fill now reads the work+community pattern_blocks
+  // union, not the removed flat workday_start/workday_end. The beforeEach's
+  // seedFallbackFillWindow() lays down a wide 09:00-18:00 window for both directions;
+  // replace it with just the narrow 'work' one this test needs (D0-D2 are all weekdays,
+  // so one 'workday' window covers the whole horizon) — otherwise the wide default
+  // would fit more than one task per day and the fan-out assertions break.
+  const workId = (
+    sqlite.prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = 'work' AND kind = 'direction'`).get(OWNER) as { id: string }
+  ).id;
+  sqlite.prepare(`DELETE FROM pattern_blocks WHERE owner_id = ?`).run(OWNER);
+  sqlite
+    .prepare(
+      `INSERT INTO pattern_blocks (id, owner_id, direction_tag_id, day_type, start_time, end_time)
+       VALUES (uuid7(), ?, ?, 'workday', '09:00', '10:00')`,
+    )
+    .run(OWNER, workId);
 }
 
 let srv: TestServer;
 beforeAll(async () => { srv = await startTestServer(); });
 afterAll(async () => { await srv.close(); });
 beforeEach(() => {
-  resetDb(); // clears time_blocks, tags (→ pattern_blocks cascade), day_assignments/map
+  resetDb();
+  seedFallbackFillWindow(); // 0156: Auto's fallback fill needs work/community windows
   sqlite.exec(`DELETE FROM flight_plan;`);
 });
 

@@ -93,8 +93,7 @@ beforeEach(() => {
   resetDb();
   sqlite.exec('DELETE FROM flight_plan; DELETE FROM pattern_blocks;');
   sqlite.prepare(
-    `UPDATE scheduling_prefs SET timezone = 'UTC', workday_start = '09:00', workday_end = '12:00',
-            auto_fill_workday = 0 WHERE owner_id = ?`,
+    `UPDATE scheduling_prefs SET timezone = 'UTC', auto_fill_workday = 0 WHERE owner_id = ?`,
   ).run(OWNER);
   // The work window opens at 09:00 — the same minute the containers below start.
   seedWindow('work', '09:00', '12:00');

@@ -102,8 +102,6 @@ export function resetDb(): void {
   sqlite.exec(`
     UPDATE scheduling_prefs SET
       timezone = 'UTC',
-      workday_start = '09:00',
-      workday_end = '18:00',
       auto_fill_workday = 1,
       fill_order = 'priority',
       enable_rituals = 0,
@@ -144,8 +142,41 @@ export function resetDb(): void {
       memory_account = NULL,
       memory_last_synced_at = NULL,
       triality_enabled = 0,
-      sleep_hours_per_week = 63;
+      sleep_hours_per_week = 63,
+      capacity_hours_per_week = 56;
   `);
+}
+
+/**
+ * 0156 — OPT-IN placement baseline. The deterministic "an undirected task lands
+ * somewhere in the workday" default used to come from the `workday_start`/
+ * `workday_end` prefs resetDb pinned to 09:00-18:00. That pref is gone: Auto's
+ * fallback fill now reads the union of the **work** and **community** directions'
+ * `pattern_blocks` windows instead. This seeds the equivalent 09:00-18:00 window for
+ * both builtin day types.
+ *
+ * Deliberately NOT called from resetDb, even though production's `provisionOwner`
+ * really does seed base direction tags + default windows for every owner: resetDb
+ * wipes `tags`, and a large family of tag-vocabulary tests depends on that blank
+ * slate (they create their own `work` tag — UNIQUE(owner_id, name) — or assert on
+ * exact tag lists). Placement-focused files call this explicitly in their own
+ * beforeEach instead; a file needing different windows just seeds its own.
+ */
+export function seedFallbackFillWindow(ownerId: string = SYSTEM_OWNER): void {
+  for (const name of ['work', 'community']) {
+    sqlite
+      .prepare(`INSERT OR IGNORE INTO tags (id, owner_id, name, kind) VALUES (uuid7(), ?, ?, 'direction')`)
+      .run(ownerId, name);
+    const tagId = (sqlite.prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = ?`).get(ownerId, name) as { id: string }).id;
+    for (const dayType of ['workday', 'weekend']) {
+      sqlite
+        .prepare(
+          `INSERT INTO pattern_blocks (id, owner_id, direction_tag_id, day_type, start_time, end_time)
+           VALUES (uuid7(), ?, ?, ?, '09:00', '18:00')`,
+        )
+        .run(ownerId, tagId, dayType);
+    }
+  }
 }
 
 /** Convenience JSON fetch wrapper. */

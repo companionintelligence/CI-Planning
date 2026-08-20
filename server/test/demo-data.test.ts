@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { createOwner, resetDb, startTestServer, SECOND_OWNER_ID, type TestServer } from './helpers.js';
+import { createOwner, resetDb, startTestServer, SECOND_OWNER_ID, type TestServer, seedFallbackFillWindow } from './helpers.js';
 import { seedDemoData } from '../src/services/demo-data.js';
 import { listBlocks } from '../src/services/blocks.js';
 
@@ -42,6 +42,7 @@ afterAll(async () => { await srv.close(); });
 
 beforeEach(() => {
   resetDb();
+  seedFallbackFillWindow(); // 0156: Auto's fallback fill needs work/community windows
   sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC' WHERE owner_id = ?`).run(OWNER);
 });
 

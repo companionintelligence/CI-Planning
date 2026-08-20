@@ -18,7 +18,7 @@ vi.mock('../src/mcp/ollama.js', async (importOriginal) => {
   };
 });
 
-import { startTestServer, resetDb, createOwner, SECOND_OWNER_ID, api, type TestServer } from './helpers.js';
+import { startTestServer, resetDb, createOwner, SECOND_OWNER_ID, api, type TestServer, seedFallbackFillWindow } from './helpers.js';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 
@@ -91,7 +91,8 @@ const T0 = isoDay(0), T2 = isoDay(2), T4 = isoDay(4);
 beforeAll(async () => { srv = await startTestServer(); });
 afterAll(async () => { await srv.close(); });
 beforeEach(() => {
-  resetDb(); // UTC, workday 09:00-18:00, horizon 7
+  resetDb();
+  seedFallbackFillWindow(); // 0156: Auto's fallback fill needs work/community windows // UTC, workday 09:00-18:00, horizon 7
   sqlite.exec(`DELETE FROM flight_plan; DELETE FROM replan_suggestions; DELETE FROM audit_log;`);
 });
 
@@ -296,7 +297,9 @@ describe('W13 — clearPlanner', () => {
 });
 
 describe('W13 — cross-owner isolation', () => {
-  beforeEach(() => { createOwner(OTHER); });
+  // 0156: createOwner() clones scheduling_prefs but not tags/pattern_blocks — seed
+  // OTHER's own fallback-fill window too, or its undirected task never places.
+  beforeEach(() => { createOwner(OTHER); seedFallbackFillWindow(OTHER); });
 
   it('autoRun as owner B never touches owner A staged plan', async () => {
     const aTask = insertTask('A task', OWNER);

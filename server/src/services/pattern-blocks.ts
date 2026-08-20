@@ -6,6 +6,14 @@ import { writeAudit } from '../lib/audit.js';
 export interface PatternRange { id: string; start_time: string; end_time: string }
 export type DirectionWindows = Record<string, PatternRange[]>; // dirTagId → ranges
 
+// 0156 — direction names the removed workday_start/workday_end fallback was
+// replaced with. See docs/... (Auto's "fallback fill" / NL-hint outer bound):
+// work+community is the general catch-all; home is added in only when the
+// specific task/hint being placed is itself home-tagged.
+export const FALLBACK_FILL_DIRECTION_NAMES = ['work', 'community'] as const;
+export const HOME_DIRECTION_NAME = 'home';
+export const WORK_DIRECTION_NAME = 'work';
+
 export async function getPatternBlocks(ownerId: string, dayType: string): Promise<DirectionWindows> {
   const rows = await store()
     .prepare(
@@ -21,6 +29,35 @@ export async function getPatternBlocks(ownerId: string, dayType: string): Promis
     result[r.direction_tag_id].push({ id: r.id, start_time: r.start_time, end_time: r.end_time });
   }
   return result;
+}
+
+/**
+ * Union of one or more direction tags' pattern_blocks windows for a day type,
+ * resolved by tag NAME (not id) — the direction-name→id lookup autoplan.ts's
+ * Pass 2a already does inline (`dirNameToId`), extracted here so every fallback
+ * bound (0156: Pass 2b, fillByPriority, the single-task fallback, NL hint
+ * bounds, patterns-place.ts, triality-vector.ts) shares one implementation.
+ * Returns wall-clock ranges sorted earliest-first; callers convert to a
+ * specific date's UTC ms themselves (zonedWallTimeToUTC), same as Pass 2a.
+ * A direction name with no matching tag, or a tag with no configured windows,
+ * contributes nothing — never throws, never falls back to a hardcoded default.
+ */
+export async function directionWindowsByName(
+  ownerId: string,
+  dayType: string,
+  names: readonly string[],
+): Promise<PatternRange[]> {
+  if (names.length === 0) return [];
+  const dirTags = await store()
+    .prepare(
+      `SELECT id FROM tags WHERE owner_id = ? AND kind = 'direction' AND name IN (${names.map(() => '?').join(',')})`,
+    )
+    .all(ownerId, ...names) as { id: string }[];
+  if (dirTags.length === 0) return [];
+  const patWindows = await getPatternBlocks(ownerId, dayType);
+  return dirTags
+    .flatMap((t) => patWindows[t.id] ?? [])
+    .sort((a, b) => a.start_time.localeCompare(b.start_time));
 }
 
 export async function setPatternBlockRanges(

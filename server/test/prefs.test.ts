@@ -21,10 +21,10 @@ describe('GET/PATCH /api/prefs', () => {
   });
 
   it('round-trips a patched field (snake_case in and out)', async () => {
-    const r = await api(srv.url, '/api/prefs', { method: 'PATCH', json: { workday_start: '08:30' } });
+    const r = await api(srv.url, '/api/prefs', { method: 'PATCH', json: { capacity_hours_per_week: 40 } });
     expect(r.status).toBe(200);
-    expect(r.body.prefs.workday_start).toBe('08:30');
-    expect((await api(srv.url, '/api/prefs')).body.prefs.workday_start).toBe('08:30');
+    expect(r.body.prefs.capacity_hours_per_week).toBe(40);
+    expect((await api(srv.url, '/api/prefs')).body.prefs.capacity_hours_per_week).toBe(40);
   });
 
   describe('recurrence_horizon_days validation', () => {

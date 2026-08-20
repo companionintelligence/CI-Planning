@@ -4,7 +4,8 @@ import { setActiveEntity } from '../stores/selection.js';
 import { revealDetails } from '../stores/ui.js';
 import { A } from '@solidjs/router';
 import { Heart, Briefcase, Users, Brain, Smile, DollarSign, Edit, Sparkles, AlertCircle, Target, ListTodo, X, BarChart3, Lightbulb } from 'lucide-solid';
-import { priorities, prefs, tasks, setElementModal } from '../stores/index.js';
+import { priorities, prefs, tasks, setElementModal, refetchPrefs, showToast } from '../stores/index.js';
+import { api } from '../lib/api.js';
 import type { Priority, Task } from '../lib/api.js';
 import { BalanceMetrics } from '../components/BalanceMetrics.js';
 
@@ -31,6 +32,14 @@ export function Balance() {
     priorities()?.find((p) => p.category === key) ?? { category: key, ...FALLBACK };
   const hasData = () => (priorities()?.length ?? 0) > 0;
   const sleepWeek = () => prefs()?.sleep_hours_per_week ?? 63;
+  // 0156 — replaces workday_start/workday_end as the source for the AI-authoring
+  // "capacity today" hint. Shown here alongside targetTotal() so allocated-across-
+  // categories can be compared against total available capacity.
+  const capacityWeek = () => prefs()?.capacity_hours_per_week ?? 56;
+  const saveCapacityWeek = (v: number) => {
+    const clamped = Math.max(1, Math.min(168, v || 1));
+    void api.prefs.update({ capacity_hours_per_week: clamped }).then(() => refetchPrefs()).catch((err) => showToast((err as Error).message, 'error'));
+  };
 
   // Phase D: related OPEN tasks per dimension — a pure client-side join (every task
   // carries its `categories` names since Phase B), so no new server surface. The
@@ -121,9 +130,16 @@ export function Balance() {
             <div class="text-xs text-muted-foreground font-semibold tracking-wider uppercase mb-1">Weekly Target</div>
             <div class="flex items-baseline gap-2">
               <div class="text-4xl font-mono font-extrabold text-foreground">{targetTotal()}h</div>
-              <div class="text-xs text-muted-foreground">total focus</div>
+              <div class="text-xs text-muted-foreground">of{' '}
+                <input
+                  type="number" min={1} max={168} step={1}
+                  class="input inline-block w-14 py-0 px-1 text-xs text-center"
+                  value={capacityWeek()}
+                  onChange={(e) => saveCapacityWeek(Number(e.currentTarget.value))}
+                />h capacity
+              </div>
             </div>
-            <div class="text-[10px] text-muted-foreground mt-3 leading-snug">Target hours per week you allocated across categories.</div>
+            <div class="text-[10px] text-muted-foreground mt-3 leading-snug">Target hours per week you allocated across categories, against the weekly capacity the AI planner assumes (also in Settings).</div>
           </div>
           <div class="card p-5 flex flex-col justify-between">
             <div class="text-xs text-muted-foreground font-semibold tracking-wider uppercase mb-1">Avg Satisfaction</div>

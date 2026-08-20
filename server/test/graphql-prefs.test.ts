@@ -37,7 +37,7 @@ describe('W11 — SchedulingPrefsType query', () => {
         timezone
         timeSenseEnabled
         viewPrefs
-        workday { start end }
+        capacityHoursPerWeek
         limits { maxFocusBlockMinutes minBreakMinutes maxTimeBlockMinutes minTimeBlockMinutes defaultTimeBlockMinutes conceptDefaultMinutes }
         planning { horizonDays recurrenceHorizonDays }
         models { fast quality embed }
@@ -50,7 +50,7 @@ describe('W11 — SchedulingPrefsType query', () => {
     expect(p.timezone).toBe('UTC'); // resetDb pins this
     expect(p.timeSenseEnabled).toBe(false);
     expect(p.viewPrefs).toBeNull();
-    expect(p.workday).toEqual({ start: '09:00', end: '18:00' });
+    expect(p.capacityHoursPerWeek).toBe(56); // 0156 default (8h/day x 7)
     expect(p.limits).toEqual({
       maxFocusBlockMinutes: 90,
       minBreakMinutes: 10,
@@ -71,7 +71,7 @@ describe('W11 — updateSchedulingPrefs', () => {
   it('round-trips a field in each group, visible via REST GET', async () => {
     const m = await gql(`mutation {
       updateSchedulingPrefs(input: {
-        workday: { start: "08:30" }
+        capacityHoursPerWeek: 40
         limits: { minBreakMinutes: 15 }
         planning: { horizonDays: 10 }
         models: { fast: "llama3.2" }
@@ -79,7 +79,7 @@ describe('W11 — updateSchedulingPrefs', () => {
       }) {
         success
         pruned
-        prefs { workday { start end } limits { minBreakMinutes } planning { horizonDays } models { fast } memory { syncEnabled account } }
+        prefs { capacityHoursPerWeek limits { minBreakMinutes } planning { horizonDays } models { fast } memory { syncEnabled account } }
       }
     }`);
     expect(m.body.errors).toBeUndefined();
@@ -87,7 +87,7 @@ describe('W11 — updateSchedulingPrefs', () => {
       success: true,
       pruned: null,
       prefs: {
-        workday: { start: '08:30', end: '18:00' },
+        capacityHoursPerWeek: 40,
         limits: { minBreakMinutes: 15 },
         planning: { horizonDays: 10 },
         models: { fast: 'llama3.2' },
@@ -96,7 +96,7 @@ describe('W11 — updateSchedulingPrefs', () => {
     });
 
     const rest = await api(srv.url, '/api/prefs');
-    expect(rest.body.prefs.workday_start).toBe('08:30');
+    expect(rest.body.prefs.capacity_hours_per_week).toBe(40);
     expect(rest.body.prefs.min_break_minutes).toBe(15);
     expect(rest.body.prefs.planning_horizon_days).toBe(10);
     expect(rest.body.prefs.fast_model).toBe('llama3.2');
@@ -105,9 +105,9 @@ describe('W11 — updateSchedulingPrefs', () => {
   });
 
   it('an absent group/key leaves those columns unchanged (PATCH-preserve)', async () => {
-    await gql('mutation { updateSchedulingPrefs(input: { workday: { start: "07:00" } }) { success } }');
-    const r = await gql('mutation { updateSchedulingPrefs(input: { limits: { minBreakMinutes: 20 } }) { prefs { workday { start end } limits { minBreakMinutes } } } }');
-    expect(r.body.data.updateSchedulingPrefs.prefs.workday).toEqual({ start: '07:00', end: '18:00' }); // untouched by the second call
+    await gql('mutation { updateSchedulingPrefs(input: { capacityHoursPerWeek: 40 }) { success } }');
+    const r = await gql('mutation { updateSchedulingPrefs(input: { limits: { minBreakMinutes: 20 } }) { prefs { capacityHoursPerWeek limits { minBreakMinutes } } } }');
+    expect(r.body.data.updateSchedulingPrefs.prefs.capacityHoursPerWeek).toBe(40); // untouched by the second call
     expect(r.body.data.updateSchedulingPrefs.prefs.limits.minBreakMinutes).toBe(20);
   });
 
@@ -199,20 +199,20 @@ describe('W11 — owner scoping', () => {
   it('another owner\'s schedulingPrefs/updateSchedulingPrefs never touches this owner\'s row', async () => {
     createOwner(OTHER); // seeds a cloned scheduling_prefs row for OTHER
 
-    await gql('mutation { updateSchedulingPrefs(input: { workday: { start: "06:00" } }) { success } }'); // as OWNER
-    const otherPatch = await gql('mutation { updateSchedulingPrefs(input: { workday: { start: "23:00" } }) { prefs { id workday { start } } } }', { 'x-test-owner': OTHER });
+    await gql('mutation { updateSchedulingPrefs(input: { capacityHoursPerWeek: 30 }) { success } }'); // as OWNER
+    const otherPatch = await gql('mutation { updateSchedulingPrefs(input: { capacityHoursPerWeek: 70 }) { prefs { id capacityHoursPerWeek } } }', { 'x-test-owner': OTHER });
     expect(otherPatch.body.errors).toBeUndefined();
     expect(otherPatch.body.data.updateSchedulingPrefs.prefs.id).toBe(OTHER);
-    expect(otherPatch.body.data.updateSchedulingPrefs.prefs.workday.start).toBe('23:00');
+    expect(otherPatch.body.data.updateSchedulingPrefs.prefs.capacityHoursPerWeek).toBe(70);
 
     // OWNER's row is untouched by OTHER's mutation.
-    const mine = await gql('{ schedulingPrefs { id workday { start } } }');
+    const mine = await gql('{ schedulingPrefs { id capacityHoursPerWeek } }');
     expect(mine.body.data.schedulingPrefs.id).toBe(OWNER);
-    expect(mine.body.data.schedulingPrefs.workday.start).toBe('06:00');
+    expect(mine.body.data.schedulingPrefs.capacityHoursPerWeek).toBe(30);
 
     // Direct DB check for good measure.
-    const row = sqlite.prepare(`SELECT workday_start FROM scheduling_prefs WHERE owner_id = ?`).get(OWNER) as { workday_start: string };
-    expect(row.workday_start).toBe('06:00');
+    const row = sqlite.prepare(`SELECT capacity_hours_per_week FROM scheduling_prefs WHERE owner_id = ?`).get(OWNER) as { capacity_hours_per_week: number };
+    expect(row.capacity_hours_per_week).toBe(30);
   });
 });
 

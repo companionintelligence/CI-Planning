@@ -1,6 +1,7 @@
 import { store } from '../db/store.js';
 import { MOODS, type Mood } from './task-close.js';
 import { resolveDayType } from './day-types.js';
+import { directionWindowsByName, FALLBACK_FILL_DIRECTION_NAMES } from './pattern-blocks.js';
 import { localDateInTZ, serverTimezone, utcDayBounds, zonedWallTimeToUTC } from '../lib/tz.js';
 
 /**
@@ -134,7 +135,7 @@ export interface DimEntry {
 // ── owner-scoped reads (module-scope SQL; prepare happens in buildDimContext) ────
 
 const SQL_PREFS = `
-  SELECT workday_start, workday_end, timezone, memory_pull_enabled
+  SELECT timezone, memory_pull_enabled
     FROM scheduling_prefs WHERE owner_id = ?
 `;
 
@@ -243,18 +244,21 @@ async function buildDimContext(ownerId: string, now: Date): Promise<DimContext> 
   const nowIso = now.toISOString();
 
   const prefs = await store().prepare(SQL_PREFS).get<
-    { workday_start: string | null; workday_end: string | null; timezone: string | null; memory_pull_enabled: number | null }
+    { timezone: string | null; memory_pull_enabled: number | null }
   >(ownerId);
   const tz = prefs?.timezone || serverTimezone();
   const localDate = localDateInTZ(nowIso, tz);
+  const dayTypeKey = await resolveDayType(ownerId, localDate);
 
-  // Work hours are wall-clock prefs; today's concrete bounds go through the same
-  // DST-correct mapping the engines use. No prefs row (or no hours) → unknown, not 9–6.
+  // 0156: work+community pattern_blocks union (replaces workday_start/workday_end)
+  // collapsed to one earliest-start/latest-end span. No configured window → unknown,
+  // not 9-6 — same honest-zero character the old prefs-absent case already had.
   let workHours: DimContext['workHours'] = null;
-  if (prefs?.workday_start && prefs.workday_end) {
+  const fallbackRanges = await directionWindowsByName(ownerId, dayTypeKey, FALLBACK_FILL_DIRECTION_NAMES);
+  if (fallbackRanges.length > 0) {
     workHours = {
-      startMs: Date.parse(zonedWallTimeToUTC(localDate, prefs.workday_start, tz)),
-      endMs: Date.parse(zonedWallTimeToUTC(localDate, prefs.workday_end, tz)),
+      startMs: Math.min(...fallbackRanges.map((r) => Date.parse(zonedWallTimeToUTC(localDate, r.start_time, tz)))),
+      endMs: Math.max(...fallbackRanges.map((r) => Date.parse(zonedWallTimeToUTC(localDate, r.end_time, tz)))),
     };
   }
 
@@ -341,7 +345,7 @@ async function buildDimContext(ownerId: string, now: Date): Promise<DimContext> 
     workHours,
     recentMood,
     freeGapMinutes,
-    dayTypeKey: await resolveDayType(ownerId, localDate),
+    dayTypeKey,
     timerRunning,
     lastCompletionMs: lastCompletion ? Date.parse(lastCompletion) : null,
     lastActivityMs: lastActivity ? Date.parse(lastActivity) : null,

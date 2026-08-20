@@ -51,7 +51,7 @@ beforeEach(async () => {
   resetDb();
   sqlite.exec(`DELETE FROM flight_plan`);
   sqlite.exec(`DELETE FROM daily_plan WHERE owner_id = '${OWNER}'`);
-  sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC', workday_start = '09:00', workday_end = '18:00' WHERE owner_id = ?`).run(OWNER);
+  sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC' WHERE owner_id = ?`).run(OWNER);
   await _resetReplanState();
   mockBroadcast.mockClear();
 });

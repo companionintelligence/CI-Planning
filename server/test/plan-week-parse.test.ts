@@ -49,7 +49,7 @@ beforeAll(async () => { srv = await startTestServer(); });
 afterAll(async () => { await srv.close(); });
 beforeEach(() => {
   resetDb();
-  sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC', workday_start = '09:00', workday_end = '18:00' WHERE owner_id = ?`).run(SYSTEM_OWNER);
+  sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC' WHERE owner_id = ?`).run(SYSTEM_OWNER);
   ollamaUp = true;
   parseResp.mockReturnValue({ pins: [], hints: [] });
   mockGenerateJson.mockClear();
