@@ -38,24 +38,84 @@ import { sendMail } from '../lib/mail/index.js';
 
 const STATE_TTL_MS = 10 * 60 * 1000; // authorize redirects are short-lived (10 min)
 const MIN_PASSWORD_LENGTH = 8;       // V: server-side floor for a reset password (client also checks)
+// A hung CI-Portal token endpoint must not hang the callback the browser is sitting on
+// mid-redirect. 10s (vs oidcDiscovery's 5s): this is a POST the provider does real work
+// for (validate the code, mint tokens), not a static document GET.
+const TOKEN_EXCHANGE_TIMEOUT_MS = 10_000;
+/** Longest accepted reset identifier — RFC 5321's max address length. */
+const MAX_IDENTIFIER_LENGTH = 254;
 
 // Minimal in-memory sliding-window limiter — the consumer of config.auth.rateLimit.
 // Bounds `issueMax` attempts per `windowMs` for a given KEY. In-process only (single-node
 // deployment); resets on restart. Keys are namespaced so different axes don't collide:
 // `ip:<addr>` for per-IP (login, ciportal start, reset-request) and `reset:<identifier>`
 // for the per-account reset-request axis (V9 — hammering one account's mailbox).
+//
+// THE MAP IS BOUNDED, deliberately and on three axes. It used to grow forever: every
+// bucket was re-inserted on read even when its whole window had expired, and nothing
+// ever removed one. The `reset:` axis makes that reachable from an UNAUTHENTICATED
+// endpoint whose key is request-supplied, so a distinct identifier per request minted
+// a permanent entry — 100k requests measured at 100k retained keys. The bounds:
+//   1. key length — one bucket can never be larger than MAX_KEY_LEN;
+//   2. an expiry sweep, so idle buckets are reclaimed rather than kept for ever;
+//   3. a hard MAX_BUCKETS ceiling with LRU eviction, so even a flood that outruns the
+//      sweep has an absolute memory cost.
 const attempts = new Map<string, number[]>();
+
 // Once-per-process latch for the reset-request "SMTP not configured" warning — the
 // endpoint is public, so a per-request warn would let anyone spam the logs.
 let warnedResetWithoutSmtp = false;
-function rateLimitedKey(key: string): boolean {
+
+/** Longest key we will store. Longer keys are truncated, never rejected — colliding
+ *  two over-long identifiers into one bucket only makes the limit *stricter*, and this
+ *  is a coarse abuse defence, not an identity. */
+const MAX_KEY_LEN = 256;
+/** Buckets held before a sweep is worth the O(n) pass. */
+const SWEEP_AT = 1_024;
+/** Absolute bucket ceiling, enforced by LRU eviction after the sweep. */
+const MAX_BUCKETS = 4_096;
+
+/**
+ * Drop every bucket whose window has fully expired.
+ *
+ * `times` is append-only and ascending, so the LAST entry is the newest: if that one is
+ * outside the window, all of them are. A bucket in that state is indistinguishable from
+ * one that never existed, which is exactly why keeping it was pure waste.
+ */
+function sweepAttempts(now: number, windowMs: number): void {
+  for (const [key, times] of attempts) {
+    const newest = times[times.length - 1];
+    if (newest === undefined || now - newest >= windowMs) attempts.delete(key);
+  }
+}
+
+function rateLimitedKey(rawKey: string): boolean {
+  const key = rawKey.length > MAX_KEY_LEN ? rawKey.slice(0, MAX_KEY_LEN) : rawKey;
   const { windowMs, issueMax } = config.auth.rateLimit;
   const now = Date.now();
+
+  if (attempts.size >= SWEEP_AT) {
+    sweepAttempts(now, windowMs);
+    // Still over the ceiling ⇒ a live flood the sweep can't keep up with. Evict the
+    // least-recently-touched buckets: they are the ones closest to expiring anyway, so
+    // this costs an attacker-shaped caller a few extra attempts and costs a legitimate
+    // one nothing. Failing CLOSED here instead (refusing new keys) would hand any
+    // stranger a way to lock every account out of login, which is the worse trade.
+    while (attempts.size >= MAX_BUCKETS) {
+      const oldest = attempts.keys().next();
+      if (oldest.done) break;
+      attempts.delete(oldest.value);
+    }
+  }
+
   const recent = (attempts.get(key) ?? []).filter((t) => now - t < windowMs);
+  const limited = recent.length >= issueMax;
+  if (!limited) recent.push(now);
+  // delete-then-set keeps Map iteration order as least-recently-touched first, which is
+  // what makes the eviction above an LRU rather than a first-seen cull.
+  attempts.delete(key);
   attempts.set(key, recent);
-  if (recent.length >= issueMax) return true;
-  recent.push(now);
-  return false;
+  return limited;
 }
 /** Per-IP limiter (login, ciportal start). */
 function rateLimited(ip: string): boolean {
@@ -96,6 +156,17 @@ export async function ciportalEndpoints(): Promise<OidcDiscoveryDoc> {
 /** Test-only: clear the in-memory login rate-limiter so tests don't bleed attempts into each other. */
 export function __resetAuthRateLimit(): void {
   attempts.clear();
+}
+
+/** Test-only: live bucket count, so the bounds above can be asserted rather than assumed. */
+export function __authRateLimitSize(): number {
+  return attempts.size;
+}
+
+/** Test-only: drive the limiter directly. The bounds are a property of the map, and
+ *  proving them through HTTP would need tens of thousands of requests to say less. */
+export function __rateLimitedKeyForTest(key: string): boolean {
+  return rateLimitedKey(key);
 }
 
 interface AuthStateRow {
@@ -196,6 +267,15 @@ export function authRouter() {
       throw httpError(400, 'identifier (username or email) is required');
     }
     const id = identifier.trim();
+    // Length-check BEFORE the limiter, which keys a bucket on this string. The body
+    // parser accepts 20mb (app.ts), so without this an unauthenticated caller chose how
+    // much memory each request cost us. 254 is the RFC 5321 ceiling for an address, so
+    // nothing this rejects could have matched an account anyway — and the check reads
+    // only the length of what was sent, never whether it names anyone, so the
+    // anti-enumeration invariant below is untouched.
+    if (id.length > MAX_IDENTIFIER_LENGTH) {
+      throw httpError(400, 'identifier is too long');
+    }
 
     // Per-IP and per-account limits. The per-IP bucket is shared with login/start (all
     // "issue" ops); the per-account bucket stops one mailbox being hammered. Keyed on the
@@ -453,6 +533,7 @@ export function authRouter() {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams(tokenParams).toString(),
+        signal: AbortSignal.timeout(TOKEN_EXCHANGE_TIMEOUT_MS),
       });
       if (!res.ok) {
         logger.warn('CI-Portal token exchange failed', { status: res.status });

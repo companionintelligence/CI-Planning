@@ -81,6 +81,9 @@ describe('runLoop — §A0 harness contract', () => {
     expect(res.candidate).toEqual([99]); // the deterministic baseline
     expect(judge).not.toHaveBeenCalled(); // gate short-circuits before any judge cost
     expect(onEscape).toHaveBeenCalledTimes(1);
+    // -1, not 0: a deterministic-fail round is never judged, so it must not count as
+    // "judged at 0" — those are different failures a caller may need to tell apart.
+    expect(res.score).toBe(-1);
   });
 
   it('judge self-consistency: the median of 3 samples gates the pass', async () => {
@@ -187,6 +190,7 @@ describe('runLoop — §A0 harness contract', () => {
     expect(res.escaped).toBe(true);
     expect(res.candidate).toEqual([-1]);
     expect(onEscape).toHaveBeenCalledTimes(1);
+    expect(res.score).toBe(-1); // same contract, judge-less stage
   });
 
   it('escape hatch never spins: generate called once, revise bounded by maxIterations', async () => {
@@ -200,5 +204,46 @@ describe('runLoop — §A0 harness contract', () => {
 
     expect(generate).toHaveBeenCalledTimes(1);
     expect(revise.mock.calls.length).toBeLessThanOrEqual(2); // ≤ maxIterations-1, never unbounded
+  });
+
+  it('a leading deterministic-fail round does not pollute the score once a later round is judged', async () => {
+    let calls = 0;
+    const check = vi.fn(() => (calls++ === 0 ? [{ rule: 'bad', detail: 'first try' }] : []));
+    const judge = vi.fn(async (): Promise<JudgeScore> => ({ overall: 0.85 }));
+    const revise = vi.fn(async (c: Cand) => c);
+    const res = await runLoop(
+      stage({ check, judge, revise }),
+      { record: recorder().record, passThreshold: 0.8 },
+    );
+
+    expect(res.passed).toBe(true);
+    expect(res.iterations).toBe(2);
+    // 0.85, not dragged toward round 1's UNTRACKED score — the caller sees exactly
+    // what the judge actually said, as if the deterministic-fail round never happened.
+    expect(res.score).toBe(0.85);
+  });
+
+  it('every round deterministic-fail: score stays -1, the judge is never once consulted', async () => {
+    const check = vi.fn(() => [{ rule: 'bad', detail: 'always' }]);
+    const judge = vi.fn(async (): Promise<JudgeScore> => ({ overall: 1.0 })); // must never be reached
+    const revise = vi.fn(async (c: Cand) => c);
+    const onEscape = vi.fn();
+    const res = await runLoop(
+      stage({ check, judge, revise }),
+      { record: recorder().record, onEscape, maxIterations: 5 },
+    );
+
+    expect(res.passed).toBe(false);
+    expect(res.escaped).toBe(true);
+    expect(judge).not.toHaveBeenCalled(); // the gate short-circuits every single round
+    // The documented "-1 if none did" (LoopResult.score) is otherwise unreachable
+    // whenever a real caller would most want it: a stage whose candidates NEVER once
+    // clear the hard rules, as opposed to one that clears them and scores badly.
+    expect(res.score).toBe(-1);
+    // Two consecutive rounds with no score movement (both untracked, pre-existing
+    // plateau behavior, unrelated to this fix) — escapes on plateau at iteration 2,
+    // not by exhausting maxIterations.
+    expect(onEscape.mock.calls[0][2].reason).toBe('plateau');
+    expect(res.iterations).toBe(2);
   });
 });

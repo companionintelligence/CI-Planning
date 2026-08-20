@@ -507,3 +507,63 @@ describe('input and value normalisation', () => {
     expect(canonicalValue([])).toBe('');
   });
 });
+
+// ── Embed reuse (weekly rebuild optimization) ──────────────────────────────────
+
+describe('embed reuse by log_id', () => {
+  /** Counts calls and delegates to the deterministic fakeEmbed, so tests can assert
+   *  exactly how many rows a run actually embedded. */
+  function countingEmbed(): { fn: (text: string) => Promise<number[]>; calls: () => number } {
+    let n = 0;
+    return { fn: async (text) => { n++; return fakeEmbed(text); }, calls: () => n };
+  }
+
+  it('a second run over an unchanged history re-embeds nothing', async () => {
+    for (let i = 0; i < 8; i++) await evidence({ text: `gym workout ${i}`, llm: 'Leisure', final: 'Health' });
+
+    const first = countingEmbed();
+    const r1 = await calibrateClassification(OWNER, NOW, { embedFn: first.fn });
+    const cat1 = r1.fields.find((f) => f.field === 'category')!;
+    expect(first.calls()).toBe(cat1.indexed); // cold index: everything is a fresh embed
+    expect(cat1.reused).toBe(0);
+
+    const second = countingEmbed();
+    const r2 = await calibrateClassification(OWNER, NOW, { embedFn: second.fn });
+    const cat2 = r2.fields.find((f) => f.field === 'category')!;
+    // Nothing changed between runs — the embedder is never called at all.
+    expect(second.calls()).toBe(0);
+    expect(cat2.reused).toBe(cat2.indexed);
+    expect(cat2.embedded).toBe(cat2.indexed);
+  });
+
+  it('only the NEW correction is embedded when one is added between runs', async () => {
+    for (let i = 0; i < 8; i++) await evidence({ text: `gym workout ${i}`, llm: 'Leisure', final: 'Health' });
+    await calibrateClassification(OWNER, NOW, { embedFn: fakeEmbed });
+
+    await evidence({ text: 'brand new correction', llm: 'Leisure', final: 'Health' });
+
+    const second = countingEmbed();
+    const r2 = await calibrateClassification(OWNER, NOW, { embedFn: second.fn });
+    const cat2 = r2.fields.find((f) => f.field === 'category')!;
+    expect(second.calls()).toBe(1); // exactly the one new row
+    expect(cat2.reused).toBe(cat2.indexed - 1);
+  });
+
+  it('a reused row carries over the SAME vector bytes, not a re-derived one', async () => {
+    await evidence({ text: 'gym workout unique-marker', llm: 'Leisure', final: 'Health' });
+    for (let i = 0; i < CORRECTION_FLOOR; i++) {
+      await evidence({ text: `filler ${i}`, llm: 'Leisure', final: 'Health' });
+    }
+    await calibrateClassification(OWNER, NOW, { embedFn: fakeEmbed });
+    const before = exemplarRows().find((r) => r.input_text.includes('unique-marker'))!.embedding;
+    expect(before).not.toBeNull();
+
+    // A DIFFERENT embedder on the second run — if the row were re-embedded instead of
+    // reused, its bytes would change here. They must not.
+    const otherEmbed = async (text: string) => (await fakeEmbed(text)).map((x) => x + 100);
+    await calibrateClassification(OWNER, NOW, { embedFn: otherEmbed });
+    const after = exemplarRows().find((r) => r.input_text.includes('unique-marker'))!.embedding;
+    expect(after).not.toBeNull();
+    expect(Buffer.compare(before!, after!)).toBe(0);
+  });
+});

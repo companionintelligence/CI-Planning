@@ -121,6 +121,9 @@ export interface FieldCalibration {
   indexed: number;
   /** Exemplars written WITH a vector; below `indexed` when no embedder answered. */
   embedded: number;
+  /** Of `embedded`, how many carried an EXISTING vector over from the prior index by
+   *  log_id instead of being freshly embedded this run — the win reuse is worth. */
+  reused: number;
   /** Held-out examples scored, and how many the classifier got right. */
   heldOut: number;
   correct: number;
@@ -480,7 +483,7 @@ export async function calibrateClassification(
       await store().prepare(DELETE_EXEMPLARS).run(ownerId, field);
       fields.push({
         field, decided: decided.length, corrections: corrections.length,
-        indexed: 0, embedded: 0, heldOut: 0, correct: 0, accuracy: null,
+        indexed: 0, embedded: 0, reused: 0, heldOut: 0, correct: 0, accuracy: null,
       });
       continue;
     }
@@ -492,13 +495,37 @@ export async function calibrateClassification(
     // what survives — a correction from three months ago should not outrank last week's.
     const indexed = [...train].reverse().slice(0, MAX_EXEMPLARS);
 
+    // Reuse a vector by log_id rather than re-embedding it. `classification_log.
+    // input_text` is write-once (the only later UPDATE touches final_value/
+    // corrected_at, never input_text — see the INSERT/UPDATE pair above), so a vector
+    // embedded for a given log_id in an earlier run is STILL that log_id's correct
+    // vector today. Without this, every run re-embedded the WHOLE index from scratch —
+    // up to MAX_EXEMPLARS rows per field, most of which had not changed since the run
+    // before, on a job that runs weekly across every owner.
+    const priorRows = await store()
+      .prepare(SELECT_EXEMPLARS)
+      .all<{ log_id: string; input_text: string; embedding: Buffer | null }>(ownerId, field);
+    const priorByLogId = new Map(priorRows.map((r) => [r.log_id, r] as const));
+
     // Embed BEFORE the swap. These are network calls, and holding a write transaction
     // open across up to MAX_EXEMPLARS of them would block every other writer for
     // minutes — the index is worth rebuilding, never at the cost of the whole DB.
     const embed = await resolveEmbed(ownerId, opts.embedFn);
     const prepared: { row: DecidedRow; vec: Buffer | null }[] = [];
     let embedded = 0;
+    let reused = 0;
     for (const row of indexed) {
+      // input_text can never actually change for a given log_id (see above) — this
+      // equality check is defensive, not load-bearing, so a future write path that DID
+      // start editing it fails safe here (falls through and re-embeds) instead of
+      // silently serving a vector for text it no longer matches.
+      const prior = priorByLogId.get(row.logId);
+      if (prior?.embedding && prior.input_text === row.inputText) {
+        prepared.push({ row, vec: prior.embedding });
+        embedded++;
+        reused++;
+        continue;
+      }
       let vec: Buffer | null = null;
       if (embed) {
         try {
@@ -536,6 +563,7 @@ export async function calibrateClassification(
       corrections: corrections.length,
       indexed: indexed.length,
       embedded,
+      reused,
       ...scored,
     });
   }

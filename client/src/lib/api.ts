@@ -1,14 +1,38 @@
 const BASE = '/api';
 
+/**
+ * A non-OK HTTP response, carrying the status alongside the server's message.
+ *
+ * The status is load-bearing for the op-log flush (stores/mutations.ts): a 4xx is
+ * the server saying "this request is wrong and will stay wrong", while a transport
+ * failure or a 5xx is worth retrying. Without the status those are the same event,
+ * and the retry policy for one becomes the retry policy for both.
+ *
+ * `status` is 0 when the request never got an answer (offline / DNS / abort), which
+ * is why callers must test `status >= 400` rather than truthiness.
+ */
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      method,
+      headers: body ? { 'Content-Type': 'application/json' } : {},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (err) {
+    // Never reached the server — status 0 marks it retryable.
+    throw new ApiError((err as Error).message, 0);
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error((err as any).error ?? res.statusText);
+    throw new ApiError((err as any).error ?? res.statusText, res.status);
   }
   return res.json() as Promise<T>;
 }
@@ -788,8 +812,14 @@ export const api = {
 
   // ── Phase L: field-level sync batch endpoint ────────────────────────────────
   sync: {
+    // The route answers `{ results }` (server routes/sync.ts), not a bare array.
+    // This was typed as the array for a long time, so `for (const r of results)` in
+    // the flush loop threw before a single op could be acked — every op stayed
+    // 'inflight' and the outbox only ever grew. Unwrap here so the declared type
+    // and the wire format agree.
     apply: (ops: SyncOp[]) =>
-      request<(SyncResult | SyncError)[]>('POST', '/sync', { ops }),
+      request<{ results: (SyncResult | SyncError)[] }>('POST', '/sync', { ops })
+        .then((r) => r.results),
   },
 
   // ── Phase N0: daily + weekly goals (reflections table) ───────────────────────

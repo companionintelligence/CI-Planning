@@ -29,6 +29,10 @@ import { buildGoogleScopes } from '../mcp/gmail-flag.js';
  */
 
 const STATE_TTL_MS = 10 * 60 * 1000; // authorize redirects are short-lived (10 min)
+// A hung Google token endpoint must not hang the callback the browser is sitting on
+// mid-redirect. 10s (vs oidcDiscovery's 5s): this is a POST Google does real work for
+// (validate the code, mint tokens), not a static document GET.
+const TOKEN_EXCHANGE_TIMEOUT_MS = 10_000;
 
 /** Where the SPA settings page lives; the callback bounces back here. */
 function settingsRedirect(query: string): string {
@@ -214,6 +218,7 @@ export function oauthRouter() {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams(tokenParams).toString(),
+        signal: AbortSignal.timeout(TOKEN_EXCHANGE_TIMEOUT_MS),
       });
       if (!res.ok) {
         const text = await res.text().catch(() => '');
