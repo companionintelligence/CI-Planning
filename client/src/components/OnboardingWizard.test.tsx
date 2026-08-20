@@ -14,7 +14,8 @@ import type { Integrations } from '../lib/api.js';
  * planWeek.session.open+close / oauth.googleStart / googleConfig.get+save /
  * jobs.runNow) and `../stores/index.js` (prefs / refetchPrefs / showToast /
  * onboardingStep+setOnboardingStep / onboardingForceOpen+setOnboardingForceOpen /
- * integrations / refetch* / hasConnectedSource) — mirrors PlanWeekFill.test.tsx.
+ * onboardingSampleDataAllowed+setOnboardingSampleDataAllowed / integrations /
+ * refetch* / hasConnectedSource) — mirrors PlanWeekFill.test.tsx.
  * `prefs`, `onboardingStep`, and `onboardingForceOpen` are backed by real Solid
  * signals so the mocked setters/refetches actually drive the component, not just
  * record that they were called.
@@ -69,6 +70,9 @@ const refetchPrefsMock = vi.fn(async () => {
 });
 const [onboardingStepValue, setOnboardingStepValue] = createSignal<1 | 2 | 3 | 4 | 5>(1);
 const [onboardingForceOpenValue, setOnboardingForceOpenValue] = createSignal(false);
+// Gates ConnectSourceStep's "Try with sample data" (store default: true). A real signal
+// so the wizard's Finish/Skip reset is observable, not just recorded as a call.
+const [onboardingSampleDataAllowedValue, setOnboardingSampleDataAllowedValue] = createSignal(true);
 const [integrationsValue, setIntegrationsValue] = createSignal<Integrations | undefined>(undefined);
 const toastMock = vi.fn();
 const refetchIntegrationsMock = vi.fn();
@@ -93,11 +97,8 @@ vi.mock('../stores/index.js', () => ({
   setOnboardingStep: (s: 1 | 2 | 3 | 4 | 5) => setOnboardingStepValue(s),
   onboardingForceOpen: () => onboardingForceOpenValue(),
   setOnboardingForceOpen: (v: boolean) => setOnboardingForceOpenValue(v),
-  // Pre-existing mock gap (unrelated to 0156): ConnectSourceStep reads this real store
-  // signal (stores/index.ts) to gate the "Try with sample data" affordance; the mock
-  // never provided it, so every test reaching Step 3 crashed on render regardless of
-  // what it was testing. Default true matches the real signal's default.
-  onboardingSampleDataAllowed: () => true,
+  onboardingSampleDataAllowed: () => onboardingSampleDataAllowedValue(),
+  setOnboardingSampleDataAllowed: (v: boolean) => setOnboardingSampleDataAllowedValue(v),
   integrations: () => integrationsValue(),
   refetchIntegrations: () => refetchIntegrationsMock(),
   refetchTasks: () => refetchTasksMock(),
@@ -182,6 +183,7 @@ describe('OnboardingWizard', () => {
     setPrefsValue(undefined);
     setOnboardingStepValue(1);
     setOnboardingForceOpenValue(false);
+    setOnboardingSampleDataAllowedValue(true);
     setIntegrationsValue(OFF_INTEGRATIONS);
     localStorage.clear();
   });
