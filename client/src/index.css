@@ -19,7 +19,7 @@
   --card-foreground: #041620;
   --popover: oklch(100% 0 0);
   --popover-foreground: #041620;
-  --primary: #0f717a;
+  --primary: #0a6358;
   --primary-foreground: oklch(98.4% 0.003 247.858);
   --secondary: oklch(96.8% 0.007 247.896);
   --secondary-foreground: #0a222e;
@@ -91,7 +91,7 @@
   --card-foreground: #88a29e;
   --popover: #0a222e;
   --popover-foreground: #88a29e;
-  --primary: #abd4d8;
+  --primary: #c5e8dc;
   --primary-foreground: #041620;
   --secondary: #0a222e;
   --secondary-foreground: #f5f8fa;
@@ -396,7 +396,7 @@
   }
   .nav-item:hover { color: var(--foreground); background: var(--sidebar-accent); }
   .nav-item-active {
-    /* Themed CI teal (--primary: light #0f717a / dark #abd4d8) so the active
+    /* Themed CI phthalo (--primary: light #0a6358 / dark #c5e8dc) so the active
        label stays legible in BOTH modes. A hardcoded pale teal was near-invisible
        on the light-mode sidebar-accent (1.46:1). */
     color: var(--primary);
