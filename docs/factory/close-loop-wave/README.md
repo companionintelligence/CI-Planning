@@ -33,12 +33,12 @@ below is bound by it.
 
 | # | Ticket | Type | Status | Blocked by |
 |---|---|---|---|---|
-| 1 | [evidence schema](loop-1-dismissal-evidence-schema.md) | DB Migration | ⬜ not started | — |
-| 2 | [capture outcomes](loop-2-capture-outcome-evidence.md) | Backend | ⬜ not started | 1 |
-| 3 | [calibrate batch](loop-3-calibrate-dismissals-batch.md) | Backend | ⬜ not started | 2 |
-| 4 | [hint renderer](loop-4-dismissal-hint-renderer.md) | Backend | ⬜ not started | 3 |
-| 5 | [apply at extraction](loop-5-extract-hint-apply.md) | Backend | ⬜ not started | 4 |
-| 6 | [noise-rate readout](loop-6-noise-rate-readout.md) | Backend | ⬜ not started | 3 |
+| 1 | [evidence schema](loop-1-dismissal-evidence-schema.md) | DB Migration | ✅ landed (`3280f01f`) | — |
+| 2 | [capture outcomes](loop-2-capture-outcome-evidence.md) | Backend | ✅ landed (`84c6e211`) | 1 |
+| 3 | [calibrate batch](loop-3-calibrate-dismissals-batch.md) | Backend | ✅ landed (`3aaf24b2`) | 2 |
+| 4 | [hint renderer](loop-4-dismissal-hint-renderer.md) | Backend | ✅ landed (`6f2da90a`) | 3 |
+| 5 | [apply at extraction](loop-5-extract-hint-apply.md) | Backend | ✅ landed (`a09e1164`) | 4 |
+| 6 | [noise-rate readout](loop-6-noise-rate-readout.md) | Backend | ✅ landed (`f9bf9b30`) | 3 |
 
 Strictly ordered 1 → 2 → 3 → 4 → 5. Ticket 6 forks off 3 and can land in parallel with
 4–5; it is what proves the loop actually works, so do not drop it as "just reporting".

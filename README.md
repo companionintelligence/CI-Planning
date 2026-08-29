@@ -1300,7 +1300,7 @@ touching the underlying rule.
 
 ### Background jobs
 
-**21 cron rows across 22 executable kinds.** Owner-scoped kinds fan out once per owner
+**22 cron rows across 23 executable kinds.** Owner-scoped kinds fan out once per owner
 (enumerated at run time, so a fresh account is picked up on the next tick); a kind still
 running is never started again by the next tick. Every run writes a `job_runs` row, and
 all of them are listed and manually runnable from the **Jobs** view.
@@ -1327,6 +1327,7 @@ all of them are listed and manually runnable from the **Jobs** view.
 | `enrich_tasks` | `20 3 * * *` | Fill blank description / direction / categories from Companion Memory |
 | `calibrate_triality` | `50 3 * * 1` | Weekly re-tune of the per-slot Triality weights from the outcome log |
 | `calibrate_classification` | `10 4 * * 1` | Weekly re-tune of the classify/parse LLM's few-shot exemplars from the owner's own corrections; runs after `calibrate_triality` so the two weekly learning passes don't compete for one GPU |
+| `calibrate_dismissals` | `20 4 * * 1` | Weekly rebuild of the dismissal-evidence exemplar rollup + one noise-rate reading, from settled `possible_outcome_log` evidence; runs after `calibrate_classification` for the same single-GPU reason |
 | `advance_objectives` | `0 5 * * 1` | Stage the next action for each active objective into the flight plan |
 | `promote_possibles` | *(no cron row)* | Runnable on demand only — ingestion auto-promotes, and `nightly_grooming` sweeps stragglers |
 
@@ -1996,6 +1997,8 @@ All from the repo root:
 | GET | `/api/metrics/triality?days=` | Balance → Metrics: acceptance per slot (a suggestion undecided for **less than 24h** is pending and excluded from the denominator; once it is 24h old and still untouched it counts as *ignored* — a decision, and a weak negative), the Novel uptake trend against the prior window, how under-served categories responded, and the learned weights with their sample counts (`null` until learning has run). 404 while the flag is off |
 | GET | `/api/classification/accuracy?limit=` | The classify/parse LLM's held-out accuracy trend, newest run first, per field (`category`/`motivation`). `accuracy: null` on a run that measured nothing — never a `0`. No feature flag |
 | DELETE | `/api/classification/exemplars` | Reset classification learning — drops this owner's learned few-shot index; the correction log survives and the next weekly `calibrate_classification` pass re-earns it |
+| GET | `/api/dismissal-learning/trend?limit=` | The `possible_dismissal_rate` noise-rate trend, oldest → newest, defaulting to 90 rows — answers "is the review queue actually getting quieter?" `rate: null` on a period with `decided = 0` — never a `0` |
+| DELETE | `/api/dismissal-learning/exemplars` | Reset dismissal learning — drops this owner's learned exemplar rollup only (`{ok: true, cleared: <n>}`); `possible_outcome_log` survives and the next weekly `calibrate_dismissals` pass re-earns it from that evidence |
 | POST | `/api/sync` | Apply offline op-log entries from a device (Phase L) |
 | GET | `/api/export` | Download all owner data as a JSON file (import-compatible) |
 | POST | `/api/import` | Restore owner data from an export JSON body |

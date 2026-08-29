@@ -10,6 +10,7 @@ import { promoteAllPending } from '../services/possibles.js';
 import { parseEmail, resolveByEmail, selfPersonId } from '../services/people.js';
 import { dedupePossibles } from './groom.js';
 import { broadcast } from '../routes/sse.js';
+import { dismissalHint } from '../services/dismissal-learning.js';
 
 export interface IngestResult {
   itemsProcessed: number;
@@ -395,11 +396,30 @@ async function runExtraction(
   result: IngestResult
 ): Promise<void> {
   result.itemsProcessed++;
+  // Close-loop wave, ticket 5 — resolve this owner's dismissal hint once per item,
+  // immediately before the extraction call (never per candidate task; see
+  // README.md's "Do not retrieve more than once per item"). One edit here covers all
+  // three producers (gmail, gcal, text) since they all funnel through runExtraction.
+  // dismissalHint() already degrades any retrieval failure to '' internally, but the
+  // resolver itself is defended too — a throw here must not dead-letter the item.
+  //
+  // Subject FIRST, then the body. The index holds the extractor's own renderings —
+  // raw_title [+ raw_summary] — so the subject line is the part of an inbound item
+  // most like what is being matched against, and retrieveDismissals caps the query at
+  // QUERY_TEXT_CAP, keeping whatever leads. For gmail that is the email subject, for
+  // gcal the event title; a plain text note has none and falls back to its opening.
+  let hint = '';
+  try {
+    const probe = source.subject ? `${source.subject} ${source.text}` : source.text;
+    hint = await dismissalHint(currentOwnerId(), probe);
+  } catch (err) {
+    logger.warn('ingest: dismissal hint resolution failed', { err: (err as Error).message });
+  }
   // Deterministic fallback (global constraint): when Ollama is down or answers with
   // something unparseable, don't drop the item — stage it raw so it still arrives,
   // source-tagged. Anything else re-throws (`llmOrNull`), which is the rule this site
   // hand-rolled first and the whole codebase now shares.
-  const extracted = await llmOrNull(`extract:${source.kind}:${source.ref}`, () => extractTasks(source, { tier }));
+  const extracted = await llmOrNull(`extract:${source.kind}:${source.ref}`, () => extractTasks(source, { tier, hint }));
   const tasks: ExtractedTask[] = extracted ?? [fallbackTask(source)];
   // for-of, not forEach: forEach never awaits an async callback, so the counters below
   // would not run and a failed upsert would become an unhandled rejection.
