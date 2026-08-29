@@ -24,6 +24,7 @@ import { advanceObjectives } from './advance-objectives.js';
 import { calibrateEstimates } from './calibrate-estimates.js';
 import { calibrateTriality } from '../services/triality-learning.js';
 import { calibrateClassification } from '../services/classification-learning.js';
+import { calibrateDismissals } from '../services/dismissal-learning.js';
 import { ollamaScorer } from '../services/classification-score.js';
 import { freezeStars } from './freeze-stars.js';
 import { resetRoutineTasks } from './reset-routines.js';
@@ -400,6 +401,18 @@ async function execute(kind: string): Promise<JobOutcome> {
       );
       return { itemsCreated: 0, itemsUpdated: indexed, log: `Classification calibration — ${parts.join('; ')}` };
     }
+    case 'calibrate_dismissals': {
+      // Close-loop wave, ticket 3 — bounded batch learning over dismissal evidence.
+      // Owner-scoped (see OWNER_SCOPED_KINDS): every read filters on the owner, and
+      // evidence is never pooled across owners. A cron/agent write, so it
+      // deliberately does NOT stamp owner attribution (WHO rule, owner ruling
+      // 2026-07-16).
+      const r = await calibrateDismissals(currentOwnerId(), new Date());
+      const log = r.indexed === 0
+        ? `${r.settled} settled dismissal(s), under the ${r.floor} floor — no exemplars written`
+        : `${r.indexed} exemplar(s) from ${r.settled} settled dismissal(s)`;
+      return { itemsCreated: 0, itemsUpdated: r.indexed, log: `Dismissal calibration — ${log}` };
+    }
     case 'calibrate_estimates': {
       const r = await calibrateEstimates();
       const label = r.bias_ratio != null
@@ -503,6 +516,9 @@ const OWNER_SCOPED_KINDS = new Set([
   // Phase 8: the correction log is per-owner by construction — one owner's vocabulary
   // must never teach another's classifier.
   'calibrate_classification',
+  // Close-loop wave, ticket 3: the dismissal evidence log is per-owner by
+  // construction — never pool one owner's dismissals into another's rollup.
+  'calibrate_dismissals',
   'freeze_stars',
   'reset_routines',
 ]);

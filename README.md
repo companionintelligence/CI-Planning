@@ -1300,7 +1300,7 @@ touching the underlying rule.
 
 ### Background jobs
 
-**21 cron rows across 22 executable kinds.** Owner-scoped kinds fan out once per owner
+**22 cron rows across 23 executable kinds.** Owner-scoped kinds fan out once per owner
 (enumerated at run time, so a fresh account is picked up on the next tick); a kind still
 running is never started again by the next tick. Every run writes a `job_runs` row, and
 all of them are listed and manually runnable from the **Jobs** view.
@@ -1327,6 +1327,7 @@ all of them are listed and manually runnable from the **Jobs** view.
 | `enrich_tasks` | `20 3 * * *` | Fill blank description / direction / categories from Companion Memory |
 | `calibrate_triality` | `50 3 * * 1` | Weekly re-tune of the per-slot Triality weights from the outcome log |
 | `calibrate_classification` | `10 4 * * 1` | Weekly re-tune of the classify/parse LLM's few-shot exemplars from the owner's own corrections; runs after `calibrate_triality` so the two weekly learning passes don't compete for one GPU |
+| `calibrate_dismissals` | `20 4 * * 1` | Weekly rebuild of the dismissal-evidence exemplar rollup + one noise-rate reading, from settled `possible_outcome_log` evidence; runs after `calibrate_classification` for the same single-GPU reason |
 | `advance_objectives` | `0 5 * * 1` | Stage the next action for each active objective into the flight plan |
 | `promote_possibles` | *(no cron row)* | Runnable on demand only — ingestion auto-promotes, and `nightly_grooming` sweeps stragglers |
 
