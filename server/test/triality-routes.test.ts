@@ -31,10 +31,13 @@ function enableTriality(owner = OWNER): void {
 
 function seedConfirmed(n: number, owner = OWNER): void {
   const stmt = sqlite.prepare(
-    `INSERT INTO tasks (id, title, owner_id, status, completed_at, completion_mood)
-     VALUES (uuid7(), ?, ?, 'done', ?, 'flat')`,
+    `INSERT INTO tasks (id, title, owner_id, status, completed_at, completion_score, reaction_at)
+     VALUES (uuid7(), ?, ?, 'done', ?, 3, ?)`,
   );
-  for (let i = 0; i < n; i++) stmt.run(`done-${i}`, owner, new Date(Date.now() - (i + 1) * 86_400_000).toISOString());
+  for (let i = 0; i < n; i++) {
+    const at = new Date(Date.now() - (i + 1) * 86_400_000).toISOString();
+    stmt.run(`done-${i}`, owner, at, at);
+  }
 }
 
 function seedOpen(title: string, owner = OWNER): void {

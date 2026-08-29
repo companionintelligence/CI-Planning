@@ -3,7 +3,7 @@ import { Check, X, Link as LinkIcon, Target, Cpu, RefreshCw, Circle, Moon } from
 import { api, type WeeklyGoal, type ReflectionWrite, type DaySummary, type TopTask } from '../lib/api.js';
 import { isoWeekKey } from '../lib/dates.js';
 import { flattenObjectives, matchObjectives, type FlatObjective } from '../lib/objectives.js';
-import { showToast, setElementModal, refetchTasks, aiAvailable, type ToastAction } from '../stores/index.js';
+import { showToast, setElementModal, refetchTasks, aiAvailable, openCloseRitual, taskOf, type ToastAction } from '../stores/index.js';
 
 type Tab = 'today' | 'week';
 
@@ -489,6 +489,8 @@ export function BriefMenu(props: { date: string }) {
     if (t.done) return;
     try {
       await api.tasks.update(t.id, { completed: true });
+      // TopTask is a projection, not a Task — resolve the row the sheet needs.
+      openCloseRitual(taskOf(t.id));
       refetchTasks();
       refetchTop();
     } catch (err) { showToast((err as Error).message, 'error'); }

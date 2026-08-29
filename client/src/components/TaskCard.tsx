@@ -3,7 +3,7 @@ import { setActiveTask } from '../stores/selection.js';
 import { revealDetails } from '../stores/ui.js';
 import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward, CalendarDays, Rocket, X, Shapes, Target, Check, Sparkles } from 'lucide-solid';
 import { type Task, type RecurringScope, api } from '../lib/api.js';
-import { tasks, refetchTasks, showToast, setElementModal, tags, patternPrefs, patterns, patternTypes, refetchPatterns, patternForTask, isRoutineTask, flightPlanTaskIds, scheduledByTaskId, texturesEnabled, categoryPrefs, setCloseRitualTask, askRecurringScope, isRecurringOccurrence } from '../stores/index.js';
+import { tasks, refetchTasks, showToast, setElementModal, tags, patternPrefs, patterns, patternTypes, refetchPatterns, patternForTask, isRoutineTask, flightPlanTaskIds, scheduledByTaskId, texturesEnabled, categoryPrefs, openCloseRitual, askRecurringScope, isRecurringOccurrence } from '../stores/index.js';
 import { buildPickerRows, leafObjectives, PICKER_SEARCH_THRESHOLD } from '../lib/objective-picker.js';
 import { isPromotableToObjective } from '../lib/objective-promote.js';
 import { directionColorForTask, directionShapeForTask, colorVar, resolveItemColor } from '../lib/pattern-meta.js';
@@ -295,9 +295,13 @@ export function TaskCard(props: Props) {
         // Close ritual (0137): offered AFTER the completion lands, never as a gate on it.
         // Raised to the APP-LEVEL store because refetchTasks() below drops this task from
         // the open list and unmounts this very card — a card-local modal would die with it.
-        // Habits and recurring instances are ticked off constantly and often in bulk;
-        // prompting on each would turn a ritual into a nag. One-off tasks only.
-        if (!props.task.is_habit && !props.task.recurrence_parent_id) setCloseRitualTask(props.task);
+        //
+        // 0161 removed the habit / recurring-instance exemption. It existed because these
+        // get ticked in bursts and one sheet per tick was a nag — but the fix for a burst
+        // is the QUEUE ("1 of 3" + skip the rest), not throwing the signal away. Habits are
+        // where a felt-rating is most valuable: they are the work you repeat, so whether
+        // you enjoy them is the question worth measuring.
+        openCloseRitual(props.task);
       }
       refetchTasks();
       refetchStreak();

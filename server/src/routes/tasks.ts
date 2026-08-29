@@ -29,7 +29,7 @@ import {
   type CreateTaskInput, type UpdateTaskInput,
 } from '../services/tasks.js';
 import { writeAudit } from '../lib/audit.js';
-import { closeTask } from '../services/task-close.js';
+import { closeTask, isScore, DECLINED_SCORE, MIN_SCORE, MAX_SCORE } from '../services/task-close.js';
 import { classificationInput, logAssignment } from '../services/classification-learning.js';
 import { getEntityPeople, getEntityPeopleBulk } from '../services/people.js';
 
@@ -695,16 +695,24 @@ export function tasksRouter() {
     ctx.body = { entry };
   });
 
-  // POST /api/tasks/:id/close { mood?, note?, actual_minutes? } — the close ritual.
-  // Completes the task if it is still open, records an optional mood/note, and stamps
-  // reaction_at (only when a mood or note was actually given — see services/task-close.ts).
+  // POST /api/tasks/:id/close { score?, note?, actual_minutes? } — the close ritual.
+  // Completes the task if it is still open, records an optional score/note, and stamps
+  // reaction_at (only when a real 1-5 rating or a note was given — see task-close.ts).
   // Also accepted on an ALREADY-DONE task, which is the point: reflecting later is normal,
   // and the completed_at ↔ reaction_at gap is what makes the lag measurable.
   router.post('/api/tasks/:id/close', async (ctx) => {
     const owner = currentOwnerId();
     const id = ctx.params.id;
-    const body = (ctx.request.body ?? {}) as { mood?: unknown; note?: unknown; actual_minutes?: unknown };
-    const res = await closeTask(owner, id, { mood: body.mood, note: body.note, actualMinutes: body.actual_minutes });
+    const body = (ctx.request.body ?? {}) as { score?: unknown; note?: unknown; actual_minutes?: unknown };
+    // A present-but-invalid score is a 400, not a silent drop. Until 0161 an unknown value
+    // returned 200 having written nothing, so a client bug looked exactly like a success
+    // and the rating vanished without a word.
+    if (body.score !== undefined && body.score !== null && !isScore(body.score)) {
+      ctx.status = 400;
+      ctx.body = { error: `score must be an integer ${DECLINED_SCORE} (declined) or ${MIN_SCORE}-${MAX_SCORE}` };
+      return;
+    }
+    const res = await closeTask(owner, id, { score: body.score, note: body.note, actualMinutes: body.actual_minutes });
     if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
     const [task] = await db.select().from(tasks).where(and(eq(tasks.id, id), eq(tasks.ownerId, owner)));
@@ -718,7 +726,7 @@ export function tasksRouter() {
       blocked: (await blockedTaskIds()).has(id),
     };
     broadcast(owner, 'task:updated', out);
-    ctx.body = { task: out, closed: { completed_at: res.completedAt, reaction_at: res.reactionAt, mood: res.mood, actual_minutes: res.actualMinutes } };
+    ctx.body = { task: out, closed: { completed_at: res.completedAt, reaction_at: res.reactionAt, score: res.score, actual_minutes: res.actualMinutes } };
   });
 
   // POST /api/tasks/:id/timer/stop — stop the (single) running timer. 409 when

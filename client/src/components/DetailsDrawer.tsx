@@ -348,10 +348,12 @@ function TaskPanel(props: { task: () => Task }) {
           </Group>
         </Show>
 
-        <Show when={t().completion_mood || t().completion_note}>
+        {/* A DECLINED (0) is not a reflection — it records that the sheet was dismissed,
+            so it must not render as "0 out of 5". Only a real 1-5 rating shows. */}
+        <Show when={(t().completion_score ?? 0) > 0 || t().completion_note}>
           <Group label="Reflection">
             <dl class="drawer-grid">
-              <Field label="Mood" when={t().completion_mood}>{t().completion_mood}</Field>
+              <Field label="Rating" when={(t().completion_score ?? 0) > 0}>{t().completion_score} / 5</Field>
               <Field label="Note" when={t().completion_note}>{t().completion_note}</Field>
             </dl>
           </Group>

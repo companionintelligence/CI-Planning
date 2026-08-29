@@ -601,13 +601,54 @@ on('reminder:fire', () => refetchReminders());
 // kind + editTarget so it jumps straight to that type's form.
 export type ElementKind = 'task' | 'habit' | 'routine' | 'timeblock';
 /**
- * The close ritual's target task, or null when closed. APP-LEVEL on purpose (same reason
- * as elementModal): completing a task refetches, the task leaves the open list, and the
- * TaskCard that triggered the ritual UNMOUNTS — taking any card-local modal state with it.
- * Measured: the sheet flashed and vanished. The task object is carried here (not just an
- * id) so the sheet can still show a title/estimate for a task no longer in `tasks()`.
+ * The close ritual's QUEUE. APP-LEVEL on purpose (same reason as elementModal): completing
+ * a task refetches, the task leaves the open list, and the TaskCard that triggered the
+ * ritual UNMOUNTS — taking any card-local modal state with it. Measured: the sheet flashed
+ * and vanished. Task objects are carried here (not just ids) so the sheet can still show a
+ * title/estimate/placement for a task no longer in `tasks()`.
+ *
+ * A QUEUE rather than a single slot (0161) because the ritual now fires on every completion
+ * path, habits included, and habits get ticked in bursts. With one slot the second tick of
+ * a burst either steals the sheet mid-answer or is dropped silently; either way a
+ * completion the user meant to rate goes unrated. The queue shows them in order ("1 of 3")
+ * and the sheet's "skip the rest" empties the backlog in one tap, so the burst case costs
+ * one gesture rather than N.
+ *
+ * Ordering is FIFO — the first thing you completed is the first you are asked about, which
+ * is the order you remember doing them in.
  */
-export const [closeRitualTask, setCloseRitualTask] = createSignal<Task | null>(null);
+export interface CloseRitualEntry {
+  task: Task;
+  /** The block the completion came from, when the call site knows it — the Planner chip and
+   *  the Focus ritual both do. Pins the duration default to the span actually worked
+   *  instead of the task's earliest placement, which differs for multi-session tasks. */
+  blockId?: string | null;
+}
+
+export const [closeRitualQueue, setCloseRitualQueue] = createSignal<CloseRitualEntry[]>([]);
+
+/** The sheet's current subject: the head of the queue, or null when there is nothing to rate. */
+export const closeRitualTask = (): CloseRitualEntry | null => closeRitualQueue()[0] ?? null;
+
+/**
+ * Enqueue a completed task for rating. Idempotent per task id: double-firing paths (a
+ * block PATCH that mirrors onto its task AND the task refetch that follows) must not ask
+ * about the same task twice.
+ */
+export function openCloseRitual(task: Task | null | undefined, blockId?: string | null): void {
+  if (!task) return;
+  setCloseRitualQueue((q) => (q.some((e) => e.task.id === task.id) ? q : [...q, { task, blockId }]));
+}
+
+/** Drop the head — the user rated it or skipped it. The next task surfaces immediately. */
+export function advanceCloseRitual(): void {
+  setCloseRitualQueue((q) => q.slice(1));
+}
+
+/** "Skip the rest": empty the backlog, head included. */
+export function clearCloseRitual(): void {
+  setCloseRitualQueue([]);
+}
 
 export const [elementModal, setElementModal] = createSignal<{
   open: boolean;

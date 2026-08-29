@@ -115,11 +115,12 @@ const ALL_THREE = { habitual: 'Model line one.', contextual: 'Model line two.', 
 
 function seedHistory(n: number, now = NOW): void {
   const stmt = sqlite.prepare(
-    `INSERT INTO tasks (id, title, owner_id, status, completed_at, completion_mood)
-     VALUES (uuid7(), ?, ?, 'done', ?, 'flat')`,
+    `INSERT INTO tasks (id, title, owner_id, status, completed_at, completion_score, reaction_at)
+     VALUES (uuid7(), ?, ?, 'done', ?, 3, ?)`,
   );
   for (let i = 0; i < n; i++) {
-    stmt.run(`done-${i}`, OWNER, new Date(now.getTime() - (i + 1) * 86_400_000).toISOString());
+    const at = new Date(now.getTime() - (i + 1) * 86_400_000).toISOString();
+    stmt.run(`done-${i}`, OWNER, at, at);
   }
 }
 

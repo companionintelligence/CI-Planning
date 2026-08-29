@@ -600,15 +600,17 @@ describe('malformed evidence', () => {
 
 function insertTask(
   title: string,
-  o: { status?: string; estimate?: number | null; completedAt?: string; mood?: string } = {},
+  o: { status?: string; estimate?: number | null; completedAt?: string; score?: number } = {},
 ): string {
   return (
     sqlite
       .prepare(
-        `INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, completed_at, completion_mood, priority)
-         VALUES (uuid7(), ?, ?, ?, ?, ?, ?, 3) RETURNING id`,
+        // reaction_at mirrors completed_at when scored — see the note in triality-engine.
+        `INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, completed_at, completion_score, reaction_at, priority)
+         VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, 3) RETURNING id`,
       )
-      .get(title, OWNER, o.status ?? 'open', o.estimate === undefined ? 30 : o.estimate, o.completedAt ?? null, o.mood ?? null) as { id: string }
+      .get(title, OWNER, o.status ?? 'open', o.estimate === undefined ? 30 : o.estimate, o.completedAt ?? null,
+           o.score ?? null, o.score != null ? (o.completedAt ?? null) : null) as { id: string }
   ).id;
 }
 
@@ -650,7 +652,7 @@ function completedIn(category: string, ageDays: number): string {
   const id = insertTask(`done-${category}-${ageDays}`, {
     status: 'done',
     completedAt: daysAgo(ageDays + MORNING_SHIFT_DAYS),
-    mood: 'flat',
+    score: 3,
   });
   addCategory(id, category);
   return id;
@@ -675,7 +677,7 @@ describe('end-to-end adaptation (the test that justifies the feature)', () => {
     // §6 deficits give health the only positive F and career the only negative one.
     // Habitual's dot product therefore TIES career/growth/leisure at 0, and the tie
     // break is the slot's weighted score — exactly the seam learning moves.
-    for (let i = 0; i < 10; i++) insertTask(`noise-${i}`, { status: 'done', completedAt: daysAgo(1 + i), mood: 'flat' });
+    for (let i = 0; i < 10; i++) insertTask(`noise-${i}`, { status: 'done', completedAt: daysAgo(1 + i), score: 3 });
     for (const age of [2, 3, 4]) completedIn('career', age);
     for (const age of [3, 5]) completedIn('growth', age);
     completedIn('leisure', 0.5);

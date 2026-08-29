@@ -356,7 +356,7 @@ class diagram in §5.3.
 
 | Table | Purpose | ORM | Added |
 |---|---|---|---|
-| `tasks` | Core work atom — UUIDv7 PK, status, priority, subtype, recurrence. `texture_enabled`/`texture_color_token` (0135) — per-element striped-texture override (§1.2); `completion_mood`/`completion_note`/`reaction_at` close-ritual columns, all nullable (0137); `motivation` (`me`\|`us`\|`them`, NULL = unlabeled — and NULL is never read as `us`) + `motivation_source` (`user`\|`llm`; a user label is never re-tagged) (0141) | ✓ | 0001, 0135, 0137, 0141 |
+| `tasks` | Core work atom — UUIDv7 PK, status, priority, subtype, recurrence. `texture_enabled`/`texture_color_token` (0135) — per-element striped-texture override (§1.2); `completion_score`/`completion_note`/`reaction_at` close-ritual columns, all nullable (0137, rescored to a 1–5 score by 0161 with 0 = "prompted and declined"); `motivation` (`me`\|`us`\|`them`, NULL = unlabeled — and NULL is never read as `us`) + `motivation_source` (`user`\|`llm`; a user label is never re-tagged) (0141) | ✓ | 0001, 0135, 0137, 0141, 0161 |
 | `task_dependencies` | Blocked-by edges between tasks | ✓ | 0005 |
 | `time_entries` | Actual work logged per task; running timer = `ended_at IS NULL` | ✓ | 0007 |
 | `possible_tasks` | Inbox — AI-proposed items pending promote / dismiss; owner-scoped `(proposed_owner_id, source_kind, source_ref)` uniqueness (0114) + `proposed_estimated_minutes` (0114) + `proposed_scheduled_for`/`proposed_task_time` START intent (0115) | ✓ | 0001, 0114, 0115 |
@@ -485,7 +485,7 @@ class tasks {
   due_at, scheduled_for, defer_until
   estimated_minutes, actual_minutes
   recurrence_rule/_parent_id/_exdates
-  motivation, completion_mood, reaction_at
+  motivation, completion_score, reaction_at
   version, field_ts
 }
 class time_blocks {
