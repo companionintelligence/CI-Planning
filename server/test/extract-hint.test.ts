@@ -14,14 +14,23 @@ import { extractTasks, type ExtractSource } from '../src/agents/extract.js';
  * `extractTasks` doesn't call `llmOrNull` itself, but `ingest.ts`'s `runExtraction` does,
  * so spreading the original keeps `llmOrNull` defined for the end-to-end tests below.
  */
-const { prompts } = vi.hoisted(() => ({ prompts: [] as string[] }));
-vi.mock('../src/mcp/ollama.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../src/mcp/ollama.js')>()),
-  generateJson: vi.fn(async (prompt: string) => {
-    prompts.push(prompt);
-    return { tasks: [{ title: 'Renew the license', priority: 3, tags: [], confidence: 0.8 }] };
-  }),
+const { prompts, ollamaControl } = vi.hoisted(() => ({
+  prompts: [] as string[],
+  // Flipped by one test to simulate Ollama being unreachable, so `llmOrNull` degrades
+  // to `fallbackTask` even though a hint was resolved for the item.
+  ollamaControl: { unavailable: false },
 }));
+vi.mock('../src/mcp/ollama.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/mcp/ollama.js')>();
+  return {
+    ...actual,
+    generateJson: vi.fn(async (prompt: string) => {
+      if (ollamaControl.unavailable) throw new actual.OllamaUnavailable('Ollama unreachable (test)');
+      prompts.push(prompt);
+      return { tasks: [{ title: 'Renew the license', priority: 3, tags: [], confidence: 0.8 }] };
+    }),
+  };
+});
 
 /**
  * Partial mock of the ticket-4 service: real `dismissalHint`/`retrieveDismissals` by
@@ -74,6 +83,7 @@ beforeEach(() => {
   resetDb();
   prompts.length = 0;
   hintControl.throwing = false;
+  ollamaControl.unavailable = false;
   seq = 0;
 });
 
@@ -160,5 +170,24 @@ describe('runExtraction wiring (end-to-end, via ingestText)', () => {
     expect(result.itemsProcessed).toBe(1);
     expect(prompts).toHaveLength(1);
     expect(prompts[0]).not.toContain('dismissed suggestions'); // degraded to no hint, not a crash
+  });
+
+  it('no Ollama: behaviour is unchanged (fallbackTask) even with a hint resolved', async () => {
+    // A hint IS resolved for this item (proving the new plumbing runs), but
+    // generateJson throws OllamaUnavailable, so llmOrNull must still degrade to
+    // fallbackTask exactly as it did before this ticket — the hint never reaches a
+    // response because there is no model call to receive it.
+    seedExemplar('renew car registration');
+    ollamaControl.unavailable = true;
+    const result = await run(() => ingestText(SOURCE.text, SOURCE.ref));
+    expect(result.itemsProcessed).toBe(1);
+    expect(prompts).toHaveLength(0); // generateJson threw before ever recording a prompt
+
+    const row = sqlite
+      .prepare(`SELECT raw_title, confidence FROM possible_tasks WHERE source_ref LIKE ?`)
+      .get<{ raw_title: string; confidence: number }>(`${SOURCE.ref}%`);
+    // fallbackTask's signature: confidence 0.3, title taken from the raw text/subject.
+    expect(row?.confidence).toBe(0.3);
+    expect(row?.raw_title).toBe(SOURCE.text);
   });
 });

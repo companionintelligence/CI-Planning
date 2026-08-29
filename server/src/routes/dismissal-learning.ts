@@ -55,7 +55,11 @@ export function dismissalLearningRouter() {
     const res = await store()
       .prepare(`DELETE FROM possible_dismissal_exemplars WHERE owner_id = ?`)
       .run(owner);
-    writeAudit({ ownerId: owner, actor: 'owner', action: 'reset', entity: 'dismissal_learning:exemplars' });
+    // Audit only a real reset — a no-op delete is not a mutation worth a row (matches
+    // routes/classification.ts's DELETE /exemplars).
+    if (res.changes > 0) {
+      writeAudit({ ownerId: owner, actor: 'owner', action: 'reset', entity: 'dismissal_learning:exemplars' });
+    }
     ctx.body = { ok: true, cleared: res.changes };
   });
 
