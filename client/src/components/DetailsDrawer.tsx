@@ -1,7 +1,7 @@
 import { Show, For, Switch, Match, createSignal, createEffect, createResource, on, onCleanup } from 'solid-js';
 import { useLocation } from '@solidjs/router';
 import { Planner } from './Planner.js';
-import { X, PanelRight, Inbox, Pencil, Sparkles, Check } from 'lucide-solid';
+import { X, PanelRight, Inbox, Pencil, Sparkles, Check, ChevronDown, ChevronRight } from 'lucide-solid';
 import {
   detailsOpen, detailsWidth, setDetailsOpen, setDetailsWidth,
   drawerTab, setDrawerTab, DETAILS_MIN_W, DETAILS_MAX_W, DETAILS_DEFAULT_W,
@@ -18,6 +18,11 @@ import { lockAffordance } from '../lib/lock.js';
 import { PriorityToggle, DateField } from './TaskCard.js';
 import { flattenObjectives } from '../lib/objectives.js';
 import { describeRule } from '../lib/recurrence.js';
+import { rangeUTC } from '../lib/dates.js';
+import {
+  windowFor, inWindow, targetForWindow, groupByTitle, minutesBetween, hoursLabel,
+  type RollupPeriod, type TitleGroup,
+} from '../lib/dimension-rollup.js';
 
 const PRIORITY_NAME: Record<number, string> = { 1: 'High', 2: 'Medium', 3: 'Low' };
 
@@ -583,12 +588,81 @@ function JobPanel(props: { id: string }) {
   );
 }
 
+/** One list row: a title, an optional repeat count, and an optional right-hand meta. */
+function RollupRow(props: { group: TitleGroup<any>; meta?: string; onClick?: () => void; done?: boolean }) {
+  return (
+    <button
+      type="button"
+      class="flex items-center gap-2 w-full text-left py-1 text-xs hover:text-primary group/row"
+      onClick={() => props.onClick?.()}
+    >
+      <span class="truncate group-hover/row:underline" classList={{ 'line-through text-muted-foreground': props.done }}>
+        {props.group.title}
+      </span>
+      {/* The repeat count, as a digit — a recurring task collapses to one row rather
+          than N identical ones. Absent at count 1 so a one-off carries no "x1" noise. */}
+      <Show when={props.group.count > 1}>
+        <span class="flex-shrink-0 text-[10px] font-mono px-1.5 rounded-full bg-muted text-muted-foreground border border-border">
+          x{props.group.count}
+        </span>
+      </Show>
+      <Show when={props.meta}>
+        <span class="ml-auto flex-shrink-0 text-[10px] text-muted-foreground font-mono">{props.meta}</span>
+      </Show>
+    </button>
+  );
+}
+
 function DimensionPanel(props: { dimension: string }) {
   const [prio] = createResource(() => api.priorities.list().then((r) => r.priorities).catch(() => []));
   const row = () => (prio() ?? []).find((x) => x.category === props.dimension);
-  const open = () => (tasks() ?? []).filter(
-    (t) => ['open', 'scheduled', 'in_progress'].includes(t.status ?? '') && (t.categories ?? []).includes(props.dimension),
+
+  // Week/month scopes the time-bound lists (Scheduled, Completed). Open tasks are not
+  // time-bound — filtering a backlog by a window would just hide work.
+  const [period, setPeriod] = createSignal<RollupPeriod>('week');
+  const [showDone, setShowDone] = createSignal(false);
+  const win = () => windowFor(period());
+  const inDim = (cats: string[] | undefined) => (cats ?? []).includes(props.dimension);
+
+  // Scheduled comes from BLOCKS, not tasks: a block is the thing that actually occupies
+  // time, so it is the only honest basis for "how much is allocated".
+  //
+  // Fetched here rather than read off the shared `blocks` resource: that one is keyed to
+  // the range the PLANNER is currently showing (usually a single day), so reading it made
+  // a week/month rollup silently report only today's blocks — 1h scheduled against a 14h
+  // target when three more sessions were already on the calendar.
+  const [windowBlocks] = createResource(
+    () => { const w = win(); return rangeUTC(w.from, w.to); },
+    (r) => api.blocks.list(r.from, r.to).then((res) => res.blocks).catch(() => [] as Block[]),
   );
+  const scheduled = () =>
+    (windowBlocks() ?? [])
+      .filter((b) => inDim(b.categories) && inWindow(b.start_at, win()))
+      .sort((a, b) => a.start_at.localeCompare(b.start_at));
+  const blockMinutes = (b: Block) => minutesBetween(b.start_at, b.end_at);
+  const scheduledMinutes = () => scheduled().reduce((sum, b) => sum + blockMinutes(b), 0);
+  const scheduledGroups = () => groupByTitle(scheduled(), (b) => b.title, blockMinutes);
+
+  const targetMinutes = () => Math.round(targetForWindow(row()?.target_hours_per_week ?? 0, win()) * 60);
+  const unallocated = () => targetMinutes() - scheduledMinutes();
+
+  // A task already on the calendar this window is NOT repeated under Open — the same
+  // task appearing in two sections is exactly the duplication this panel avoids.
+  const scheduledTaskIds = () => new Set(scheduled().map((b) => b.task_id).filter(Boolean) as string[]);
+  const openTasks = () =>
+    (tasks() ?? []).filter(
+      (t) => inDim(t.categories)
+        && ['open', 'scheduled', 'in_progress'].includes(t.status ?? '')
+        && !scheduledTaskIds().has(t.id),
+    );
+  const openGroups = () => groupByTitle(openTasks(), (t) => t.title, (t) => t.estimated_minutes ?? 0);
+
+  const doneTasks = () =>
+    (tasks() ?? [])
+      .filter((t) => inDim(t.categories) && inWindow(t.completed_at, win()))
+      .sort((a, b) => (b.completed_at ?? '').localeCompare(a.completed_at ?? ''));
+  const doneGroups = () => groupByTitle(doneTasks(), (t) => t.title, (t) => t.estimated_minutes ?? 0);
+
   return (
     <div class="drawer-body">
       <Show when={row()} fallback={<div><span class="drawer-pill">No priorities set</span></div>}>
@@ -603,19 +677,103 @@ function DimensionPanel(props: { dimension: string }) {
           </Group>
         )}
       </Show>
-      <Group label={`Open tasks (${open().length})`}>
-        <Show when={open().length > 0} fallback={<span class="text-xs text-muted-foreground">Nothing open in this dimension.</span>}>
-          <div class="flex flex-col gap-1">
-            <For each={open().slice(0, 8)}>
-              {(t) => (
-                <button type="button" class="drawer-tag text-left cursor-pointer hover:border-ring" onClick={() => setActiveTask(t.id)}>
-                  {t.title}
-                </button>
+
+      {/* Window switch — scopes Scheduled + Completed below. */}
+      <div class="flex items-center gap-1 p-0.5 rounded-lg bg-muted/50 border border-border w-fit">
+        <For each={['week', 'month'] as RollupPeriod[]}>
+          {(k) => (
+            <button
+              type="button"
+              class="text-[11px] px-2.5 py-0.5 rounded-md capitalize transition-colors"
+              classList={{
+                'bg-card text-foreground font-medium border border-border': period() === k,
+                'text-muted-foreground hover:text-foreground': period() !== k,
+              }}
+              aria-pressed={period() === k}
+              onClick={() => setPeriod(k)}
+            >
+              {k}
+            </button>
+          )}
+        </For>
+      </div>
+
+      {/* Unallocated — the headline number: target for this window minus what is
+          actually on the calendar. Negative means over-committed, which is a real
+          state and is named rather than clamped to zero. */}
+      <Show when={row()}>
+        <Group label="Allocation">
+          <dl class="drawer-grid">
+            <Field label={period() === 'week' ? 'Target (week)' : 'Target (month)'} when={true}>
+              {hoursLabel(targetMinutes())}
+            </Field>
+            <Field label="Scheduled" when={true}>{hoursLabel(scheduledMinutes())}</Field>
+            <Field label={unallocated() >= 0 ? 'Unallocated' : 'Over target'} when={true}>
+              <span classList={{ 'text-amber-500': unallocated() < 0 }}>
+                {hoursLabel(Math.abs(unallocated()))}
+              </span>
+            </Field>
+          </dl>
+        </Group>
+      </Show>
+
+      <Group label={`Scheduled (${scheduledGroups().length})`}>
+        <Show
+          when={scheduledGroups().length > 0}
+          fallback={<span class="text-xs text-muted-foreground">Nothing scheduled this {period()}.</span>}
+        >
+          <div class="flex flex-col">
+            <For each={scheduledGroups()}>
+              {(g) => (
+                <RollupRow
+                  group={g}
+                  meta={hoursLabel(g.minutes)}
+                  onClick={() => (g.first.task_id ? setActiveTask(g.first.task_id) : setActiveBlock(g.first.id))}
+                />
               )}
             </For>
           </div>
         </Show>
       </Group>
+
+      <Group label={`Open (${openGroups().length})`}>
+        <Show
+          when={openGroups().length > 0}
+          fallback={<span class="text-xs text-muted-foreground">Nothing open in this dimension.</span>}
+        >
+          <div class="flex flex-col">
+            <For each={openGroups()}>
+              {(g) => <RollupRow group={g} onClick={() => setActiveTask(g.first.id)} />}
+            </For>
+          </div>
+        </Show>
+      </Group>
+
+      {/* Completed is collapsed by default: it is history, and on a busy dimension it
+          is the longest of the three lists. */}
+      <div>
+        <button
+          type="button"
+          class="drawer-group flex items-center gap-1 w-full hover:text-foreground"
+          aria-expanded={showDone()}
+          onClick={() => setShowDone((v) => !v)}
+        >
+          <Show when={showDone()} fallback={<ChevronRight size={11} />}><ChevronDown size={11} /></Show>
+          Completed ({doneGroups().length})
+        </button>
+        <Show when={showDone()}>
+          <Show
+            when={doneGroups().length > 0}
+            fallback={<span class="text-xs text-muted-foreground">Nothing completed this {period()}.</span>}
+          >
+            <div class="flex flex-col">
+              <For each={doneGroups()}>
+                {(g) => <RollupRow group={g} done onClick={() => setActiveTask(g.first.id)} />}
+              </For>
+            </div>
+          </Show>
+        </Show>
+      </div>
     </div>
   );
 }
