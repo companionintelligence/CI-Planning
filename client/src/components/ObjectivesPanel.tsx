@@ -12,6 +12,7 @@ import { showToast, refetchTasks, setElementModal, elementModal } from '../store
 import { localISODate } from '../lib/dates.js';
 import { isLeafObjective, visibleLeafTasks, executeQuickAdd } from '../lib/objectives-quickadd.js';
 import { ObjectiveModal } from './ObjectiveModal.js';
+import { setActiveEntity } from '../stores/selection.js';
 
 /** Whether `id` is `o` or anywhere in its subtree — used to auto-expand to a focused node. */
 function subtreeHas(o: Objective, id: string): boolean {
@@ -487,9 +488,13 @@ function ObjectiveNode(props: {
         {/* Title + meta */}
         <div class="flex-1 min-w-0">
           <div class="flex items-baseline gap-2 flex-wrap">
+            {/* AF-D: the title opens the DETAILS DRAWER, not the edit form. Answering
+                "what is this objective?" with a modal edit form meant the subtasks were
+                only reachable by expanding the row, and the form itself was clipped on a
+                short viewport. Editing keeps its own affordance — the pencil below. */}
             <span
               class={`text-sm font-medium truncate cursor-pointer ${STATUS_CLASSES[obj().status]}`}
-              onClick={() => props.onEdit(obj())}
+              onClick={() => setActiveEntity('objective', obj().id)}
             >
               {obj().title}
             </span>
