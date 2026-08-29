@@ -7,7 +7,7 @@ import { FocusReminders } from '../components/FocusReminders.js';
 import { TrialityBanner } from '../components/TrialityBanner.js';
 import { BriefMenu, FocusMenu } from '../components/DayGoals.js';
 import { EmptyStateConnectCTA } from '../components/EmptyStateConnectCTA.js';
-import { blocks, tasks, taskOf, prefs, tags, patternPrefs, refetchTasks, refetchBlocks, showToast, setSelectedDay } from '../stores/index.js';
+import { blocks, tasks, taskOf, prefs, tags, patternPrefs, refetchTasks, refetchBlocks, showToast, setSelectedDay, openCloseRitual } from '../stores/index.js';
 import { api, type Block, type Task } from '../lib/api.js';
 import { localISODate } from '../lib/dates.js';
 import { focusState, formatRemaining } from '../lib/focus.js';
@@ -281,7 +281,12 @@ export function Focus() {
     if (!e.taskId) return;
     try {
       if (e.done) await api.tasks.update(e.taskId, { status: 'open', completed_at: null });
-      else await api.tasks.update(e.taskId, { completed: true });
+      else {
+        await api.tasks.update(e.taskId, { completed: true });
+        // The row knows its block, so the ritual can measure against the span the user
+        // actually just worked rather than guessing at the earliest placement.
+        openCloseRitual(e.task ?? taskOf(e.taskId));
+      }
       refetchTasks();
       refetchBlocks();
     } catch (err) { showToast((err as Error).message, 'error'); }

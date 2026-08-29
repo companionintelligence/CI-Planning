@@ -100,7 +100,7 @@ export interface Task {
   secondary_tags?: string[];      // Phase 5: secondary tags (entity_tags level>1)
   categories?: string[];          // Phase B (0134): 1–3 category names, position order (stripe order)
   // Close ritual (0137) — all optional; a task closed by the plain checkbox has none.
-  completion_mood?: Mood | null;
+  completion_score?: Score | typeof DECLINED_SCORE | null;
   completion_note?: string | null;
   /** When the reflection was recorded — NOT completed_at (the assumed task end). */
   reaction_at?: string | null;
@@ -307,10 +307,27 @@ export interface ParsedQuick {
   isComplex?: boolean;
 }
 
-/** The four close-ritual "temperature" faces (server: services/task-close.ts MOODS). */
-export type Mood = 'happy' | 'flat' | 'frustrated' | 'stressed';
+/**
+ * The close-ritual rating, 1-5 (server: services/task-close.ts).
+ *
+ * Produced by the three-face picker with an optional second pick:
+ *   frown = 1 · frown+flat = 2 · flat = 3 · flat+smile = 4 · smile = 5
+ * The opposite pair (frown+smile) is unreachable, so every value is a point on one
+ * ordered scale.
+ */
+export type Score = 1 | 2 | 3 | 4 | 5;
 
-export interface MoodBreakdown { happy: number; flat: number; frustrated: number; stressed: number }
+/** "Prompted, and declined" — written by the queue's skip paths. NOT a rating: it is
+ *  excluded from every aggregate and never stamps `reaction_at`. */
+export const DECLINED_SCORE = 0;
+
+export interface ScoreDistribution {
+  counts: Record<Score, number>;
+  /** Mean of the real ratings, 1dp. null with no samples. */
+  mean: number | null;
+  samples: number;
+  declined: number;
+}
 
 export interface AxisMetrics {
   name: string;
@@ -319,16 +336,20 @@ export interface AxisMetrics {
   actualMinutes: number;
   /** Median actual/estimated; null under 3 samples. >1 means you run long. */
   estimateBias: number | null;
-  mood: MoodBreakdown;
-  moodSamples: number;
+  score: ScoreDistribution;
   medianReactionLagMin: number | null;
 }
 
-export interface TaskMetrics {
-  window: { days: number; since: string };
+export interface MetricsGroup {
   directions: AxisMetrics[];
   categories: AxisMetrics[];
-  totals: { open: number; completed: number; actualMinutes: number; mood: MoodBreakdown; moodSamples: number };
+  totals: { open: number; completed: number; actualMinutes: number; score: ScoreDistribution };
+}
+
+export interface TaskMetrics extends MetricsGroup {
+  window: { days: number; since: string };
+  /** Habits, rolled up over a disjoint population — never blended into the task counts. */
+  habits: MetricsGroup;
 }
 
 export interface CalibrationReading {
@@ -386,8 +407,8 @@ export const api = {
     quickParse: (text: string) => request<{ parsed: ParsedQuick; llm: boolean }>('POST', '/tasks/quick/parse', { text }),
     // The close ritual: complete (if still open) + record mood/note/corrected duration.
     // Accepted on an already-done task too — reflecting later is the normal case.
-    close: (id: string, body: { mood?: Mood; note?: string; actual_minutes?: number }) =>
-      request<{ task: Task; closed: { completed_at: string; reaction_at: string | null; mood: Mood | null; actual_minutes: number } }>(
+    close: (id: string, body: { score?: Score | typeof DECLINED_SCORE; note?: string; actual_minutes?: number }) =>
+      request<{ task: Task; closed: { completed_at: string; reaction_at: string | null; score: Score | null; actual_minutes: number } }>(
         'POST', `/tasks/${id}/close`, body,
       ),
     // Best-effort LLM auto-tag for the wizard, constrained to existing tags ([] if Ollama down).

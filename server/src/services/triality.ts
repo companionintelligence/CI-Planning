@@ -385,7 +385,14 @@ export interface TrialityOpts {
 // ── Refusal floor (§4) ────────────────────────────────────────────────────────
 
 /** Ritual- or timer-confirmed completions in the window — ranking noise dressed
- *  as insight is exactly what this feature refuses to ship. */
+ *  as insight is exactly what this feature refuses to ship.
+ *
+ *  The old `completion_mood IS NOT NULL` disjunct is gone (0161) rather than reworded to
+ *  `completion_score`, because `reaction_at IS NOT NULL` now subsumes it: closeTask
+ *  stamps reaction_at for every real 1-5 rating and every note. What that leaves out is
+ *  exactly what should be left out — a DECLINED, which stamps nothing and confirms only
+ *  that the sheet was dismissed. Counting dismissals toward the floor would let a user
+ *  who skips every prompt cross it on empty engagement. */
 export async function confirmedCompletionCount(ownerId: string, now: Date): Promise<number> {
   const since = new Date(now.getTime() - WINDOW_DAYS * 86_400_000).toISOString();
   return (
@@ -393,7 +400,7 @@ export async function confirmedCompletionCount(ownerId: string, now: Date): Prom
       .prepare(
         `SELECT COUNT(*) AS c FROM tasks t
           WHERE t.owner_id = ? AND t.status = 'done' AND t.completed_at >= ?
-            AND (t.completion_mood IS NOT NULL OR t.reaction_at IS NOT NULL
+            AND (t.reaction_at IS NOT NULL
                  OR EXISTS (SELECT 1 FROM time_entries e WHERE e.task_id = t.id AND e.ended_at IS NOT NULL))`,
       )
       .get<{ c: number }>(ownerId, since))!

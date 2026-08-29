@@ -680,7 +680,7 @@ of writing (2026-08-15) `main` is at `0150_calibrate_classification_job`.
 | Table | Purpose |
 |---|---|
 | `owners` | User identity — `role` drives scopes (0125): `operator` (R+W+A) · `member` (R+W) · `viewer` (R) |
-| `tasks` | Core work atom — UUIDv7 PK, status, priority, recurrence fields, subtype; `texture_enabled`/`texture_color_token` (0135) per-element striped-texture override; close-ritual columns `completion_mood`/`completion_note`/`reaction_at` (0137, all nullable — the ritual is optional); `motivation` (`me`/`us`/`them`, NULL = unlabeled — never read as `us`) + `motivation_source` (`user` \| `llm`; a user label wins permanently) (0141) |
+| `tasks` | Core work atom — UUIDv7 PK, status, priority, recurrence fields, subtype; `texture_enabled`/`texture_color_token` (0135) per-element striped-texture override; close-ritual columns `completion_score`/`completion_note`/`reaction_at` (0137, rescored 0161 — all nullable, the ritual is optional; `completion_score` is 1–5, or 0 for "prompted and declined", which is excluded from every aggregate); `motivation` (`me`/`us`/`them`, NULL = unlabeled — never read as `us`) + `motivation_source` (`user` \| `llm`; a user label wins permanently) (0141) |
 | `task_dependencies` | Blocked-by edges between tasks |
 | `time_blocks` | Named time spans — `scheduled` / `someday` / `saved` states; recurrence support; same `texture_enabled`/`texture_color_token` override (0135); legacy `category_id`/`color_token` (0069) are read-only now — writes go through `entity_categories` |
 | `block_templates` | Reusable Time-Block templates with saved task lists |
@@ -807,19 +807,28 @@ planner place it on your calendar — no cloud round-trip, all on-device.
   toggle it off or override the colour per element. Adding/removing which six categories
   exist is deliberately locked for now (a feature flag, off); renaming and recolouring stay
   open
-- **Close ritual** — finish a task and an optional sheet asks how it went: a **mood face**
-  (Good · Fine · Frustrated · Stressed — a face answers honestly and instantly where a
-  1–5 self-score invites deliberation), a closing note, and how long it really took
-  (pre-filled from the timer, so the common case is *confirm*, not *compute*). Entirely
-  skippable — the checkbox already completed the task, and dismissing writes nothing. The
-  reflection is stamped with its own `reaction_at`, deliberately **not** `completed_at`:
-  the gap between them is signal, since a reflection written now reads the work more
-  accurately than one reconstructed days later
+- **Close ritual** — finish *anything* — task, habit, recurring instance, subtask, a
+  Planner chip, the end of a Focus block — and an optional sheet asks how it went: **three
+  faces** (Bad · Fine · Good), a closing note, and how long it really took. Tapping one
+  face scores 1 · 3 · 5; tapping a **second, adjacent** face fills the gap between, giving
+  a full 1–5 without ever asking anyone to type a number (a face is answered instantly and
+  honestly where a numeric self-score invites deliberation — 0137's argument, still true,
+  which is why the input is still faces). The opposite pair is unreachable by construction,
+  so every stored value is a point on one ordered scale. The duration is **pre-filled from
+  the block the work was allocated** — `min(now, block end)`, so finishing early credits
+  only the time used and finishing late credits only the time given; with no block it falls
+  back to the timer, then the estimate. Entirely skippable, and a skip is *recorded* (a
+  `declined` count, never a fabricated neutral 3) so a nagging prompt is measurable rather
+  than invisible. Completing several at once queues them — **“1 of 3”**, with one tap to
+  skip the rest. The reflection is stamped with its own `reaction_at`, deliberately **not**
+  `completed_at`: the gap between them is signal, since a reflection written now reads the
+  work more accurately than one reconstructed days later
 - **Balance → Metrics** — the measured counterpart to the stated-intent Balance tab, over a
   7 / 30 / 90-day window and both axes you think in (direction: Work / Home / Community;
   category: the six life dimensions). Task counts and timed minutes come from real rows,
-  the mood mix only from tasks closed with the ritual, and estimate bias is the median
-  actual/estimated with a 3-sample floor. Where there's no data a tile says so instead of
+  the rating mix only from items closed with the ritual, and estimate bias is the median
+  actual/estimated with a 3-sample floor. **Tasks and habits are reported separately** —
+  blending them would let a daily habit's twenty ratings drown out five one-off tasks. Where there's no data a tile says so instead of
   rendering a confident zero — an empty axis and a genuinely balanced one must never look
   alike
 - **Calibration history** — the nightly bias rollup is regenerable (replaced wholesale each
@@ -1023,10 +1032,11 @@ stateDiagram-v2
 
     note right of done
         Optional close ritual:
-        mood face · closing note · real duration.
-        reaction_at is stamped only when a mood
-        or note was actually written — its gap
-        from completed_at is the signal.
+        three faces to a 1-5 rating · closing note · real duration.
+        reaction_at is stamped only when a real rating
+        or a note was written — its gap from completed_at
+        is the signal. A skip stores 0 (declined) and
+        stamps nothing.
     end note
 
     note right of scheduled
@@ -1110,9 +1120,9 @@ sequenceDiagram
     Svc->>DB: mirror the task's blocks to completed
     Svc->>DB: tick any FOCUS slot linked to this task
     Svc->>DB: recompute linked objectives progress
-    opt close ritual — entirely skippable
+    opt close ritual — entirely skippable, queued when several land at once
         UI->>API: POST /api/tasks/:id/close
-        Svc->>DB: completion_mood, completion_note, actual_minutes, reaction_at
+        Svc->>DB: completion_score, completion_note, actual_minutes, reaction_at
     end
     end
 
@@ -1542,7 +1552,7 @@ every other caller passes.
 - **Day note + five-star day** (Phase O) — one note per day (`reflections.kind='day_note'`, PK-enforced uniqueness); `computeStars()` derives 5 booleans (intention/habits/tasks/bonus/reflection) with zero manual toggles, cached in `daily_recap` and frozen permanently by the nightly `freeze_stars` job; `GET /api/stars` serves the frozen row over a live recompute
 - **Weekly Review** — scheduled/focus minutes, capacity bar, completion rate, and calibration bias insight
 - **Estimate calibration** — the nightly (01:30) `calibrate_estimates` job computes personal bias ratio (p25/p50/p75) from actual vs estimated minutes; surfaced in the Weekly Review. The same run appends an immutable per-(scope, day) row to `calibration_history` (0138), so the regenerable rollup can keep being replaced without destroying the trend
-- **Close ritual + Balance Metrics** (0137/0138) — an optional post-completion sheet (mood face · note · real duration, stamped with its own `reaction_at`) feeding a measured **Metrics** tab on `/balance`: counts, timed minutes, mood mix, and estimate bias per direction and per category over 7/30/90 days, served by `GET /api/metrics/tasks` + `/api/metrics/calibration`
+- **Close ritual + Balance Metrics** (0137/0138, rescored 0161) — an optional post-completion sheet (three faces → a 1–5 rating · note · real duration, stamped with its own `reaction_at`) offered on **every** completion path and queued when several land at once, feeding a measured **Metrics** tab on `/balance`: counts, timed minutes, rating mix, and estimate bias per direction and per category over 7/30/90 days — **tasks and habits in separate sections** — served by `GET /api/metrics/tasks` + `/api/metrics/calibration`
 - **Memory enrichment** (0136) — `POST /api/tasks/:id/enrich` (the task-card ✨ button) and the nightly `enrich_tasks` job fill blank description/direction/categories from Companion Memory; fill-blanks-only, and it reports an honest reason when it can't help
 - **Recurrence horizon + Clear Date Range** (Phase P) — `recurrence_horizon_days` bounds materialization in both recurrence engines (patterns + blocks); lowering it auto-prunes via a shared `clearPlannerRange` engine, which also backs `POST /api/planner/clear` (dry-run preview, DB snapshot on apply) and the original `clear-planner-from.ts` CLI script
 - **Multi-device sync** — field-level merge, `sync_events` append-only log, `Last-Event-ID` SSE catch-up; `POST /api/sync` applies offline op-log entries
@@ -1917,7 +1927,7 @@ All from the repo root:
 | POST | `/api/tasks` | Create a task (`title` required) |
 | PATCH | `/api/tasks/:id` | Update fields; `{"completed": true}` marks done |
 | DELETE | `/api/tasks/:id` | Soft delete (status → `cancelled`) |
-| POST | `/api/tasks/:id/close` | Record the close ritual on an already-completed task (mood · note · actual minutes); stamps `reaction_at` server-side |
+| POST | `/api/tasks/:id/close` | Record the close ritual on an already-completed task (`score` 1–5, or 0 = declined · note · actual minutes); stamps `reaction_at` server-side for a real rating or a note. **400** on a present-but-invalid score |
 | POST | `/api/tasks/:id/enrich` | Fill blank description / direction / categories from Companion Memory; always resolves — `enriched:false` carries the reason |
 | GET | `/api/tasks/:id/subtasks` | List subtasks |
 | GET/POST/PATCH/DELETE | `/api/blocks` | Time blocks for a date range |

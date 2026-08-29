@@ -8,7 +8,7 @@ import {
 } from 'lucide-solid';
 import { STAR_GOLD } from '../lib/stars.js';
 import { api, type Objective, type ObjectiveTaskSummary } from '../lib/api.js';
-import { showToast, refetchTasks, setElementModal, elementModal } from '../stores/index.js';
+import { showToast, refetchTasks, setElementModal, elementModal, openCloseRitual, taskOf } from '../stores/index.js';
 import { localISODate } from '../lib/dates.js';
 import { isLeafObjective, visibleLeafTasks, executeQuickAdd } from '../lib/objectives-quickadd.js';
 import { ObjectiveModal } from './ObjectiveModal.js';
@@ -417,6 +417,10 @@ function ObjectiveNode(props: {
         await api.tasks.update(t.id, { status: 'open', completed_at: null });
       } else {
         await api.tasks.update(t.id, { completed: true });
+        // This panel holds an ObjectiveTaskSummary, not a Task — resolve the full row for
+        // the sheet (it needs the estimate and the placement). A task missing from
+        // `tasks()` simply gets no prompt rather than a sheet with blank fields.
+        openCloseRitual(taskOf(t.id));
       }
       // A done⇄not-done PATCH recomputes progress server-side (updateTask, alongside
       // link/unlink/delete), so onRefetch's re-read of the objective picks up the moved

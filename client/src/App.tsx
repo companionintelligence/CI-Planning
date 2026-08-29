@@ -26,7 +26,7 @@ import { AllTasks } from './views/AllTasks.js';
 import { Tags }     from './views/Tags.js';
 import { Settings } from './views/Settings.js';
 import { Jobs }     from './views/Jobs.js';
-import { setElementModal, blocks, taskOf, tags, patternPrefs, prefs, refetchPrefs, showToast, refetchTasks, refetchBlocks, refetchFlightPlan, closeRitualTask, setCloseRitualTask } from './stores/index.js';
+import { setElementModal, blocks, taskOf, tags, patternPrefs, prefs, refetchPrefs, showToast, refetchTasks, refetchBlocks, refetchFlightPlan, closeRitualTask, closeRitualQueue, advanceCloseRitual, clearCloseRitual } from './stores/index.js';
 import { api } from './lib/api.js';
 import {
   requestNotificationPermission,
@@ -256,8 +256,20 @@ function Shell(props: { children?: any }) {
 
       {/* Unified Add/Edit Element wizard — self-driven by the elementModal signal. */}
       <ElementWizard />
-      {/* App-level like the wizard: the card that triggers it unmounts on completion. */}
-      <Show when={closeRitualTask()}>{(t) => <CloseRitual task={t()} onClose={() => setCloseRitualTask(null)} />}</Show>
+      {/* App-level like the wizard: the card that triggers it unmounts on completion.
+          `keyed` so a queue advance REMOUNTS the sheet — otherwise the next task would
+          inherit the previous one's faces, note and edited duration. */}
+      <Show when={closeRitualTask()} keyed>
+        {(entry) => (
+          <CloseRitual
+            task={entry.task}
+            preferBlockId={entry.blockId}
+            remaining={Math.max(0, closeRitualQueue().length - 1)}
+            onAdvance={advanceCloseRitual}
+            onSkipAll={clearCloseRitual}
+          />
+        )}
+      </Show>
       <PlanWeekAssistant />
       <OnboardingWizard />
       {/* Mounted once so any call site can await askRecurringScope() inline. */}
