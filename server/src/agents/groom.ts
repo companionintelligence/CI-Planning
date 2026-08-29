@@ -70,7 +70,9 @@ export async function promotePossibles(
       await store().prepare(`UPDATE possible_tasks SET proposed_owner_id = ? WHERE id = ?`).run(owner, p.id);
     }
     try {
-      const res = await promotePossible(owner, p.id);
+      // 'auto': the nightly straggler sweep promotes on the owner's behalf, so it is
+      // not a decision and must not enter the dismissal-learning corpus (PromoteActor).
+      const res = await promotePossible(owner, p.id, {}, { actor: 'auto' });
       if (res.ok) promoted++;
     } catch (err) {
       failed++;

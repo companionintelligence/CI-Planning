@@ -19,7 +19,7 @@
   --card-foreground: #041620;
   --popover: oklch(100% 0 0);
   --popover-foreground: #041620;
-  --primary: #0f717a;
+  --primary: #0a6358;
   --primary-foreground: oklch(98.4% 0.003 247.858);
   --secondary: oklch(96.8% 0.007 247.896);
   --secondary-foreground: #0a222e;
@@ -91,7 +91,7 @@
   --card-foreground: #88a29e;
   --popover: #0a222e;
   --popover-foreground: #88a29e;
-  --primary: #abd4d8;
+  --primary: #c5e8dc;
   --primary-foreground: #041620;
   --secondary: #0a222e;
   --secondary-foreground: #f5f8fa;
@@ -217,7 +217,15 @@
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
   ::-webkit-scrollbar-thumb:hover { background: var(--muted-foreground); }
-  .page-enter { animation: pageIn 140ms ease both; }
+  /* fill-mode `backwards`, NOT `both`: `both` RETAINS the final keyframe
+     (`transform: translateY(0)`) forever, and a transform — even the identity —
+     makes the element the containing block for every `position: fixed`
+     descendant. That silently re-anchored `.modal-backdrop`'s `inset-0` to this
+     container instead of the viewport, so modals were centred inside the view
+     box and hung off the top of the screen. `backwards` keeps the entry
+     animation and drops the retained transform; the end state (opacity 1,
+     translateY 0) is identical to the natural one, so nothing moves. */
+  .page-enter { animation: pageIn 140ms ease backwards; }
   @keyframes pageIn {
     from { opacity: 0; transform: translateY(5px); }
     to   { opacity: 1; transform: translateY(0); }
@@ -360,6 +368,14 @@
     background: var(--card);
     border-color: var(--border);
     animation: modalIn 200ms cubic-bezier(0.34,1.56,0.64,1) both;
+    /* A modal taller than the viewport was being CLIPPED, not scrolled: the
+       backdrop centres it and `overflow-hidden` (there for the rounded corners)
+       cut off both the header and the footer, so the save/close controls were
+       unreachable. Only the <768px sheet rule below used to cap the height, so
+       this hit desktop only. Cap it here and let the body scroll instead. */
+    max-height: 90vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
   @keyframes fadeIn  { from { opacity: 0; } to { opacity: 1; } }
   @keyframes modalIn {
@@ -396,7 +412,7 @@
   }
   .nav-item:hover { color: var(--foreground); background: var(--sidebar-accent); }
   .nav-item-active {
-    /* Themed CI teal (--primary: light #0f717a / dark #abd4d8) so the active
+    /* Themed CI phthalo (--primary: light #0a6358 / dark #c5e8dc) so the active
        label stays legible in BOTH modes. A hardcoded pale teal was near-invisible
        on the light-mode sidebar-accent (1.46:1). */
     color: var(--primary);

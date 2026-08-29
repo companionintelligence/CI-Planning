@@ -1314,6 +1314,44 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   },
   {
     "columns": [
+      "owner_id",
+      "log_id",
+      "input_text",
+      "source_kind",
+      "embedding",
+      "computed_date",
+    ],
+    "table": "possible_dismissal_exemplars",
+  },
+  {
+    "columns": [
+      "owner_id",
+      "computed_date",
+      "period_days",
+      "created",
+      "decided",
+      "dismissed",
+      "rate",
+      "exemplars",
+      "hinted",
+    ],
+    "table": "possible_dismissal_rate",
+  },
+  {
+    "columns": [
+      "id",
+      "owner_id",
+      "possible_task_id",
+      "source_kind",
+      "input_text",
+      "outcome",
+      "decided_at",
+      "local_date",
+    ],
+    "table": "possible_outcome_log",
+  },
+  {
+    "columns": [
       "possible_task_id",
       "person_id",
       "role",

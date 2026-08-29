@@ -127,6 +127,29 @@ describe('GET /api/oauth/google/start', () => {
     expect(sqlite.prepare('SELECT COUNT(*) AS n FROM oauth_states').get()).toEqual({ n: 0 });
   });
 
+  // The bug this pins: `client_id` was only appended `if (config.google.clientId)`, so a
+  // live mode with no client configured minted an authorize URL WITHOUT it and bounced
+  // the user to Google's "Error 401: invalid_client / The OAuth client was not found".
+  // That message blames Google for what is a missing LOCAL setting. Fail closed instead.
+  it('refuses with 409 when live but no client id is configured', async () => {
+    config.auth.mode = 'standalone';
+    config.google.mode = 'live';
+    config.google.clientId = '';
+    const { status, body } = await realApi<{ error: string }>('/api/oauth/google/start', await authHeaders());
+    expect(status).toBe(409);
+    expect(body.error).toBe('google_client_id_missing');
+    // and no half-started flow is left behind
+    expect(sqlite.prepare('SELECT COUNT(*) AS n FROM oauth_states').get()).toEqual({ n: 0 });
+  });
+
+  it('refuses with 409 when the client id is only whitespace', async () => {
+    config.auth.mode = 'standalone';
+    config.google.mode = 'live';
+    config.google.clientId = '   ';
+    const { status } = await realApi('/api/oauth/google/start', await authHeaders());
+    expect(status).toBe(409);
+  });
+
   it('refuses with 409 in test mode and writes no oauth_states row (I2)', async () => {
     config.auth.mode = 'test';
     const { status } = await rawGet('/api/oauth/google/start');

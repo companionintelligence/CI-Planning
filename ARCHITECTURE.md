@@ -924,6 +924,7 @@ rubric-governed verdict, over N≥5 runs, and assert the completion is non-empty
 | `prune_sync_events` | daily 03:00 | Trim old `sync_events` rows beyond retention window |
 | `enrich_tasks` | daily 03:20 | Per owner: fill blank description / direction / categories on thin tasks from Companion Memory (fill-blanks-only; no-op when memory is off) (0136) |
 | `calibrate_triality` | Mon 03:50 | Re-tune the per-slot Triality weights from 90 days of `triality_log` outcomes — batch, each weight clamped to ½×–2× of its default and then renormalized so the slot's weights still sum to the default total, and inert below 20 decided rows for a slot. **Owner-scoped** (in `OWNER_SCOPED_KINDS`): weights are per-owner by construction, and pooling one owner's feedback into another's ranking is ruled out absolutely (0143) |
+| `calibrate_dismissals` | Mon 04:20 | Close-loop wave (ticket 3): rebuild `possible_dismissal_exemplars` wholesale from settled `possible_outcome_log` evidence (inert below `DISMISSAL_FLOOR` = 5 settled dismissals) and append one `possible_dismissal_rate` reading. **Owner-scoped**: dismissal evidence is per-owner by construction, never pooled. Runs after `calibrate_classification` (Mon 04:10) so the weekly per-owner learning passes don't compete for one GPU (0158) |
 | `advance_objectives` | Mon 05:00 | Stage tasks for active objectives into flight-plan |
 
 ---
