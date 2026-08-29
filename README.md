@@ -1997,6 +1997,8 @@ All from the repo root:
 | GET | `/api/metrics/triality?days=` | Balance → Metrics: acceptance per slot (a suggestion undecided for **less than 24h** is pending and excluded from the denominator; once it is 24h old and still untouched it counts as *ignored* — a decision, and a weak negative), the Novel uptake trend against the prior window, how under-served categories responded, and the learned weights with their sample counts (`null` until learning has run). 404 while the flag is off |
 | GET | `/api/classification/accuracy?limit=` | The classify/parse LLM's held-out accuracy trend, newest run first, per field (`category`/`motivation`). `accuracy: null` on a run that measured nothing — never a `0`. No feature flag |
 | DELETE | `/api/classification/exemplars` | Reset classification learning — drops this owner's learned few-shot index; the correction log survives and the next weekly `calibrate_classification` pass re-earns it |
+| GET | `/api/dismissal-learning/trend?limit=` | The `possible_dismissal_rate` noise-rate trend, oldest → newest, defaulting to 90 rows — answers "is the review queue actually getting quieter?" `rate: null` on a period with `decided = 0` — never a `0` |
+| DELETE | `/api/dismissal-learning/exemplars` | Reset dismissal learning — drops this owner's learned exemplar rollup only (`{ok: true, cleared: <n>}`); `possible_outcome_log` survives and the next weekly `calibrate_dismissals` pass re-earns it from that evidence |
 | POST | `/api/sync` | Apply offline op-log entries from a device (Phase L) |
 | GET | `/api/export` | Download all owner data as a JSON file (import-compatible) |
 | POST | `/api/import` | Restore owner data from an export JSON body |

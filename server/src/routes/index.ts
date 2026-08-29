@@ -43,6 +43,7 @@ import { planWeekRouter } from './plan-week.js';
 import { connectionsRouter } from './connections.js';
 import { trialityRouter } from './triality.js';
 import { classificationRouter } from './classification.js';
+import { dismissalLearningRouter } from './dismissal-learning.js';
 import { demoRouter } from './demo.js';
 
 export function mountRoutes(app: Koa) {
@@ -91,6 +92,7 @@ export function mountRoutes(app: Koa) {
     connectionsRouter(),
     trialityRouter(),
     classificationRouter(),
+    dismissalLearningRouter(),
     demoRouter(),
   ]) {
     app.use(router.routes()).use(router.allowedMethods());
