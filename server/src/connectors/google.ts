@@ -126,6 +126,15 @@ export class RevokedTokenError extends Error {
   }
 }
 
+// getAccessToken() single-flights refreshToken() (base.ts) across every concurrent
+// caller sharing an owner/account, so a hang here doesn't just stall the request that
+// triggered it — it stalls everyone else already waiting on the same in-flight refresh.
+const TOKEN_TIMEOUT_MS = 10_000;
+// revoke() is BEST-EFFORT by design (see its own doc below) — its only job is to not
+// block the disconnect it's part of. A tighter ceiling than the refresh path: this is a
+// fire-and-forget cleanup step, not a request anything downstream is waiting to use.
+const REVOKE_TIMEOUT_MS = 5_000;
+
 /**
  * POST the OAuth token endpoint with a urlencoded body. `client_secret` is only sent
  * when configured (installed-app clients may be public). Shared by refreshToken().
@@ -136,6 +145,7 @@ async function postToken(params: Record<string, string>): Promise<Response> {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
+    signal: AbortSignal.timeout(TOKEN_TIMEOUT_MS),
   });
 }
 
@@ -153,6 +163,7 @@ export async function revoke(token: string): Promise<void> {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ token }).toString(),
+      signal: AbortSignal.timeout(REVOKE_TIMEOUT_MS),
     });
     if (!res.ok) {
       logger.warn('Google token revoke returned non-2xx', { status: res.status });

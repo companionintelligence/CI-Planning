@@ -261,6 +261,55 @@ describe('live transport degradation', () => {
       await close(target);
     }
   });
+
+  /**
+   * A CI-Server that accepts the connection and never answers must not hang the
+   * request forever. getJson() had no AbortSignal at all — a stalled server (not
+   * refused, not erroring, just silent) meant the promise never settled, which for
+   * resolveLiveMemoryCreds's single-flighted token refresh meant every OTHER caller
+   * sharing that in-flight refresh hung too, indefinitely, with it.
+   *
+   * Real wall-clock wait against the actual HTTP_TIMEOUT_MS (10s), not a shortened
+   * stand-in — the point is that the PRODUCTION constant, wired at the real call
+   * site, actually bounds a real hang.
+   */
+  it(
+    'a silent CI-Server does not hang graphContext forever — the request times out',
+    { timeout: 15_000 },
+    async () => {
+      const listen = (srv: Server) => new Promise<number>((resolve) => {
+        srv.listen(0, '127.0.0.1', () => resolve((srv.address() as AddressInfo).port));
+      });
+      const close = (srv: Server) => new Promise<void>((resolve) => srv.close(() => resolve()));
+
+      // Accepts the connection, then does nothing — no response, no close, no error.
+      // The opposite of "unreachable": something IS there, it just never answers.
+      const blackHole = createServer(() => { /* deliberately silent */ });
+      const port = await listen(blackHole);
+
+      try {
+        process.env.MEMORY_MODE = 'live';
+        process.env.CI_SERVER_URL = `http://127.0.0.1:${port}`;
+        process.env.CI_SERVER_API_KEY = 'irrelevant-key';
+
+        const started = Date.now();
+        const err = await graphContext(OWNER).then(
+          () => { throw new Error('expected graphContext to reject'); },
+          (e: unknown) => e as Error,
+        );
+        const elapsed = Date.now() - started;
+
+        expect(err).toBeInstanceOf(MemoryUnavailable);
+        // Bounded by HTTP_TIMEOUT_MS (10s), not left to the OS's own multi-minute TCP
+        // timeout — with real margin either side so this isn't a hair-trigger timing
+        // assertion.
+        expect(elapsed).toBeGreaterThan(8_000);
+        expect(elapsed).toBeLessThan(13_000);
+      } finally {
+        await close(blackHole);
+      }
+    },
+  );
 });
 
 describe('routes', () => {

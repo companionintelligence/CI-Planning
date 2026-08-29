@@ -38,6 +38,21 @@ import { getEntityPeople, getEntityPeopleBulk } from '../services/people.js';
 // service → map error→status → serialize (taskToApi + tag/dep reads) → broadcast.
 
 /**
+ * GET /api/tasks has no pagination — unlike the GraphQL `tasks` connection
+ * (listTasks/countTasks, keyset-paginated), it returns every matching row in one
+ * response. That is a real, still-open gap (AllTasks.tsx, RoutinesPanel.tsx and the
+ * central task store all currently assume "every matching task comes back," so wiring
+ * real pagination through here means changing THEM too, not just this route).
+ *
+ * This cap is deliberately not that fix. It bounds only the pathological case — a
+ * script, a seed, a bug that leaves an owner with an unbounded row count — at a
+ * ceiling far above anything a real owner could ever reach by using the app: even a
+ * task or two a day, every day, for a decade is a small fraction of this. No real
+ * caller should ever notice it fire.
+ */
+const DEFAULT_TASKS_LIMIT = 20_000;
+
+/**
  * The two people-sets, shaped for spreading into a task payload (0151).
  *
  * Single-row: fine inside an async handler, but NOT inside the synchronous `.map()`
@@ -55,7 +70,7 @@ export function tasksRouter() {
 
   // GET /api/tasks
   router.get('/api/tasks', async (ctx) => {
-    const { status, owner_id, tag, q, due_before, priority, include_fast } = ctx.query as Record<string, string>;
+    const { status, owner_id, tag, q, due_before, priority, include_fast, limit } = ctx.query as Record<string, string>;
 
     // The list is ALWAYS scoped to the current owner — a plain `db.select()` here
     // is a cross-tenant read leak (IDOR). An explicit `owner_id` param can only
@@ -71,11 +86,36 @@ export function tasksRouter() {
     // Filter on the canonical subtype (W1-A); equivalent to the is_fast_task alias.
     if (include_fast !== '1') conditions.push(ne(tasks.subtype, 'quick'));
 
+    // A caller may narrow below the default cap; nobody may raise it above — the cap
+    // is the ceiling this route promises, not a suggestion a query param can override.
+    const parsedLimit = Number(limit);
+    const effectiveLimit =
+      Number.isFinite(parsedLimit) && parsedLimit > 0
+        ? Math.min(parsedLimit, DEFAULT_TASKS_LIMIT)
+        : DEFAULT_TASKS_LIMIT;
+
     const result = await db
       .select()
       .from(tasks)
       .where(and(...conditions))
-      .orderBy(asc(tasks.priority), asc(tasks.dueAt));
+      // `id` (uuid7 — time-ordered) is a pure tiebreak: priority/dueAt alone leave
+      // many rows tied, and without a stable final key a LIMIT's boundary is whichever
+      // tied row the engine happens to return first — different on every call.
+      .orderBy(asc(tasks.priority), asc(tasks.dueAt), asc(tasks.id))
+      .limit(effectiveLimit);
+
+    // A full page is the cheap, standard heuristic for "there may be more" — exactly
+    // `effectiveLimit` real matches with nothing beyond it is indistinguishable from
+    // this without a second COUNT(*) query on every request, which is a real cost to
+    // pay on every call for a signal this route's only callers don't consume today.
+    // `tag` filters AFTER this fetch (below) — a tag match beyond the cap is invisible
+    // to it. Both are the same trade this whole cap makes: correct and unbounded, or
+    // bounded with an edge a real owner will never reach.
+    if (result.length === effectiveLimit) {
+      logger.warn('GET /api/tasks hit its row cap — results are truncated', {
+        ownerId: currentOwnerId(), limit: effectiveLimit,
+      });
+    }
 
     // Attach tags + dependency info, serialize to snake_case
     const blocked = await blockedTaskIds();
@@ -110,7 +150,10 @@ export function tasksRouter() {
       ? withTags.filter((t) => (t.tags as string[]).includes(tag) || (t.secondary_tags as string[]).includes(tag))
       : withTags;
 
-    ctx.body = { tasks: filtered };
+    // Additive-only: existing callers read `.tasks` and stay correct without ever
+    // reading `truncated`. It exists for whoever picks this cap up in the future,
+    // whether that's a client-side "there may be more" affordance or a diagnostic.
+    ctx.body = { tasks: filtered, truncated: result.length === effectiveLimit };
   });
 
   // POST /api/tasks

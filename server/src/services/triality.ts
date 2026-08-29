@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto';
 import { store } from '../db/store.js';
 import { ollama } from '../mcp/ollama.js';
+import { resolveEmbedModel } from '../lib/models.js';
 import { logger } from '../lib/logger.js';
 import { localDateInTZ, utcToZonedWallTime } from '../lib/tz.js';
 import { ownerTimezone } from '../engine/recurrence-generate.js';
@@ -116,6 +118,109 @@ const GAP_MARGIN_MIN = 5;      // capacity filter: estimate must fit the gap wit
 const EMBED_CANDIDATE_CAP = 40;   // pool size past which embedding is skipped entirely
 const EMBED_TIMEOUT_MS = 3_000;   // per-call ceiling (ollama.embed's own default is 30s)
 const NOVELTY_BUDGET_MS = 4_000;  // whole-stage deadline, centroid + candidates together
+const CENTROID_TITLES = 25;       // completed titles the centroid averages over
+
+// ── Centroid cache (per owner) ────────────────────────────────────────────────
+
+/**
+ * The completed-history centroid, remembered per owner between requests.
+ *
+ * The 25 titles it averages change only when the owner COMPLETES something, but the
+ * centroid was rebuilt from scratch on every request — 25 embeddings, every time, to
+ * recompute a vector that was bit-for-bit identical to the last one. That was the single
+ * largest block of repeated model work in the scoring path, and unlike the candidate
+ * embeddings it bought nothing at all: same input, same model, same answer.
+ *
+ * INVALIDATION IS THE FINGERPRINT, not a TTL. The key covers the embedding model and the
+ * exact title list the centroid was built from, so a completion, an edited title, or a
+ * task ageing out of the 90-day window all change it and force a rebuild. A model swap
+ * changes it too — that one is load-bearing rather than tidy, because vectors from two
+ * models are not comparable and their dimensions need not even match. There is therefore
+ * no window in which a stale centroid can be served: a hit is, by construction, exactly
+ * what a rebuild would have produced.
+ *
+ * Keyed BY OWNER even though a vector is a pure function of (model, title). Sharing one
+ * cache across owners would make a hit observable to a tenant who did not populate it,
+ * turning "is anyone else on this box tracking <title>" into a timing question. One entry
+ * per owner also bounds the thing naturally.
+ *
+ * In-process and lost on restart, like the Ollama probe cache and the tz formatter cache.
+ * Nothing here is worth persisting: rebuilding costs one request's worth of embeddings.
+ */
+const CENTROID_CACHE_MAX = 64;
+
+interface CachedCentroid {
+  /** Embedding model + the exact titles this centroid was built from. */
+  fingerprint: string;
+  /** Never mutated — `squashedCosineDistance` only reads — so it is shared, not copied. */
+  centroid: readonly number[];
+}
+
+const centroidCache = new Map<string, CachedCentroid>();
+
+/** Hash (model, titles) into one comparable key. The NUL separator keeps
+ *  ['ab','c'] from fingerprinting the same as ['a','bc']. */
+function centroidFingerprint(model: string, titles: readonly string[]): string {
+  const h = createHash('sha1').update(model);
+  for (const t of titles) h.update('\0').update(t);
+  return h.digest('hex');
+}
+
+function cachedCentroidFor(ownerId: string, fingerprint: string): readonly number[] | null {
+  const hit = centroidCache.get(ownerId);
+  if (!hit || hit.fingerprint !== fingerprint) return null;
+  centroidCache.delete(ownerId); // re-insert to keep Map order least-recently-used first
+  centroidCache.set(ownerId, hit);
+  return hit.centroid;
+}
+
+function rememberCentroid(ownerId: string, fingerprint: string, centroid: readonly number[]): void {
+  centroidCache.delete(ownerId);
+  centroidCache.set(ownerId, { fingerprint, centroid });
+  while (centroidCache.size > CENTROID_CACHE_MAX) {
+    const oldest = centroidCache.keys().next();
+    if (oldest.done) break;
+    centroidCache.delete(oldest.value);
+  }
+}
+
+/** Test-only: forget every cached centroid so cases don't bleed into each other. */
+export function __resetCentroidCache(): void {
+  centroidCache.clear();
+}
+
+/** Test-only: live entry count, so the LRU ceiling can be asserted directly rather than
+ *  inferred from a run expensive enough to actually hit it end-to-end. */
+export function __centroidCacheSize(): number {
+  return centroidCache.size;
+}
+
+/** Test-only: exercise the LRU insert path without a DB or a model behind it. */
+export function __primeCentroidCacheForTest(ownerId: string, fingerprint: string, centroid: number[]): void {
+  rememberCentroid(ownerId, fingerprint, centroid);
+}
+
+/**
+ * Average `titles` into one unit-less centroid vector, or null when the vectors don't
+ * agree on a dimension.
+ *
+ * The all-or-nothing dimension check is the same doctrine as the pool cap: one short or
+ * empty vector would poison the centroid with NaN — shipping "N": null on every pick AND
+ * silently deleting N from the learning corpus — or hand one candidate a free N=0.5
+ * outlier from a degenerate cosine.
+ */
+async function buildCentroid(
+  titles: readonly string[],
+  embed: (text: string, signal?: AbortSignal) => Promise<number[]>,
+  signal: AbortSignal,
+): Promise<number[] | null> {
+  const vecs = await Promise.all(titles.map((t) => embed(t, signal)));
+  const dim = vecs[0]?.length ?? 0;
+  if (!dim || vecs.some((v) => v.length !== dim)) return null;
+  const centroid = new Array<number>(dim).fill(0);
+  for (const v of vecs) for (let i = 0; i < dim; i++) centroid[i] += v[i] / vecs.length;
+  return centroid;
+}
 
 // ── Time of day + day of week (v2.3, design §3.2/§3.3) ────────────────────────
 
@@ -267,8 +372,13 @@ export interface TrialityOpts {
   /** Injectable embedding fn (the possibles.ts embedFn idiom). `null` forces the
    *  categorical-only path; undefined = use Ollama when it has an embedder pulled AND
    *  answers inside the stage budget, degrade silently otherwise. An injected fn is
-   *  taken at its word — the readiness gate gets asked about Ollama only. */
-  embedFn?: ((text: string) => Promise<number[]>) | null;
+   *  taken at its word — the readiness gate gets asked about Ollama only.
+   *
+   *  `signal` carries the stage budget. Honouring it is optional — a fake that ignores
+   *  it still type-checks and still works, it just cannot be cancelled — but a real
+   *  embedder should pass it to its transport so an expired budget stops the work
+   *  rather than merely stopping us waiting for it. */
+  embedFn?: ((text: string, signal?: AbortSignal) => Promise<number[]>) | null;
   getWeightsFn?: GetWeightsFn;
 }
 
@@ -706,7 +816,7 @@ async function noveltyScores(
   const categorical = classStrengths.map((h) => 1 - h);
   // Explicit short per-call timeout: inheriting ollama.embed's 30s default put a
   // 30-second-per-title ceiling on a request the banner is waiting for.
-  const embed = embedFn === null ? null : embedFn ?? (async (t: string) => ollama.embed(t, EMBED_TIMEOUT_MS));
+  const embed = embedFn === null ? null : embedFn ?? (async (t: string, signal?: AbortSignal) => ollama.embed(t, EMBED_TIMEOUT_MS, signal));
   if (!embed) return categorical;
 
   try {
@@ -734,10 +844,19 @@ async function noveltyScores(
     const recent = await store()
       .prepare(
         `SELECT title FROM tasks WHERE owner_id = ? AND status = 'done' AND completed_at >= ?
-          ORDER BY completed_at DESC LIMIT 25`,
+          ORDER BY completed_at DESC LIMIT ?`,
       )
-      .all<{ title: string }>(ownerId, since);
+      .all<{ title: string }>(ownerId, since, CENTROID_TITLES);
     if (recent.length < 5) return categorical; // too little signal for a meaningful centroid
+
+    // Cache lookup on the DEFAULT embedder only, matching the readiness gate above: an
+    // injected embedFn is the caller's business, and a test that hands in a counting or
+    // failing fake must see every call it expects rather than a vector this process
+    // happened to remember from an earlier case.
+    const titles = recent.map((r) => r.title);
+    const fingerprint =
+      embedFn === undefined ? centroidFingerprint(await resolveEmbedModel(ownerId), titles) : null;
+    const reusable = fingerprint ? cachedCentroidFor(ownerId, fingerprint) : null;
 
     // A pool bigger than the cap is not embedded AT ALL, rather than partially:
     // a half-embedded pool would rank some candidates on blended novelty and the
@@ -755,33 +874,54 @@ async function noveltyScores(
     // per candidate that is an unbounded stall on a reachable-but-slow Ollama, on
     // a request a human is waiting on. Racing the entire stage against one deadline
     // makes the worst case bounded and the outcome shape deterministic.
+    // The budget CANCELS the work it walks away from; losing the race is not enough.
+    //
+    // Racing bounds the caller's latency. It does not bound the load, and on this stage
+    // those came apart badly: every abandoned run left up to 25 centroid embeds plus one
+    // per candidate still executing against Ollama, to their own per-call ceilings, for
+    // results already thrown away. That is worse than waste — it is a feedback loop. A
+    // busy Ollama makes the budget more likely to blow, and each blown budget adds a
+    // fresh pile of orphaned embeddings that keeps it busy, so a refreshing user drives
+    // it further from recovery. Cancelling makes the timeout SHED load instead of hiding it.
+    const budget = new AbortController();
     let budgetTimer: ReturnType<typeof setTimeout> | undefined;
     const blended = await Promise.race([
       (async () => {
-        const vecs = await Promise.all(recent.map((r) => embed(r.title)));
-        const dim = vecs[0]?.length ?? 0;
-        // Dimension agreement is validated for EVERY vector, and the fallback is
-        // all-or-nothing (the same doctrine as the cap): one short/empty vector
-        // would otherwise poison the centroid with NaN — which would ship "N": null
-        // on every pick AND silently delete N from the learning corpus — or hand
-        // one candidate a free N=0.5 outlier from a degenerate cosine.
-        if (!dim || vecs.some((v) => v.length !== dim)) return null;
-        const centroid = new Array<number>(dim).fill(0);
-        for (const v of vecs) for (let i = 0; i < dim; i++) centroid[i] += v[i] / vecs.length;
+        // A reused centroid costs zero embeddings; only a miss pays for the 25.
+        const centroid = reusable ?? (await buildCentroid(titles, embed, budget.signal));
+        if (!centroid) return null;
+        // Store only a FULLY built, dimension-validated centroid — never a partial one,
+        // and never one from a run the budget cancelled (buildCentroid rejects there, so
+        // this line is not reached).
+        if (!reusable && fingerprint) rememberCentroid(ownerId, fingerprint, centroid);
+
         // Parallel, not sequential: the cap bounds the fan-out, and serial awaits
         // multiplied the latency by the pool size for no benefit.
-        const cvecs = await Promise.all(cands.map((c) => embed(c.title)));
-        if (cvecs.some((v) => v.length !== dim)) return null;
+        const cvecs = await Promise.all(cands.map((c) => embed(c.title, budget.signal)));
+        // Candidates must live in the centroid's space. A cached centroid cannot be from
+        // another model (the fingerprint covers it), but a candidate vector can still
+        // come back the wrong length from a half-swapped embedder.
+        if (cvecs.some((v) => v.length !== centroid.length)) return null;
         return cvecs.map(
-          (v, i) => EMBED_BLEND * categorical[i] + (1 - EMBED_BLEND) * squashedCosineDistance(v, centroid),
+          (v, i) => EMBED_BLEND * categorical[i] + (1 - EMBED_BLEND) * squashedCosineDistance(v, centroid as number[]),
         );
       })(),
       new Promise<null>((resolve) => {
         budgetTimer = setTimeout(() => resolve(null), NOVELTY_BUDGET_MS);
       }),
-    ]).finally(() => clearTimeout(budgetTimer));
-    // ^ the timer is CLEARED on the fast path — an uncleared 4s timeout per request
-    // held vitest workers open and added a measurable tail to graceful shutdown.
+    ]).finally(() => {
+      // The timer is CLEARED on the fast path — an uncleared 4s timeout per request
+      // held vitest workers open and added a measurable tail to graceful shutdown.
+      clearTimeout(budgetTimer);
+      // Abort on EVERY exit, not just the timeout. A rejected `Promise.all` settles the
+      // race while its siblings are still in flight, so the fast-fail path orphaned
+      // embeddings too. Once this stage is over nothing it started may still be running;
+      // when the work finished normally this is a no-op.
+      budget.abort();
+    });
+    // A cancelled embed rejects, and that rejection lands on a race that has already
+    // settled — `Promise.race` keeps its handlers attached to every input, so it is
+    // observed and discarded rather than surfacing as an unhandled rejection.
     if (!blended) {
       logger.info('triality: novelty embedding budget exceeded — categorical only', { ownerId, budgetMs: NOVELTY_BUDGET_MS });
       return categorical;

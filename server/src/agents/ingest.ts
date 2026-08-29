@@ -1,7 +1,7 @@
 import { store } from '../db/store.js';
 import { extractTasks, type ExtractedTask, type ExtractSource } from './extract.js';
 import { createGoogleClient, type GoogleClient } from '../mcp/google.js';
-import { type ModelTier, llmOrNull } from '../mcp/ollama.js';
+import { type ModelTier, llmAttempt } from '../mcp/ollama.js';
 import { inferDirection } from './direction.js';
 import { currentOwnerId } from '../lib/context.js';
 import { newId } from '../lib/ids.js';
@@ -24,10 +24,31 @@ export interface IngestResult {
   /** AF-CU1: possibles whose promote threw (poison isolation) — left pending for the
    *  nightly sweeper / manual triage. */
   failed: number;
+  /** Items left UNPROCESSED because Ollama was unreachable. Nothing was written for
+   *  them and no watermark advanced past them, so a later run re-reads them. Distinct
+   *  from `failed`, which is a verdict; this one means "not yet". */
+  deferred: number;
 }
 
+/**
+ * Items one ingest run will put through the model, at most.
+ *
+ * Extraction is a QUALITY-tier call per item with a 60s ceiling (CALL_POLICY.extract),
+ * and the scheduled callers passed no limit at all — so a freshly-connected mailbox with
+ * a large backlog inside the lookback window meant one run issuing an unbounded serial
+ * fan-out of the most expensive call the app makes.
+ *
+ * 50 an ingest, against a 15-minute gmail tick, drains ~4.8k items a day, and the batch
+ * is a strict oldest-first prefix so the remainder is deferred rather than dropped. A run
+ * that outlasts its own period is fine: the tick lock (jobs/index.ts) refuses the
+ * overlapping tick instead of stacking a second fan-out on top.
+ *
+ * Callers with a real budget of their own still pass `maxExtractions` and win.
+ */
+const MAX_EXTRACTIONS_PER_RUN = 50;
+
 function emptyResult(): IngestResult {
-  return { itemsProcessed: 0, possiblesCreated: 0, possiblesUpdated: 0, blocksCreated: 0, promoted: 0, duplicates: 0, failed: 0 };
+  return { itemsProcessed: 0, possiblesCreated: 0, possiblesUpdated: 0, blocksCreated: 0, promoted: 0, duplicates: 0, failed: 0, deferred: 0 };
 }
 
 /**
@@ -102,9 +123,13 @@ async function directionTagId(name: string): Promise<string> {
 }
 
 /**
- * Deterministic fallback used when Ollama is down: stage the raw item as a single
- * possible-task so nothing is lost. No content tags (the LLM produced none) — the
- * source-inferred direction still tags it downstream (always-on, D4).
+ * Deterministic fallback for a model that ANSWERED but not with usable JSON: stage the
+ * raw item as a single possible-task so nothing is lost. No content tags (the LLM produced
+ * none) — the source-inferred direction still tags it downstream (always-on, D4).
+ *
+ * NOT used when Ollama is unreachable on the batch paths. A stub is a permanent record,
+ * and an outage is not a verdict on the item: those defer instead (see runExtraction).
+ * `ingestText` is the exception — one-shot, so it has no later run to defer to.
  */
 function fallbackTask(source: ExtractSource): ExtractedTask {
   const title = (source.subject?.trim() || source.text.split('\n').map((l) => l.trim()).find(Boolean) || 'Review item').slice(0, 200);
@@ -389,13 +414,24 @@ async function deadLetterGmail(ownerId: string, account: string, messageId: stri
     .run(newId(), ownerId, GMAIL_PROVIDER, account, GMAIL_DEADLETTER, JSON.stringify(ids));
 }
 
+/**
+ * What one item's extraction did.
+ *
+ * 'staged'   — possibles were written for this item (real extraction, or the raw
+ *              fallback after the model answered badly). The item is DONE.
+ * 'deferred' — Ollama was unreachable, so nothing was written and the item is
+ *              untouched. It must be re-read by a later run; a caller holding a
+ *              watermark must NOT advance past it.
+ */
+type ExtractionOutcome = 'staged' | 'deferred';
+
 async function runExtraction(
   source: ExtractSource,
   tier: ModelTier,
   payload: unknown,
-  result: IngestResult
-): Promise<void> {
-  result.itemsProcessed++;
+  result: IngestResult,
+  opts: { stubWhenUnavailable?: boolean } = {},
+): Promise<ExtractionOutcome> {
   // Close-loop wave, ticket 5 — resolve this owner's dismissal hint once per item,
   // immediately before the extraction call (never per candidate task; see
   // README.md's "Do not retrieve more than once per item"). One edit here covers all
@@ -408,6 +444,12 @@ async function runExtraction(
   // most like what is being matched against, and retrieveDismissals caps the query at
   // QUERY_TEXT_CAP, keeping whatever leads. For gmail that is the email subject, for
   // gcal the event title; a plain text note has none and falls back to its opening.
+  //
+  // Resolved BEFORE the attempt because extractTasks consumes it. That costs nothing
+  // on the 'unavailable' path below: an owner with no rollup returns after one indexed
+  // SELECT without reaching the model, and an owner WITH one still skips the embed,
+  // because embedReady() is false for the same down Ollama that is about to defer this
+  // item anyway.
   let hint = '';
   try {
     const probe = source.subject ? `${source.subject} ${source.text}` : source.text;
@@ -415,12 +457,31 @@ async function runExtraction(
   } catch (err) {
     logger.warn('ingest: dismissal hint resolution failed', { err: (err as Error).message });
   }
-  // Deterministic fallback (global constraint): when Ollama is down or answers with
-  // something unparseable, don't drop the item — stage it raw so it still arrives,
-  // source-tagged. Anything else re-throws (`llmOrNull`), which is the rule this site
-  // hand-rolled first and the whole codebase now shares.
-  const extracted = await llmOrNull(`extract:${source.kind}:${source.ref}`, () => extractTasks(source, { tier, hint }));
-  const tasks: ExtractedTask[] = extracted ?? [fallbackTask(source)];
+
+  const attempt = await llmAttempt(`extract:${source.kind}:${source.ref}`, () =>
+    extractTasks(source, { tier, hint }),
+  );
+
+  // Deterministic fallback (global constraint): when the model answers with something
+  // unparseable, don't drop the item — stage it raw so it still arrives, source-tagged.
+  // Anything that isn't one of the two degradable failures re-throws (`llmAttempt`).
+  //
+  // 'unavailable' is deliberately NOT that case, and this is the bug the split fixes.
+  // A raw stub is a PERMANENT record: the callers below advance a watermark past
+  // everything they stage, so an Ollama outage used to convert a whole batch into
+  // title-only stubs that were never looked at again — the extraction for those
+  // messages was gone for good, and nothing said so. Ollama being down is not this
+  // message's answer, so we write nothing and let the caller re-read it later.
+  //
+  // `stubWhenUnavailable` is the exception for one-shot callers (ingestText): there is
+  // no later run to defer to, so for them a stub really is better than nothing.
+  if (!attempt.ok && attempt.reason === 'unavailable' && !opts.stubWhenUnavailable) {
+    result.deferred++;
+    return 'deferred';
+  }
+
+  result.itemsProcessed++;
+  const tasks: ExtractedTask[] = attempt.ok ? attempt.value : [fallbackTask(source)];
   // for-of, not forEach: forEach never awaits an async callback, so the counters below
   // would not run and a failed upsert would become an unhandled rejection.
   for (const [i, task] of tasks.entries()) {
@@ -428,6 +489,7 @@ async function runExtraction(
     if (outcome === 'created') result.possiblesCreated++;
     else result.possiblesUpdated++;
   }
+  return 'staged';
 }
 
 /**
@@ -445,10 +507,26 @@ async function runExtraction(
  * dead-letters that message id (sync_state, resource='gmail_deadletter') and CONTINUES; the
  * watermark still advances past it so one bad message can never wedge the pipeline or be
  * silently lost. An explicit `opts.since` overrides the persisted watermark (manual replay).
+ *
+ * Bounded and ordered: the batch is sorted oldest-first and capped at
+ * MAX_EXTRACTIONS_PER_RUN, so one run can never issue an unbounded fan-out of quality-tier
+ * extractions and the watermark can never pass a message the run did not read.
+ *
+ * Deferral vs the watermark: an Ollama outage HALTS the batch. The old code staged a raw
+ * fallback for every message and advanced the cursor past all of them, so an outage
+ * silently converted a whole batch into title-only stubs nothing would ever revisit. A
+ * message we could not extract now keeps its place in the queue instead.
  */
 export async function ingestEmails(
   client: GoogleClient = createGoogleClient(),
-  opts: { since?: string; tier?: ModelTier; limit?: number; account?: string } = {}
+  opts: {
+    since?: string;
+    tier?: ModelTier;
+    limit?: number;
+    account?: string;
+    /** Override {@link MAX_EXTRACTIONS_PER_RUN} for this run. */
+    maxExtractions?: number;
+  } = {}
 ): Promise<IngestResult> {
   const result = emptyResult();
   const ownerId = currentOwnerId();
@@ -460,11 +538,25 @@ export async function ingestEmails(
   const watermark = await readGmailSince(ownerId, account);
   const since = opts.since ?? (watermark && watermark > floor ? watermark : floor);
 
-  const emails = await client.listEmails({ since, limit: opts.limit });
+  const fetched = await client.listEmails({ since, limit: opts.limit });
+
+  // OLDEST FIRST, and the cap applied after the sort — both halves matter.
+  //
+  // Neither client promises an order: the fixture returns file order, and the live path
+  // returns whatever the MCP child hands back (Gmail's own API is newest-first). The
+  // watermark is a high-water mark over `receivedAt`, so processing an unordered list
+  // and taking the max means a cap could bank the NEWEST messages and then advance the
+  // cursor past older ones we never read — losing them permanently. Sorting first makes
+  // the batch a true prefix of the backlog, so the cap only ever defers work to the next
+  // run and the watermark can never outrun what was actually processed.
+  const ordered = [...fetched].sort((a, b) => a.receivedAt.localeCompare(b.receivedAt));
+  const batch = ordered.slice(0, opts.maxExtractions ?? MAX_EXTRACTIONS_PER_RUN);
+
   let newestProcessed: string | undefined;
-  for (const email of emails) {
+  for (const [i, email] of batch.entries()) {
+    let outcome: ExtractionOutcome;
     try {
-      await runExtraction(
+      outcome = await runExtraction(
         { kind: 'gmail', ref: email.id, subject: email.subject, text: email.body, at: email.receivedAt },
         opts.tier ?? 'quality',
         // Fixture mode (no real account connected) reads canned sample mail — marked so
@@ -476,13 +568,33 @@ export async function ingestEmails(
       );
     } catch (err) {
       // Non-transient failure on this message → dead-letter and keep going. Do NOT rethrow
-      // (that would wedge the whole batch). OllamaUnavailable is handled inside runExtraction
-      // as a fallback, so anything reaching here is a genuine poison message.
+      // (that would wedge the whole batch). A dead-lettered message counts as moved past.
       await deadLetterGmail(ownerId, account, email.id);
       logger.error('gmail message dead-lettered', { id: email.id, err: (err as Error).message });
+      outcome = 'staged';
     }
-    // Watermark advances past EVERY message we've moved past, dead-lettered included.
+
+    // Ollama is down. STOP — don't grind the rest of the batch against an endpoint that
+    // is answering nothing, where every remaining message costs a full extract timeout
+    // (60s on the quality tier) to learn what we already know. The watermark stays where
+    // this message begins, so this one and everything after it are re-read next run.
+    if (outcome === 'deferred') {
+      result.deferred += batch.length - i - 1; // + the untried remainder (this one is already counted)
+      logger.warn('ingestEmails halted — Ollama unavailable; watermark held for a later run', {
+        owner: ownerId, account, processed: result.itemsProcessed, deferred: result.deferred,
+      });
+      break;
+    }
+
+    // Watermark advances past EVERY message we've moved past, dead-lettered included —
+    // but never past a deferred one, which is why the break above comes first.
     if (!newestProcessed || email.receivedAt > newestProcessed) newestProcessed = email.receivedAt;
+  }
+
+  if (ordered.length > batch.length) {
+    logger.info('ingestEmails capped this run — the remainder follows on the next tick', {
+      owner: ownerId, account, taken: batch.length, waiting: ordered.length - batch.length,
+    });
   }
 
   // Advance-after-commit: only after the loop's possibles are committed.
@@ -507,7 +619,8 @@ export async function ingestEmails(
 }
 
 /**
- * Ingest calendar events → prep possible_tasks ONLY. Throws if Ollama unavailable.
+ * Ingest calendar events → prep possible_tasks ONLY. An Ollama outage halts the batch
+ * (reported as `deferred`) rather than throwing — the next tick re-reads the window.
  *
  * As of WP5 this no longer creates meeting blocks: the locked meeting mirror is produced
  * exclusively by sync.ts applyInbound (the single canonical inbound path), so the two
@@ -516,28 +629,58 @@ export async function ingestEmails(
  */
 export async function ingestEvents(
   client: GoogleClient = createGoogleClient(),
-  opts: { from?: string; to?: string; tier?: ModelTier; limit?: number } = {}
+  opts: {
+    from?: string;
+    to?: string;
+    tier?: ModelTier;
+    limit?: number;
+    /** Override {@link MAX_EXTRACTIONS_PER_RUN} for this run. */
+    maxExtractions?: number;
+  } = {}
 ): Promise<IngestResult> {
   const result = emptyResult();
-  const events = await client.listEvents({ from: opts.from, to: opts.to, limit: opts.limit });
-  for (const event of events) {
-    const text = `${event.title}\n${event.description}`.trim();
-    if (text) {
-      await runExtraction(
-        { kind: 'gcal', ref: event.id, subject: event.title, text, at: event.start },
-        opts.tier ?? 'quality',
-        // 0151: the invite's people ride along in the payload so attachDetectedPeople
-        // can resolve them. Absent on a provider (or an older MCP child) that doesn't
-        // send them — detection then simply finds nobody.
-        {
-          title: event.title,
-          start: event.start,
-          ...(event.organizer ? { organizer: event.organizer } : {}),
-          ...(event.attendees?.length ? { attendees: event.attendees } : {}),
-        },
-        result
-      );
+  const fetched = await client.listEvents({ from: opts.from, to: opts.to, limit: opts.limit });
+
+  // Same bounded, ordered batch as ingestEmails. There is no watermark on this path (the
+  // window is from/to), so a cap here can't lose anything — but the ordering still earns
+  // its keep by making WHICH events a capped run covers deterministic instead of a
+  // function of whatever order the MCP child happened to return.
+  const withText = fetched
+    .map((event) => ({ event, text: `${event.title}\n${event.description}`.trim() }))
+    .filter((e) => e.text)
+    .sort((a, b) => a.event.start.localeCompare(b.event.start));
+  const batch = withText.slice(0, opts.maxExtractions ?? MAX_EXTRACTIONS_PER_RUN);
+
+  for (const [i, { event, text }] of batch.entries()) {
+    const outcome = await runExtraction(
+      { kind: 'gcal', ref: event.id, subject: event.title, text, at: event.start },
+      opts.tier ?? 'quality',
+      // 0151: the invite's people ride along in the payload so attachDetectedPeople
+      // can resolve them. Absent on a provider (or an older MCP child) that doesn't
+      // send them — detection then simply finds nobody.
+      {
+        title: event.title,
+        start: event.start,
+        ...(event.organizer ? { organizer: event.organizer } : {}),
+        ...(event.attendees?.length ? { attendees: event.attendees } : {}),
+      },
+      result
+    );
+    // Ollama is down — stop rather than pay a full extract timeout per remaining event
+    // to relearn it. Nothing was staged for these; the next run re-reads the window.
+    if (outcome === 'deferred') {
+      result.deferred += batch.length - i - 1;
+      logger.warn('ingestEvents halted — Ollama unavailable', {
+        processed: result.itemsProcessed, deferred: result.deferred,
+      });
+      break;
     }
+  }
+
+  if (withText.length > batch.length) {
+    logger.info('ingestEvents capped this run — the remainder follows on the next tick', {
+      taken: batch.length, waiting: withText.length - batch.length,
+    });
   }
 
   // AF-3: auto-promote the batch (dedupe → promote ALL pending) before returning.
@@ -554,7 +697,14 @@ export async function ingestText(
   opts: { tier?: ModelTier } = {}
 ): Promise<IngestResult> {
   const result = emptyResult();
-  await runExtraction({ kind: 'text', ref, text }, opts.tier ?? 'quality', { ref }, result);
+  // `stubWhenUnavailable` — the one caller that keeps the old behaviour. This is a
+  // one-shot, user-initiated paste with no cron behind it: there is no later run to
+  // defer to, so staging the raw text really is better than returning nothing. The
+  // batch callers have a next tick, which is what makes deferring the better answer
+  // for them.
+  await runExtraction({ kind: 'text', ref, text }, opts.tier ?? 'quality', { ref }, result, {
+    stubWhenUnavailable: true,
+  });
 
   // AF-3: auto-promote the batch (dedupe → promote ALL pending) before returning.
   await promoteBatch(result);

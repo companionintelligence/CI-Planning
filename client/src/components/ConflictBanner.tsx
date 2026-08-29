@@ -2,13 +2,22 @@ import { For, Show, createSignal } from 'solid-js';
 import { AlertTriangle, X, ChevronDown, ChevronUp } from 'lucide-solid';
 import { conflicts, resolveConflict, resolveAllConflicts, type ConflictRecord } from '../stores/conflicts.js';
 
+/**
+ * What happened to the edit, in the owner's terms. A rejected op never applied at
+ * all, so telling them another device overwrote it would be plainly false — and
+ * would send them looking for a change on their phone that was never made there.
+ */
+function conflictReason(record: ConflictRecord): string {
+  return record.kind === 'rejected' ? "couldn't be saved" : 'overwritten by another device';
+}
+
 function ConflictRow(props: { record: ConflictRecord }) {
   const fieldList = () => props.record.fields.join(', ');
   return (
     <div class="flex items-center gap-3 py-1.5 border-b border-amber-700/30 last:border-0">
       <span class="flex-1 text-xs text-amber-100 min-w-0 truncate">
         <span class="font-medium">"{props.record.entityTitle}"</span>
-        {' '}— {fieldList()} overwritten by another device
+        {' '}— {fieldList()} {conflictReason(props.record)}
       </span>
       <button
         type="button"
@@ -46,7 +55,7 @@ export function ConflictBanner() {
               <div class="flex items-center gap-2 py-2">
                 <AlertTriangle size={14} class="text-amber-400 flex-shrink-0" />
                 <span class="flex-1 text-xs text-amber-200">
-                  {count()} edits were overwritten by another device
+                  {count()} edits need your attention
                 </span>
                 <button
                   type="button"
@@ -80,7 +89,7 @@ export function ConflictBanner() {
             <AlertTriangle size={14} class="text-amber-400 flex-shrink-0" />
             <span class="flex-1 text-xs text-amber-200 min-w-0 truncate">
               <span class="font-medium">"{single()!.entityTitle}"</span>
-              {' '}— {single()!.fields.join(', ')} overwritten by another device
+              {' '}— {single()!.fields.join(', ')} {conflictReason(single()!)}
             </span>
             <button
               type="button"
