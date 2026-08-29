@@ -246,6 +246,18 @@ describe('owner-scoping (W3.2) — a cross-owner id is rejected with no mutation
     expect(row.block_type).toBe('someday');
   });
 
+  it('addTasksToBlock: an EXISTING user pin on the task is left untouched', async () => {
+    const container = insertBlock(OWNER, {
+      title: 'Focus', block_kind: 'timeblock', block_type: 'scheduled',
+      start_at: at('09:00'), end_at: at('12:00'),
+    });
+    const taskId = insertTask(OWNER, 'Stated time', { estimated_minutes: 30, task_time: '15:45' });
+
+    await addTasksToBlock(OWNER, container, [taskId]);
+    const task = sqlite.prepare(`SELECT task_time FROM tasks WHERE id = ?`).get(taskId) as { task_time: string | null };
+    expect(task.task_time).toBe('15:45'); // the user's own pin survives the placement
+  });
+
   it('addTasksToBlock: a foreign container is a silent no-op (zero counts), foreign task never attached', async () => {
     createOwner();
     const foreignContainer = insertBlock(SECOND_OWNER_ID, { title: 'Foreign container', block_kind: 'timeblock', start_at: at('09:00'), end_at: at('12:00') });

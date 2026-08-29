@@ -73,7 +73,7 @@ describe('placeTasksInBlock', () => {
     expect(kids[0].end_at <= kids[1].start_at).toBe(true);
   });
 
-  it('flips a placed task to scheduled AND mirrors scheduled_for/task_time onto it', async () => {
+  it('flips a placed task to scheduled and mirrors scheduled_for — but NEVER task_time', async () => {
     const c = insertContainer(at('09:00'), at('12:00'));
     const t = insertTask('Write A', 30);
     await placeTasksInBlock(OWNER, c, [t]);
@@ -81,7 +81,15 @@ describe('placeTasksInBlock', () => {
       { status: string; scheduled_for: string | null; task_time: string | null };
     expect(row.status).toBe('scheduled');
     expect(row.scheduled_for).toBe(DAY);   // 09:00 UTC, tz=UTC → same local day
-    expect(row.task_time).toBe('09:00');   // mirrored from the earliest placement
+    // This asserted `toBe('09:00')` until the call site moved to mirrorEnginePlacement.
+    // The container is the user's choice; the minute inside it is gap math, and
+    // `tasks.task_time` means a user-STATED pin that Auto's AD1 pass reads back as
+    // intent. The old behaviour predates mirrorEnginePlacement (8d923c99, which
+    // migrated autoplan but missed this path) and is reachable: delete the container —
+    // deleteBlock drops the children but not the task's scheduling fields — and the next
+    // Auto run for that day re-pins the task at the engine's minute, as an is_auto=0
+    // block clearPriorAuto cannot sweep. See the call site in engine/blocks-place.ts.
+    expect(row.task_time).toBeNull();
   });
 
   it('treats an existing child as an obstacle (new task lands after it, with a break)', async () => {
