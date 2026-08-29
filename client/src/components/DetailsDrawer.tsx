@@ -1,7 +1,7 @@
 import { Show, For, Switch, Match, createSignal, createEffect, createResource, on, onCleanup } from 'solid-js';
 import { useLocation } from '@solidjs/router';
 import { Planner } from './Planner.js';
-import { X, PanelRight, Inbox, Pencil, Sparkles, Check } from 'lucide-solid';
+import { X, PanelRight, Inbox, Pencil, Sparkles, Check, ChevronDown, ChevronRight } from 'lucide-solid';
 import {
   detailsOpen, detailsWidth, setDetailsOpen, setDetailsWidth,
   drawerTab, setDrawerTab, DETAILS_MIN_W, DETAILS_MAX_W, DETAILS_DEFAULT_W,
@@ -11,13 +11,18 @@ import {
   blocks, tasks, taskOf, tags, objectives, suggestions, refetchSuggestions,
   isSuggestionBusy, setSuggestionBusy, connections, showToast, refetchTasks, setElementModal,
 } from '../stores/index.js';
-import { api, type Task, type Block, type Tag, type Person, type PossibleTask } from '../lib/api.js';
+import { api, type Task, type Block, type Tag, type Person, type PossibleTask, type Objective } from '../lib/api.js';
 import { displayTag } from '../lib/tag-tax.js';
 import { LockToggle } from './LockToggle.js';
 import { lockAffordance } from '../lib/lock.js';
 import { PriorityToggle, DateField } from './TaskCard.js';
 import { flattenObjectives } from '../lib/objectives.js';
 import { describeRule } from '../lib/recurrence.js';
+import { rangeUTC } from '../lib/dates.js';
+import {
+  windowFor, inWindow, targetForWindow, groupByTitle, minutesBetween, hoursLabel,
+  type RollupPeriod, type TitleGroup,
+} from '../lib/dimension-rollup.js';
 
 const PRIORITY_NAME: Record<number, string> = { 1: 'High', 2: 'Medium', 3: 'Low' };
 
@@ -583,12 +588,81 @@ function JobPanel(props: { id: string }) {
   );
 }
 
+/** One list row: a title, an optional repeat count, and an optional right-hand meta. */
+function RollupRow(props: { group: TitleGroup<any>; meta?: string; onClick?: () => void; done?: boolean }) {
+  return (
+    <button
+      type="button"
+      class="flex items-center gap-2 w-full text-left py-1 text-xs hover:text-primary group/row"
+      onClick={() => props.onClick?.()}
+    >
+      <span class="truncate group-hover/row:underline" classList={{ 'line-through text-muted-foreground': props.done }}>
+        {props.group.title}
+      </span>
+      {/* The repeat count, as a digit — a recurring task collapses to one row rather
+          than N identical ones. Absent at count 1 so a one-off carries no "x1" noise. */}
+      <Show when={props.group.count > 1}>
+        <span class="flex-shrink-0 text-[10px] font-mono px-1.5 rounded-full bg-muted text-muted-foreground border border-border">
+          x{props.group.count}
+        </span>
+      </Show>
+      <Show when={props.meta}>
+        <span class="ml-auto flex-shrink-0 text-[10px] text-muted-foreground font-mono">{props.meta}</span>
+      </Show>
+    </button>
+  );
+}
+
 function DimensionPanel(props: { dimension: string }) {
   const [prio] = createResource(() => api.priorities.list().then((r) => r.priorities).catch(() => []));
   const row = () => (prio() ?? []).find((x) => x.category === props.dimension);
-  const open = () => (tasks() ?? []).filter(
-    (t) => ['open', 'scheduled', 'in_progress'].includes(t.status ?? '') && (t.categories ?? []).includes(props.dimension),
+
+  // Week/month scopes the time-bound lists (Scheduled, Completed). Open tasks are not
+  // time-bound — filtering a backlog by a window would just hide work.
+  const [period, setPeriod] = createSignal<RollupPeriod>('week');
+  const [showDone, setShowDone] = createSignal(false);
+  const win = () => windowFor(period());
+  const inDim = (cats: string[] | undefined) => (cats ?? []).includes(props.dimension);
+
+  // Scheduled comes from BLOCKS, not tasks: a block is the thing that actually occupies
+  // time, so it is the only honest basis for "how much is allocated".
+  //
+  // Fetched here rather than read off the shared `blocks` resource: that one is keyed to
+  // the range the PLANNER is currently showing (usually a single day), so reading it made
+  // a week/month rollup silently report only today's blocks — 1h scheduled against a 14h
+  // target when three more sessions were already on the calendar.
+  const [windowBlocks] = createResource(
+    () => { const w = win(); return rangeUTC(w.from, w.to); },
+    (r) => api.blocks.list(r.from, r.to).then((res) => res.blocks).catch(() => [] as Block[]),
   );
+  const scheduled = () =>
+    (windowBlocks() ?? [])
+      .filter((b) => inDim(b.categories) && inWindow(b.start_at, win()))
+      .sort((a, b) => a.start_at.localeCompare(b.start_at));
+  const blockMinutes = (b: Block) => minutesBetween(b.start_at, b.end_at);
+  const scheduledMinutes = () => scheduled().reduce((sum, b) => sum + blockMinutes(b), 0);
+  const scheduledGroups = () => groupByTitle(scheduled(), (b) => b.title, blockMinutes);
+
+  const targetMinutes = () => Math.round(targetForWindow(row()?.target_hours_per_week ?? 0, win()) * 60);
+  const unallocated = () => targetMinutes() - scheduledMinutes();
+
+  // A task already on the calendar this window is NOT repeated under Open — the same
+  // task appearing in two sections is exactly the duplication this panel avoids.
+  const scheduledTaskIds = () => new Set(scheduled().map((b) => b.task_id).filter(Boolean) as string[]);
+  const openTasks = () =>
+    (tasks() ?? []).filter(
+      (t) => inDim(t.categories)
+        && ['open', 'scheduled', 'in_progress'].includes(t.status ?? '')
+        && !scheduledTaskIds().has(t.id),
+    );
+  const openGroups = () => groupByTitle(openTasks(), (t) => t.title, (t) => t.estimated_minutes ?? 0);
+
+  const doneTasks = () =>
+    (tasks() ?? [])
+      .filter((t) => inDim(t.categories) && inWindow(t.completed_at, win()))
+      .sort((a, b) => (b.completed_at ?? '').localeCompare(a.completed_at ?? ''));
+  const doneGroups = () => groupByTitle(doneTasks(), (t) => t.title, (t) => t.estimated_minutes ?? 0);
+
   return (
     <div class="drawer-body">
       <Show when={row()} fallback={<div><span class="drawer-pill">No priorities set</span></div>}>
@@ -603,19 +677,103 @@ function DimensionPanel(props: { dimension: string }) {
           </Group>
         )}
       </Show>
-      <Group label={`Open tasks (${open().length})`}>
-        <Show when={open().length > 0} fallback={<span class="text-xs text-muted-foreground">Nothing open in this dimension.</span>}>
-          <div class="flex flex-col gap-1">
-            <For each={open().slice(0, 8)}>
-              {(t) => (
-                <button type="button" class="drawer-tag text-left cursor-pointer hover:border-ring" onClick={() => setActiveTask(t.id)}>
-                  {t.title}
-                </button>
+
+      {/* Window switch — scopes Scheduled + Completed below. */}
+      <div class="flex items-center gap-1 p-0.5 rounded-lg bg-muted/50 border border-border w-fit">
+        <For each={['week', 'month'] as RollupPeriod[]}>
+          {(k) => (
+            <button
+              type="button"
+              class="text-[11px] px-2.5 py-0.5 rounded-md capitalize transition-colors"
+              classList={{
+                'bg-card text-foreground font-medium border border-border': period() === k,
+                'text-muted-foreground hover:text-foreground': period() !== k,
+              }}
+              aria-pressed={period() === k}
+              onClick={() => setPeriod(k)}
+            >
+              {k}
+            </button>
+          )}
+        </For>
+      </div>
+
+      {/* Unallocated — the headline number: target for this window minus what is
+          actually on the calendar. Negative means over-committed, which is a real
+          state and is named rather than clamped to zero. */}
+      <Show when={row()}>
+        <Group label="Allocation">
+          <dl class="drawer-grid">
+            <Field label={period() === 'week' ? 'Target (week)' : 'Target (month)'} when={true}>
+              {hoursLabel(targetMinutes())}
+            </Field>
+            <Field label="Scheduled" when={true}>{hoursLabel(scheduledMinutes())}</Field>
+            <Field label={unallocated() >= 0 ? 'Unallocated' : 'Over target'} when={true}>
+              <span classList={{ 'text-amber-500': unallocated() < 0 }}>
+                {hoursLabel(Math.abs(unallocated()))}
+              </span>
+            </Field>
+          </dl>
+        </Group>
+      </Show>
+
+      <Group label={`Scheduled (${scheduledGroups().length})`}>
+        <Show
+          when={scheduledGroups().length > 0}
+          fallback={<span class="text-xs text-muted-foreground">Nothing scheduled this {period()}.</span>}
+        >
+          <div class="flex flex-col">
+            <For each={scheduledGroups()}>
+              {(g) => (
+                <RollupRow
+                  group={g}
+                  meta={hoursLabel(g.minutes)}
+                  onClick={() => (g.first.task_id ? setActiveTask(g.first.task_id) : setActiveBlock(g.first.id))}
+                />
               )}
             </For>
           </div>
         </Show>
       </Group>
+
+      <Group label={`Open (${openGroups().length})`}>
+        <Show
+          when={openGroups().length > 0}
+          fallback={<span class="text-xs text-muted-foreground">Nothing open in this dimension.</span>}
+        >
+          <div class="flex flex-col">
+            <For each={openGroups()}>
+              {(g) => <RollupRow group={g} onClick={() => setActiveTask(g.first.id)} />}
+            </For>
+          </div>
+        </Show>
+      </Group>
+
+      {/* Completed is collapsed by default: it is history, and on a busy dimension it
+          is the longest of the three lists. */}
+      <div>
+        <button
+          type="button"
+          class="drawer-group flex items-center gap-1 w-full hover:text-foreground"
+          aria-expanded={showDone()}
+          onClick={() => setShowDone((v) => !v)}
+        >
+          <Show when={showDone()} fallback={<ChevronRight size={11} />}><ChevronDown size={11} /></Show>
+          Completed ({doneGroups().length})
+        </button>
+        <Show when={showDone()}>
+          <Show
+            when={doneGroups().length > 0}
+            fallback={<span class="text-xs text-muted-foreground">Nothing completed this {period()}.</span>}
+          >
+            <div class="flex flex-col">
+              <For each={doneGroups()}>
+                {(g) => <RollupRow group={g} done onClick={() => setActiveTask(g.first.id)} />}
+              </For>
+            </div>
+          </Show>
+        </Show>
+      </div>
     </div>
   );
 }
@@ -732,6 +890,127 @@ function SuggestionPanel(props: { possible: PossibleTask }) {
   );
 }
 
+/** Walk the objective tree for one node by id — the store holds the tree, not a flat map. */
+function findObjective(nodes: Objective[], id: string): Objective | undefined {
+  for (const n of nodes) {
+    if (n.id === id) return n;
+    const hit = n.children?.length ? findObjective(n.children, id) : undefined;
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+const OBJECTIVE_HORIZON: Record<string, string> = {
+  none: 'No horizon', week: 'This week', month: 'This month', quarter: 'This quarter', year: 'This year',
+};
+
+/**
+ * AF-D: an Objective opens HERE rather than in the create/edit form. Clicking a tree
+ * row used to jump straight to ObjectiveModal — an edit surface answering "what is
+ * this?" with a form, and one that was clipped on a short viewport. The drawer is the
+ * app's standing answer to that question for every other entity, so objectives use it
+ * too; the pencil in the tree still opens the form for actual editing.
+ *
+ * Members are rendered as real anchors: a plain click stays in the drawer (no reload),
+ * while cmd/ctrl/middle-click keeps the browser's own "open in a new tab" behaviour,
+ * which is what makes them hotlinks rather than click handlers wearing a link's paint.
+ */
+function ObjectivePanel(props: { objective: Objective }) {
+  const o = () => props.objective;
+  const pct = () => (o().progress_cache != null ? `${Math.round(o().progress_cache! * 100)}%` : null);
+  const openTasks = () => (o().tasks ?? []).filter((t) => t.status !== 'done');
+  const doneTasks = () => (o().tasks ?? []).filter((t) => t.status === 'done');
+
+  /** Intercept only the plain left click; let every modifier fall through to the href. */
+  const inDrawer = (e: MouseEvent, run: () => void) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    e.preventDefault();
+    run();
+  };
+
+  const TaskRow = (p: { t: { id: string; title: string; status: string; due_at: string | null } }) => (
+    <a
+      href={`/tasks?tab=tasks&task=${p.t.id}`}
+      class="flex items-center gap-2 py-1 text-xs hover:text-primary group/row"
+      onClick={(e) => inDrawer(e, () => setActiveTask(p.t.id))}
+    >
+      <Show when={p.t.status === 'done'} fallback={<span class="w-3 flex-shrink-0" />}>
+        <Check size={11} class="flex-shrink-0 text-primary" />
+      </Show>
+      <span class="truncate group-hover/row:underline" classList={{ 'line-through text-muted-foreground': p.t.status === 'done' }}>
+        {p.t.title}
+      </span>
+      <Show when={p.t.due_at}>
+        <span class="ml-auto flex-shrink-0 text-[10px] text-muted-foreground">{fmtDate(p.t.due_at!)}</span>
+      </Show>
+    </a>
+  );
+
+  return (
+    <div class="drawer-body">
+      <div class="flex items-center gap-2">
+        <span class="drawer-pill" data-status={o().status === 'done' ? 'done' : 'open'}>{o().status}</span>
+        <span class="text-[11px] text-muted-foreground uppercase tracking-wide">{o().level}</span>
+      </div>
+
+      <Show when={o().description}>
+        <Group label="Description">
+          <p class="text-xs text-muted-foreground whitespace-pre-wrap">{o().description}</p>
+        </Group>
+      </Show>
+
+      <Group label="Planning">
+        <dl class="drawer-grid">
+          <Field label="Horizon" when={true}>{OBJECTIVE_HORIZON[o().horizon] ?? o().horizon}</Field>
+          <Field label="Progress" when={true}>{pct() ?? 'No plan yet'}</Field>
+          <Field label="Cadence" when={o().cadence !== 'none'}>{o().cadence}</Field>
+          <Field label="Target" when={o().effective_target ?? o().target_date}>
+            {fmtDate((o().effective_target ?? o().target_date)!)}
+          </Field>
+          <Field label="Next action" when={o().next_action?.title}>{o().next_action!.title}</Field>
+        </dl>
+      </Group>
+
+      {/* Subtasks — the reason this panel exists: the tree row could only ever show a
+          count, so "what is actually in this objective?" needed the form to answer it. */}
+      <Group label={`Subtasks${(o().tasks ?? []).length ? ` (${openTasks().length} open)` : ''}`}>
+        <Show
+          when={(o().tasks ?? []).length > 0}
+          fallback={
+            <span class="text-xs text-muted-foreground">
+              {o().children?.length ? 'Tasks live on the sub-objectives below.' : 'No tasks linked yet.'}
+            </span>
+          }
+        >
+          <div class="flex flex-col">
+            <For each={openTasks()}>{(t) => <TaskRow t={t} />}</For>
+            <For each={doneTasks()}>{(t) => <TaskRow t={t} />}</For>
+          </div>
+        </Show>
+      </Group>
+
+      <Show when={o().children?.length}>
+        <Group label={`Sub-objectives (${o().children.length})`}>
+          <div class="flex flex-col">
+            <For each={o().children}>
+              {(c) => (
+                <a
+                  href={`/tasks?tab=objectives&focus=${c.id}`}
+                  class="flex items-center gap-2 py-1 text-xs hover:text-primary hover:underline"
+                  onClick={(e) => inDrawer(e, () => setActiveEntity('objective', c.id))}
+                >
+                  <span class="truncate">{c.title}</span>
+                  <span class="ml-auto flex-shrink-0 text-[10px] text-muted-foreground">{c.level}</span>
+                </a>
+              )}
+            </For>
+          </div>
+        </Group>
+      </Show>
+    </div>
+  );
+}
+
 function EmptyPanel(props: { where: string }) {
   return (
     <div class="drawer-empty">
@@ -774,6 +1053,11 @@ export function DetailsDrawer() {
     if (e.kind === 'direction' || e.kind === 'category') return (tags() ?? []).find((t) => t.name === e.id);
     return undefined;
   };
+  const entityObjective = (): Objective | undefined => {
+    const e = entity();
+    if (e?.kind !== 'objective') return undefined;
+    return findObjective(objectives() ?? [], e.id);
+  };
   const suggestion = (): PossibleTask | undefined => {
     const e = entity();
     if (e?.kind !== 'suggestion') return undefined;
@@ -794,6 +1078,7 @@ export function DetailsDrawer() {
   const KIND_LABEL: Record<string, string> = {
     tag: 'Tag', direction: 'Direction', category: 'Category',
     day: 'Day', job: 'Scheduled job', dimension: 'Life dimension', suggestion: 'Suggestion',
+    objective: 'Objective',
   };
   const title = () => {
     const t = task(); if (t) return t.title;
@@ -806,11 +1091,23 @@ export function DetailsDrawer() {
     }
     if (e.kind === 'dimension') return displayTag(e.id);
     if (e.kind === 'suggestion') return suggestion()?.raw_title ?? KIND_LABEL.suggestion;
+    if (e.kind === 'objective') return entityObjective()?.title ?? KIND_LABEL.objective;
     const g = entityTag();
     return g ? displayTag(g.name) : KIND_LABEL[e.kind];
   };
-  const kind = () =>
-    task() ? 'Task' : block() ? 'Scheduled block' : entity() ? KIND_LABEL[entity()!.kind] : 'Details';
+  const kind = () => {
+    if (task()) return 'Task';
+    if (block()) return 'Scheduled block';
+    const e = entity();
+    if (!e) return 'Details';
+    // A goal and a project are both objective rows; show which one rather than the
+    // generic kind, matching the level word the tree puts beside the title.
+    if (e.kind === 'objective') {
+      const lvl = entityObjective()?.level;
+      return lvl ? lvl.charAt(0).toUpperCase() + lvl.slice(1) : KIND_LABEL.objective;
+    }
+    return KIND_LABEL[e.kind];
+  };
 
   /** What the empty state invites you to pick — per view, as in the mockup. */
   const emptyWhere = () => ({
@@ -962,6 +1259,7 @@ export function DetailsDrawer() {
             <Match when={entity()?.kind === 'job' && entity()}>{(e) => <JobPanel id={e().id} />}</Match>
             <Match when={entity()?.kind === 'dimension' && entity()}>{(e) => <DimensionPanel dimension={e().id} />}</Match>
             <Match when={entity()?.kind === 'suggestion' && suggestion()}>{(s) => <SuggestionPanel possible={s()} />}</Match>
+            <Match when={entity()?.kind === 'objective' && entityObjective()}>{(o) => <ObjectivePanel objective={o()} />}</Match>
           </Switch>
         </Show>
       </aside>

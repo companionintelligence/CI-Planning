@@ -3,7 +3,7 @@ import { ViewHeader } from '../components/ViewHeader.js';
 import { setActiveEntity } from '../stores/selection.js';
 import { revealDetails } from '../stores/ui.js';
 import { A } from '@solidjs/router';
-import { Heart, Briefcase, Users, Brain, Smile, DollarSign, Edit, Sparkles, AlertCircle, Target, ListTodo, X, BarChart3, Lightbulb } from 'lucide-solid';
+import { Heart, Briefcase, Users, Brain, Smile, DollarSign, Edit, AlertCircle, Target, ListTodo, X, BarChart3 } from 'lucide-solid';
 import { priorities, prefs, tasks, setElementModal, refetchPrefs, showToast } from '../stores/index.js';
 import { api } from '../lib/api.js';
 import type { Priority, Task } from '../lib/api.js';
@@ -66,12 +66,6 @@ export function Balance() {
     return list.length ? Math.round((list.reduce((s, p) => s + p.satisfaction, 0) / list.length) * 10) / 10 : 0;
   };
 
-  // Focus areas: high importance but a meaningful satisfaction gap (importance − satisfaction ≥ 3).
-  const focusAreas = () =>
-    CATEGORIES
-      .map((c) => ({ cat: c, p: byCategory(c.key) }))
-      .filter(({ p }) => p.importance - p.satisfaction >= 3)
-      .sort((a, b) => (b.p.importance - b.p.satisfaction) - (a.p.importance - a.p.satisfaction));
 
   return (
     <div class="view-container page-enter">
@@ -151,9 +145,11 @@ export function Balance() {
           </div>
         </div>
 
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Per-category */}
-          <div class="lg:col-span-2 flex flex-col gap-4">
+        <div>
+          {/* Per-category. Single column since the Focus Areas rail was removed —
+              the per-card "matters more than it satisfies" line already carries that
+              signal, in place, without a second list restating it. */}
+          <div class="flex flex-col gap-4">
             <h2 class="text-lg font-bold text-foreground flex items-center gap-2"><BarChart3 class="w-4 h-4 text-primary" /> Core Dimensions</h2>
             <div class="flex flex-col gap-4">
               <For each={CATEGORIES}>
@@ -230,56 +226,6 @@ export function Balance() {
             </div>
           </div>
 
-          {/* Focus areas / tips */}
-          <div class="flex flex-col gap-5">
-            <h2 class="text-lg font-bold text-foreground flex items-center gap-2"><Lightbulb class="w-4 h-4 text-primary" /> Focus Areas</h2>
-            <div class="flex flex-col gap-4">
-              <Show
-                when={focusAreas().length > 0}
-                fallback={
-                  <div class="card p-4 flex gap-3.5 items-start">
-                    <div class="p-2 rounded-xl bg-muted text-accent flex-shrink-0 mt-0.5"><Sparkles class="w-4 h-4" /></div>
-                    <div class="space-y-1">
-                      <h4 class="text-xs font-bold text-foreground">Well aligned</h4>
-                      <p class="text-[11px] text-muted-foreground leading-snug">
-                        Your satisfaction tracks what matters to you across every area. Keep it up.
-                      </p>
-                    </div>
-                  </div>
-                }
-              >
-                <For each={focusAreas()}>
-                  {({ cat, p }) => {
-                    const Icon = cat.icon;
-                    return (
-                      <div class="card p-4 flex gap-3.5 items-start">
-                        <div class={`p-2 rounded-xl bg-muted ${cat.colorClass} flex-shrink-0 mt-0.5`}><Icon class="w-4 h-4" /></div>
-                        <div class="space-y-1">
-                          {/* Separator, not a verb: category names are a mix of singular
-                              and plural ("Health", "Relationships"), so "{name} needs
-                              attention" rendered "Relationships needs attention". The
-                              middle dot is the same idiom used in "Goals · Projects ·
-                              Objectives" and reads correctly for every category. */}
-                          <h4 class="text-xs font-bold text-foreground">{cat.name} · needs attention</h4>
-                          <p class="text-[11px] text-muted-foreground leading-snug">
-                            You rate it {p.importance}/10 important but only {p.satisfaction}/10 satisfying — the biggest gaps are worth a plan.
-                          </p>
-                        </div>
-                      </div>
-                    );
-                  }}
-                </For>
-              </Show>
-
-              <div class="card p-4 flex flex-col gap-2">
-                <h3 class="text-xs font-bold text-foreground flex items-center gap-1.5"><AlertCircle class="w-3.5 h-3.5 text-accent" /> About this view</h3>
-                <p class="text-[10px] text-muted-foreground leading-relaxed">
-                  Focus areas are where importance outruns satisfaction by 3+ points. Weekly-target vs actual-scheduled
-                  time tracking arrives with the scheduling integration.
-                </p>
-              </div>
-            </div>
-          </div>
         </div>
       </Show>
       </Show>
