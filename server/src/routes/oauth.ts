@@ -107,6 +107,17 @@ export function oauthRouter() {
       ctx.body = { error: 'google_mode_not_live' };
       return;
     }
+    // Fail closed on a live mode with no client id. The authorize URL below only sets
+    // `client_id` when one exists, so this used to mint a URL WITHOUT it and hand the
+    // user off to Google — which answers a missing client_id with "Error 401:
+    // invalid_client / The OAuth client was not found", a message that points at
+    // Google rather than at the unset local config that actually caused it. Refuse
+    // here instead, so the app can say what is wrong and where to fix it.
+    if (!config.google.clientId?.trim()) {
+      ctx.status = 409;
+      ctx.body = { error: 'google_client_id_missing' };
+      return;
+    }
 
     const ownerId = currentOwnerId();
     const codeVerifier = base64url(randomBytes(64)); // ~86 chars (within 43–128)
@@ -138,7 +149,7 @@ export function oauthRouter() {
     // be able to steer the OAuth redirect).
     const authUrl = new URL(config.google.authUri);
     const params = authUrl.searchParams;
-    if (config.google.clientId) params.set('client_id', config.google.clientId);
+    params.set('client_id', config.google.clientId); // guaranteed non-empty by the guard above
     params.set('redirect_uri', config.google.redirectUri);
     params.set('response_type', 'code');
     params.set('scope', scopes.join(' '));

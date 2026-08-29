@@ -1,4 +1,4 @@
-import { createSignal, createResource, createMemo, onCleanup, Show, For } from 'solid-js';
+import { createSignal, createResource, createMemo, createEffect, onCleanup, Show, For } from 'solid-js';
 import { ViewHeader } from '../components/ViewHeader.js';
 import { useSearchParams } from '@solidjs/router';
 import { SlidersHorizontal, Search, Archive, ChevronDown, ChevronRight, X, CalendarRange } from 'lucide-solid';
@@ -15,6 +15,8 @@ import { RoutinesPanel } from '../components/RoutinesPanel.js';
 import { TimeBlocksPanel } from '../components/TimeBlocksPanel.js';
 import { ObjectivesPanel } from '../components/ObjectivesPanel.js';
 import { parseTasksTab, type TasksTab } from '../lib/tasks-tabs.js';
+import { setActiveTask } from '../stores/selection.js';
+import { setDetailsOpen } from '../stores/ui.js';
 import { partitionTaskSections, headerOpenCount } from '../lib/task-sections.js';
 import { SuggestionsSection } from '../components/SuggestionsSection.js';
 
@@ -79,9 +81,22 @@ export function AllTasks() {
   // Switching to a panel tab drops the Tasks-only archive/filter state; the
   // objectives deep-link focus (`?focus=`) is cleared on any explicit tab change.
   const selectTab = (v: TasksTab) => {
-    setSearchParams({ tab: v, focus: undefined });
+    setSearchParams({ tab: v, focus: undefined, task: undefined });
     if (v !== 'tasks' && v !== 'habits') { setShowArchive(false); setShowFilters(false); }
   };
+
+  // AF-D: `?task=<id>` selects a task and opens the drawer on it. This is what makes the
+  // drawer's subtask rows real hotlinks — cmd/middle-click opens a genuine browser tab
+  // that lands on the same task, instead of a bare /tasks with nothing selected. Consumed
+  // ONCE (mirrors `?focus=`), so a later manual deselect isn't fought by a re-run.
+  let consumedTaskParam: string | undefined;
+  createEffect(() => {
+    const id = typeof searchParams.task === 'string' ? searchParams.task : undefined;
+    if (!id || consumedTaskParam === id) return;
+    consumedTaskParam = id;
+    setActiveTask(id);
+    setDetailsOpen(true);
+  });
   const isTopLevel = (t: Task) => !t.parent_id && !t.recurrence_parent_id;
   const baseList = () => (tasks() ?? []).filter(isTopLevel);
 

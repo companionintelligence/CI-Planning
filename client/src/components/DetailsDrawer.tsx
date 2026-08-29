@@ -11,7 +11,7 @@ import {
   blocks, tasks, taskOf, tags, objectives, suggestions, refetchSuggestions,
   isSuggestionBusy, setSuggestionBusy, connections, showToast, refetchTasks, setElementModal,
 } from '../stores/index.js';
-import { api, type Task, type Block, type Tag, type Person, type PossibleTask } from '../lib/api.js';
+import { api, type Task, type Block, type Tag, type Person, type PossibleTask, type Objective } from '../lib/api.js';
 import { displayTag } from '../lib/tag-tax.js';
 import { LockToggle } from './LockToggle.js';
 import { lockAffordance } from '../lib/lock.js';
@@ -732,6 +732,127 @@ function SuggestionPanel(props: { possible: PossibleTask }) {
   );
 }
 
+/** Walk the objective tree for one node by id — the store holds the tree, not a flat map. */
+function findObjective(nodes: Objective[], id: string): Objective | undefined {
+  for (const n of nodes) {
+    if (n.id === id) return n;
+    const hit = n.children?.length ? findObjective(n.children, id) : undefined;
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+const OBJECTIVE_HORIZON: Record<string, string> = {
+  none: 'No horizon', week: 'This week', month: 'This month', quarter: 'This quarter', year: 'This year',
+};
+
+/**
+ * AF-D: an Objective opens HERE rather than in the create/edit form. Clicking a tree
+ * row used to jump straight to ObjectiveModal — an edit surface answering "what is
+ * this?" with a form, and one that was clipped on a short viewport. The drawer is the
+ * app's standing answer to that question for every other entity, so objectives use it
+ * too; the pencil in the tree still opens the form for actual editing.
+ *
+ * Members are rendered as real anchors: a plain click stays in the drawer (no reload),
+ * while cmd/ctrl/middle-click keeps the browser's own "open in a new tab" behaviour,
+ * which is what makes them hotlinks rather than click handlers wearing a link's paint.
+ */
+function ObjectivePanel(props: { objective: Objective }) {
+  const o = () => props.objective;
+  const pct = () => (o().progress_cache != null ? `${Math.round(o().progress_cache! * 100)}%` : null);
+  const openTasks = () => (o().tasks ?? []).filter((t) => t.status !== 'done');
+  const doneTasks = () => (o().tasks ?? []).filter((t) => t.status === 'done');
+
+  /** Intercept only the plain left click; let every modifier fall through to the href. */
+  const inDrawer = (e: MouseEvent, run: () => void) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    e.preventDefault();
+    run();
+  };
+
+  const TaskRow = (p: { t: { id: string; title: string; status: string; due_at: string | null } }) => (
+    <a
+      href={`/tasks?tab=tasks&task=${p.t.id}`}
+      class="flex items-center gap-2 py-1 text-xs hover:text-primary group/row"
+      onClick={(e) => inDrawer(e, () => setActiveTask(p.t.id))}
+    >
+      <Show when={p.t.status === 'done'} fallback={<span class="w-3 flex-shrink-0" />}>
+        <Check size={11} class="flex-shrink-0 text-primary" />
+      </Show>
+      <span class="truncate group-hover/row:underline" classList={{ 'line-through text-muted-foreground': p.t.status === 'done' }}>
+        {p.t.title}
+      </span>
+      <Show when={p.t.due_at}>
+        <span class="ml-auto flex-shrink-0 text-[10px] text-muted-foreground">{fmtDate(p.t.due_at!)}</span>
+      </Show>
+    </a>
+  );
+
+  return (
+    <div class="drawer-body">
+      <div class="flex items-center gap-2">
+        <span class="drawer-pill" data-status={o().status === 'done' ? 'done' : 'open'}>{o().status}</span>
+        <span class="text-[11px] text-muted-foreground uppercase tracking-wide">{o().level}</span>
+      </div>
+
+      <Show when={o().description}>
+        <Group label="Description">
+          <p class="text-xs text-muted-foreground whitespace-pre-wrap">{o().description}</p>
+        </Group>
+      </Show>
+
+      <Group label="Planning">
+        <dl class="drawer-grid">
+          <Field label="Horizon" when={true}>{OBJECTIVE_HORIZON[o().horizon] ?? o().horizon}</Field>
+          <Field label="Progress" when={true}>{pct() ?? 'No plan yet'}</Field>
+          <Field label="Cadence" when={o().cadence !== 'none'}>{o().cadence}</Field>
+          <Field label="Target" when={o().effective_target ?? o().target_date}>
+            {fmtDate((o().effective_target ?? o().target_date)!)}
+          </Field>
+          <Field label="Next action" when={o().next_action?.title}>{o().next_action!.title}</Field>
+        </dl>
+      </Group>
+
+      {/* Subtasks — the reason this panel exists: the tree row could only ever show a
+          count, so "what is actually in this objective?" needed the form to answer it. */}
+      <Group label={`Subtasks${(o().tasks ?? []).length ? ` (${openTasks().length} open)` : ''}`}>
+        <Show
+          when={(o().tasks ?? []).length > 0}
+          fallback={
+            <span class="text-xs text-muted-foreground">
+              {o().children?.length ? 'Tasks live on the sub-objectives below.' : 'No tasks linked yet.'}
+            </span>
+          }
+        >
+          <div class="flex flex-col">
+            <For each={openTasks()}>{(t) => <TaskRow t={t} />}</For>
+            <For each={doneTasks()}>{(t) => <TaskRow t={t} />}</For>
+          </div>
+        </Show>
+      </Group>
+
+      <Show when={o().children?.length}>
+        <Group label={`Sub-objectives (${o().children.length})`}>
+          <div class="flex flex-col">
+            <For each={o().children}>
+              {(c) => (
+                <a
+                  href={`/tasks?tab=objectives&focus=${c.id}`}
+                  class="flex items-center gap-2 py-1 text-xs hover:text-primary hover:underline"
+                  onClick={(e) => inDrawer(e, () => setActiveEntity('objective', c.id))}
+                >
+                  <span class="truncate">{c.title}</span>
+                  <span class="ml-auto flex-shrink-0 text-[10px] text-muted-foreground">{c.level}</span>
+                </a>
+              )}
+            </For>
+          </div>
+        </Group>
+      </Show>
+    </div>
+  );
+}
+
 function EmptyPanel(props: { where: string }) {
   return (
     <div class="drawer-empty">
@@ -774,6 +895,11 @@ export function DetailsDrawer() {
     if (e.kind === 'direction' || e.kind === 'category') return (tags() ?? []).find((t) => t.name === e.id);
     return undefined;
   };
+  const entityObjective = (): Objective | undefined => {
+    const e = entity();
+    if (e?.kind !== 'objective') return undefined;
+    return findObjective(objectives() ?? [], e.id);
+  };
   const suggestion = (): PossibleTask | undefined => {
     const e = entity();
     if (e?.kind !== 'suggestion') return undefined;
@@ -794,6 +920,7 @@ export function DetailsDrawer() {
   const KIND_LABEL: Record<string, string> = {
     tag: 'Tag', direction: 'Direction', category: 'Category',
     day: 'Day', job: 'Scheduled job', dimension: 'Life dimension', suggestion: 'Suggestion',
+    objective: 'Objective',
   };
   const title = () => {
     const t = task(); if (t) return t.title;
@@ -806,11 +933,23 @@ export function DetailsDrawer() {
     }
     if (e.kind === 'dimension') return displayTag(e.id);
     if (e.kind === 'suggestion') return suggestion()?.raw_title ?? KIND_LABEL.suggestion;
+    if (e.kind === 'objective') return entityObjective()?.title ?? KIND_LABEL.objective;
     const g = entityTag();
     return g ? displayTag(g.name) : KIND_LABEL[e.kind];
   };
-  const kind = () =>
-    task() ? 'Task' : block() ? 'Scheduled block' : entity() ? KIND_LABEL[entity()!.kind] : 'Details';
+  const kind = () => {
+    if (task()) return 'Task';
+    if (block()) return 'Scheduled block';
+    const e = entity();
+    if (!e) return 'Details';
+    // A goal and a project are both objective rows; show which one rather than the
+    // generic kind, matching the level word the tree puts beside the title.
+    if (e.kind === 'objective') {
+      const lvl = entityObjective()?.level;
+      return lvl ? lvl.charAt(0).toUpperCase() + lvl.slice(1) : KIND_LABEL.objective;
+    }
+    return KIND_LABEL[e.kind];
+  };
 
   /** What the empty state invites you to pick — per view, as in the mockup. */
   const emptyWhere = () => ({
@@ -962,6 +1101,7 @@ export function DetailsDrawer() {
             <Match when={entity()?.kind === 'job' && entity()}>{(e) => <JobPanel id={e().id} />}</Match>
             <Match when={entity()?.kind === 'dimension' && entity()}>{(e) => <DimensionPanel dimension={e().id} />}</Match>
             <Match when={entity()?.kind === 'suggestion' && suggestion()}>{(s) => <SuggestionPanel possible={s()} />}</Match>
+            <Match when={entity()?.kind === 'objective' && entityObjective()}>{(o) => <ObjectivePanel objective={o()} />}</Match>
           </Switch>
         </Show>
       </aside>
