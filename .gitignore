@@ -28,3 +28,16 @@ data/
 test-results/
 playwright-report/
 playwright/.cache/
+
+# Local design notes kept in the working tree but deliberately not in the repo: the G-phase
+# circles/rituals exploration and its stress test, the technical-diagram dump (diagrams.html
+# is ~3MB of generated output) and the colour-system gap analysis. Untracked since June 2026
+# by choice — listed here so they stop appearing in `git status` and can't be swept into a
+# commit by a stray `git add .`. Listed individually rather than as `docs/G-*.md` so a future
+# doc that IS meant to be tracked isn't silently ignored.
+docs/DIAGRAMS.md
+docs/diagrams.html
+docs/G-circles-stress-test.md
+docs/G-rituals-circles-design.md
+docs/G-updated-plan.md
+docs/styleguide-color-gap-analysis.md
