@@ -103,11 +103,12 @@ describe('an owner below DISMISSAL_FLOOR', () => {
 
 describe('bounded retrieval', () => {
   it('never returns or renders more than RETRIEVE_K exemplars, however many are indexed', async () => {
-    // Distinct source_kind per row so the priors path (grouped by source_kind) has
-    // more groups than RETRIEVE_K to choose from — otherwise the cap could pass by
-    // accident because there was nothing to cap.
+    // All from ONE channel, the ordinary shape: an owner's noise usually arrives
+    // through a single source. Distinct texts so the priors path has more groups than
+    // RETRIEVE_K to choose from — otherwise the cap could pass by accident because
+    // there was nothing to cap.
     for (let i = 0; i < RETRIEVE_K + 7; i++) {
-      seedExemplar({ text: `noise ${i}`, sourceKind: `kind-${i}` });
+      seedExemplar({ text: `distinct noise topic ${String.fromCharCode(97 + i)}`, sourceKind: 'gmail' });
     }
     const got = await retrieveDismissals(OWNER, 'noise', { embedFn: null });
     expect(got).toHaveLength(RETRIEVE_K);
@@ -168,6 +169,35 @@ describe('the no-embedder fallback', () => {
     expect(got.length).toBeGreaterThan(0);
     const hint = await dismissalHint(OWNER, 'anything', { embedFn: null });
     expect(hint).not.toBe('');
+  });
+
+  /**
+   * The priors path groups by the dismissed TEXT, not by `source_kind`. Grouping on
+   * source_kind would cap this whole path at the number of distinct channels — three
+   * in production — and hand a single-channel owner exactly one exemplar, which is the
+   * near-empty hint case precisely when there is no embedder to do better.
+   */
+  it('gives a single-channel owner the full RETRIEVE_K, not one per source kind', async () => {
+    for (const topic of ['renew car registration', 'weekly team lunch poll', 'gym class waitlist', 'parcel is ready']) {
+      seedExemplar({ text: topic, sourceKind: 'gmail' });
+    }
+    const got = await retrieveDismissals(OWNER, 'anything', { embedFn: null });
+    expect(got).toHaveLength(RETRIEVE_K);
+    expect(new Set(got.map((g) => g.inputText)).size).toBe(RETRIEVE_K); // no duplicates
+  });
+
+  it('leads with the most recurrent noise, collapsing the part that varies', async () => {
+    // One pattern dismissed repeatedly, differing only in the digits — the shape real
+    // recurring noise takes. Plus two one-off dismissals it must outrank.
+    for (const n of [4417, 5012, 5588, 6110]) seedExemplar({ text: `Invoice #${n} is ready`, sourceKind: 'gmail' });
+    seedExemplar({ text: 'one-off note about the offsite', sourceKind: 'gmail' });
+    seedExemplar({ text: 'another unrelated single thing', sourceKind: 'gmail' });
+
+    const got = await retrieveDismissals(OWNER, 'anything', { embedFn: null });
+    expect(got).toHaveLength(RETRIEVE_K);
+    // The recurring pattern leads, and appears ONCE despite four rows feeding it.
+    expect(got[0].inputText).toBe('Invoice #6110 is ready'); // the newest of its group
+    expect(got.filter((g) => g.inputText.startsWith('Invoice'))).toHaveLength(1);
   });
 });
 

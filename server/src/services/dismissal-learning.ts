@@ -410,25 +410,59 @@ const stripDismissal = (e: StoredDismissalExemplar): DismissalExemplar => ({
 });
 
 /**
- * One exemplar per most-frequent `source_kind` — the newest of each — standing in for
- * similarity when there is no embedder. `source_kind` is the closest thing a dismissal
- * exemplar has to `classification-learning.ts`'s `correctValue`: there is no corrected
- * "value" to group by here, only the channel the noise came from, so that is what
- * frequency is measured over. Rows come in ascending `log_id` order (uuid7, so
- * chronological) — `list[list.length - 1]` is therefore the newest of the group.
+ * Grouping key for the priors path: what makes two dismissals "the same kind of noise".
+ *
+ * Case-, punctuation- and number-insensitive, because the recurring noise this loop
+ * exists to learn is near-identical rather than identical — "Invoice #4417 is ready"
+ * and "Invoice #5012 is ready" are one pattern the owner keeps throwing away, and an
+ * exact-match key would count them as two unrelated singletons. Masking digits is what
+ * collapses the part that varies (invoice numbers, dates, unread counts).
+ */
+function noiseKey(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\d+/g, '#')
+    .replace(/[^a-z#\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 200);
+}
+
+/**
+ * The owner's most recurrent past dismissals — one exemplar per distinct kind of noise,
+ * the newest of each — standing in for similarity when there is no embedder.
+ *
+ * Grouped by `noiseKey(input_text)`, NOT by `source_kind`. That distinction is the whole
+ * value of this function: `source_kind` only ever holds 'gmail' | 'gcal' | 'text' (or
+ * NULL), so grouping on it yields at most four groups and, for the ordinary owner whose
+ * noise all arrives through one channel, exactly ONE exemplar — a near-empty hint
+ * precisely when there is no embedder to do better. What `classification-learning.ts`
+ * groups by (`correctValue`) is a genuinely multi-valued label; the honest analogue here
+ * is the dismissed text itself, since "what does this owner keep rejecting" is the
+ * question the priors line is standing in for.
+ *
+ * Ordered most-recurrent first, then newest — so a pattern dismissed twenty times leads,
+ * and when nothing recurs (every group a singleton) this degrades to the k most recent
+ * dismissals, which is still a reasonable prior. Rows arrive in ascending `log_id` order
+ * (uuid7, so chronological), so `list[list.length - 1]` is the newest of its group.
+ *
+ * `RETRIEVE_K` is the binding cap on what reaches a prompt and `k` is already clamped to
+ * it by the caller; `MAX_PRIORS` bounds the candidate groups considered, and would only
+ * become the tighter of the two if `RETRIEVE_K` were ever raised above it.
  */
 function frequentDismissals(stored: StoredDismissalExemplar[], k: number): DismissalExemplar[] {
-  const byKind = new Map<string, StoredDismissalExemplar[]>();
+  const byNoise = new Map<string, StoredDismissalExemplar[]>();
   for (const e of stored) {
-    const key = e.sourceKind ?? '(unknown)';
-    const list = byKind.get(key);
-    if (list) list.push(e); else byKind.set(key, [e]);
+    const key = noiseKey(e.inputText);
+    const list = byNoise.get(key);
+    if (list) list.push(e); else byNoise.set(key, [e]);
   }
-  return [...byKind.entries()]
-    // Most-frequent source first; ties by kind name so the order is stable.
-    .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
+  return [...byNoise.values()]
+    // Most recurrent first; then newest, which also makes the order deterministic
+    // (log_id is unique, so no two groups can compare equal).
+    .sort((a, b) => b.length - a.length || b[b.length - 1].logId.localeCompare(a[a.length - 1].logId))
     .slice(0, Math.min(k, MAX_PRIORS))
-    .map(([, list]) => stripDismissal(list[list.length - 1]));
+    .map((list) => stripDismissal(list[list.length - 1]));
 }
 
 /**
