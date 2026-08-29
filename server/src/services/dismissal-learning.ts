@@ -2,7 +2,7 @@ import { store } from '../db/store.js';
 import { localDateInTZ } from '../lib/tz.js';
 import { ownerTimezone } from '../engine/recurrence-generate.js';
 import { logger } from '../lib/logger.js';
-import { packVector } from '../lib/vector.js';
+import { cosineSimilarity, packVector, unpackVector } from '../lib/vector.js';
 import { ollama } from '../mcp/ollama.js';
 
 /**
@@ -81,6 +81,13 @@ export const MAX_PRIORS = 5;
  *  of 200 is a job that can hang until morning. */
 export const EMBED_TIMEOUT_MS = 3_000;
 
+/**
+ * Cap for the sanitised text rendered into a dismissal hint — shorter than
+ * `classification-learning.ts`'s `oneLine` cap of 120. See `sanitizeDismissalText`
+ * for why this sanitiser is stricter across the board, not just this number.
+ */
+export const DISMISSAL_TEXT_CAP = 80;
+
 /** The noise-rate measurement window — how many trailing days one
  *  `possible_dismissal_rate` row covers. */
 export const RATE_PERIOD_DAYS = 7;
@@ -95,6 +102,16 @@ export type EmbedFn = ((text: string) => Promise<number[]>) | null | undefined;
 /** One settled dismissal — durable evidence that cleared the pending fence and was
  *  not later reversed by a promote. */
 interface DismissalEvidence {
+  logId: string;
+  inputText: string;
+  sourceKind: string | null;
+}
+
+/** One rollup row read back at retrieval time (ticket 4) — the shape `retrieveDismissals`
+ *  hands to `dismissalPrompt`. Same fields as `DismissalEvidence`; kept as a distinct,
+ *  exported type because the two describe different moments (batch input vs. rollup
+ *  output) even though they carry the same data today. */
+export interface DismissalExemplar {
   logId: string;
   inputText: string;
   sourceKind: string | null;
@@ -358,4 +375,151 @@ export async function calibrateDismissals(
     .run(ownerId, computedDate, rate.periodDays, rate.created, rate.decided, rate.dismissed, rate.rate, rate.exemplars, rate.hinted ? 1 : 0);
 
   return { settled: evidence.length, indexed, embedded, floor: DISMISSAL_FLOOR, rate };
+}
+
+// ── Retrieval: what a live extraction reads (ticket 4) ─────────────────────────
+//
+// Nothing calls this yet — wiring it into `buildPrompt` / `extractTasks` is ticket 5.
+// This section only reads the rollup `calibrateDismissals` writes above; it never
+// touches `possible_outcome_log` (that is the batch's input, not the request path's)
+// and it never writes anything.
+
+const SELECT_DISMISSAL_EXEMPLARS = `
+  SELECT log_id, input_text, source_kind, embedding
+    FROM possible_dismissal_exemplars WHERE owner_id = ?
+   ORDER BY log_id`;
+
+interface StoredDismissalExemplar extends DismissalExemplar {
+  vec: number[] | null;
+}
+
+async function loadDismissalExemplars(ownerId: string): Promise<StoredDismissalExemplar[]> {
+  const rows = await store().prepare(SELECT_DISMISSAL_EXEMPLARS).all<{
+    log_id: string; input_text: string; source_kind: string | null; embedding: Buffer | null;
+  }>(ownerId);
+  return rows.map((r) => ({
+    logId: r.log_id,
+    inputText: r.input_text,
+    sourceKind: r.source_kind,
+    vec: unpackVector(r.embedding),
+  }));
+}
+
+const stripDismissal = (e: StoredDismissalExemplar): DismissalExemplar => ({
+  logId: e.logId, inputText: e.inputText, sourceKind: e.sourceKind,
+});
+
+/**
+ * One exemplar per most-frequent `source_kind` — the newest of each — standing in for
+ * similarity when there is no embedder. `source_kind` is the closest thing a dismissal
+ * exemplar has to `classification-learning.ts`'s `correctValue`: there is no corrected
+ * "value" to group by here, only the channel the noise came from, so that is what
+ * frequency is measured over. Rows come in ascending `log_id` order (uuid7, so
+ * chronological) — `list[list.length - 1]` is therefore the newest of the group.
+ */
+function frequentDismissals(stored: StoredDismissalExemplar[], k: number): DismissalExemplar[] {
+  const byKind = new Map<string, StoredDismissalExemplar[]>();
+  for (const e of stored) {
+    const key = e.sourceKind ?? '(unknown)';
+    const list = byKind.get(key);
+    if (list) list.push(e); else byKind.set(key, [e]);
+  }
+  return [...byKind.entries()]
+    // Most-frequent source first; ties by kind name so the order is stable.
+    .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
+    .slice(0, Math.min(k, MAX_PRIORS))
+    .map(([, list]) => stripDismissal(list[list.length - 1]));
+}
+
+/**
+ * The k nearest past dismissals to `text`, or the owner's most frequent dismissals when
+ * similarity is unavailable. A pure read of what the last `calibrateDismissals` run
+ * wrote — no writes, no model generation, and never a throw. No index, below the
+ * floor — the rollup is simply empty, see `calibrateDismissals` — or no embedder all
+ * degrade to fewer or no exemplars, because an extraction with no hint is exactly
+ * today's behaviour and therefore always a safe answer.
+ *
+ * Unlike `classification-learning.ts`'s `retrieveExemplars`, an embed call that THROWS
+ * (as opposed to `embedReady` reporting false up front) is NOT caught locally and
+ * turned into a frequency fallback — it propagates to the catch below and the caller
+ * gets `''`. That is deliberate, not an oversight: this text is untrusted third-party
+ * content (see the module doc and `sanitizeDismissalText`), and an embedder failing
+ * partway through a call is exactly the kind of unexpected condition this ticket's
+ * "any thrown error → ''" rule exists for, rather than quietly widening what reaches
+ * the extraction prompt.
+ *
+ * `opts.k` is clamped to `RETRIEVE_K` regardless of what a caller passes — the bound is
+ * not the caller's to raise.
+ */
+export async function retrieveDismissals(
+  ownerId: string,
+  text: string,
+  opts: { embedFn?: EmbedFn; k?: number } = {},
+): Promise<DismissalExemplar[]> {
+  const k = Math.min(opts.k ?? RETRIEVE_K, RETRIEVE_K);
+  try {
+    const stored = await loadDismissalExemplars(ownerId);
+    if (stored.length === 0 || k <= 0) return [];
+
+    const embed = await resolveEmbed(ownerId, opts.embedFn);
+    const withVectors = stored.filter((e): e is StoredDismissalExemplar & { vec: number[] } => e.vec !== null);
+    if (embed && withVectors.length > 0 && text.trim()) {
+      const query = await embed(text); // a throw here falls to the catch below, not to priors
+      const scored = withVectors
+        .filter((e) => e.vec.length === query.length) // a re-embedded index changed dimension
+        .map((e) => ({ e, score: cosineSimilarity(query, e.vec) }))
+        // Ties broken by log id so two identical scores order the same on every run.
+        .sort((a, b) => b.score - a.score || a.e.logId.localeCompare(b.e.logId));
+      if (scored.length > 0) return scored.slice(0, k).map(({ e }) => stripDismissal(e));
+    }
+    return frequentDismissals(stored, k);
+  } catch (err) {
+    logger.warn('dismissal-learning: retrieval failed', { err: (err as Error).message });
+    return [];
+  }
+}
+
+/**
+ * Stricter than `classification-learning.ts`'s `oneLine`. `oneLine` is safe because its
+ * input is something the OWNER typed. This one renders the extractor's own rendering of
+ * THIRD-PARTY INBOUND EMAIL, replayed into a later extraction prompt whose contract is
+ * JSON — a stray `"`, `{` or `}` surviving here can corrupt the response shape, not
+ * merely mislead it the way a stray word would. So on top of collapsing whitespace this
+ * strips quote and brace characters outright, and caps shorter than `oneLine`'s 120.
+ * Do not "simplify" this back to `oneLine` — the input here is untrusted in a way
+ * `oneLine`'s never is.
+ */
+function sanitizeDismissalText(s: string): string {
+  return s.replace(/["{}]/g, '').replace(/\s+/g, ' ').trim().slice(0, DISMISSAL_TEXT_CAP);
+}
+
+/**
+ * The prompt fragment. Empty string when there is nothing to say, so a caller can
+ * concatenate it unconditionally and an owner with no dismissals gets byte-identical
+ * prompts to today's.
+ *
+ * Phrased strictly as history ("you suggested X; the user dismissed it"), never as an
+ * instruction — no "never suggest", no "ignore". See README.md "Influence, never
+ * suppression": this loop biases what gets proposed, it does not filter or suppress.
+ *
+ * Deliberately no literal quote characters in the template itself (unlike
+ * `classification-learning.ts`'s `"${oneLine(...)}"`) — this text is untrusted, and
+ * the whole point of `sanitizeDismissalText` is that no `"` survives into the
+ * rendered block. Wrapping its output in hand-written quotes would defeat that.
+ */
+export function dismissalPrompt(exemplars: readonly DismissalExemplar[]): string {
+  if (exemplars.length === 0) return '';
+  const lines = exemplars
+    .map((e) => `- You once suggested a task from something like this: ${sanitizeDismissalText(e.inputText)} — the user dismissed it.`)
+    .join('\n');
+  return `\nThis user has dismissed suggestions like these before:\n${lines}\n`;
+}
+
+/** Retrieve + render in one call — what the extraction prompt actually wants. */
+export async function dismissalHint(
+  ownerId: string,
+  text: string,
+  opts: { embedFn?: EmbedFn; k?: number } = {},
+): Promise<string> {
+  return dismissalPrompt(await retrieveDismissals(ownerId, text, opts));
 }
