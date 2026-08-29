@@ -40,7 +40,14 @@ Rules:
 - confidence: 0..1, how sure you are this is a real actionable task.
 Respond ONLY with JSON.`;
 
-function buildPrompt(source: ExtractSource): string {
+// Close-loop wave, ticket 5 — `hint` is a pre-rendered fragment from
+// `dismissalHint()` (services/dismissal-learning.ts), never a raw ownerId: this
+// function stays a pure prompt-builder with no DB access. It is injected AFTER the
+// closing `"""` content fence and BEFORE the JSON shape spec, which must remain the
+// very last thing the model reads — see README.md "The JSON shape spec must stay
+// terminal". Default `''` keeps `buildPrompt(source, '')` byte-identical to
+// `buildPrompt(source)`, so every caller that predates this ticket is unchanged.
+function buildPrompt(source: ExtractSource, hint = ''): string {
   const anchor = source.at ? `\nItem date: ${source.at}` : '';
   const subject = source.subject ? `\nSubject: ${source.subject}` : '';
   return `Source type: ${source.kind}${subject}${anchor}
@@ -49,7 +56,7 @@ Content:
 """
 ${source.text.slice(0, 6000)}
 """
-
+${hint}
 Extract actionable to-dos. Respond with JSON in exactly this shape:
 {"tasks":[{"title":"...","summary":"...","priority":3,"dueAt":null,"estimatedMinutes":30,"tags":["..."],"confidence":0.8}]}
 If there are no actionable to-dos, respond with {"tasks":[]}.`;
@@ -103,13 +110,13 @@ function clampInt(n: unknown, lo: number, hi: number, fallback: number): number 
  */
 export async function extractTasks(
   source: ExtractSource,
-  opts: { tier?: ModelTier; timeoutMs?: number } = {}
+  opts: { tier?: ModelTier; timeoutMs?: number; hint?: string } = {}
 ): Promise<ExtractedTask[]> {
   // The `extract` policy names the tier/temperature/timeout. A caller may still override
   // the tier or hand in its own budget — an explicitly passed value wins over the purpose,
   // and omitting the key (rather than passing undefined) is what defers to the policy.
-  const { tier, timeoutMs } = opts;
-  const result = await generateJson<RawResult>(buildPrompt(source), {
+  const { tier, timeoutMs, hint } = opts;
+  const result = await generateJson<RawResult>(buildPrompt(source, hint), {
     purpose: 'extract',
     system: SYSTEM,
     ...(tier !== undefined ? { tier } : {}),
@@ -120,6 +127,6 @@ export async function extractTasks(
     .map(normalize)
     .filter((t): t is ExtractedTask => t !== null);
 
-  logger.debug('extractTasks', { kind: source.kind, ref: source.ref, found: tasks.length });
+  logger.debug('extractTasks', { kind: source.kind, ref: source.ref, found: tasks.length, hinted: !!hint });
   return tasks;
 }
