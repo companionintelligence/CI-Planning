@@ -204,10 +204,23 @@ interface OutcomeRow {
 }
 
 /**
- * Settled dismissals in the learning window, oldest first. A row counts only when:
- * it is inside `LEARNING_WINDOW_DAYS`, its `decided_at` is older than `PENDING_MS`
- * (the mis-click fence), and it is the LATEST outcome recorded for that possible —
- * so a dismissal the owner later reversed by promoting is fenced out entirely.
+ * Settled dismissals in the learning window, oldest first. A possible counts only when
+ * it is inside `LEARNING_WINDOW_DAYS`, its latest recorded outcome is still `dismissed`
+ * — so one the owner later reversed by promoting is fenced out entirely — and that
+ * dismissal has outlived `PENDING_MS`, the mis-click fence.
+ *
+ * The row representing a possible is the FIRST dismissal of its current unbroken run,
+ * not its last, and the two differ whenever an owner dismisses the same suggestion
+ * twice. `dismissPossible` has no status guard, so a double-click, a retried request or
+ * a re-dismiss from a second surface appends another row; taking the newest would reset
+ * the settling clock and make a months-old, long-settled dismissal look brand new,
+ * dropping it from the corpus for a further 24 hours. An owner sitting exactly on
+ * `DISMISSAL_FLOOR` would fall under it and have their whole rollup deleted by the next
+ * run — hinting silently switching itself off because they clicked dismiss again.
+ *
+ * "Current unbroken run" rather than "earliest ever" is what keeps the reversal fence
+ * honest in the dismiss → promote → dismiss case: the first two outcomes are spent, and
+ * the live decision is the one that started after the last promote.
  *
  * Never throws: `possible_outcome_log` is durable evidence, but a missing or broken
  * table must not fail the batch — it degrades to "no evidence found", same as an
@@ -219,20 +232,34 @@ async function settledDismissals(ownerId: string, now: Date): Promise<DismissalE
     const since = localDateInTZ(new Date(now.getTime() - LEARNING_WINDOW_DAYS * 86_400_000).toISOString(), tz);
     const rows = await store().prepare(SELECT_WINDOW).all<OutcomeRow>(ownerId, since);
 
-    // Keep only the LATEST outcome per possible — ascending order means the last
-    // write for a key wins. Rows with no possible_task_id (never happens via the
-    // capture path, but the column is nullable) can't collide with one another, so
-    // key them by their own log id.
-    const latest = new Map<string, OutcomeRow>();
-    for (const r of rows) latest.set(r.possible_task_id ?? r.id, r);
+    // Every outcome for one possible, in ascending decision order (the SELECT's own
+    // ORDER BY). Rows with no possible_task_id (never happens via the capture path, but
+    // the column is nullable) can't collide with one another, so key them by their own
+    // log id and each becomes a history of one.
+    const byPossible = new Map<string, OutcomeRow[]>();
+    for (const r of rows) {
+      const key = r.possible_task_id ?? r.id;
+      const history = byPossible.get(key);
+      if (history) history.push(r); else byPossible.set(key, [r]);
+    }
 
-    // Order the survivors by THEIR OWN decided_at (not first-seen-key order, which
-    // is what Map iteration would give) so the caller's newest-first cap is well
-    // defined. ISO timestamps sort correctly as strings; the id tiebreak matches
-    // every other read in this codebase.
-    const settled = [...latest.values()]
-      .filter((r) => r.outcome === 'dismissed') // else reversed by a later promote
-      .sort((a, b) => a.decided_at.localeCompare(b.decided_at) || a.id.localeCompare(b.id));
+    const settled: OutcomeRow[] = [];
+    for (const history of byPossible.values()) {
+      if (history[history.length - 1].outcome !== 'dismissed') continue; // reversed by a promote
+      // Walk back to the outcome that BROKE the run of dismissals; the row just after
+      // it is where this decision began. No break found ⇒ never reversed ⇒ index 0.
+      let start = 0;
+      for (let i = history.length - 1; i >= 0; i--) {
+        if (history[i].outcome !== 'dismissed') { start = i + 1; break; }
+      }
+      settled.push(history[start]);
+    }
+
+    // Order by THEIR OWN decided_at (not first-seen-key order, which is what Map
+    // iteration would give) so the caller's newest-first cap is well defined. ISO
+    // timestamps sort correctly as strings; the id tiebreak matches every other read
+    // in this codebase.
+    settled.sort((a, b) => a.decided_at.localeCompare(b.decided_at) || a.id.localeCompare(b.id));
 
     const out: DismissalEvidence[] = [];
     for (const r of settled) {

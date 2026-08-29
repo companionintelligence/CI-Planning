@@ -123,6 +123,67 @@ describe('what counts as settled dismissal evidence', () => {
     expect(exemplarRows().some((e) => e.input_text.startsWith('reversed'))).toBe(false);
   });
 
+  /**
+   * `dismissPossible` has no status guard, so a double-click, a retried request or a
+   * re-dismiss from a second surface appends another row for the same possible. The
+   * settling clock has to measure when the DECISION was made, not when it was last
+   * re-clicked — otherwise clicking dismiss again on a months-old suggestion would
+   * withdraw it from the corpus for a further 24 hours.
+   */
+  it('keeps a settled dismissal that was dismissed again just now', async () => {
+    for (let i = 0; i < DISMISSAL_FLOOR - 1; i++) await dismiss({ text: `keep ${i}` });
+    const twice = 'possible-double-clicked';
+    await dismiss({ possibleId: twice, text: 'long-settled', ageMs: SETTLED });
+    await dismiss({ possibleId: twice, text: 'long-settled', ageMs: 1000 }); // re-clicked seconds ago
+
+    const r = await calibrateDismissals(OWNER, NOW, { embedFn: null });
+    // Still one possible's worth of evidence, still settled, and still over the floor —
+    // the repeat collapses into the original decision rather than replacing it.
+    expect(r.settled).toBe(DISMISSAL_FLOOR);
+    expect(r.indexed).toBe(DISMISSAL_FLOOR);
+    expect(exemplarRows().filter((e) => e.input_text === 'long-settled')).toHaveLength(1);
+  });
+
+  it('does not let a repeat dismiss drag an owner under the floor', async () => {
+    // Exactly at the floor, then one of them is re-clicked. Before the fence measured
+    // the first dismissal of the run, this dropped to 4 and deleted the whole rollup.
+    for (let i = 0; i < DISMISSAL_FLOOR; i++) await dismiss({ possibleId: `p-${i}`, text: `noise ${i}` });
+    await dismiss({ possibleId: 'p-0', text: 'noise 0', ageMs: 1000 });
+
+    const r = await calibrateDismissals(OWNER, NOW, { embedFn: null });
+    expect(r.settled).toBe(DISMISSAL_FLOOR);
+    expect(exemplarRows()).toHaveLength(DISMISSAL_FLOOR);
+  });
+
+  /**
+   * The run has to be the CURRENT one. A dismissal that was reversed by a promote is
+   * spent; if the owner dismisses again afterwards, the live decision starts there and
+   * must serve its own settling period rather than inheriting the original's age.
+   */
+  it('measures a re-dismiss after a promote from the re-dismiss, not the original', async () => {
+    for (let i = 0; i < DISMISSAL_FLOOR; i++) await dismiss({ text: `keep ${i}` });
+    const churned = 'possible-churned';
+    await dismiss({ possibleId: churned, text: 'churned', ageMs: 30 * 86_400_000 });
+    await promote({ possibleId: churned, text: 'churned', ageMs: 20 * 86_400_000 });
+    await dismiss({ possibleId: churned, text: 'churned', ageMs: 1000 }); // the live decision, unsettled
+
+    const r = await calibrateDismissals(OWNER, NOW, { embedFn: null });
+    expect(r.settled).toBe(DISMISSAL_FLOOR); // churned contributes nothing yet
+    expect(exemplarRows().some((e) => e.input_text === 'churned')).toBe(false);
+  });
+
+  it('counts a re-dismiss after a promote once it has settled', async () => {
+    for (let i = 0; i < DISMISSAL_FLOOR; i++) await dismiss({ text: `keep ${i}` });
+    const churned = 'possible-churned';
+    await dismiss({ possibleId: churned, text: 'churned', ageMs: 30 * 86_400_000 });
+    await promote({ possibleId: churned, text: 'churned', ageMs: 20 * 86_400_000 });
+    await dismiss({ possibleId: churned, text: 'churned', ageMs: SETTLED });
+
+    const r = await calibrateDismissals(OWNER, NOW, { embedFn: null });
+    expect(r.settled).toBe(DISMISSAL_FLOOR + 1);
+    expect(exemplarRows().filter((e) => e.input_text === 'churned')).toHaveLength(1);
+  });
+
   it('excludes evidence outside LEARNING_WINDOW_DAYS', async () => {
     for (let i = 0; i < DISMISSAL_FLOOR - 1; i++) await dismiss();
     await dismiss({ ageMs: (LEARNING_WINDOW_DAYS + 5) * 86_400_000 });
