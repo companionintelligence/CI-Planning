@@ -100,14 +100,23 @@ caller — `agents/plan.ts:747`, `stage: 'order'` — despite the loop.ts header
 naming four stages. Every table carries `stage TEXT` so A3/A4/B4 plug in when they
 exist, but this wave measures the ordering stage only and claims nothing else.
 
-**Migration slots 0159 + 0160; cron Mon 04:30.** Latest on `main` is `0156`; the
-close-loop-wave plan reserves 0157–0158 (not yet created in any worktree — verified
-2026-08-29). ⚠️ **Collision risk:** the G-INT and N2 waves are planned in parallel
-and will also claim slots; whichever wave merges later renumbers. 04:30 Monday runs
-after `calibrate_classification` (04:10) for the same reason 0150 documents — even
-though THIS job makes no model calls, keeping the weekly learning passes serialized
-in one block keeps the schedule legible. Clear of: 03:20 enrich, 03:50 triality,
-04:00 Sun estimates, 04:10 classification, 05:00 advance_objectives.
+**Migration slots 0162 + 0163; cron Mon 04:30.** Originally planned as 0159/0160,
+renumbered 2026-08-29 after checking every worktree: `0159`/`0160` turned out to be
+**triple-claimed** — `placement-learning-wave` (G-INT, `0159_placement_evidence.ts` /
+`0160_calibrate_placement_job.ts`) and `balance-targets-wave` (N2,
+`0159_balance_bias_pref.ts` / `0160_balance_week_log.ts`) both planned the identical
+pair independently, and this wave would have been a third. The highest slot actually
+materialized as a file anywhere (any worktree) was `0161` (an unrelated feature) plus
+`0157`/`0158` (close-loop-wave's dismissal tables, already implemented in one
+worktree). `0162`/`0163` were free of all three at check time. ⚠️ **This does not
+retire the risk, only this wave's contribution to it:** G-INT and N2 still collide
+with each other on 0159/0160, and whichever of the three waves actually merges first
+still forces the other two to renumber on rebase — re-run the worktree sweep before
+merging. 04:30 Monday runs after `calibrate_classification` (04:10) for the same
+reason 0150 documents — even though THIS job makes no model calls, keeping the
+weekly learning passes serialized in one block keeps the schedule legible. Clear of:
+03:20 enrich, 03:50 triality, 04:00 Sun estimates, 04:10 classification, 05:00
+advance_objectives.
 
 ## Corrections to the brief that opened this wave
 

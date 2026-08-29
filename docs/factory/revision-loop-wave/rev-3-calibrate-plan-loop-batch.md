@@ -1,7 +1,7 @@
 > **Type:** Backend
 > **Phase:** Revision-loop wave — the agent loop's write-only log
 > **Branch:** `feat/calibrate-plan-loop`
-> **Commit style:** `feat(learning): weekly plan-loop stats batch + cron (0160)`
+> **Commit style:** `feat(learning): weekly plan-loop stats batch + cron (0163)`
 > **Design:** [README.md](README.md)
 > **Dependencies:** Blocked by ticket 2 (evidence must be accruing). Blocks 4.
 
@@ -74,7 +74,7 @@ that turns "the ordering prompt seems fine" into a measured trend.
     one-line comment: evidence is per-owner by construction, never pooled.
   - A comment on the case noting the WHO rule: cron/agent write ⇒ no owner
     attribution (matches the neighbouring cases' comments, owner ruling 2026-07-16).
-- **Cron seed migration:** `server/src/db/migrations/0160_calibrate_plan_loop_job.ts`
+- **Cron seed migration:** `server/src/db/migrations/0163_calibrate_plan_loop_job.ts`
   — the 0149→0150 table/seed split. Same file skeleton as
   `0150_calibrate_classification_job.ts` including `import { newId } from
   '../../lib/ids.js';`. Seed:
@@ -83,9 +83,9 @@ that turns "the ordering prompt seems fine" into a measured trend.
   before `advance_objectives` (05:00 Mon); this job makes NO model calls, but the
   weekly learning passes stay serialized in one block so the schedule reads as one
   unit; clear of daily 03:00 prune_sync_events / 03:20 enrich_tasks and Sunday
-  04:00 calibrate_estimates. Register `m0160` in `migrations/index.ts` after
-  `m0159`.
-- ⚠️ **Slot collision:** same warning as ticket 1 — verify 0160 is free before
+  04:00 calibrate_estimates. Register `m0163` in `migrations/index.ts` after
+  `m0162`.
+- ⚠️ **Slot collision:** same warning as ticket 1 — verify 0163 is free before
   branching; renumber if a sibling wave took it.
 
 ## Before implementation
@@ -100,19 +100,19 @@ skeleton and slot-picking comment).
 ## Files impacted
 
 **New:**
-- `server/src/db/migrations/0160_calibrate_plan_loop_job.ts`
+- `server/src/db/migrations/0163_calibrate_plan_loop_job.ts`
 - `server/test/plan-loop-calibrate.test.ts`
 
 **Changed:**
 - `server/src/services/plan-loop-learning.ts` — add `STATS_WINDOW_DAYS`,
   `calibratePlanLoop`
 - `server/src/jobs/index.ts` — switch case + `OWNER_SCOPED_KINDS` entry
-- `server/src/db/migrations/index.ts` — import + append `m0160`
+- `server/src/db/migrations/index.ts` — import + append `m0163`
 
 ## Schema required
 
 None — ticket 1 created `plan_loop_stats`; this ticket only seeds a
-`scheduled_jobs` row (0160).
+`scheduled_jobs` row (0163).
 
 ## Definition of Done
 
@@ -161,7 +161,7 @@ pnpm typecheck
 
 ## Subtasks
 
-1. [ ] Verify slot 0160 is free; write and register the seed migration
+1. [ ] Verify slot 0163 is free; write and register the seed migration
 2. [ ] Add `STATS_WINDOW_DAYS` + `calibratePlanLoop` to the service
 3. [ ] Add the switch case + `OWNER_SCOPED_KINDS` entry
 4. [ ] Write `plan-loop-calibrate.test.ts` (seven cases above)

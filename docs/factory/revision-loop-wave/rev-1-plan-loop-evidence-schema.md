@@ -1,7 +1,7 @@
 > **Type:** DB Migration
 > **Phase:** Revision-loop wave — the agent loop's write-only log
 > **Branch:** `feat/plan-loop-evidence-schema`
-> **Commit style:** `feat(learning): plan-loop evidence + stats tables (0159)`
+> **Commit style:** `feat(learning): plan-loop evidence + stats tables (0162)`
 > **Design:** [README.md](README.md)
 > **Dependencies:** None. Blocks tickets 2–4.
 
@@ -26,23 +26,23 @@ parse back.
   ticket 3 (stats). This ticket is schema + test-reset plumbing only.
 - **Do not add CHECK constraints.** Enums (`stage`, `reason`, `escape_reason`) are
   bare TEXT enforced in code — repo convention.
-- **Do not seed a cron row** — that is ticket 3's migration (0160), following the
+- **Do not seed a cron row** — that is ticket 3's migration (0163), following the
   0149→0150 table/seed split.
 - **Do not add pruning.** Append-only like `calibration_history`; volume is ≤ ~4
   rows per owner per day.
 
 ## Pinned conventions
 
-- **File:** `server/src/db/migrations/0159_plan_loop_learning.ts`. Line 1 is
+- **File:** `server/src/db/migrations/0162_plan_loop_learning.ts`. Line 1 is
   `import type { Database } from 'better-sqlite3';`, then
-  `export const id = '0159_plan_loop_learning';`, then a block comment explaining
+  `export const id = '0162_plan_loop_learning';`, then a block comment explaining
   WHY (the write-only-log gap; cite that `grep -rn "FROM audit_log" server/src` is
   empty), then `export function up(db: Database): void` containing one `db.exec`
   template literal. Idempotent (`CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT
   EXISTS`), forward-only, **no `down`**, no `manual` flag (plain DDL).
 - **Register** in `server/src/db/migrations/index.ts`: add
-  `import * as m0159 from './0159_plan_loop_learning.js';` (note the `.js`
-  extension) in numeric order, and append `m0159` to the END of the `MIGRATIONS`
+  `import * as m0162 from './0162_plan_loop_learning.js';` (note the `.js`
+  extension) in numeric order, and append `m0162` to the END of the `MIGRATIONS`
   array.
 - **Ids:** TEXT primary keys minted in code via `newId()` (UUIDv7) — the migration
   itself mints nothing.
@@ -57,8 +57,8 @@ parse back.
   serves.
 - ⚠️ **Slot collision:** 0157–0158 are reserved by the close-loop wave; the G-INT
   and N2 waves are planned in parallel. Before branching, run
-  `ls server/src/db/migrations | tail -3` — if 0159 is taken, renumber this file,
-  ticket 3's 0160, and both tickets' texts.
+  `ls server/src/db/migrations | tail -3` — if 0162 is taken, renumber this file,
+  ticket 3's 0163, and both tickets' texts.
 
 ## Before implementation
 
@@ -71,10 +71,10 @@ append-only tables must be cleared in resetDb), and `server/src/agents/loop.ts:4
 ## Files impacted
 
 **New:**
-- `server/src/db/migrations/0159_plan_loop_learning.ts`
+- `server/src/db/migrations/0162_plan_loop_learning.ts`
 
 **Changed:**
-- `server/src/db/migrations/index.ts` — import + append `m0159`
+- `server/src/db/migrations/index.ts` — import + append `m0162`
 - `server/test/helpers.ts` — three `DELETE FROM` lines in `resetDb()` (see below)
 
 ## Schema required
@@ -138,7 +138,7 @@ CREATE TABLE IF NOT EXISTS plan_loop_stats (
 
 ## Definition of Done
 
-- [ ] Migration 0159 exists, matches the conventions above, and is registered last
+- [ ] Migration 0162 exists, matches the conventions above, and is registered last
       in `MIGRATIONS`
 - [ ] A fresh DB migrates cleanly; re-running the migration is a no-op
 - [ ] `resetDb()` in `server/test/helpers.ts` deletes from all three tables (add
@@ -174,7 +174,7 @@ pnpm test
 ## Subtasks
 
 1. [ ] Check `ls server/src/db/migrations | tail -3` for slot collisions; renumber if needed
-2. [ ] Write `0159_plan_loop_learning.ts` (header comment: the gap, the no-FK-on-run_id rationale, the NULL-vs-0 rationale)
-3. [ ] Register `m0159` in `migrations/index.ts`
+2. [ ] Write `0162_plan_loop_learning.ts` (header comment: the gap, the no-FK-on-run_id rationale, the NULL-vs-0 rationale)
+3. [ ] Register `m0162` in `migrations/index.ts`
 4. [ ] Add the three `DELETE FROM` lines + comment to `resetDb()`
 5. [ ] Run the verification commands
