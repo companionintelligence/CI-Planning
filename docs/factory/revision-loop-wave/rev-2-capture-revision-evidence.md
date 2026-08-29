@@ -130,8 +130,8 @@ assertion:
 - [ ] `critique` longer than 1000 chars is stored capped at exactly 1000
 
 ```bash
-pnpm --filter server exec vitest run server/test/plan-loop-capture.test.ts
-pnpm --filter server exec vitest run server/test/loop.test.ts
+pnpm --filter server exec vitest run test/plan-loop-capture.test.ts
+pnpm --filter server exec vitest run test/loop.test.ts
 pnpm typecheck
 ```
 

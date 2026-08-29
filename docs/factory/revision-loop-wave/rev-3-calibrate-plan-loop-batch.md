@@ -145,7 +145,7 @@ millisecond order randomly; give rows distinct `at` values):
       existing job tests drive the switch)
 
 ```bash
-pnpm --filter server exec vitest run server/test/plan-loop-calibrate.test.ts
+pnpm --filter server exec vitest run test/plan-loop-calibrate.test.ts
 pnpm typecheck
 ```
 

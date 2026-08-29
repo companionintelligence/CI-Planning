@@ -49,7 +49,7 @@ pure SQL aggregation over evidence the loop already paid for.
 
 | # | Ticket | Type | Status | Blocked by |
 |---|---|---|---|---|
-| 1 | [evidence + stats schema](rev-1-plan-loop-evidence-schema.md) | DB Migration | ⬜ not started | — |
+| 1 | [evidence + stats schema](rev-1-plan-loop-evidence-schema.md) | DB Migration | ✅ merged-ready (uncommitted) | — |
 | 2 | [capture revision evidence](rev-2-capture-revision-evidence.md) | Backend | ⬜ not started | 1 |
 | 3 | [calibrate batch + cron](rev-3-calibrate-plan-loop-batch.md) | Backend | ⬜ not started | 2 |
 | 4 | [trend readout](rev-4-plan-loop-trend-readout.md) | Backend | ⬜ not started | 3 |
@@ -126,6 +126,26 @@ advance_objectives.
   `prune_sync_events` (daily 03:00) and others also occupy the window. Full list
   verified from the migration seeds before picking 04:30.
 
+## Corrections found while implementing ticket 1
+
+- **The verification command form stated in the original brief was wrong.**
+  `pnpm --filter server exec vitest run server/test/<file>.test.ts` fails with "No
+  test files found" — `--filter server exec` already sets cwd to `server/`, so
+  repeating `server/` in the path doubles it. The corrected form, `pnpm --filter
+  server exec vitest run test/<file>.test.ts`, is what every ticket in this wave
+  now specifies. Reproduced identically on a clean `main` checkout, so this isn't
+  worktree-specific.
+- **Ticket 1 as originally drafted omitted the golden schema-shape snapshot.**
+  `server/test/baseline.characterization.test.ts` asserts every table/column name
+  against a stored snapshot and already tracks migration 0149's tables — any
+  migration adding tables must regenerate it in the same commit or the suite fails
+  with an "unexplained diff." Ticket 1 now names the snapshot file, the `-u`
+  regeneration command, and a check that the diff is purely additive.
+- Confirmed unrelated to this wave: `test/triality-metrics.test.ts` ("calibration
+  reaches the wire with the field names the client reads") fails identically on a
+  clean `main` checkout with no plan-loop changes present — pre-existing, not
+  caused by ticket 1.
+
 ## Verification
 
 Every ticket carries its own commands. Wave-level, from the repo root:
@@ -138,7 +158,7 @@ pnpm typecheck && pnpm test
 the working form, used throughout these tickets, is:
 
 ```bash
-pnpm --filter server exec vitest run server/test/<file>.test.ts
+pnpm --filter server exec vitest run test/<file>.test.ts
 ```
 
 ## Open follow-ups this wave will produce

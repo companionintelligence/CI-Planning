@@ -76,6 +76,15 @@ append-only tables must be cleared in resetDb), and `server/src/agents/loop.ts:4
 **Changed:**
 - `server/src/db/migrations/index.ts` — import + append `m0162`
 - `server/test/helpers.ts` — three `DELETE FROM` lines in `resetDb()` (see below)
+- `server/test/__snapshots__/baseline.characterization.test.ts.snap` — the golden
+  `schema: tables + column names` snapshot (`baseline.characterization.test.ts:173`)
+  asserts every table/column in the live DB against a stored snapshot; it already
+  tracks `classification_log`/`classification_exemplars`/`classification_accuracy`
+  from migration 0149, so any migration that adds tables must regenerate it in the
+  same commit (`pnpm --filter server exec vitest run test/baseline.characterization.test.ts -u`)
+  — otherwise the suite fails with an "unexplained diff" the test's own header
+  comment calls a regression. Verify the diff is purely additive (the three new
+  tables, nothing else) before committing it.
 
 ## Schema required
 
@@ -146,6 +155,9 @@ CREATE TABLE IF NOT EXISTS plan_loop_stats (
       `plan_revision_log`/`plan_loop_runs` are append-only by design — the
       `calibration_history` contamination argument at helpers.ts:66)
 - [ ] None of the three tables appears in `server/src/db/schema.ts`
+- [ ] The `baseline.characterization.test.ts` schema-shape snapshot is regenerated
+      and its diff is purely additive (the three new tables, exact columns above —
+      nothing else changes)
 - [ ] `pnpm typecheck` and the full suite pass
 
 ## Tests
@@ -156,9 +168,14 @@ the suite booting against the migrated DB (the 0149 precedent adds none either).
 - [ ] Full suite green (proves resetDb's new DELETEs name real tables and the
       migration applies in every test boot)
 - [ ] `server/test/schema-parity.test.ts` still green (proves nothing was modelled)
+- [ ] `server/test/baseline.characterization.test.ts` green after regenerating its
+      snapshot (proves the diff is exactly the three new tables and nothing else
+      moved or was lost)
 
 ```bash
-pnpm --filter server exec vitest run server/test/schema-parity.test.ts
+pnpm --filter server exec vitest run test/schema-parity.test.ts
+pnpm --filter server exec vitest run test/baseline.characterization.test.ts -u
+git diff server/test/__snapshots__/baseline.characterization.test.ts.snap  # inspect: must be purely additive
 pnpm typecheck
 pnpm test
 ```
@@ -177,4 +194,6 @@ pnpm test
 2. [ ] Write `0162_plan_loop_learning.ts` (header comment: the gap, the no-FK-on-run_id rationale, the NULL-vs-0 rationale)
 3. [ ] Register `m0162` in `migrations/index.ts`
 4. [ ] Add the three `DELETE FROM` lines + comment to `resetDb()`
-5. [ ] Run the verification commands
+5. [ ] Regenerate the `baseline.characterization.test.ts` snapshot and confirm the
+       diff is purely additive
+6. [ ] Run the verification commands

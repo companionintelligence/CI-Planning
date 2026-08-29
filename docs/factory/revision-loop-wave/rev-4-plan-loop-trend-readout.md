@@ -110,7 +110,7 @@ New `server/test/plan-loop-routes.test.ts`, seeding `plan_loop_stats` rows direc
 - [ ] Fresh owner → `{ runs: [] }` with status 200
 
 ```bash
-pnpm --filter server exec vitest run server/test/plan-loop-routes.test.ts
+pnpm --filter server exec vitest run test/plan-loop-routes.test.ts
 pnpm typecheck
 ```
 
