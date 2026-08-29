@@ -77,6 +77,15 @@ export function resetDb(): void {
     DELETE FROM copy_history;
     DELETE FROM life_priorities;
     DELETE FROM planning_sessions;
+    -- 0157: append-only evidence log (the dismissal-learning corpus) — same
+    -- cross-test contamination argument as classification_log/triality_log above.
+    DELETE FROM possible_outcome_log;
+    -- 0157: rollup is read by a production path (the extraction prompt), so a
+    -- leftover row would silently bend another test file's prompt.
+    DELETE FROM possible_dismissal_exemplars;
+    -- 0157: measurement is appended per (owner, computed_date) run; clear so a
+    -- backdated reading from one test doesn't collide with the next test's.
+    DELETE FROM possible_dismissal_rate;
   `);
   // Prune any extra owners a multi-tenant isolation test created, so they don't
   // leak across the shared pid-keyed DB into later files (resetDb kept only the
