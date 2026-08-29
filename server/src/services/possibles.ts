@@ -225,6 +225,23 @@ export async function getPossible(owner: string, id: string): Promise<PossibleTa
 /** Client-supplied overrides for a promote (both the REST snake_case + GraphQL forms map here). */
 export type PromoteOverrides = { title?: string; due_at?: string; priority?: number };
 
+/**
+ * Who drove a promote. Load-bearing for the close-loop wave and nothing else: only an
+ * OWNER decision is evidence about what that owner considers noise.
+ *
+ * Since AF-3 most promotes are NOT owner decisions — `promoteAllPending` (every ingest
+ * and memory-suggest batch) and `promotePossibles` (the nightly grooming sweeper)
+ * auto-promote every non-review-gated possible by machine. Recording those as
+ * `possible_outcome_log` rows would put one machine row per ingested item into the
+ * denominator of ticket 6's noise rate (`dismissed / decided`), pinning it near zero
+ * however noisy the queue actually is, and would grow an append-only table forever.
+ *
+ * Defaults to `'owner'` so the two human surfaces (routes/possibles.ts, the GraphQL
+ * mutation) need no ceremony; the machine sweepers below pass `'auto'` explicitly.
+ * A dismiss needs no such flag — nothing dismisses on the owner's behalf.
+ */
+export type PromoteActor = 'owner' | 'auto';
+
 export type PromoteResult =
   | { ok: true; task: typeof tasks.$inferSelect; taskId: string }
   | { ok: false; error: 'not_found' };
@@ -243,6 +260,7 @@ export async function promotePossible(
   owner: string,
   id: string,
   overrides: PromoteOverrides = {},
+  opts: { actor?: PromoteActor } = {},
 ): Promise<PromoteResult> {
   const possible = await getPossible(owner, id);
   if (!possible) return { ok: false, error: 'not_found' };
@@ -278,7 +296,9 @@ export async function promotePossible(
     .where(and(eq(possibleTasks.id, id), eq(possibleTasks.proposedOwnerId, owner)));
 
   writeAudit({ ownerId: owner, actor: 'owner', action: 'promote', entity: `possible:${id}` });
-  await recordPossibleOutcome(possible, 'promoted');
+  // Evidence, unlike the audit row above, is only written for a real owner decision —
+  // see PromoteActor. An auto-promote says nothing about what the owner considers noise.
+  if (opts.actor !== 'auto') await recordPossibleOutcome(possible, 'promoted');
 
   return { ok: true, task, taskId: task.id };
 }
@@ -335,7 +355,9 @@ export async function promoteAllPending(
   for (const p of pending) {
     let res: PromoteResult;
     try {
-      res = await promotePossible(owner, p.id);
+      // 'auto': AF-3 promotes on the owner's behalf, so this is not a decision and
+      // must not enter the dismissal-learning corpus (see PromoteActor).
+      res = await promotePossible(owner, p.id, {}, { actor: 'auto' });
     } catch (err) {
       // Poison isolation (same philosophy as ingest's dead-letter): one bad row —
       // e.g. a UNIQUE(source_kind, source_ref) collision with an existing task —

@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
-import { SYSTEM_OWNER } from '../src/lib/context.js';
+import { SYSTEM_OWNER, ALL_SCOPES, runWithOwner } from '../src/lib/context.js';
+import { promoteAllPending } from '../src/services/possibles.js';
+import { promotePossibles } from '../src/agents/groom.js';
 import { startTestServer, resetDb, createOwner, SECOND_OWNER_ID, api, type TestServer } from './helpers.js';
 
 /**
@@ -128,5 +130,54 @@ describe('promote records outcome evidence', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].outcome).toBe('promoted');
     expect(rows[0].owner_id).toBe(OWNER);
+  });
+});
+
+/**
+ * The evidence log is OWNER DECISIONS ONLY (services/possibles.ts `PromoteActor`).
+ *
+ * Since AF-3 the overwhelming majority of promotes are machine-driven: every ingest and
+ * memory-suggest batch auto-promotes its non-review-gated possibles, and the nightly
+ * grooming sweeper mops up the stragglers. Logging those would put one row per ingested
+ * item into the denominator of ticket 6's noise rate (`dismissed / decided`), pinning it
+ * near zero however noisy the queue actually is, and would grow an append-only table
+ * without bound. Both sweepers therefore pass `actor: 'auto'`.
+ */
+describe('machine auto-promotes are not owner decisions', () => {
+  const run = <T>(fn: () => Promise<T>): Promise<T> => runWithOwner(OWNER, ALL_SCOPES, fn);
+  const logCount = () =>
+    (sqlite.prepare(`SELECT COUNT(*) n FROM possible_outcome_log`).get() as { n: number }).n;
+
+  it('promoteAllPending (AF-3, every ingest batch) writes no evidence', async () => {
+    const id = insertPossible('Newsletter blurb', { sourceKind: 'text' });
+    const r = await run(() => promoteAllPending(OWNER));
+    expect(r.promoted).toBe(1); // it really did promote — the behaviour is unchanged
+    expect(possibleStatus(id)).toBe('promoted');
+    expect(outcomeRows(id)).toHaveLength(0);
+    expect(logCount()).toBe(0);
+  });
+
+  it('promotePossibles (the nightly straggler sweeper) writes no evidence', async () => {
+    const id = insertPossible('Calendar noise', { sourceKind: 'gcal' });
+    await run(() => promotePossibles(OWNER));
+    expect(possibleStatus(id)).toBe('promoted');
+    expect(outcomeRows(id)).toHaveLength(0);
+    expect(logCount()).toBe(0);
+  });
+
+  it('an owner dismiss is still captured after the sweepers have run', async () => {
+    const auto = insertPossible('Newsletter blurb', { sourceKind: 'text' });
+    const gated = insertPossible('Real ask from a colleague', { sourceKind: 'gmail' });
+    await run(() => promoteAllPending(OWNER)); // sweeps `auto`, leaves the gmail row pending
+    expect(possibleStatus(gated)).toBe('pending');
+
+    await api(srv.url, `/api/possible-tasks/${gated}/dismiss`, { method: 'POST', json: {} });
+
+    // Exactly one row in the whole corpus: the owner's dismiss. The auto-promote of the
+    // other row contributed nothing, so the rate's denominator counts decisions only.
+    expect(logCount()).toBe(1);
+    expect(outcomeRows(gated)).toHaveLength(1);
+    expect(outcomeRows(gated)[0].outcome).toBe('dismissed');
+    expect(outcomeRows(auto)).toHaveLength(0);
   });
 });
