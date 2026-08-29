@@ -6,7 +6,7 @@ import { ownerTimezone } from '../src/engine/recurrence-generate.js';
 import { packVector } from '../src/lib/vector.js';
 import {
   calibrateDismissals, dismissalHint, dismissalPrompt, retrieveDismissals,
-  DISMISSAL_FLOOR, DISMISSAL_TEXT_CAP, PENDING_MS, RETRIEVE_K,
+  DISMISSAL_FLOOR, DISMISSAL_TEXT_CAP, PENDING_MS, QUERY_TEXT_CAP, RETRIEVE_K,
   type DismissalExemplar,
 } from '../src/services/dismissal-learning.js';
 import { createOwner, resetDb, SECOND_OWNER_ID } from './helpers.js';
@@ -198,6 +198,60 @@ describe('the no-embedder fallback', () => {
     // The recurring pattern leads, and appears ONCE despite four rows feeding it.
     expect(got[0].inputText).toBe('Invoice #6110 is ready'); // the newest of its group
     expect(got.filter((g) => g.inputText.startsWith('Invoice'))).toHaveLength(1);
+  });
+});
+
+/**
+ * The index holds the extractor's own renderings (raw_title [+ raw_summary]), so the
+ * query has to arrive in that shape too: cosine similarity between a whole email body
+ * and a one-line title is dominated by how much ground each text covers rather than by
+ * how alike they are. The cap also keeps an unbounded body away from the embedder,
+ * which matters more here than in the template because a THROWN embed yields no hint
+ * at all rather than falling back to priors.
+ */
+describe('the query is bounded and exemplar-shaped', () => {
+  const capture = () => {
+    const seen: string[] = [];
+    return {
+      seen,
+      embedFn: async (t: string): Promise<number[]> => { seen.push(t); return [1, 0, 0]; },
+    };
+  };
+
+  it('never embeds more than QUERY_TEXT_CAP characters', async () => {
+    seedExemplar({ text: 'renew car registration', vec: [1, 0, 0] });
+    const { seen, embedFn } = capture();
+
+    await retrieveDismissals(OWNER, 'x'.repeat(QUERY_TEXT_CAP * 10), { embedFn });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toHaveLength(QUERY_TEXT_CAP);
+  });
+
+  it('collapses the whitespace an email body is full of and an exemplar never has', async () => {
+    seedExemplar({ text: 'renew car registration', vec: [1, 0, 0] });
+    const { seen, embedFn } = capture();
+
+    await retrieveDismissals(OWNER, '  Renew\n\n\t your   registration\n>  quoted reply  ', { embedFn });
+    expect(seen[0]).toBe('Renew your registration > quoted reply');
+  });
+
+  it('keeps the leading subject when a long body is truncated away', async () => {
+    seedExemplar({ text: 'renew car registration', vec: [1, 0, 0] });
+    const { seen, embedFn } = capture();
+
+    // What runExtraction passes: subject first, then the body.
+    const subject = 'Your vehicle registration renewal';
+    await retrieveDismissals(OWNER, `${subject} ${'filler '.repeat(500)}`, { embedFn });
+    expect(seen[0].startsWith(subject)).toBe(true);
+  });
+
+  it('a body of pure whitespace is not embedded at all', async () => {
+    seedExemplar({ text: 'renew car registration', vec: [1, 0, 0] });
+    const { seen, embedFn } = capture();
+
+    const got = await retrieveDismissals(OWNER, '   \n\t  ', { embedFn });
+    expect(seen).toHaveLength(0); // fell straight through to priors
+    expect(got).toHaveLength(1);
   });
 });
 

@@ -88,6 +88,21 @@ export const EMBED_TIMEOUT_MS = 3_000;
  */
 export const DISMISSAL_TEXT_CAP = 80;
 
+/**
+ * Cap on the text `retrieveDismissals` embeds as its query, chosen to match the
+ * MAGNITUDE of what the index holds: an exemplar's `input_text` is a possible's
+ * `raw_title` (normalize() caps it at 200) plus its `raw_summary` (capped at 500).
+ *
+ * Comparability is the point, not just cost. Cosine similarity between a whole email
+ * body and a one-line title is dominated by how much ground each text covers rather
+ * than by how alike they are, so an uncapped query would rank the index badly even
+ * when it answered quickly. The secondary benefit is that a caller cannot hand the
+ * embedder an unbounded payload and blow `EMBED_TIMEOUT_MS` — which, because a thrown
+ * embed deliberately yields no hint at all rather than falling back to priors, would
+ * otherwise silently disable the loop for exactly the longest, noisiest items.
+ */
+export const QUERY_TEXT_CAP = 700;
+
 /** The noise-rate measurement window — how many trailing days one
  *  `possible_dismissal_rate` row covers. */
 export const RATE_PERIOD_DAYS = 7;
@@ -483,7 +498,11 @@ function frequentDismissals(stored: StoredDismissalExemplar[], k: number): Dismi
  * the extraction prompt.
  *
  * `opts.k` is clamped to `RETRIEVE_K` regardless of what a caller passes — the bound is
- * not the caller's to raise.
+ * not the caller's to raise, and neither is the query length: `text` is normalised to
+ * `QUERY_TEXT_CAP` before it is embedded, so what gets compared is the same shape and
+ * magnitude as the title-plus-summary strings the index was built from. Callers should
+ * therefore lead with the most title-like part of their input (a subject line), because
+ * that is the part guaranteed to survive the cap.
  */
 export async function retrieveDismissals(
   ownerId: string,
@@ -495,10 +514,14 @@ export async function retrieveDismissals(
     const stored = await loadDismissalExemplars(ownerId);
     if (stored.length === 0 || k <= 0) return [];
 
+    // Collapse whitespace before capping: an email body is mostly newlines and quoted
+    // indentation, and an exemplar never is, so this both makes the two comparable and
+    // buys more real signal inside the cap.
+    const probe = text.replace(/\s+/g, ' ').trim().slice(0, QUERY_TEXT_CAP);
     const embed = await resolveEmbed(ownerId, opts.embedFn);
     const withVectors = stored.filter((e): e is StoredDismissalExemplar & { vec: number[] } => e.vec !== null);
-    if (embed && withVectors.length > 0 && text.trim()) {
-      const query = await embed(text); // a throw here falls to the catch below, not to priors
+    if (embed && withVectors.length > 0 && probe) {
+      const query = await embed(probe); // a throw here falls to the catch below, not to priors
       const scored = withVectors
         .filter((e) => e.vec.length === query.length) // a re-embedded index changed dimension
         .map((e) => ({ e, score: cosineSimilarity(query, e.vec) }))

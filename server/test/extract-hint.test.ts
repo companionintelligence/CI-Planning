@@ -39,19 +39,21 @@ vi.mock('../src/mcp/ollama.js', async (importOriginal) => {
  * — proving `runExtraction`'s resolver guard, not `dismissalHint`'s own internal one
  * (already covered by dismissal-hint.test.ts).
  */
-const { hintControl } = vi.hoisted(() => ({ hintControl: { throwing: false } }));
+const { hintControl } = vi.hoisted(() => ({ hintControl: { throwing: false, probes: [] as string[] } }));
 vi.mock('../src/services/dismissal-learning.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/services/dismissal-learning.js')>();
   return {
     ...actual,
     dismissalHint: async (ownerId: string, text: string, opts?: Record<string, unknown>) => {
+      hintControl.probes.push(text);
       if (hintControl.throwing) throw new Error('dismissal hint resolver exploded');
       return actual.dismissalHint(ownerId, text, opts);
     },
   };
 });
 
-import { ingestText } from '../src/agents/ingest.js';
+import { ingestText, ingestEmails } from '../src/agents/ingest.js';
+import type { GoogleClient, EmailMessage } from '../src/mcp/google.js';
 
 const SOURCE: ExtractSource = {
   kind: 'text',
@@ -83,6 +85,7 @@ beforeEach(() => {
   resetDb();
   prompts.length = 0;
   hintControl.throwing = false;
+  hintControl.probes.length = 0;
   ollamaControl.unavailable = false;
   seq = 0;
 });
@@ -170,6 +173,33 @@ describe('runExtraction wiring (end-to-end, via ingestText)', () => {
     expect(result.itemsProcessed).toBe(1);
     expect(prompts).toHaveLength(1);
     expect(prompts[0]).not.toContain('dismissed suggestions'); // degraded to no hint, not a crash
+  });
+
+  it('probes retrieval with the bare text when the source has no subject', async () => {
+    await run(() => ingestText(SOURCE.text, SOURCE.ref));
+    // Not `undefined ${text}` — the ternary must not stringify a missing subject.
+    expect(hintControl.probes).toEqual([SOURCE.text]);
+  });
+
+  it('leads the retrieval probe with the subject when the source has one', async () => {
+    // The index holds raw_title [+ raw_summary], so the subject line is the part of an
+    // inbound email most like what it is matched against, and QUERY_TEXT_CAP keeps
+    // whatever leads — so the subject has to come first.
+    const mail: EmailMessage = {
+      id: 'msg-1',
+      from: '"Dana Reyes" <dana@example.com>',
+      subject: 'Your vehicle registration renewal',
+      body: 'Please take a look before Friday.',
+      receivedAt: new Date().toISOString(),
+    };
+    const client: GoogleClient = {
+      mode: 'fixture',
+      async listEmails() { return [mail]; },
+      async listEvents() { return []; },
+    };
+
+    await run(() => ingestEmails(client));
+    expect(hintControl.probes).toEqual([`${mail.subject} ${mail.body}`]);
   });
 
   it('no Ollama: behaviour is unchanged (fallbackTask) even with a hint resolved', async () => {
