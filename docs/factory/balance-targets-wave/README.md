@@ -129,7 +129,7 @@ pnpm --filter server exec vitest run server/test/<file>.test.ts
 
 | Item | Origin | Status |
 |---|---|---|
-| Task lock/unlock toggle on the task modal (owner request 2026-08-29): `time_blocks.is_locked` already exists and reflow honors it; the feature is a modal toggle + API write on the task's active block. Separate mechanism from targets — deliberately fenced out of this wave. | owner ruling | open, next wave candidate |
+| Task lock/unlock toggle on the task modal — ticketed: [drafts/task-lock-toggle.md](../drafts/task-lock-toggle.md). `time_blocks.is_locked` and `PATCH /api/blocks/:id` already exist; the ticket adds an `activeBlockFor` route enrichment (mirroring `peopleFor`) and wires the Lock chip that already exists on the timeblock tab (`ElementWizard.tsx:1503`) onto the task tab. Separate mechanism from targets — deliberately fenced out of this wave. | owner ruling | ticketed 2026-08-29, not started |
 | Capacity reservation ("protect 14 h for Health") as an opt-in layer over `balance_week_log` data | apply-mode decision | open, only if bias measures too gentle |
 | Reconcile with `e7359a3c`'s client `dimension-rollup.ts` if that branch merges — ticket 5's server shortfall read supersedes its client-side week math; keep the server as the single source | brief correction | open |
 | `life_priorities` has no `updated_at`-driven staleness surface — a 2-year-old target biases as strongly as yesterday's; consider a "targets last reviewed" nudge | found pinning ticket 1 | open, out of scope |
