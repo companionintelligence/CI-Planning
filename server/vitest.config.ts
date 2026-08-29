@@ -18,7 +18,13 @@ export default defineConfig({
     // Tests share one DB file and reset tables themselves; keep files sequential to avoid write races.
     fileParallelism: false,
     testTimeout: 120_000, // LLM-backed tests can be slow
-    hookTimeout: 30_000,
+    // Must clear THREE of helpers.ts's OLLAMA_PROBE_TIMEOUT_MS. The `ollamaAvailable()`
+    // gate runs a real fast generation, quality generation and embedding, and several
+    // suites spend it from `beforeAll`; a healthy-but-cold box pays each in turn. If this
+    // drops below that the hook is killed first and those suites FAIL instead of skipping
+    // — the exact outcome the probe exists to prevent. Change the two together or not at
+    // all. (An unhealthy box stops at the first failed probe, so it pays one budget.)
+    hookTimeout: 150_000,
     env: {
       DB_PATH: testDbPath,
       LOG_LEVEL: 'error',
