@@ -142,9 +142,19 @@ never a hotter dial.
 
 **Life-balance categories are out.** `taskNestCoords` returns `categories` alongside
 `directions`, and adding it as a second coordinate is the obvious sharpening. It is
-deliberately excluded: life-balance targets reaching the scheduler is a **sibling wave**
-being planned in parallel, and its shape may change what a category means to placement.
-Recorded as an open follow-up below, not planned here.
+deliberately excluded: life-balance targets reaching the scheduler is the
+**balance-targets wave** (N2, `docs/factory/balance-targets-wave/`, branch
+`claude/sad-merkle-5aaa0c`), being planned in parallel, and its shape may change what a
+category means to placement. Recorded as an open follow-up below, not planned here.
+
+**Verified non-overlapping, not just assumed.** That wave's ticket 3
+(`bal-3-candidate-bias.md`) touches `engine/autoplan.ts`, the same file as this wave's
+tickets 2 and 5 — but a different function at a different pipeline stage:
+`fillFlightPlanCandidates` (`autoplan.ts:758`, **step 1**, which tasks get proposed into
+the flight plan) versus this wave's `placeIntoWindow` (`autoplan.ts:399`, **step 2**,
+where an already-selected task's session lands — where `pickGap` is called). ~360 lines
+apart, no shared local state, no shared import either wave adds. Both waves' tickets can
+implement concurrently without a functional collision.
 
 **Pattern and container placements are out.** `engine/patterns-place.ts` (`source_kind =
 'pattern'`) and `engine/blocks-place.ts` (`source_kind = 'manual'`) also call `pickGap`.
@@ -156,32 +166,72 @@ model. Touching them here would collide. Ticket 5's `pickGap` signature change i
 additive (an optional third parameter), so their two call sites compile unchanged on either
 side of that merge.
 
-**The agent-loop revision log is out** — the other sibling wave. Nothing here reads or
-writes `daily_plan`, `plan_hints` or `replan_suggestions`.
+**The agent-loop revision log is out** — the **revision-loop wave** (§A0,
+`docs/factory/revision-loop-wave/`, branch `claude/silly-solomon-5ab111`, already landed
+`0162` as a real migration). Nothing here reads or writes `daily_plan`, `plan_hints` or
+`replan_suggestions`, and that wave never touches `engine/scheduler.ts`, `engine/autoplan.ts`
+or `services/blocks.ts` — its footprint is `agents/loop.ts`, `agents/plan.ts` and its own
+new service/route files. No functional collision.
 
-## Reserved slots — collision risk, stated not assumed
+**Shared touch-files, not shared logic — a merge-order note, not a design conflict.** Both
+sibling waves add a migration import to `migrations/index.ts`, a `DELETE FROM` to
+`resetDb()` in `helpers.ts`, and (revision-loop only) a `case` + `OWNER_SCOPED_KINDS` entry
+to `jobs/index.ts` and a router registration to `routes/index.ts` — the same four files
+tickets 1, 4 and 6 here touch. Every one of these is an append to a list (an import line,
+a `DELETE FROM`, a `case`, an array entry), so a normal sequential merge resolves cleanly;
+there is nothing to coordinate beyond not rebasing on a stale base. The one file worth
+watching is `server/test/__snapshots__/baseline.characterization.test.ts.snap` — it
+asserts every table/column in the live DB in one snapshot, so whichever wave's schema
+ticket merges second must regenerate it (`... -u`) against the already-merged tables, not
+just its own three. Confirm the regenerated diff is purely additive before committing.
 
-This wave assumes **`0159`** (tables) and **`0160`** (cron seed), following the
+## Reserved slots — renumbered once already; re-verify before implementing
+
+This wave assumes **`0164`** (tables) and **`0165`** (cron seed), following the
 `0149` → `0150` precedent of splitting tables and cron seed into two files.
 
-Verified: latest on `main` is `0156_capacity_hours_per_week.ts`, and **no `0157+` file
-exists on any branch or in any worktree**. `0157` / `0158` are reserved on paper by the
-close-loop wave (`docs/factory/close-loop-wave/`, commit `aade3a64`, branch
-`claude/app-launch-tailscale-7c490a`, unmerged). Two further waves are being planned in
-parallel and will also want slots.
+**These are not the original numbers.** This README first claimed `0159`/`0160`, verified
+at the time against `main` (head `0156`) and every branch and worktree then on disk, none
+of which had a `0157+` file. That verification was correct and immediately went stale: two
+sibling sessions were mid-flight on the exact same tree and independently claimed the same
+pair. Re-sweeping on 2026-08-29 found:
 
-**If 0159/0160 are taken by the time this wave is implemented, renumber both files and
-their two `MIGRATIONS` entries.** Nothing else in the wave references the numbers — no
-service, test or doc hardcodes them.
+| wave | what happened |
+|---|---|
+| close-loop wave | `0157`/`0158` — **merged to `main`** (`aade3a64` → `main` via #586/#587). No longer "on paper"; these are real. |
+| *(unrelated)* `close-ritual` 1–5 score | `0161` — merged to `main` (#588), landed **after** a gap at 0159/0160, for reasons unrelated to any of these three waves. |
+| revision-loop wave (§A0 log, the sibling this brief fenced out) | Planned `0159`/`0160` for the same reason this wave did, **found the triple-claim first**, and moved to `0162`/`0163` — its own commit says: *"0159/0160 turned out to be triple-claimed: placement-learning-wave (G-INT) and balance-targets-wave (N2) both independently planned the identical pair."* Slot `0162` is now a real file (`docs/factory/revision-loop-wave/`, branch `claude/silly-solomon-5ab111`); `0163` is claimed on paper for its second migration. |
+| balance-targets wave (N2, the life-balance sibling this brief also fenced out) | Still states `0159`/`0160` in `docs/factory/balance-targets-wave/README.md` (branch `claude/sad-merkle-5aaa0c`), **unimplemented** — its own README already anticipated this and punts the exact number to whoever implements first: *"Whoever implements renumbers to the actual head at merge time."* |
+
+Revision-loop wave moved to `0162`/`0163` rather than `0164`/`0165` — it checked first and
+found only itself and the two doc-only claims (this wave and balance-targets), with `0161`
+already real. This wave checks one step later, with `0162` now also real and `0163` also
+claimed, so it takes `0164`/`0165` — clear of every real file and every doc claim on every
+branch and remote-tracking ref as of this sweep. This does not resolve the `G-INT`/N2
+collision on `0159`/`0160` between this wave and balance-targets — there is no collision
+left to resolve, since this wave is the one moving off the number. Nothing else in this
+wave's tickets references the old numbers; the rename touched only the four files that
+named a slot.
+
+**Re-verify before implementing anyway.** Two renumbers in one afternoon is the base rate
+on this tree, not an anomaly — sweep again immediately before ticket 1 lands:
+
+```bash
+for b in $(git for-each-ref --format='%(refname:short)' refs/heads refs/remotes | grep -v 'HEAD$'); do
+  git ls-tree -r "$b" --name-only 2>/dev/null | grep -E 'migrations/016[4-9]_'
+done
+```
 
 Cron slot **Monday 04:30**. Verified against the seeds rather than inherited: the brief's
 "`calibrate_estimates` Sun 04:00" is its **pre-0107** value — `0083_learning_loops.ts:42`
 seeds `'0 4 * * 0'` and `0107_calibration_scope.ts:67` moves it to nightly `'30 1 * * *'`,
 so on any current DB it runs at **01:30 daily**. Live neighbours: `enrich_tasks` 03:20
 nightly, `calibrate_triality` Mon 03:50, `calibrate_classification` Mon 04:10,
-`advance_objectives` Mon 05:00, plus Mon 04:20 claimed on paper by the close-loop wave.
-04:30 is clear, and running last of the weekly per-owner learning passes keeps this
-pure-SQL job from contending with the two that may call a model on a single-GPU box.
+`advance_objectives` Mon 05:00, and the now-merged close-loop wave's `calibrate_dismissals`
+at Mon 04:20 (`0158_calibrate_dismissals_job.ts`, confirmed on `main`). `04:30` is clear,
+verified against the real seed rows on `main`, not the planning doc. Running last of the
+weekly per-owner learning passes keeps this pure-SQL job from contending with the two that
+may call a model on a single-GPU box.
 
 ## Re-entrancy
 

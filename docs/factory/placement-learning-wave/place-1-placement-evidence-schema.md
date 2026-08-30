@@ -1,13 +1,13 @@
 > **Type:** DB Migration
 > **Phase:** Placement-learning wave — G-INT (timing intelligence)
 > **Branch:** `feat/placement-evidence-schema`
-> **Commit style:** `feat(db): 0159 placement evidence log, preference rollup and survival table`
+> **Commit style:** `feat(db): 0164 placement evidence log, preference rollup and survival table`
 > **Design:** [README.md](README.md)
 > **Dependencies:** None — ticket 1 of 6
 
 ## Goal
 
-Land the storage the loop needs, in one migration at slot `0159`, mirroring
+Land the storage the loop needs, in one migration at slot `0164`, mirroring
 `0149_classification_learning.ts` end to end. Three tables in the same three-role split the
 house pattern uses (`classification_log` → `classification_exemplars` →
 `classification_accuracy`):
@@ -34,7 +34,7 @@ This ticket lands three empty tables and nothing else.
   migration-only table is invisible to it.
 - **No service, no reads, no writes.** Placement capture is ticket 2, correction capture is
   ticket 3, the batch is ticket 4.
-- **No cron row and no job kind.** The `calibrate_placement` seed is migration `0160` in
+- **No cron row and no job kind.** The `calibrate_placement` seed is migration `0165` in
   ticket 4 — one concern per file, as `0149` → `0150` does. Do not touch
   `server/src/jobs/index.ts`, `OWNER_SCOPED_KINDS`, `README.md` or `ARCHITECTURE.md`.
 - **No route and no client change.** The route is ticket 6.
@@ -69,17 +69,24 @@ This ticket lands three empty tables and nothing else.
 Verified against the tree — do not substitute.
 
 - **File skeleton.** Line 1 is exactly `import type { Database } from 'better-sqlite3';`
-  (type-only). Then `export const id = '0159_placement_evidence';`, a block comment
+  (type-only). Then `export const id = '0164_placement_evidence';`, a block comment
   explaining *why*, then `export function up(db: Database): void`. All 154 migration
   files (numbered to 0156 — 0009 and 0119 are unused) follow this with zero exceptions. Idempotent, forward-only, additive:
   `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` throughout; no `down`.
 - **Registration.** `server/src/db/migrations/index.ts` — add
-  `import * as m0159 from './0159_placement_evidence.js';` in numeric order after `m0156`,
-  and append `m0159` to the exported `MIGRATIONS` array. The `.js` extension is required
-  (ESM).
-- **Slot number.** `0159`, not `0157` — `0157`/`0158` are reserved on paper by
-  `docs/factory/close-loop-wave/` (commit `aade3a64`, unmerged). If `0159`/`0160` are taken
-  when you start, renumber this file and ticket 4's; nothing else references the numbers.
+  `import * as m0164 from './0164_placement_evidence.js';` in numeric order **after
+  whatever the tail import actually is at implementation time** — do not assume `m0156`.
+  `0157`/`0158` (close-loop wave) and `0161` (an unrelated close-ritual change) merged to
+  `main` after this plan was written; `0162` (revision-loop wave) may also have merged by
+  then. Run `tail -3 server/src/db/migrations/index.ts` first and append `m0164` after the
+  real last entry in the exported `MIGRATIONS` array. The `.js` extension is required (ESM).
+- **Slot number.** `0164`, not `0157` and not the `0159`/`0160` this plan originally
+  claimed. `0157`/`0158` are **merged to `main`** (close-loop wave, via #586/#587) — no
+  longer "on paper." `0159`/`0160` were independently claimed by both this wave and the
+  balance-targets wave (N2); this wave moved off them, documented in [README.md](README.md)
+  § reserved slots. If `0164`/`0165` are ALSO taken by the time you start — re-sweep with
+  the command in that section — renumber this file and ticket 4's; nothing else in either
+  ticket references the numbers.
 - **Owner column.** `owner_id TEXT NOT NULL REFERENCES owners(id) ON DELETE CASCADE`.
 - **Timestamps.** ISO-8601 `TEXT`, stamped in code via `new Date().toISOString()`. Never a
   SQL `CURRENT_TIMESTAMP` default on a decision stamp — `time_blocks.created_at` uses one
@@ -93,7 +100,7 @@ Verified against the tree — do not substitute.
 - **Rollup shape.** `classification_exemplars` has a composite PK, no surrogate `id` and no
   index — every read is a PK-prefix scan on `owner_id`. Mirror that for both rollups.
 - **`resetDb()`** (`server/test/helpers.ts:32`) — add one `DELETE FROM` per new table with a
-  `-- 0159:` comment, alongside the existing `triality_log` / `triality_weights` entries.
+  `-- 0164:` comment, alongside the existing `triality_log` / `triality_weights` entries.
   `placement_preferences` is read by a production path, so a leftover row would silently
   bend another test file's Auto placement.
 
@@ -107,7 +114,7 @@ and three-role split), `0156_capacity_hours_per_week.ts` (latest slot, current h
 ## Files impacted
 
 **New:**
-- `server/src/db/migrations/0159_placement_evidence.ts`
+- `server/src/db/migrations/0164_placement_evidence.ts`
 
 **Changed:**
 - `server/src/db/migrations/index.ts` — import + `MIGRATIONS` entry
@@ -192,10 +199,10 @@ CREATE TABLE IF NOT EXISTS placement_survival (
 
 ## Definition of Done
 
-- [ ] `0159_placement_evidence.ts` exists, matches the pinned skeleton, and is registered in
+- [ ] `0164_placement_evidence.ts` exists, matches the pinned skeleton, and is registered in
       `migrations/index.ts` in numeric order
 - [ ] All three tables and both indexes are created, idempotently
-- [ ] `resetDb()` clears all three, each with a `-- 0159:` comment
+- [ ] `resetDb()` clears all three, each with a `-- 0164:` comment
 - [ ] `schema.ts` is unchanged and `schema-parity.test.ts` still passes
 - [ ] `time_blocks` and `tasks` are unchanged and the characterization snapshot is unaffected
 - [ ] Running the migration twice is a no-op
@@ -236,10 +243,10 @@ pnpm typecheck
 
 1. [ ] Read `0149_classification_learning.ts` and `0156_capacity_hours_per_week.ts`
 2. [ ] Confirm the slot is still free: `ls server/src/db/migrations/ | tail -5`
-3. [ ] Write `0159_placement_evidence.ts` with the DDL above and a block comment saying why
+3. [ ] Write `0164_placement_evidence.ts` with the DDL above and a block comment saying why
        the menu (`candidates`) exists, why there are no FKs to `time_blocks`/`tasks`, and
        why `fit = 0` rows are not evidence
 4. [ ] Register it in `migrations/index.ts`
-5. [ ] Add the three `DELETE FROM`s to `resetDb()` with `-- 0159:` comments
+5. [ ] Add the three `DELETE FROM`s to `resetDb()` with `-- 0164:` comments
 6. [ ] Add the table/index existence, idempotency, cascade and block-deletion tests
 7. [ ] Run the five verification commands; confirm no snapshot churn

@@ -3,7 +3,7 @@
 > **Branch:** `feat/placement-capture-menu`
 > **Commit style:** `feat(engine): record what the scheduler chose and what it passed over`
 > **Design:** [README.md](README.md)
-> **Dependencies:** Ticket 1 (`0159_placement_evidence`)
+> **Dependencies:** Ticket 1 (`0164_placement_evidence`)
 
 ## Goal
 

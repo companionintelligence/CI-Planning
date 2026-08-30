@@ -12,7 +12,7 @@ rebuild `placement_preferences` wholesale, and record one `placement_survival` r
 Nothing reads the preferences yet — ticket 5 does that — so this ticket is safe to merge
 alone and its output is inspectable before it can influence anything.
 
-Also lands migration `0160`, seeding the `calibrate_placement` cron row.
+Also lands migration `0165`, seeding the `calibrate_placement` cron row.
 
 ## Non-goals
 
@@ -40,9 +40,9 @@ Also lands migration `0160`, seeding the `calibrate_placement` cron row.
 
 Verified against the tree — do not substitute.
 
-- **Migration skeleton.** `0160_calibrate_placement_job.ts`, copying
+- **Migration skeleton.** `0165_calibrate_placement_job.ts`, copying
   `0150_calibrate_classification_job.ts` exactly: `import type { Database } from 'better-sqlite3';`,
-  `import { newId } from '../../lib/ids.js';`, `export const id = '0160_calibrate_placement_job';`,
+  `import { newId } from '../../lib/ids.js';`, `export const id = '0165_calibrate_placement_job';`,
   a block comment naming every neighbouring cron slot and why this one is clear, then
   ```ts
   db.prepare(`INSERT OR IGNORE INTO scheduled_jobs (id, name, kind, cron) VALUES (?, ?, ?, ?)`)
@@ -54,7 +54,8 @@ Verified against the tree — do not substitute.
   `calibrate_classification` `'10 4 * * 1'`, `advance_objectives` `'0 5 * * 1'`, and
   `calibrate_estimates` `'30 1 * * *'` — **nightly, not Sunday 04:00**:
   `0083_learning_loops.ts:42` seeds `'0 4 * * 0'` and `0107_calibration_scope.ts:67` moves
-  it. Mon 04:20 is claimed on paper by the close-loop wave. Do not copy the slot list from
+  it. Mon 04:20 is **merged and real** — the close-loop wave's `0158_calibrate_dismissals_job.ts`
+  seeds `'20 4 * * 1'` on `main`. Do not copy the slot list from
   `0150`'s comment; it names an `03:30 calibrate_estimates` that has never existed. Last of
   the weekly learning passes deliberately: this one never calls a model, so it must not sit
   ahead of the two that might on a single-GPU box.
@@ -111,7 +112,7 @@ lines 38–66 (`quantile` / `robustStats`), `jobs/index.ts` lines 373–410 and 
 ## Files impacted
 
 **New:**
-- `server/src/db/migrations/0160_calibrate_placement_job.ts`
+- `server/src/db/migrations/0165_calibrate_placement_job.ts`
 - `server/test/placement-learning.test.ts`
 
 **Changed:**
@@ -121,7 +122,7 @@ lines 38–66 (`quantile` / `robustStats`), `jobs/index.ts` lines 373–410 and 
 
 ## Schema required
 
-None beyond ticket 1's tables. Migration `0160` inserts **one row** into the existing
+None beyond ticket 1's tables. Migration `0165` inserts **one row** into the existing
 `scheduled_jobs` table and creates nothing.
 
 ## Definition of Done
@@ -202,7 +203,7 @@ pnpm typecheck
 3. [ ] Add the windowed read with the `LEFT JOIN time_blocks` existence check
 4. [ ] Add `hourQuantile` and the band builder with the floor and `MAX_BAND_HOURS` guards
 5. [ ] Add `calibratePlacement` with the transactional delete-then-insert and the survival upsert
-6. [ ] Write `0160_calibrate_placement_job.ts`; register it in `migrations/index.ts`
+6. [ ] Write `0165_calibrate_placement_job.ts`; register it in `migrations/index.ts`
 7. [ ] Add the `case` to `execute()` and the entry to `OWNER_SCOPED_KINDS`
 8. [ ] Write `placement-learning.test.ts`
 9. [ ] Run the five verification commands
