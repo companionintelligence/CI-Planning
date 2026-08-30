@@ -768,6 +768,7 @@ export const api = {
   priorities: {
     list: () => request<{ priorities: Priority[] }>('GET', '/priorities'),
     save: (priorities: Priority[]) => request<{ priorities: Priority[] }>('POST', '/priorities', { priorities }),
+    history: () => request<BalanceHistory>('GET', '/priorities/history'),
   },
 
   patternBlocks: {
@@ -1335,6 +1336,7 @@ export interface Prefs {
   haptic_cues_enabled?: boolean; // T1–T4 haptics (arm-derived on first enable)
   ambient_color_enabled?: boolean; // depletion + breathing animation (arm-derived)
   calibration_loop_enabled?: boolean; // estimate prompt + scoped nudge (§2)
+  balance_bias_enabled?: boolean; // balance-targets wave: bias gate (default true)
   z_experiment_arm?: 'A' | 'B' | 'C' | 'D' | null; // fixed A/B bucket, server-assigned; read-only
   day_theme?: Record<string, string>; planning_mode: string;
   timezone?: string; planning_horizon_days?: number;
@@ -1552,6 +1554,19 @@ export interface Priority {
   satisfaction: number;
   importance: number;
   target_hours_per_week: number;
+}
+
+/** GET /api/priorities/history (bal-7) — the frozen balance_week_log readout, per
+ *  dimension. `recent` is newest-first and already capped server-side; a dimension with
+ *  no logged weeks simply does not appear. */
+export interface BalanceHistory {
+  weeks_recorded: number;
+  dimensions: Array<{
+    category: string;
+    met_weeks: number;
+    counted_weeks: number;
+    recent: Array<{ week_start: string; met: boolean }>;
+  }>;
 }
 
 export interface Integrations {

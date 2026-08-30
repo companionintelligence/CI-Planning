@@ -339,6 +339,12 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   // 0156: replaces the removed workday_start/workday_end as the source for the
   // AI-authoring "capacity today" hint. Default 56 = 8h/day × 7.
   capacityHoursPerWeek: integer('capacity_hours_per_week').notNull().default(56),
+  // 0164 (balance-targets wave, bal-2): master gate for the auto-planning bias
+  // tickets 3/4 add — nudges candidate ordering/placement toward life dimensions
+  // running behind their weekly target. Default ON (owner ruling 2026-08-29). Not a
+  // Time-Sense channel; the suggest surface and weekly snapshot are deliberately NOT
+  // gated by this flag.
+  balanceBiasEnabled: integer('balance_bias_enabled', { mode: 'boolean' }).notNull().default(true),
 });
 
 export const tags = sqliteTable('tags', {

@@ -27,6 +27,20 @@ describe('GET/PATCH /api/prefs', () => {
     expect((await api(srv.url, '/api/prefs')).body.prefs.capacity_hours_per_week).toBe(40);
   });
 
+  // 0164 (balance-targets wave, bal-2) — bias gate, default ON.
+  describe('balance_bias_enabled', () => {
+    it('defaults to true when never patched', async () => {
+      expect((await api(srv.url, '/api/prefs')).body.prefs.balance_bias_enabled).toBe(true);
+    });
+
+    it('round-trips false: save false → reload → false', async () => {
+      const r = await api(srv.url, '/api/prefs', { method: 'PATCH', json: { balance_bias_enabled: false } });
+      expect(r.status).toBe(200);
+      expect(r.body.prefs.balance_bias_enabled).toBe(false);
+      expect((await api(srv.url, '/api/prefs')).body.prefs.balance_bias_enabled).toBe(false);
+    });
+  });
+
   describe('recurrence_horizon_days validation', () => {
     it('rejects a value outside {7,15,30,60,90,180} (422) and does not persist it', async () => {
       const r = await api(srv.url, '/api/prefs', { method: 'PATCH', json: { recurrence_horizon_days: 45 } });

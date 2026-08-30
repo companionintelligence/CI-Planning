@@ -26,7 +26,7 @@
  */
 import { store } from '../db/store.js';
 import { generateJson, isReady, llmOrNull } from '../mcp/ollama.js';
-import { entityTagLevels } from '../services/tags.js';
+import { entityTagLevels, entityCategoryNamesByIds } from '../services/tags.js';
 import { runLoop, type Defect, type JudgeScore } from './loop.js';
 import { logger } from '../lib/logger.js';
 import { broadcast } from '../routes/sse.js';
@@ -38,6 +38,7 @@ import { graphData, MemoryUnavailable, type MemoryGraph } from '../connectors/me
 import { memoryConnectorAvailable } from '../services/memory.js';
 import { resolveDayType } from '../services/day-types.js';
 import { directionWindowsByName, FALLBACK_FILL_DIRECTION_NAMES } from '../services/pattern-blocks.js';
+import { dimensionShortfalls, biasLeadDimensions, SHORTFALL_FLOOR_HOURS, BIAS_DIMENSIONS_MAX, type DimensionShortfall } from '../services/balance-budget.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -76,15 +77,28 @@ interface PlanningPrefs {
    *   'priority' → priority-first (priority → due_at). Legacy opt-in.
    */
   fill_order?: string;
+  /** Balance-targets wave (bal-4) — master gate for the `balanceLead` ordering band
+   *  below. Absent row (no scheduling_prefs at all) ⇒ ON, matching the migration's
+   *  own `DEFAULT 1` for an existing row. */
+  balance_bias_enabled: boolean;
 }
 
 // ─── DB helpers ─────────────────────────────────────────────────────────────
 
 async function loadPlanningPrefs(owner: string): Promise<PlanningPrefs> {
   const row = await store()
-    .prepare(`SELECT planning_mode, trust_mode, capacity_hours_per_week, day_theme, fill_order FROM scheduling_prefs WHERE owner_id = ?`)
-    .get<PlanningPrefs & { trust_mode: string | null; day_theme: string | null; fill_order: string | null }>(owner);
-  if (!row) return { planning_mode: 'basic', capacity_hours_per_week: 56, fill_order: 'overdue' };
+    .prepare(
+      `SELECT planning_mode, trust_mode, capacity_hours_per_week, day_theme, fill_order, balance_bias_enabled FROM scheduling_prefs WHERE owner_id = ?`,
+    )
+    .get<
+      Omit<PlanningPrefs, 'day_theme' | 'fill_order' | 'balance_bias_enabled'> & {
+        trust_mode: string | null;
+        day_theme: string | null;
+        fill_order: string | null;
+        balance_bias_enabled: number | null;
+      }
+    >(owner);
+  if (!row) return { planning_mode: 'basic', capacity_hours_per_week: 56, fill_order: 'overdue', balance_bias_enabled: true };
   let day_theme: Record<string, string> | null = null;
   if (row.day_theme) {
     try { day_theme = JSON.parse(row.day_theme) as Record<string, string>; } catch { /* ignore malformed */ }
@@ -96,6 +110,7 @@ async function loadPlanningPrefs(owner: string): Promise<PlanningPrefs> {
     capacity_hours_per_week: row.capacity_hours_per_week ?? 56,
     day_theme,
     fill_order: row.fill_order ?? 'overdue',
+    balance_bias_enabled: row.balance_bias_enabled == null || !!row.balance_bias_enabled,
   };
 }
 
@@ -230,6 +245,23 @@ function memoryOrderLine(tasks: PlanTask[], related: Set<string>): string {
   return `\nToday's memory context: tasks at indices ${idxs.join(', ')} relate to today's commitments — order them earliest (after any theme), ahead of the deadline and priority weighing above.`;
 }
 
+/**
+ * Balance-targets wave (bal-4) — the smart-prompt balance line: soft CONTEXT ("Behind
+ * weekly targets: …"), never an instruction, unlike `memoryOrderLine`'s directive
+ * phrasing — see the ticket's Non-goal. Renders at most `BIAS_DIMENSIONS_MAX`
+ * dimensions (worst-first — `dimensionShortfalls` already sorts shortfall-desc), each
+ * at/above `SHORTFALL_FLOOR_HOURS`, hours rounded to whole, no task ids. Empty string
+ * when nothing qualifies.
+ */
+export function balanceLine(shortfalls: readonly DimensionShortfall[]): string {
+  const behind = shortfalls
+    .filter((s) => s.shortfall_minutes >= SHORTFALL_FLOOR_HOURS * 60)
+    .slice(0, BIAS_DIMENSIONS_MAX);
+  if (behind.length === 0) return '';
+  const parts = behind.map((s) => `${s.category} (${Math.round(s.shortfall_minutes / 60)}h short)`);
+  return `\nBehind weekly targets: ${parts.join(', ')}.`;
+}
+
 async function getStagedTasks(owner: string): Promise<PlanTask[]> {
   const rows = await store()
     .prepare(
@@ -323,6 +355,7 @@ export function deterministicIndices(
   fillOrder?: string,
   memoryRelated?: Set<string>,
   newToday?: Set<string>,
+  balanceLead?: Set<string>,
 ): number[] {
   const priorityFirst = fillOrder === 'priority';
   const themeCmp = (a: number, b: number): number => {
@@ -347,6 +380,16 @@ export function deterministicIndices(
     const newB = newToday.has(tasks[b].task_id) ? 0 : 1;
     return newA - newB;
   };
+  // Balance-targets wave (bal-4): categories running behind their weekly target lead
+  // within their theme/memory/new_today band — the LAST band before due/priority
+  // (a weekly nudge, weaker than an explicit theme or today's memory/arrivals). Cloned
+  // byte-for-byte from newCmp; inert when the set is absent/empty.
+  const balCmp = (a: number, b: number): number => {
+    if (!balanceLead || balanceLead.size === 0) return 0;
+    const balA = balanceLead.has(tasks[a].task_id) ? 0 : 1;
+    const balB = balanceLead.has(tasks[b].task_id) ? 0 : 1;
+    return balA - balB;
+  };
   const dueCmp = (a: number, b: number): number =>
     (tasks[a].due_at ?? '9999').localeCompare(tasks[b].due_at ?? '9999');
   const priCmp = (a: number, b: number): number => tasks[a].priority - tasks[b].priority;
@@ -360,6 +403,8 @@ export function deterministicIndices(
       if (mem !== 0) return mem;
       const fresh = newCmp(a, b);
       if (fresh !== 0) return fresh;
+      const bal = balCmp(a, b);
+      if (bal !== 0) return bal;
       const primary = priorityFirst ? priCmp(a, b) : dueCmp(a, b);
       if (primary !== 0) return primary;
       const secondary = priorityFirst ? dueCmp(a, b) : priCmp(a, b);
@@ -461,11 +506,22 @@ export function checkOrder(
   today: string,
   themeTag?: string | null,
   memoryRelated?: Set<string>,
+  balanceLead?: Set<string>,
+  newToday?: Set<string>,
 ): Defect[] {
   const defects: Defect[] = [];
   const todayMs = Date.parse(today + 'T00:00:00Z');
   const themed = (t: PlanTask): boolean => (themeTag ? t.tags.includes(themeTag) : false);
   const related = (t: PlanTask): boolean => (memoryRelated ? memoryRelated.has(t.task_id) : false);
+  // Balance-targets wave (bal-4): same compositional shape as `related` above.
+  const leading = (t: PlanTask): boolean => (balanceLead ? balanceLead.has(t.task_id) : false);
+  // Code-review follow-up: `deterministicIndices` places `new_today` BETWEEN memory
+  // and balance (theme > memory > new_today > balance > due/priority — see its own
+  // band comments), but until this fix `checkOrder` had no freshness predicate at
+  // all, so the balance exemption below could fire across a newToday/non-newToday
+  // pair it was never meant to cover: a stale, low-priority, balance-lead task could
+  // wrongly skip an inversion check against a fresh, higher-priority, non-lead task.
+  const fresh = (t: PlanTask): boolean => (newToday ? newToday.has(t.task_id) : false);
 
   for (let i = 0; i < order.length && defects.length < 5; i++) {
     const a = tasks[order[i]];
@@ -473,6 +529,8 @@ export function checkOrder(
     const aDue = a.due_at ? Date.parse(a.due_at) : Infinity;
     const aThemed = themed(a);
     const aRelated = related(a);
+    const aLeading = leading(a);
+    const aFresh = fresh(a);
 
     for (let j = i + 1; j < order.length && defects.length < 5; j++) {
       const b = tasks[order[j]];
@@ -486,6 +544,13 @@ export function checkOrder(
       // AA3a: within the SAME theme band, a memory-related task legitimately leads an
       // unrelated one — memory is the next band after theme, so this isn't an inversion.
       if (aThemed === themed(b) && aRelated && !related(b)) continue;
+
+      // bal-4: within the SAME theme, memory AND new_today band, a balance-lead task
+      // legitimately leads a non-lead one — balance is the band after new_today, so
+      // this isn't an inversion. The `aFresh === fresh(b)` guard is the fix: without
+      // it, this exemption could fire across the new_today boundary it was never
+      // meant to cover.
+      if (aThemed === themed(b) && aRelated === related(b) && aFresh === fresh(b) && aLeading && !leading(b)) continue;
 
       // Priority inversion: b (later) has higher priority (lower number) than a (earlier),
       // and a does not have an earlier deadline to justify being placed first.
@@ -538,7 +603,17 @@ export function constraintLine(hints: PlanHint[]): string {
  * §C2: when themeTag is provided, append a theme line after the capacity line.
  * §A4: when `constraint` is non-empty, append the NL-hint constraint line.
  */
-export function genPrompt(lines: string[], capacityMin: number, themeTag?: string | null, constraint = '', memoryLine = ''): string {
+export function genPrompt(
+  lines: string[],
+  capacityMin: number,
+  themeTag?: string | null,
+  constraint = '',
+  memoryLine = '',
+  // Named `balLine`, not `balanceLine` — a parameter named `balanceLine` shadows the
+  // module-level `balanceLine(shortfalls)` function (above) within this function's own
+  // scope, which is a real footgun even though nothing here ever needs to call it.
+  balLine = '',
+): string {
   const themeLine = themeTag
     ? `\nToday's theme: ${themeTag} — favour ${themeTag}-tagged tasks earlier.`
     : '';
@@ -547,7 +622,7 @@ export function genPrompt(lines: string[], capacityMin: number, themeTag?: strin
     `1) hard deadlines (sooner due = earlier); 2) priority (P1 highest);\n` +
     `3) momentum — group related work, minimize context switches;\n` +
     `4) front-load demanding work while focus is fresh.\n` +
-    `Capacity today: ~${capacityMin} focused minutes.${themeLine}${constraint}${memoryLine}\n\n` +
+    `Capacity today: ~${capacityMin} focused minutes.${themeLine}${constraint}${memoryLine}${balLine}\n\n` +
     `Tasks (index: [priority] title (due) ~estimate tags):\n${lines.join('\n')}\n\n` +
     `Reply with ONLY a JSON array containing every index exactly once, in your chosen order. Example: [3,0,1,2]`
   );
@@ -710,13 +785,41 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
     newToday = newTodayTasks(staged, tz, todayInTZ(tz));
   }
 
+  // Balance-targets wave (bal-4): the staged tasks in a category running behind its
+  // weekly target — the LAST ordering band (after theme/memory/new_today, before
+  // due/priority; see the ticket's Non-goals). Gated on the pref (absent row ⇒ ON);
+  // empty on pref-off / no targets / under-floor / any lookup failure — `dimensionShortfalls`
+  // + `biasLeadDimensions` are a pure READ of user-stated config (wave README, "Instruction,
+  // not evidence"), never allowed to break authoring's never-throws invariant (persistDeterministic
+  // above; the try/catch below degrades to the empty set exactly like `loadMemoryRelated`).
+  // `balanceShortfalls` is computed once here and reused below for the LLM prompt's soft
+  // `balanceLine`, so the service is queried at most once per authorPlanOrder call.
+  let balanceShortfalls: DimensionShortfall[] = [];
+  let balanceLead = new Set<string>();
+  if (prefs.balance_bias_enabled) {
+    try {
+      balanceShortfalls = await dimensionShortfalls(owner, date);
+      const leadDims = new Set(biasLeadDimensions(balanceShortfalls));
+      if (leadDims.size > 0) {
+        const catsByTask = await entityCategoryNamesByIds('task', staged.map((t) => t.task_id));
+        for (const t of staged) {
+          if (catsByTask.get(t.task_id)?.some((c) => leadDims.has(c))) balanceLead.add(t.task_id);
+        }
+      }
+    } catch (err) {
+      logger.debug('authorPlanOrder: balance shortfall lookup failed — ignoring', { owner, err: (err as Error).message });
+      balanceShortfalls = [];
+      balanceLead = new Set();
+    }
+  }
+
   // Deterministic authoring — basic mode, AI off, Ollama unreachable at the pre-flight
   // check, OR (via the catch below) an LLM call that fails MID-loop. Centralised here so
   // the "never throws / always lands a valid order" invariant holds for every caller.
   const persistDeterministic = async () => {
-    const detIndices = deterministicIndices(staged, themeTag, fillOrder, memoryRelated, newToday);
+    const detIndices = deterministicIndices(staged, themeTag, fillOrder, memoryRelated, newToday, balanceLead);
     const postPassed = tagGroupPostPass(detIndices, staged);
-    const defects = checkOrder(postPassed, staged, date, themeTag, memoryRelated);
+    const defects = checkOrder(postPassed, staged, date, themeTag, memoryRelated, balanceLead, newToday);
     const final = defects.length === 0 ? postPassed : detIndices;
     await persistOrder(owner, date, staged, final, 'deterministic');
   };
@@ -738,6 +841,8 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
   const constraint = constraintLine(await loadPlanHints(owner, date));
   // AA3a: the memory-context nudge (empty string when nothing is related).
   const memoryLine = memoryOrderLine(staged, memoryRelated);
+  // bal-4: the balance-targets nudge (empty string when nothing is behind / pref off).
+  const balLine = balanceLine(balanceShortfalls);
 
   // B4 invariant (docs/M-ai-scheduler.md:270,303): an LLM failure MID-loop — Ollama dies
   // AFTER the pre-flight isReady() check (timeout, OOM, dropped connection) — must
@@ -754,8 +859,8 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
         ownerId: owner,
 
         generate: async () => {
-          // §C2: theme tag; §A4: NL-hint constraint line; AA3a: memory-context line
-          const raw = await generateJson<unknown>(genPrompt(lines, capacityMin, themeTag, constraint, memoryLine), {
+          // §C2: theme tag; §A4: NL-hint constraint line; AA3a: memory-context line; bal-4: balance line
+          const raw = await generateJson<unknown>(genPrompt(lines, capacityMin, themeTag, constraint, memoryLine, balLine), {
             purpose: 'plan_generate',
             system: genSystem(),
           });
@@ -765,7 +870,7 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
         check: (order) => {
           // §A2: apply post-pass before checking
           const postPassed = tagGroupPostPass(order, staged);
-          return checkOrder(postPassed, staged, date, themeTag, memoryRelated);
+          return checkOrder(postPassed, staged, date, themeTag, memoryRelated, balanceLead, newToday);
         },
 
         judge: async (order): Promise<JudgeScore> => {
@@ -792,7 +897,7 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
           return safeOrder(raw, staged);
         },
 
-        baseline: () => deterministicIndices(staged, themeTag, fillOrder, memoryRelated, newToday),
+        baseline: () => deterministicIndices(staged, themeTag, fillOrder, memoryRelated, newToday, balanceLead),
       },
       {
         record: (ownerId, stage, rev) => recordPlanRevision(runId, ownerId, stage, rev),
@@ -820,7 +925,7 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
 
     // §A2: apply post-pass to the final LLM result
     const finalCandidate = tagGroupPostPass(result.candidate, staged);
-    const finalDefects = checkOrder(finalCandidate, staged, date, themeTag, memoryRelated);
+    const finalDefects = checkOrder(finalCandidate, staged, date, themeTag, memoryRelated, balanceLead, newToday);
     const finalIndices = finalDefects.length === 0 ? finalCandidate : result.candidate;
 
     // §A3: only an LLM-authored order carries per-task rationales; an escape-hatch

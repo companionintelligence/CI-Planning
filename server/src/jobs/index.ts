@@ -27,6 +27,7 @@ import { calibrateClassification } from '../services/classification-learning.js'
 import { calibrateDismissals } from '../services/dismissal-learning.js';
 import { ollamaScorer } from '../services/classification-score.js';
 import { calibratePlanLoop } from '../services/plan-loop-learning.js';
+import { snapshotBalanceWeek } from '../services/balance-snapshot.js';
 import { freezeStars } from './freeze-stars.js';
 import { resetRoutineTasks } from './reset-routines.js';
 import { config } from '../lib/config.js';
@@ -428,6 +429,14 @@ async function execute(kind: string): Promise<JobOutcome> {
       );
       return { itemsCreated: 0, itemsUpdated: indexed, log: `Classification calibration — ${parts.join('; ')}` };
     }
+    case 'snapshot_balance': {
+      // Balance-targets wave, ticket 6 — durable-evidence stage. Owner-scoped (see
+      // OWNER_SCOPED_KINDS): freezes only this owner's previous completed week. A
+      // cron/agent write, so it deliberately does NOT stamp owner attribution (WHO
+      // rule, owner ruling 2026-07-16).
+      const r = await snapshotBalanceWeek(currentOwnerId(), new Date());
+      return { itemsCreated: r.rows, itemsUpdated: 0, log: `Balance snapshot: ${r.rows} row(s) for week ${r.weekStart}` };
+    }
     case 'calibrate_dismissals': {
       // Close-loop wave, ticket 3 — bounded batch learning over dismissal evidence.
       // Owner-scoped (see OWNER_SCOPED_KINDS): every read filters on the owner, and
@@ -587,6 +596,9 @@ const OWNER_SCOPED_KINDS = new Set([
   // Close-loop wave, ticket 3: the dismissal evidence log is per-owner by
   // construction — never pool one owner's dismissals into another's rollup.
   'calibrate_dismissals',
+  // Balance-targets wave, ticket 6: the weekly snapshot is per-owner evidence — never
+  // pool one owner's targets/calendar into another's history.
+  'snapshot_balance',
   'freeze_stars',
   'reset_routines',
 ]);

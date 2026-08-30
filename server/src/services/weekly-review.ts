@@ -1,6 +1,6 @@
 import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
-import { isoWeekKey } from '../lib/tz.js';
+import { isoWeekKey, weekDays } from '../lib/tz.js';
 
 /** The discriminated shape `GET /api/calibration` has always returned. */
 export type CalibrationReadout =
@@ -71,17 +71,9 @@ export interface WeekReview {
   objectives_rotting: number;
 }
 
-function addDays(dateStr: string, n: number): string {
-  const dt = new Date(dateStr + 'T12:00:00Z');
-  dt.setUTCDate(dt.getUTCDate() + n);
-  return dt.toISOString().slice(0, 10);
-}
-
-function weekDays(anchor: string): string[] {
-  const dow = new Date(anchor + 'T12:00:00Z').getUTCDay(); // 0=Sun
-  const monday = addDays(anchor, -(dow === 0 ? 6 : dow - 1));
-  return Array.from({ length: 7 }, (_, i) => addDays(monday, i));
-}
+// Code-review fix: `addDays`/`weekDays` used to be private copies here, byte-identical
+// to `services/balance-budget.ts`'s (and to a third private copy inlined in
+// `lib/tz.ts`'s `isoWeekKey`) — now shared from `lib/tz.ts`.
 
 export async function weeklyReview(anchor: string): Promise<WeekReview> {
   const owner = currentOwnerId();

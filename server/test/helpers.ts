@@ -92,6 +92,11 @@ export function resetDb(): void {
     -- 0157: measurement is appended per (owner, computed_date) run; clear so a
     -- backdated reading from one test doesn't collide with the next test's.
     DELETE FROM possible_dismissal_rate;
+    -- 0165: append-only weekly balance snapshot (first-freeze-wins, UNIQUE(owner_id,
+    -- week_start, category)) — same cross-test contamination argument as
+    -- calibration_history/triality_log/possible_outcome_log above: a leftover row for
+    -- the same (owner, week, category) would silently no-op a later test's insert.
+    DELETE FROM balance_week_log;
   `);
   // Prune any extra owners a multi-tenant isolation test created, so they don't
   // leak across the shared pid-keyed DB into later files (resetDb kept only the
@@ -158,7 +163,8 @@ export function resetDb(): void {
       memory_last_synced_at = NULL,
       triality_enabled = 0,
       sleep_hours_per_week = 63,
-      capacity_hours_per_week = 56;
+      capacity_hours_per_week = 56,
+      balance_bias_enabled = 1;
   `);
 }
 

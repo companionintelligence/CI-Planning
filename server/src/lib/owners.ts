@@ -253,6 +253,11 @@ export async function purgeOwnerData(ownerId: string): Promise<void> {
   // collide with the restored rows).
   await run('DELETE FROM life_priorities WHERE owner_id = ?', ownerId);
   await run('DELETE FROM planning_sessions WHERE owner_id = ?', ownerId);
+  // Balance-targets wave (bal-6): the weekly target/scheduled/timed snapshot log.
+  // FK CASCADE already covers deleteOwner's full-owner-removal path; explicit here
+  // because the purge list is explicit by convention (matches life_priorities above),
+  // and this table is also part of the portable export/import round-trip.
+  await run('DELETE FROM balance_week_log WHERE owner_id = ?', ownerId);
   // entity_tags has no direct owner_id — delete by entity membership.
   await run(`DELETE FROM entity_tags WHERE entity_id IN (
          SELECT id FROM tasks WHERE owner_id = ?
