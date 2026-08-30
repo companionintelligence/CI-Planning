@@ -40,7 +40,7 @@ below is bound by it.
 | # | Ticket | Type | Status | Blocked by |
 |---|---|---|---|---|
 | 1 | [evidence schema](place-1-placement-evidence-schema.md) | DB Migration | ✅ done | — |
-| 2 | [capture the menu](place-2-capture-placement-menu.md) | Backend | ⬜ not started | 1 |
+| 2 | [capture the menu](place-2-capture-placement-menu.md) | Backend | ✅ done | 1 |
 | 3 | [capture the correction](place-3-capture-correction.md) | Backend | ⬜ not started | 2 |
 | 4 | [calibrate batch](place-4-calibrate-placement-batch.md) | Backend + DB | ⬜ not started | 3 |
 | 5 | [bias gap choice](place-5-bias-gap-choice.md) | Backend | ⬜ not started | 4 |

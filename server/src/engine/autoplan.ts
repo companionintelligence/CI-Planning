@@ -35,6 +35,7 @@ import { getPatternBlocks, directionWindowsByName, FALLBACK_FILL_DIRECTION_NAMES
 import { resolveDayType } from '../services/day-types.js';
 import { getPatternPrefs } from '../services/pattern-prefs.js';
 import { nestCandidatesInRange, preferredContainers, taskNestCoords } from '../services/auto-nest.js';
+import { logPlacement, slotKeyFor, type CandidateGap } from '../services/placement-learning.js';
 
 const DEFAULT_EST_MIN = 30;
 const MIN_SESSION_MS = 15 * MS_PER_MIN;
@@ -351,7 +352,7 @@ function orderByNewToday(cands: StagedTask[], todayISO: string, tz: string): Sta
 const insBlock = () =>
   store().prepare(
     `INSERT INTO time_blocks (id, task_id, owner_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, parent_block_id, auto_run_id, tag)
-     VALUES (uuid7(), ?, ?, ?, 'task', ?, ?, 0, 1, 'agent', 'planned', ?, ?, ?)`
+     VALUES (uuid7(), ?, ?, ?, 'task', ?, ?, 0, 1, 'agent', 'planned', ?, ?, ?) RETURNING id`
   );
 
 /**
@@ -421,6 +422,9 @@ async function placeIntoWindow(
   const gaps = buildGaps(windowStartMs, windowEndMs, fixed, breakMs);
   const ins = insBlock();
   let blocksCreated = 0;
+  // Ticket 2 (placement-learning wave): at most one coordinate read per task, however
+  // many sessions it splits into.
+  const slotKeyCache = new Map<string, string>();
 
   // AD2: when placing INTO a Plan/container (parentBlockId set), read the container's
   // direction (`time_blocks.tag`) so each child task inherits it as its level-1 primary
@@ -436,14 +440,30 @@ async function placeIntoWindow(
     const sessions = splitIntoSessions((t.estimated_minutes ?? DEFAULT_EST_MIN) * MS_PER_MIN, maxFocusMs);
     let placedAny = false;
     for (const want of sessions) {
+      // Snapshot the menu BEFORE the pick — `pick.gap.cursor` mutates below as sessions
+      // pack in, so a snapshot taken after would show the wrong cursor for this choice.
+      const candidateSnapshot: CandidateGap[] = gaps.map((g) => ({ s: g.start, e: g.end, c: g.cursor }));
       const pick = pickGap(gaps, want);
       if (!pick) break;
       const startMs = pick.gap.cursor;
       const endMs = startMs + pick.len;
-      await ins.run(t.task_id, owner, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), opts.parentBlockId ?? null, opts.runId ?? null, opts.parentBlockId ? containerTag : null);
+      const startISO = new Date(startMs).toISOString();
+      const endISO = new Date(endMs).toISOString();
+      const { id: blockId } = (await ins.get<{ id: string }>(t.task_id, owner, t.title, startISO, endISO, opts.parentBlockId ?? null, opts.runId ?? null, opts.parentBlockId ? containerTag : null))!;
       pick.gap.cursor = endMs + breakMs;
       blocksCreated++;
       placedAny = true;
+      const slotKey = await slotKeyFor(owner, t.task_id, slotKeyCache);
+      await logPlacement(owner, {
+        blockId,
+        taskId: t.task_id,
+        slotKey,
+        autoRunId: opts.runId ?? null,
+        chosenStartAt: startISO,
+        chosenEndAt: endISO,
+        fit: pick.len === want ? 1 : 0,
+        candidates: candidateSnapshot,
+      });
     }
     if (placedAny) {
       placedTaskIds.add(t.task_id);
