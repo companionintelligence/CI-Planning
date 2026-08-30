@@ -77,6 +77,15 @@ export function resetDb(): void {
     DELETE FROM copy_history;
     DELETE FROM life_priorities;
     DELETE FROM planning_sessions;
+    -- 0166: durable placement evidence, append-only by design — same cross-test
+    -- contamination argument as calibration_history / triality_log above.
+    DELETE FROM placement_log;
+    -- 0166: placement_preferences is a regenerable rollup, but it is read by a
+    -- production path (pickGap), so a leftover row would silently bend another
+    -- test file's Auto placement.
+    DELETE FROM placement_preferences;
+    -- 0166: placement_survival is per-owner-per-day measurement output.
+    DELETE FROM placement_survival;
   `);
   // Prune any extra owners a multi-tenant isolation test created, so they don't
   // leak across the shared pid-keyed DB into later files (resetDb kept only the
