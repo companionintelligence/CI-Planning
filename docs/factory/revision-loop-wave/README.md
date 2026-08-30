@@ -52,12 +52,16 @@ pure SQL aggregation over evidence the loop already paid for.
 | 1 | [evidence + stats schema](rev-1-plan-loop-evidence-schema.md) | DB Migration | ✅ committed (`67bfd190`) | — |
 | 2 | [capture revision evidence](rev-2-capture-revision-evidence.md) | Backend | ✅ committed (`0555dc32`) | 1 |
 | 3 | [calibrate batch + cron](rev-3-calibrate-plan-loop-batch.md) | Backend | ✅ committed (`66476b89`) | 2 |
-| 4 | [trend readout](rev-4-plan-loop-trend-readout.md) | Backend | ⬜ not started | 3 |
+| 4 | [trend readout](rev-4-plan-loop-trend-readout.md) | Backend | ✅ committed (`dab2f33b`) | 3 |
 
-Strictly ordered 1 → 2 → 3 → 4. Merge 2 early even if 3–4 trail: the corpus starts
-accruing the day 2 merges and nothing can recover history from before it (see "No
-backfill"). Ticket 4 is what makes the loop falsifiable — do not drop it as "just
-reporting"; it is the reason this wave is not `plan_outcomes` again.
+**Wave complete as of 2026-08-29.** All four tickets landed in strict dependency
+order (`67bfd190` → `0555dc32` → `66476b89` → `dab2f33b`). The loop this wave set
+out to close: `agents/loop.ts` clause 5 promised an append-only revision log,
+every candidate the §A0 authoring loop scored was durably recorded, weekly-batched,
+and is now readable at `GET /api/plan-loop/trend` — closing the gap without
+weakening `audit_log`'s own append-only guarantee, and without an apply stage
+(a human reads the trend; nothing auto-tunes). Ticket 4 is what makes the loop
+falsifiable — it was not dropped as "just reporting."
 
 ## Decisions of record
 
