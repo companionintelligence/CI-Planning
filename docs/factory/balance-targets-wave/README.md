@@ -24,14 +24,59 @@ can rate Health 10/10 with a 14 h/week target and the scheduler never acts on it
 
 ## Corrections to the brief that opened this wave
 
-- **`client/src/lib/dimension-rollup.ts` is not on this base.** It exists only on
-  `claude/app-launch-tailscale-7c490a` (commit `e7359a3c`). The drawer's
-  `DimensionPanel` here shows Satisfaction / Importance / Gap / Target only.
-- **The "batch arguably exists" premise does not hold.** There is no target-vs-scheduled
-  computation anywhere server-side (`grep -rn "unallocated" server/src` → empty). The
-  §6 comparison in `triality-vector.ts:308` measures **timed minutes from
-  `time_entries`**, a different quantity, inside the situation vector. This wave builds
-  the batch stage; it is not "capture + batch exist, add apply".
+- **`client/src/lib/dimension-rollup.ts` was not on this base when this wave was
+  first drafted** (2026-08-29, before the rebase below) — it existed only on
+  `claude/app-launch-tailscale-7c490a` (commit `e7359a3c`), and this worktree's
+  `DimensionPanel` showed Satisfaction / Importance / Gap / Target only. **This is
+  now stale — see "Update — 2026-08-29 rebase" below.** Left here rather than
+  deleted so the history of what changed and why stays legible.
+- **The "batch arguably exists" premise does not hold, and still doesn't.** There
+  was no target-vs-scheduled computation anywhere server-side
+  (`grep -rn "unallocated" server/src` → empty at the time). The §6 comparison in
+  `triality-vector.ts:308` measures **timed minutes from `time_entries`**, a
+  different quantity, inside the situation vector. This wave still builds the
+  server batch stage (ticket 1) — the rebase below added a CLIENT rollup, not a
+  server one, and tickets 3/4's bias needs server data regardless of what the
+  client can compute for itself.
+
+## Update — 2026-08-29 rebase onto `origin/main`
+
+This worktree's `main` was 7 commits behind `origin/main` when this wave was
+first drafted. After rebasing onto `origin/main` (merge-base moved from
+`cb072d07` to `cfc5e753`), two merged PRs landed in this branch:
+
+- **#584** — the close-loop wave (dismissed suggestions), making `0157`/`0158`
+  real migrations, not paper reservations.
+- **#587** — "Objectives in the drawer, a Balance time rollup, and the
+  close-loop ticket wave," which is exactly the `dimension-rollup.ts` /
+  `DimensionPanel` work the original brief flagged as "may not be on main yet."
+  It is now on main, and it is a fuller build of it than this wave's ticket 5
+  originally planned: a week/month-scoped Allocation group (Target / Scheduled /
+  Unallocated-or-Over-target), computed client-side from `api.blocks.list()`,
+  plus a Balance.tsx simplification (the old Focus Areas rail was removed in
+  favor of the drawer as the single per-dimension detail surface).
+
+**Consequence: ticket 5 was rewritten**, not just renumbered. Its original scope
+(a server shortfall endpoint + an "Unallocated" field in the drawer) is now
+redundant with #587. What #587 does NOT add is any way to act on the number —
+every row in the drawer's Open list opens the task, none stages it. Ticket 5 now
+does exactly that: a one-tap Stage button on the existing Open list, entirely
+client-side, no new server route, no dependency on ticket 1. See
+[bal-5-suggest-surface.md](bal-5-suggest-surface.md) for the full rework and its
+own "Superseded by a rebase, not by design" note.
+
+**Ticket 1 is unaffected in purpose** (tickets 3/4's server-side bias cannot call
+client code regardless of what the client now computes for itself) but now
+carries a documented divergence: the client's "Scheduled" number in
+`DimensionPanel` counts blocks with no status filter — including
+cancelled/skipped/missed — while ticket 1's service deliberately excludes them.
+Not a bug this wave introduces or is responsible for fixing; flagged in ticket 1
+and in the follow-ups table below.
+
+**Ticket 7's line-number citations into `DetailsDrawer.tsx` were updated** to
+match the file as rebased in (the function moved from line 586 to 618) — those
+numbers should still be re-checked at implementation time; this file has shifted
+twice in one day already.
 
 ## Decisions of record (owner rulings, 2026-08-29)
 
@@ -88,14 +133,15 @@ target; `completed` does. Categories resolve block-own-else-task
 | 2 | [balance_bias_enabled pref](bal-2-balance-bias-pref.md) | DB Migration + Frontend | ⬜ not started | — |
 | 3 | [candidate-fill bias](bal-3-candidate-bias.md) | Backend | ⬜ not started | 1, 2 |
 | 4 | [day-order balance band](bal-4-order-band.md) | Backend | ⬜ not started | 1, 2 |
-| 5 | [suggest surface](bal-5-suggest-surface.md) | Backend + Frontend | ⬜ not started | 1 |
+| 5 | [suggest surface](bal-5-suggest-surface.md) | Frontend | ⬜ not started | — |
 | 6 | [weekly history log](bal-6-week-log.md) | DB Migration + Backend | ⬜ not started | 1 |
 | 7 | [history readout](bal-7-history-readout.md) | Backend + Frontend | ⬜ not started | 6 |
 
-1 and 2 are independent and can land in parallel. 3, 4 and 5 fork off them and are
-independent of each other. 6 forks off 1; 7 needs 6. Merge 6 early even if 7 trails —
-the history corpus starts accruing only when the cron row exists, and nothing can
-recover missed weeks.
+1 and 2 are independent and can land in parallel. 3 and 4 fork off them; 5 is now
+fully independent (client-only, no server dependency — see the 2026-08-29 rebase
+update below) and can land any time. 6 forks off 1; 7 needs 6. Merge 6 early even
+if 7 trails — the history corpus starts accruing only when the cron row exists,
+and nothing can recover missed weeks.
 
 ## Cross-wave dependencies — verified against every branch, 2026-08-29
 
@@ -120,15 +166,22 @@ inferred from a README):**
 | 0159/0160 | G-INT — placement-override learning (`placement-learning-wave`) | `claude/silly-golick-0b3078` | 6 tickets + README only, no implementation |
 | 0162 | Agent loop's write-only revision log (`revision-loop-wave`) | `claude/silly-solomon-5ab111` | 6 tickets + README, **plus one real file**: `db/migrations/0162_plan_loop_learning.ts` and a `test/helpers.ts` teardown addition |
 
-**The collision:** G-INT's `place-1`/`place-4` tickets claim 0159/0160 with the
-identical reasoning this wave originally used ("0157/0158 taken, so next is
-0159/0160") — two independent planning sessions reserved the same free slots
-because neither could see the other's worktree. Since I can't edit G-INT's
-tickets (scope fence) and their claim is just as valid as mine, **this wave now
-assumes 0163/0164** (tickets 2 and 6, updated) — past every real slot (0157,
-0158, 0161) and every paper claim (0159, 0160, 0162) currently visible.
-**Re-run this check at implementation time**; if another wave has since landed
-past 0164, renumber again. The ids inside the migration files must be renamed
+**The collision, and how it was resolved.** G-INT's `place-1`/`place-4` tickets
+originally claimed 0159/0160 with the identical reasoning this wave used
+("0157/0158 taken, so next is 0159/0160") — a real triple-claim, since
+revision-loop-wave had independently claimed the same pair too. Three rounds of
+independent sweep-and-reclaim later (0159/0160 → this wave tried 0163/0164 →
+G-INT tried 0164/0165), the G-INT session proposed a **fixed sequence across
+all three waves**, relayed here via cross-session message, 2026-08-29:
+revision-loop-wave keeps **0162/0163** (0162 already landed as a real file
+there — re-litigating a merged number is real churn a still-unimplemented
+plan's number isn't); this wave takes **0164/0165** (tickets 2 and 6, updated);
+G-INT takes **0166/0167**. Adopted here because it's mechanically better than
+another independent sweep (which is what produced the triple-claim in the
+first place) and costs nothing to accept — it only changes two integers this
+wave doesn't otherwise care about. **Re-verify at implementation time
+regardless** — a fourth wave, or any of these three actually merging, moves
+the real head again. The ids inside the migration files must be renamed
 together with the filenames, and `migrations/index.ts` registration order must
 match the actual head.
 
@@ -164,12 +217,19 @@ match the actual head.
 
 **Bottom line: this wave's 7 tickets can be implemented in parallel with both
 sibling waves.** No two waves write the same lines of the same function. The
-only two coordination points are (a) the 0163/0164 slot re-check above, both
-mechanical renumbers with no design implication, and (b) the `agents/plan.ts`
-`runLoop` call-site adjacency with the revision-loop-wave, a normal merge-order
-issue, not a blocker — implement, test, and land any of the three waves
-independently; whichever merges second does a small manual resolve on those
-two spots, nothing more.
+only two coordination points are (a) the 0164/0165 slot assignment above —
+settled, not just assumed, though still worth a final re-check at
+implementation time — and (b) the `agents/plan.ts` `runLoop` call-site
+adjacency with the revision-loop-wave, a normal merge-order issue, not a
+blocker. Implement, test, and land any of the three waves independently;
+whichever merges second does a small manual resolve on that one spot, nothing
+more.
+
+Also unaffected by any of this: the 2026-08-29 rebase onto `origin/main` (see
+"Update" section above) reworked ticket 5 in response to #587 shipping the
+client-side Allocation/Unallocated surface this wave had independently
+planned. That rework is unrelated to the migration-slot coordination — it's a
+response to what's already merged, not to a sibling wave still in flight.
 
 ## Verification
 
@@ -188,5 +248,6 @@ pnpm --filter server exec vitest run server/test/<file>.test.ts
 |---|---|---|
 | Task lock/unlock toggle on the task modal — ticketed: [drafts/task-lock-toggle.md](../drafts/task-lock-toggle.md). `time_blocks.is_locked` and `PATCH /api/blocks/:id` already exist; the ticket adds an `activeBlockFor` route enrichment (mirroring `peopleFor`) and wires the Lock chip that already exists on the timeblock tab (`ElementWizard.tsx:1503`) onto the task tab. Separate mechanism from targets — deliberately fenced out of this wave. | owner ruling | ticketed 2026-08-29, not started |
 | Capacity reservation ("protect 14 h for Health") as an opt-in layer over `balance_week_log` data | apply-mode decision | open, only if bias measures too gentle |
-| Reconcile with `e7359a3c`'s client `dimension-rollup.ts` if that branch merges — ticket 5's server shortfall read supersedes its client-side week math; keep the server as the single source | brief correction | open |
+| ~~Reconcile with `e7359a3c`'s client `dimension-rollup.ts`~~ — **done**: it merged as #587 during this wave's 2026-08-29 rebase; ticket 5 was rewritten around it rather than superseding it (see "Update — 2026-08-29 rebase" above) | brief correction | resolved 2026-08-29 |
+| The client `DimensionPanel`'s "Scheduled" count has no status filter (counts cancelled/skipped/missed blocks); ticket 1's server service deliberately excludes them. Two different numbers for "scheduled" now exist in the app, one client one server. Not this wave's bug and not fixed here — flagged in ticket 1 | found reconciling ticket 5 post-rebase | open, out of scope |
 | `life_priorities` has no `updated_at`-driven staleness surface — a 2-year-old target biases as strongly as yesterday's; consider a "targets last reviewed" nudge | found pinning ticket 1 | open, out of scope |

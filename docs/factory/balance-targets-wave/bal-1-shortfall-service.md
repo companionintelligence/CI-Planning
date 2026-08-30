@@ -46,6 +46,16 @@ surface, weekly snapshot) consumes this one service — build it once, here.
   bounds (a block spanning Sunday midnight contributes only its in-week part).
   Malformed rows (end ≤ start) contribute 0, mirroring `entryMinutes`
   (`services/triality-vector.ts:236`).
+  **Known divergence from the client, noted not fixed:** `client/src/components/DetailsDrawer.tsx`'s
+  `DimensionPanel` (shipped in #587, merged to `origin/main` after this wave was
+  first drafted) computes its own "Scheduled" client-side via
+  `api.blocks.list()` + `inWindow(b.start_at, ...)`, with NO status filter — it
+  counts cancelled/skipped/missed blocks toward "Scheduled" that this service
+  deliberately excludes. This service does not inherit that gap: tickets 3/4 bias
+  placement, and biasing off blocks that never happened would be wrong in the
+  opposite direction from what bias is for. Fixing the client's looser count is
+  out of scope for this wave (it predates this wave and nothing here regresses
+  it) — flagged as a follow-up below, not silently diverged from without a note.
 - **A block with N categories contributes its full minutes to each** (no splitting) —
   matches how the drawer's open-task list already treats membership. Say so in a
   comment.

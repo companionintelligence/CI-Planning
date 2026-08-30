@@ -28,11 +28,11 @@ past calendars mutate and `life_priorities` has no history).
 
 ## Pinned conventions
 
-- **Migration:** `server/src/db/migrations/0164_balance_week_log.ts` — **slot
-  verified 2026-08-29** (ticket 2's note applies identically: 0157/0158/0161 are
-  merged to `origin/main`; 0159/0160 double-claimed on paper by G-INT; 0162 claimed
-  by the revision-loop-wave; this ticket steps past all four to 0164). **Re-verify
-  at implementation time** per README "Cross-wave dependencies." Skeleton per 0127
+- **Migration:** `server/src/db/migrations/0165_balance_week_log.ts` — **slot
+  fixed by cross-session coordination, 2026-08-29** (ticket 2's note applies
+  identically — see it for the full three-way sequence: revision-loop-wave
+  0162/0163, this wave 0164/**0165**, G-INT 0166/0167). **Re-verify at
+  implementation time regardless** per README "Cross-wave dependencies." Skeleton per 0127
   (line-1 type import, `export const id`, why-comment, `up`, idempotent
   `CREATE TABLE IF NOT EXISTS`, register in `index.ts` with `.js` import). Same
   file also seeds the cron row (0150 shows job-seed style):
@@ -92,7 +92,7 @@ Read `db/migrations/0127_life_priorities.ts` and `0150_calibrate_classification_
 ## Files impacted
 
 **New:**
-- `server/src/db/migrations/0164_balance_week_log.ts`
+- `server/src/db/migrations/0165_balance_week_log.ts`
 - `server/src/services/balance-snapshot.ts`
 - `server/test/balance-snapshot.test.ts`
 

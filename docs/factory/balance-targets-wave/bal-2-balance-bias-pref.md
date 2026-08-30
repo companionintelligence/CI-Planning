@@ -23,21 +23,22 @@ wire it end-to-end: migration → schema.ts mirror → GraphQL prefs map → cli
 
 ## Pinned conventions
 
-- **Migration:** `server/src/db/migrations/0163_balance_bias_pref.ts` — **slot
-  verified 2026-08-29** against every active branch, not just this worktree's stale
-  `main` (7 commits behind `origin/main` at last check): 0157/0158 (dismissal
-  evidence) and 0161 (completion_score) are MERGED to `origin/main`; 0159/0160 are
-  double-claimed on paper by the G-INT placement-learning-wave
-  (`claude/silly-golick-0b3078`, unmerged — its README states the identical
-  "0157/0158 reserved, so 0159/0160" reasoning this wave originally used); 0162 is
-  claimed on paper by the revision-loop-wave (`claude/silly-solomon-5ab111`,
-  unmerged). This wave deliberately steps past all four rather than contest
-  G-INT's claim. **Re-verify at implementation time** — replay the checks in
-  README "Cross-wave dependencies" before trusting 0163 is still free; renumber
-  file, `export const id`, and the `migrations/index.ts` import position to
-  whatever is actually free then. Skeleton (copy 0156 exactly):
+- **Migration:** `server/src/db/migrations/0164_balance_bias_pref.ts` — **slot
+  fixed by cross-session coordination, 2026-08-29**, replacing the earlier
+  independent-sweep approach that produced a real triple-claim on 0159/0160
+  across this wave, G-INT (`placement-learning-wave`,
+  `claude/silly-golick-0b3078`) and the revision-loop-wave
+  (`claude/silly-solomon-5ab111`). Settled sequence: revision-loop-wave keeps
+  `0162`/`0163` (0162 already landed as a real file there, so re-litigating it is
+  real churn a still-unimplemented plan's number isn't); this wave takes
+  `0164`/`0165`; G-INT takes `0166`/`0167`. 0157/0158 (dismissal evidence) and
+  0161 (completion_score) are separately confirmed MERGED to `origin/main`.
+  **Re-verify at implementation time regardless** — this sequence resolves the
+  known collision as of 2026-08-29, not whatever the tree looks like when this
+  ticket is actually built; a fourth wave or a merge could still move things.
+  Skeleton (copy 0156 exactly):
   - Line 1 `import type { Database } from 'better-sqlite3';`
-  - `export const id = '0163_balance_bias_pref';`
+  - `export const id = '0164_balance_bias_pref';`
   - Block comment saying WHY (targets-reach-placement wave; bias gate; default on by
     owner ruling; suggest surface deliberately not gated)
   - `hasColumn` guard via `PRAGMA table_info` (SQLite has no ADD COLUMN IF NOT
@@ -80,7 +81,7 @@ enumerate every wiring point.
 ## Files impacted
 
 **New:**
-- `server/src/db/migrations/0163_balance_bias_pref.ts`
+- `server/src/db/migrations/0164_balance_bias_pref.ts`
 
 **Changed:**
 - `server/src/db/migrations/index.ts`

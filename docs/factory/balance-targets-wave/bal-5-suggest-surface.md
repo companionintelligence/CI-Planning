@@ -1,78 +1,105 @@
-> **Type:** Backend + Frontend
+> **Type:** Frontend
 > **Phase:** Balance-targets wave — stated targets reach the scheduler
 > **Branch:** `feat/balance-suggest-surface`
-> **Commit style:** `feat(balance): shortfall read API + one-tap stage from the dimension drawer`
+> **Commit style:** `feat(balance): one-tap stage from the dimension drawer's Open list`
 > **Design:** [README.md](README.md)
-> **Dependencies:** Blocked by ticket 1; independent of 2/3/4
+> **Dependencies:** None
 
 ## Goal
 
-Surface the shortfall where the owner already looks — the Balance view and the
-dimension drawer — with a one-tap "stage a task" action. The read is pure; **the
-human tap is the write** (precedent: `suggestEstimate` is "PURE READ — it never
-writes", `services/calibration.ts:8`; the accept is the write). This is the suggest
-half of the owner's bias+suggest ruling, and it works even with the bias pref off.
+Add a one-tap "Stage" action to the dimension drawer's existing Open-tasks list, so
+an owner looking at "3.2h unallocated this week" can act on it without leaving the
+drawer. The read already exists — this ticket adds only the write affordance.
+
+**Superseded by a rebase, not by design:** this ticket originally planned to add a
+server endpoint plus an "Unallocated" field to the drawer. Both are now redundant —
+`server/src/db/migrations` PR #587 (merged to `origin/main`, pulled into this branch
+by the 2026-08-29 rebase) already shipped `client/src/lib/dimension-rollup.ts` and
+rebuilt `DimensionPanel` (`DetailsDrawer.tsx`) with a week/month-scoped Allocation
+group — Target, Scheduled, Unallocated-or-Over-target — computed entirely
+client-side from `api.blocks.list()`. It is a better version of what this ticket
+planned to build. What it does NOT have: any way to act on the shortfall. Every row
+in the panel's Open list opens the task (`setActiveTask`); none stages it.
 
 ## Non-goals
 
-- **Do not gate on `balance_bias_enabled`.** The pref gates bias; this is a read the
-  owner must act on. (README decision; say so in a route comment.)
-- **Do not auto-place or auto-stage.** The endpoint returns data; only the tap calls
-  the existing staging API. No new write endpoint at all.
-- **Do not duplicate week math client-side.** The server number is the single source
-  (README follow-up: supersedes `e7359a3c`'s client-side rollup if that branch merges).
-- **Do not redesign Balance.tsx.** One line + one button on existing surfaces.
+- **Do not add a server route.** Everything this ticket needs — the shortfall
+  number, the candidate open tasks — is already fetched and computed client-side in
+  `DimensionPanel`. Adding a server round-trip here would duplicate data the
+  component already has, which is exactly the mistake this rewrite is correcting.
+  (This also means the wave's server shortfall service, ticket 1, gains no new
+  caller from this ticket — it stays scoped to what tickets 3/4 need for
+  server-side bias, which cannot reach client code.)
+- **Do not touch `Balance.tsx`.** PR #587 deliberately removed Balance.tsx's Focus
+  Areas rail in favor of the drawer as the single place for per-dimension detail
+  (`Balance.tsx:149` comment: "Single column since the Focus Areas rail was
+  removed"). Adding a shortfall readout back onto the summary view would work
+  against that simplification. The drawer is one click away and already shows it.
+- **Do not re-sort or re-fetch `openTasks()`.** Reuse the panel's existing
+  `openTasks()`/`openGroups()` exactly; only add an ordering comparator ahead of
+  the existing `groupByTitle` call (see Pinned conventions) and the Stage button.
+- **Do not auto-stage.** The tap is the only write; nothing stages without it
+  (same posture the original ticket pinned — the human tap is the write).
+- **Do not gate on `balance_bias_enabled`.** Unchanged from the original ruling:
+  this is a read-and-act surface, independent of the bias pref.
+- **Do not add a "suggested" concept distinct from the Open list.** One list,
+  one action per row (or per top row — see conventions); no new hidden ranking
+  the owner can't see for themselves.
 
 ## Pinned conventions
 
-- **Route:** extend `server/src/routes/priorities.ts` (thin-transport doctrine in
-  its header):
-  `GET /api/priorities/shortfalls` →
-  `{ week_start: string, shortfalls: Array<{ category, target_hours, scheduled_minutes, shortfall_minutes, suggested_task_ids: string[] }> }`.
-  Anchor = `todayInTZ(ownerTimezone)`; delegate to `dimensionShortfalls`. Requires
-  read auth like the sibling GET (the route file is not in `PUBLIC_PREFIXES`).
-- **Suggested tasks — bounded retrieval:** per dimension, at most
-  `SUGGEST_TASKS_MAX = 3` (new exported const in `services/balance-budget.ts`) open
-  tasks (`status = 'open'`, `parent_id IS NULL`, `recurrence_parent_id IS NULL`,
-  not already in `flight_plan`) whose `entity_categories` include the dimension,
-  ordered `priority, COALESCE(due_at,'9999-12-31'), id` — the exact candidate-fill
-  order (`engine/autoplan.ts:780`). Implemented in the service, not the route.
-- **Client api:** `client/src/lib/api.ts` — `api.priorities.shortfalls()` typed to
-  the payload, next to the existing `api.priorities.list()`.
-- **Drawer:** `client/src/components/DetailsDrawer.tsx` `DimensionPanel`
-  (line 586): add to the Alignment `<dl>` a
-  `<Field label="Unallocated">{...}h this week</Field>` (shortfall rounded to one
-  decimal; render `0h` when met — meeting a target is information too), and below
-  the grid a `<button>` "Stage a task" shown only when `shortfall_minutes > 0` and
-  `suggested_task_ids.length > 0`; tap calls the EXISTING
-  `api.flightPlan.stage(taskId)` (`api.ts:539`, POSTs `/flight-plan` with
-  `{ task_id }`) for the first suggested id, then refetches the resource. Style:
-  reuse the `drawer-pill`/`drawer-tag` classes already in the panel — no new CSS.
-- **Balance view:** `client/src/views/Balance.tsx` dimension card (the
-  `{p().target_hours_per_week}h/wk target` line, ~179): append
-  ` · Nh unallocated` when > 0, from the same single `shortfalls()` resource
-  fetched once per view (never per card).
-- **Failure:** resource `catch (() => null)` and every render guarded — the drawer
-  must render exactly as today when the endpoint fails (matches the panel's
-  existing `.catch(() => [])` pattern).
+- **Ordering:** `openTasks()` (`DetailsDrawer.tsx:654-659` today) is currently
+  unsorted before `groupByTitle`. Add a comparator matching the candidate-fill
+  order the rest of the wave already cites (`engine/autoplan.ts:780`):
+  `priority, COALESCE(due_at, '9999-12-31'), id` — client-side equivalent:
+  `.sort((a, b) => a.priority - b.priority || (a.due_at ?? '9999-12-31').localeCompare(b.due_at ?? '9999-12-31') || a.id.localeCompare(b.id))`
+  inserted right before the existing `groupByTitle(openTasks(), ...)` call, so the
+  list an owner already sees also becomes consistently ordered (today it is not,
+  which this ticket treats as a small pre-existing gap worth closing alongside the
+  new button, not a separate ticket).
+- **Stage button:** in `RollupRow`'s open-list usage
+  (`DetailsDrawer.tsx:747-749` today), add a second action beside the existing
+  row click — a small icon button (reuse the `Lock`/similar icon-button sizing
+  already in this file, e.g. 11px, `text-muted-foreground hover:text-foreground`)
+  that calls `api.flightPlan.stage(g.first.id)` (`api.ts:539`,
+  `POST /flight-plan` with `{ task_id }`) and does NOT also trigger the row's
+  `setActiveTask` (stop propagation). On success, refetch whatever resource backs
+  `tasks()` so the staged task's status reflects immediately (check
+  `stores/index.ts` for the existing refetch the row's other mutations already
+  use — match it, don't invent a second refresh path). On failure, `showToast`
+  with the error message (existing app-wide pattern — grep `showToast` for the
+  call shape used elsewhere in this file).
+- **Visibility:** show the Stage button only when `unallocated() > 0` (the
+  existing signal, `DetailsDrawer.tsx:649` today) — met or over-target dimensions
+  get no stage affordance, since there's nothing to fill. This reuses the exact
+  signal the Allocation group already renders from; do not recompute it.
+- **Scope:** the button appears on every row of `openGroups()`, not just the
+  first — a `TitleGroup`'s `first` field already carries the single task id to
+  stage (a grouped repeat-count row stages its first occurrence). This matches
+  "one action per row" from Non-goals rather than singling out a "top pick" the
+  owner didn't choose.
 
 ## Before implementation
 
-Read `routes/priorities.ts` (whole file — it is short), `services/calibration.ts:300-345`
-(suggest-only precedent), `DetailsDrawer.tsx:586-625`, `Balance.tsx:150-200`,
-`api.ts:530-548` and `:1091` region.
+Read `DetailsDrawer.tsx:618-781` (the current `DimensionPanel` in full — note the
+exact current line numbers for `openTasks`/`openGroups`/`RollupRow` usage, since
+they will have shifted again by implementation time), `lib/dimension-rollup.ts`
+(the pure helpers, esp. `groupByTitle` and `TitleGroup`), `api.ts:433-460`
+(`api.blocks.update`/`api.flightPlan.stage` shapes), and `Balance.tsx:44-49`
+(`openTasksFor`'s comment — the precedent this ticket is following: "a pure
+client-side join... so no new server surface").
 
 ## Files impacted
 
 **Changed:**
-- `server/src/services/balance-budget.ts` — add `SUGGEST_TASKS_MAX` + suggested-task query
-- `server/src/routes/priorities.ts`
-- `client/src/lib/api.ts`
-- `client/src/components/DetailsDrawer.tsx`
-- `client/src/views/Balance.tsx`
+- `client/src/components/DetailsDrawer.tsx` — `DimensionPanel`: sort `openTasks()`
+  before grouping; add the Stage button to open rows
 
-**New:**
-- `server/test/balance-shortfalls-api.test.ts`
+**Changed (test):**
+- `client/src/components/DetailsDrawer.dimension.test.tsx` — already covers
+  `DimensionPanel`'s five contracts (see its header comment); extend it with a
+  sixth: staging from the Open list. Do not create a second test file for the
+  same component.
 
 ## Schema required
 
@@ -80,37 +107,40 @@ None.
 
 ## Definition of Done
 
-- [ ] GET returns per-dimension shortfall + ≤3 suggested open task ids in the pinned order
-- [ ] No write path anywhere in this ticket's server code
-- [ ] Drawer shows Unallocated + stage button per the pinned rules; tap stages via
-      the existing endpoint and the panel refreshes
-- [ ] Balance card shows the unallocated suffix only when > 0
-- [ ] Endpoint failure leaves both surfaces rendering as today
+- [ ] Open list within a dimension panel is ordered priority → due_at → id
+- [ ] A Stage button appears on each Open row only when `unallocated() > 0`
+- [ ] Tapping it calls the existing flight-plan stage endpoint for that row's task,
+      does not also open the task modal, and the list reflects the change
+- [ ] A dimension at or over target shows no Stage buttons
+- [ ] A failed stage call surfaces the existing toast pattern and leaves the row
+      as before (task not silently marked staged)
 
 ## Tests
 
-- [ ] API: target 14 h / 4 h scheduled ⇒ `shortfall_minutes: 600`
-- [ ] API: at most 3 suggestions, correct order, staged/subtask/instance tasks excluded
-- [ ] API: owner isolation
-- [ ] API: no `life_priorities` rows ⇒ `shortfalls: []`
-- [ ] API: auth required (401 unauthenticated, matching the sibling GET's behavior)
+- [ ] Ordering: three open tasks, mixed priority/due_at ⇒ correct sequence
+- [ ] Button visibility: `unallocated() > 0` shows it; `<= 0` hides it
+- [ ] Tap stages the correct task id and does not navigate to the task panel
+- [ ] A stage-endpoint failure shows the toast and does not change task state
+- [ ] Grouped (repeated-title) row stages `first`'s id, not a different occurrence
 
 ```bash
-pnpm --filter server exec vitest run server/test/balance-shortfalls-api.test.ts
+pnpm --filter client exec vitest run client/src/components/DetailsDrawer.dimension.test.tsx
 pnpm typecheck && pnpm test
 ```
 
 ## Acceptance Criteria
 
-- [ ] Given Health 10 h unallocated with open Health tasks, when the owner opens the
-      Health drawer, then they see "10h this week" and one tap stages the top task
-      into the flight plan (nothing placed on the calendar)
-- [ ] Given every target met, then the drawer shows 0h and no button
+- [ ] Given Health 10h unallocated with open Health tasks, when the owner opens the
+      Health drawer, then Open rows are priority/due-ordered and each carries a
+      Stage button that adds that task to the flight plan (nothing placed on the
+      calendar)
+- [ ] Given a dimension at or over target, then no Stage buttons render
 
 ## Subtasks
 
-1. [ ] Service: suggested-task query + constant
-2. [ ] Route + api.ts client
-3. [ ] Drawer field + button; Balance suffix
-4. [ ] Five API tests
+1. [ ] Re-read current `DimensionPanel` to confirm line numbers and confirm no
+       further drawer changes have landed since this ticket was written
+2. [ ] Add the sort comparator ahead of `groupByTitle`
+3. [ ] Add the Stage button + click handler + refetch
+4. [ ] Five tests
 5. [ ] Run verification

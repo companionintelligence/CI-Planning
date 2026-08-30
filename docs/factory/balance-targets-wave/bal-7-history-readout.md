@@ -42,16 +42,27 @@ protect the time?") will grow from; this wave stops at showing the truth.
   `balanceHistory(ownerId)` in `balance-snapshot.ts` does the shaping; the route
   stays thin-transport.
 - **Client:** `api.priorities.history()` in `api.ts`; in `DimensionPanel`
-  (`DetailsDrawer.tsx:586`) one line under the Alignment group:
+  (`DetailsDrawer.tsx`, `function DimensionPanel` — line 618 as of the
+  2026-08-29 rebase that pulled in #587's drawer rewrite; re-locate at
+  implementation time, this file has moved twice already) one line under the
+  Alignment group (the `<Group label="Alignment">` `<dl>` with
+  Satisfaction/Importance/Gap/Target — unchanged in shape by #587):
   `Met target {met} of last {counted} weeks` — rendered only when
   `counted_weeks > 0`, so pre-history installs show nothing (not "0 of 0"). Resource
   `catch(() => null)`, render guarded — endpoint failure leaves the drawer as today.
 - **No pref gate** — pure read, same reasoning as ticket 5.
+- **No dependency on ticket 5's rework:** ticket 5 no longer touches
+  `routes/priorities.ts` (it became client-only after #587 shipped the
+  Allocation group this ticket's sibling would have duplicated — see ticket 5's
+  header). This ticket's `GET /api/priorities/history` route is new regardless;
+  read ticket 5 only to avoid inserting at the same line.
 
 ## Before implementation
 
-Read ticket 6's service + table, `routes/priorities.ts` as changed by ticket 5,
-`DetailsDrawer.tsx:586-625` as changed by ticket 5.
+Read ticket 6's service + table, and the CURRENT `DimensionPanel`
+(`DetailsDrawer.tsx:618-781` as of this rebase) in full — not just the Alignment
+group — so the new line's placement doesn't collide with ticket 5's Stage-button
+change if that lands first.
 
 ## Files impacted
 
