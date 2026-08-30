@@ -130,7 +130,7 @@ export function median(xs: number[]): number {
 }
 
 /** Default revision sink: append one compact row to audit_log (never throws — audit is fire-and-forget). */
-function auditRecord(ownerId: string, stage: string, rev: Revision): void {
+export function auditRecord(ownerId: string, stage: string, rev: Revision): void {
   writeAudit({
     ownerId,
     actor: 'system',

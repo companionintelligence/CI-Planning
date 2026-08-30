@@ -31,6 +31,8 @@ import { runLoop, type Defect, type JudgeScore } from './loop.js';
 import { logger } from '../lib/logger.js';
 import { broadcast } from '../routes/sse.js';
 import { writeAudit } from '../lib/audit.js';
+import { newId } from '../lib/ids.js';
+import { recordPlanRevision, recordPlanRun } from '../services/plan-loop-learning.js';
 import { serverTimezone, zonedWallTimeToUTC, utcDayBounds, localDateInTZ, todayInTZ } from '../lib/tz.js';
 import { graphData, MemoryUnavailable, type MemoryGraph } from '../connectors/memory.js';
 import { memoryConnectorAvailable } from '../services/memory.js';
@@ -744,6 +746,8 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
   // whole LLM tail is guarded. (The sibling A4 parseInstruction already wraps its call;
   // authoring was the omission this restores.)
   try {
+    const runId = newId();
+    let escapeReason: string | null = null;
     const result = await runLoop<number[]>(
       {
         stage: 'order',
@@ -791,6 +795,7 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
         baseline: () => deterministicIndices(staged, themeTag, fillOrder, memoryRelated, newToday),
       },
       {
+        record: (ownerId, stage, rev) => recordPlanRevision(runId, ownerId, stage, rev),
         onEscape: (ownerId, stage, info) => {
           logger.warn('authorPlanOrder: loop stalled, falling back to deterministic order', {
             owner: ownerId,
@@ -799,9 +804,19 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
             iterations: info.iterations,
             reason: info.reason,
           });
+          escapeReason = info.reason;
         },
       },
     );
+
+    // Evidence: one plan_loop_runs row per completed runLoop() invocation, keyed by the
+    // same runId its per-iteration plan_revision_log rows carry. Recorded immediately once
+    // the loop returns — before the generateRationales/persistOrder tail below, which can
+    // itself throw (e.g. Ollama dying between the loop finishing and the rationale call) —
+    // so a run that actually completed always gets its runs row, independent of what
+    // happens next. Fire-and-forget, like the revision writes above — never blocks plan
+    // authoring.
+    recordPlanRun(runId, owner, 'order', result, escapeReason);
 
     // §A2: apply post-pass to the final LLM result
     const finalCandidate = tagGroupPostPass(result.candidate, staged);
