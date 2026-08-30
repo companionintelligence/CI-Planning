@@ -17,6 +17,7 @@ import {
   deserializeDeselected,
   deserializePrio,
 } from '../lib/view-prefs.js';
+import { readFocusAppearance, writeFocusAppearance, type FocusAppearance } from '../lib/focus-appearance.js';
 import { replanToastMessage } from '../lib/replan.js';
 import { hasConnectedSource as pureHasConnectedSource } from '../lib/onboarding.js';
 
@@ -432,6 +433,19 @@ export function setTexturesEnabled(v: boolean) {
   const existing = prefs()?.view_prefs ?? {};
   const appearance = { ...(existing.appearance ?? {}), direction_textures: v };
   void api.prefs.update({ view_prefs: { ...existing, appearance } })
+    .then(() => refetchPrefs())
+    .catch((err) => showToast((err as Error).message, 'error'));
+}
+
+// ── Focus Ritual appearance (view_prefs.focus) ───────────────────────────────
+// Style, tint override and "Start now" length. Display-only: none of these is ever
+// written onto a task or a block — see lib/focus-appearance.ts for the resolution
+// order and defaults. Writes merge over the existing blob (so calendar/planner/
+// appearance survive) and refetch, so the ritual and Settings agree immediately.
+export const focusAppearance = () => readFocusAppearance(prefs()?.view_prefs);
+export function setFocusAppearance(patch: Partial<FocusAppearance>) {
+  const next = writeFocusAppearance(prefs()?.view_prefs, patch);
+  void api.prefs.update({ view_prefs: next })
     .then(() => refetchPrefs())
     .catch((err) => showToast((err as Error).message, 'error'));
 }

@@ -1,8 +1,9 @@
 import { createSignal, createMemo, createResource, Show, For, onCleanup } from 'solid-js';
 import { setActiveTask } from '../stores/selection.js';
 import { revealDetails } from '../stores/ui.js';
-import { ChevronDown, ChevronRight, Crosshair, Play, Check, RotateCcw, NotebookPen } from 'lucide-solid';
+import { ChevronDown, ChevronRight, Crosshair, Play, Check, RotateCcw, NotebookPen, SlidersHorizontal } from 'lucide-solid';
 import { FocusRitual } from '../components/FocusRitual.js';
+import { FocusLab } from '../components/FocusLab.js';
 import { FocusReminders } from '../components/FocusReminders.js';
 import { TrialityBanner } from '../components/TrialityBanner.js';
 import { BriefMenu, FocusMenu } from '../components/DayGoals.js';
@@ -11,7 +12,9 @@ import { blocks, tasks, taskOf, prefs, tags, patternPrefs, refetchTasks, refetch
 import { api, type Block, type Task } from '../lib/api.js';
 import { localISODate } from '../lib/dates.js';
 import { focusState, formatRemaining } from '../lib/focus.js';
+import { resolveSessionMinutes, resolveFocusTint } from '../lib/focus-appearance.js';
 import { directionColorForTask } from '../lib/pattern-meta.js';
+import { focusAppearance } from '../stores/index.js';
 import { minutesIntoDay } from '../lib/grid.js';
 import { buildFocusItems, countPastRows, memberPast, itemPast, sectionPast, type BuiltSection } from '../lib/focus-sections.js';
 import { LockToggle } from '../components/LockToggle.js';
@@ -97,6 +100,7 @@ export function Focus() {
   // a deliberate request for the timer, so it runs even if the ambient hero is off.
   const [startedBlock, setStartedBlock] = createSignal<Block | null>(null);
   const [starting, setStarting] = createSignal<string | null>(null); // entry key mid-start
+  const [labOpen, setLabOpen] = createSignal(false);         // the Focus Lab pop-up
 
   // ── The day's entries: placed blocks first, then unplaced scheduled-for-today tasks ──
   const entries = createMemo<Entry[]>(() => {
@@ -215,7 +219,7 @@ export function Focus() {
     // If it's already the in-progress block, just (re)enter the timer.
     if (entry.block && isNow(entry)) { setStartedBlock(entry.block); return; }
 
-    const durMin = Math.max(15, entry.task?.estimated_minutes || 30);
+    const durMin = resolveSessionMinutes(focusAppearance().sessionMinutes, entry.task?.estimated_minutes);
     const nowMs = Date.now();
     const next = nextCommitmentAfter(nowMs, entry.block?.id);
     if (next) {
@@ -252,7 +256,10 @@ export function Focus() {
   // which resumes the block's remaining scheduled time.
   async function restartHeroNow(block: Block) {
     if (starting()) return;
-    const durMin = Math.max(15, (block.task_id ? taskOf(block.task_id)?.estimated_minutes : 0) || 30);
+    const durMin = resolveSessionMinutes(
+      focusAppearance().sessionMinutes,
+      block.task_id ? taskOf(block.task_id)?.estimated_minutes : null,
+    );
     const nowMs = Date.now();
     setStarting(block.id);
     try {
@@ -268,6 +275,19 @@ export function Focus() {
       setStarting(null);
     }
   }
+
+  // What the ritual would be lit with right now if the owner set no override — the
+  // in-progress task's Work / Home / Community colour. Previewed in the Focus Lab.
+  const directionTint = () => {
+    const b = currentBlock();
+    return resolveFocusTint({
+      task: b?.task_id ? taskOf(b.task_id) : null,
+      tagDefs: tags() ?? [],
+      patternPrefs: patternPrefs()?.prefs ?? {},
+      block: b ?? null,
+      categoryPrefs: categoryPrefs()?.prefs ?? {},
+    });
+  };
 
   // The block the ritual runs over: an explicit start wins; else the auto hero on "Enter Focus".
   const ritualBlock = () => startedBlock() ?? (ritualOpen() ? currentBlock() : null);
@@ -428,6 +448,15 @@ export function Focus() {
           <div class="flex items-center gap-1.5 flex-shrink-0 self-start">
             <BriefMenu date={today} />
             <FocusMenu date={today} />
+            {/* Focus Lab — session length + the timer's colour. Display-only settings;
+                the style itself is a standing pref in Settings. */}
+            <button
+              onClick={() => setLabOpen(true)}
+              class="btn-icon"
+              title="Focus Lab — session length and timer colour"
+            >
+              <SlidersHorizontal size={16} />
+            </button>
             <button
               onClick={startEditNote}
               class="btn-icon"
@@ -564,6 +593,10 @@ export function Focus() {
           </div>
         </Show>
       </div>
+
+      <Show when={labOpen()}>
+        <FocusLab directionTint={directionTint()} onClose={() => setLabOpen(false)} />
+      </Show>
 
       {/* The full-screen Focus Ritual (Phase Z · Z3b) — over an explicitly-started task
           (start-any-task-now) or the auto-detected in-progress block ("Enter Focus"). */}

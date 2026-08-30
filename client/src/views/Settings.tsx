@@ -1,7 +1,7 @@
 import { createSignal, createEffect, Show, createResource, For, onMount } from 'solid-js';
 import { ViewHeader } from '../components/ViewHeader.js';
 import { BellRing, Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, Database, AlertTriangle, Users, KeyRound, ScrollText, Eye, FileJson, FileText, Mail } from 'lucide-solid';
-import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast, texturesEnabled, setTexturesEnabled, plannerAxisState, setPlannerCollapseBounds, integrations, refetchIntegrations, recheckIntegrations, aiAvailable, connections, refetchConnections, openOnboardingAt } from '../stores/index.js';
+import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast, texturesEnabled, setTexturesEnabled, focusAppearance, setFocusAppearance, plannerAxisState, setPlannerCollapseBounds, integrations, refetchIntegrations, recheckIntegrations, aiAvailable, connections, refetchConnections, openOnboardingAt } from '../stores/index.js';
 import { api, type PlanningSession } from '../lib/api.js';
 import { sessionToMarkdown, sessionToJson, exportFilename } from '../lib/plan-week-export.js';
 import { FTUE_RESUME_KEY } from '../lib/onboarding.js';
@@ -16,6 +16,7 @@ import { on } from '../lib/sse.js';
 import { GOOGLE_CONNECT_ENABLED } from '../lib/flags.js';
 import { ollamaHealth, ollamaHealthDescription } from '../lib/ollama-health.js';
 import { ConnectionAppearance } from '../components/ConnectionAppearance.js';
+import { FOCUS_STYLES, type FocusStyle } from '../lib/focus-appearance.js';
 
 const BROWSER_TZ = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
@@ -1380,6 +1381,22 @@ export function Settings() {
                   hint="Vibration pulses at the start, midpoint, 3-min warning, and end (where the device supports it)." />
                 <Toggle field="ambient_color_enabled" label="Ambient color"
                   hint="Category-color depletion across the block, breathing in the final 3 minutes." />
+                {/* Focus screen style (view_prefs.focus.style). Writes straight
+                    through — no migration, and not part of the Save button above,
+                    so it applies to the next ritual immediately. */}
+                <label class="flex items-center justify-between gap-3 pl-[2.75rem]">
+                  <div>
+                    <div class="text-sm text-foreground leading-tight">Focus screen style</div>
+                    <div class="text-[11px] text-muted-foreground">
+                      {FOCUS_STYLES.find((o) => o.id === focusAppearance().style)?.hint}
+                    </div>
+                  </div>
+                  <select class="input py-1 text-sm w-28 flex-shrink-0"
+                    value={focusAppearance().style}
+                    onChange={(e) => setFocusAppearance({ style: e.currentTarget.value as FocusStyle })}>
+                    <For each={FOCUS_STYLES}>{(o) => <option value={o.id}>{o.name}</option>}</For>
+                  </select>
+                </label>
                 <Toggle field="calibration_loop_enabled" label="Calibration nudge"
                   hint="The suggest-only estimate chip based on your tag-scoped history." />
                 {/* #390: the combo-suggestion confirm workflow — reads live prefs (not

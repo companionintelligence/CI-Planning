@@ -337,8 +337,10 @@ erDiagram
 
 ORM = modeled in `server/src/db/schema.ts` (the Drizzle mirror, guarded by
 `schema-parity.test.ts`). Raw = raw-SQL only — invisible to Drizzle queries and to that
-parity test. 56 live tables total, grouped below by concern; superseded by the full UML
-class diagram in §5.3.
+parity test. 66 live tables total, grouped below by concern; superseded by the full UML
+class diagram in §5.3. (The People feature — `people` / `person_emails` / `entity_people` /
+`possible_task_people`, 0151–0154 — isn't broken into its own subsection below yet; a
+pre-existing gap this pass didn't close. The live count is 70 including those four.)
 
 #### Identity, auth & config
 
@@ -420,6 +422,7 @@ class diagram in §5.3.
 | `objective_tasks` | Objective ↔ Task linkage for progress roll-up | raw | 0081 |
 | `reflections` | FOCUS card slots — today focus + up to 3 weekly goals per ISO week; optional source link to a Task/Objective (`source_kind`/`source_ref`); also the one-per-day `kind='day_note'` row | raw | 0080, 0088 |
 | `life_priorities` | Self-audit per `(owner, category)` — `satisfaction` 1–10, `importance` 1–10, `target_hours_per_week`. Backs `/priorities` (wizard) + `/balance` (dashboard); `UNIQUE(owner_id, category)`. `category` is a plain TEXT key (no FK) — shares its NAME vocabulary with `tags.kind='category'` (0134) but the two are linked only by string equality, per owner | ✓ | 0127 |
+| `balance_week_log` | Balance-targets wave (bal-6) — one row per `(owner, week_start, category)`, `UNIQUE`. A weekly `snapshot_balance` job freezes `target_hours`/`scheduled_minutes`/`timed_minutes` for the week just closed, `INSERT OR IGNORE` (first-freeze-wins). `category` is bare TEXT, same string-equality link to `life_priorities`/`tags` as above — no FK. History for a future learning surface; the live bias (below) reads the *instruction* (`life_priorities` + this week's calendar), not this log | raw | 0165 |
 
 #### Learning loops
 
@@ -430,6 +433,15 @@ class diagram in §5.3.
 | `calibration_combo_pins` | Pinned scope combos for the calibration UI, one row per (owner, scope_ref) | raw | 0107 |
 | `triality_log` | Append-only Triality outcome log — one row per suggestion shown (`slot`, `action_kind`/`action_ref`, the full `scores` JSON breakdown), stamped once more on `opened`/`staged`/`dismissed`. The learning corpus, not a cache: two requests log two sets of rows. Enums in code; raw SQL only (not in `schema.ts`); indexed on `(owner_id, local_date)` | raw | 0140 |
 | `triality_weights` | Learned Triality weights per `(owner_id, slot)` PK — `weights` JSON, `sample_count`, `computed_date`. Regenerable rollup replaced wholesale by `calibrate_triality`; **absence means "the default weights"**, so deleting an owner's rows is the reset switch. Raw SQL only | raw | 0142 |
+| `classification_log` | Append-only evidence for the parse/classify LLM's per-owner vocabulary — one row per assignment (`field`, `input_text`, `llm_value`, `final_value` null until corrected, `assigned_at`/`corrected_at`). Never online, never mid-request: a bad afternoon of corrections can't bend a live answer | raw | 0149 |
+| `classification_exemplars` | Regenerable few-shot retrieval index the classify prompt reads, rebuilt wholesale per owner by the weekly `calibrate_classification` job; deleting an owner's rows resets the adaptation without losing the log above | raw | 0149 |
+| `classification_accuracy` | Held-out measured trend per `(owner, field, computed_date)` — `heldOut`/`correct`/`accuracy`; `accuracy` NULL when nothing was measured, never 0 | raw | 0149 |
+| `possible_outcome_log` | Close-loop wave (ticket 1) — durable evidence for dismissal learning. Append-only, one row per decided `possible_tasks` suggestion: `source_kind`, `input_text`, `outcome` (`dismissed`\|`promoted`), `decided_at` (load-bearing — `possible_tasks` itself has no decision timestamp), `local_date`. `possible_task_id` deliberately NOT a foreign key: the evidence must outlive the suggestion | raw | 0157 |
+| `possible_dismissal_exemplars` | Regenerable rollup the extraction prompt reads, rebuilt wholesale per owner by the weekly `calibrate_dismissals` job from settled `possible_outcome_log` evidence; inert below `DISMISSAL_FLOOR` = 5 | raw | 0157 |
+| `possible_dismissal_rate` | One noise-rate reading per `(owner, computed_date)` — `created`/`decided`/`dismissed`/`rate`/`exemplars`/`hinted`; `rate` NULL when `decided` = 0, never 0, so a trend draws a gap rather than a false floor | raw | 0157 |
+| `plan_loop_runs` | Revision-loop wave — one row per `runLoop()` invocation (Phase M §A0 authoring loop): `stage`, `passed`, `escaped`, `escape_reason`, `score`, `iterations`. The durable evidence sink `agents/loop.ts`'s own contract promised but never got — its default sink was `audit_log`, which nothing ever reads back | raw | 0162 |
+| `plan_revision_log` | Append-only evidence — one row per candidate the loop scored inside a run: `run_id` (indexed TEXT, deliberately NOT a foreign key — revisions are written during the run, before the run's own row exists), `iter`, `score`, `reason`, `defects` JSON, `critique` | raw | 0162 |
+| `plan_loop_stats` | Measured trend per `(owner, stage, computed_date)`, written weekly by `calibrate_plan_loop` over its trailing window — `avg_iterations`/`pass_rate` NULL when `runs` = 0, never 0 | raw | 0162 |
 
 #### Sync & external calendars
 
@@ -575,16 +587,26 @@ class life_priorities {
   +TEXT id «PK» — uq(owner, category)
   satisfaction, importance, target_hours_per_week
 }
+class balance_week_log { +TEXT id «PK» — uq(owner, week_start, category) : target_hours, scheduled_minutes, timed_minutes }
 class daily_plan { +«PK» owner_id, date, task_id : position, source, outcome, block_id }
 class daily_recap { +«PK» owner_id, date : prose, stats, star_*, total, frozen_at }
 class plan_hints { +TEXT id «PK» : date, kind, tag, time }
 class replan_suggestions { +owner_id «PK» : date, reason, at_risk }
 class planning_sessions { +TEXT id «PK» : entry_branch, status, llm_used, transcript }
+class plan_loop_runs { +TEXT id «PK» : stage, passed, escaped, escape_reason, score, iterations }
+class plan_revision_log { +TEXT id «PK» : run_id «no FK», stage, iter, score, reason, defects, critique }
+class plan_loop_stats { +«PK» owner_id, stage, computed_date : runs, passed, first_try_pass, avg_iterations, pass_rate }
 class estimate_calibration { +«PK» owner_id, scope_kind, scope_ref : bias_ratio, p25/p50/p75 }
 class calibration_history { +«PK» owner_id, scope_kind, scope_ref, computed_date }
 class calibration_combo_pins { +«PK» owner_id, scope_ref }
+class classification_log { +TEXT id «PK» : field, input_text, llm_value, final_value, assigned_at, corrected_at }
+class classification_exemplars { +«PK» owner_id, field, log_id : llm_value, correct_value, embedding }
+class classification_accuracy { +«PK» owner_id, field, computed_date : held_out, correct, accuracy }
 class triality_log { +TEXT id «PK» : slot, action_kind/_ref, scores, outcome }
 class triality_weights { +«PK» owner_id, slot : weights, sample_count }
+class possible_outcome_log { +TEXT id «PK» : possible_task_id «no FK», source_kind, input_text, outcome, decided_at, local_date }
+class possible_dismissal_exemplars { +«PK» owner_id, log_id : input_text, source_kind, embedding }
+class possible_dismissal_rate { +«PK» owner_id, computed_date : created, decided, dismissed, rate, exemplars, hinted }
 class connection_tokens { +TEXT id «PK» : provider, account, ciphertext, status }
 class connection_prefs { +TEXT id «PK» : provider, account, color_token, texture }
 class external_events { +TEXT id «PK» : provider, account, external_id, etag, direction }
@@ -614,7 +636,11 @@ owners "1" --o "0..*" pattern_blocks
 owners "1" --o "0..*" objectives : owns
 owners "1" --o "0..*" reflections
 owners "1" --o "0..*" life_priorities : audits
+owners "1" --o "0..*" balance_week_log
 owners "1" --o "0..*" possible_tasks : proposed_for
+owners "1" --o "0..*" possible_outcome_log
+owners "1" --o "0..*" possible_dismissal_exemplars
+owners "1" --o "0..*" possible_dismissal_rate
 owners "1" --o "0..*" reminders
 owners "1" --o "0..*" push_subscriptions
 owners "1" --o "0..*" api_keys
@@ -631,6 +657,9 @@ owners "1" --o "0..*" day_of_week_map
 owners "1" --o "0..*" day_assignments
 owners "1" --o "0..*" block_templates
 owners "1" --o "0..*" planning_sessions
+owners "1" --o "0..*" plan_loop_runs
+owners "1" --o "0..*" plan_revision_log
+owners "1" --o "0..*" plan_loop_stats
 owners "1" --o "0..*" plan_hints
 owners "1" --o "0..1" replan_suggestions
 owners "1" --o "0..*" daily_plan
@@ -638,6 +667,9 @@ owners "1" --o "0..*" daily_recap
 owners "1" --o "0..*" estimate_calibration
 owners "1" --o "0..*" calibration_history
 owners "1" --o "0..*" calibration_combo_pins
+owners "1" --o "0..*" classification_log
+owners "1" --o "0..*" classification_exemplars
+owners "1" --o "0..*" classification_accuracy
 owners "1" --o "0..*" triality_log
 owners "1" --o "0..*" triality_weights
 owners "1" --o "0..*" flight_plan
@@ -694,6 +726,13 @@ tasks "0..1" <.. "0..*" objectives : source_task_id
 daily_plan "0..*" --> "0..1" time_blocks : block_id
 
 scheduled_jobs "1" --o "0..*" job_runs : logged as
+
+possible_outcome_log "0..1" ..> "0..1" possible_tasks : possible_task_id «no FK, evidence outlives the row»
+possible_outcome_log ..> possible_dismissal_exemplars : weekly calibration
+plan_revision_log "0..*" ..> "0..1" plan_loop_runs : run_id «no FK, written before the run row exists»
+plan_loop_runs ..> plan_loop_stats : weekly calibration
+classification_log ..> classification_exemplars : weekly calibration
+balance_week_log ..> life_priorities : category «string match, no FK»
 ```
 
 Three things worth flagging in the model:
@@ -704,10 +743,12 @@ Three things worth flagging in the model:
 - **`owners` is the tenant root** — nearly every table hangs off it, but cascade behavior
   is inconsistent (some `ON DELETE CASCADE`, some plain FK), so owner deletion isn't yet a
   single safe operation.
-- **16 tables live only in raw SQL**, outside `schema.ts` (marked "raw" in §5.2) — the
-  whole life layer (`objectives`, `reflections`), the AI-loop tables, and the
-  calibration/triality rollups. They're invisible to Drizzle queries *and* to the
-  `schema-parity` test that guards drift.
+- **26 tables live only in raw SQL**, outside `schema.ts` (marked "raw" in §5.2) — the
+  whole life layer (`objectives`, `reflections`), the AI-loop tables, and every
+  evidence/rollup/measurement trio in the Learning loops section (calibration, triality,
+  classification, dismissal, plan-loop) plus `balance_week_log`. They're invisible to
+  Drizzle queries *and* to the `schema-parity` test that guards drift — deliberately, per
+  each table's own migration comment: none of them are mirrored in `schema.ts`.
 
 ---
 
@@ -924,7 +965,10 @@ rubric-governed verdict, over N≥5 runs, and assert the completion is non-empty
 | `prune_sync_events` | daily 03:00 | Trim old `sync_events` rows beyond retention window |
 | `enrich_tasks` | daily 03:20 | Per owner: fill blank description / direction / categories on thin tasks from Companion Memory (fill-blanks-only; no-op when memory is off) (0136) |
 | `calibrate_triality` | Mon 03:50 | Re-tune the per-slot Triality weights from 90 days of `triality_log` outcomes — batch, each weight clamped to ½×–2× of its default and then renormalized so the slot's weights still sum to the default total, and inert below 20 decided rows for a slot. **Owner-scoped** (in `OWNER_SCOPED_KINDS`): weights are per-owner by construction, and pooling one owner's feedback into another's ranking is ruled out absolutely (0143) |
+| `calibrate_classification` | Mon 04:10 | Weekly per-owner rebuild of `classification_exemplars` (the parse/classify LLM's few-shot retrieval index) from `classification_log` corrections, plus a held-out `classification_accuracy` measurement. **Owner-scoped**: corrections are per-owner by construction. Runs after `calibrate_triality` so the two weekly learning passes don't compete for one GPU (0149) |
 | `calibrate_dismissals` | Mon 04:20 | Close-loop wave (ticket 3): rebuild `possible_dismissal_exemplars` wholesale from settled `possible_outcome_log` evidence (inert below `DISMISSAL_FLOOR` = 5 settled dismissals) and append one `possible_dismissal_rate` reading. **Owner-scoped**: dismissal evidence is per-owner by construction, never pooled. Runs after `calibrate_classification` (Mon 04:10) so the weekly per-owner learning passes don't compete for one GPU (0158) |
+| `calibrate_plan_loop` | Mon 04:30 | Revision-loop wave (ticket 3): pure-SQL weekly aggregate over `plan_loop_runs` into one `plan_loop_stats` row per `(owner, stage)` — pass rate, first-try pass rate, escapes, average iterations. Makes NO model calls, but stays inside the weekly learning block so the cron schedule reads as one unit (0163) |
+| `snapshot_balance` | Mon 04:40 | Balance-targets wave (ticket 6): freeze each life dimension's target/scheduled/timed hours for the week just closed into `balance_week_log`. `INSERT OR IGNORE`, first-freeze-wins — a missed week can never be recomputed later. History only; nothing reads it back yet (0165) |
 | `advance_objectives` | Mon 05:00 | Stage tasks for active objectives into flight-plan |
 
 ---

@@ -474,17 +474,247 @@
   }
 }
 
-/* Phase Z · Z3b — Focus Ritual ambient breathing (the final 3 minutes: fade
-   in→out→in, the one deliberately attention-recruiting cue, §1.1). Top-level so it
-   applies at every width; disabled under reduced motion (discrete cues remain). */
+/* ══════════════════════════════════════════════════════════════════════════
+   FOCUS RITUAL — the full-screen focus surface (Phase Z · Z3b, §1.0–1.2).
+
+   The ritual's job is to render *felt duration* in the periphery, so the
+   surface is built from light rather than paint: a wash that rises from below,
+   a vignette that closes as the block settles, and a grain that keeps large
+   flat gradients from banding. Every layer is `pointer-events: none` and sits
+   behind the content on its own stacking context (`.focus-stage` isolates).
+
+   Shared contract — the stage sets three custom properties inline, and every
+   layer of both styles reads only these, so neither re-implements the clock:
+
+     --focus-tint     the colour the ritual is lit with, always a token var
+     --focus-elapsed  0 → 1 across the whole block   (positional ramps)
+     --focus-settle   0 → 1 across start → the 3-min warning (depletion)
+
+   Motion is decorative everywhere: `prefers-reduced-motion` (and the Lab's
+   `data-motion="reduced"` switch) drops every animation, and each animated
+   element carries a static mid-cycle appearance so nothing disappears when it
+   does. The positional ramps above are *data*, not decoration, and survive.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.focus-stage {
+  --focus-tint: var(--primary);
+  --focus-elapsed: 0;
+  --focus-settle: 0;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background: var(--background);
+  /* Sized as a query container so the type scale and every ambient dimension
+     below resolve against the SURFACE, not the viewport. The same component is
+     then correct full-screen, on a phone, and in a Focus Lab preview card. */
+  container-type: size;
+}
+
+/* Every ambient layer: full-bleed, inert, behind the content. */
+.focus-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* The on-switch: a slow settle-in rather than a modal snap (§1.1 T1). */
+@keyframes focusEnter {
+  from { opacity: 0; transform: scale(1.015); }
+  to   { opacity: 1; transform: none; }
+}
+.focus-enter { animation: focusEnter 620ms cubic-bezier(0.22, 0.61, 0.36, 1) both; }
+
+/* Content rises a beat after the light does. */
+@keyframes focusRise {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+.focus-rise { animation: focusRise 720ms cubic-bezier(0.22, 0.61, 0.36, 1) 120ms both; }
+
+/* ── Base ambience ────────────────────────────────────────────────────────
+   The category colour as a horizon glow from below plus a faint crown above,
+   so the tint reads as light in the room instead of a sheet of colour over the
+   type. Opacity (the depletion ramp) stays on the element, set by the stage. */
+.focus-wash {
+  background:
+    radial-gradient(125% 80% at 50% 114%,
+      color-mix(in oklab, var(--focus-tint) 70%, transparent) 0%,
+      color-mix(in oklab, var(--focus-tint) 22%, transparent) 46%,
+      transparent 72%),
+    radial-gradient(95% 62% at 50% -16%,
+      color-mix(in oklab, var(--focus-tint) 26%, transparent) 0%,
+      transparent 68%);
+}
+
+/* Edges fall away, and fall away further as the block settles. */
+.focus-vignette {
+  background: radial-gradient(120% 96% at 50% 50%,
+    transparent calc(46% - var(--focus-settle) * 12%),
+    rgba(0, 0, 0, 0.12) 100%);
+}
+.dark .focus-vignette {
+  background: radial-gradient(120% 96% at 50% 50%,
+    transparent calc(42% - var(--focus-settle) * 12%),
+    rgba(0, 0, 0, 0.46) 100%);
+}
+
+/* Film grain — breaks up gradient banding on large flat washes and gives the
+   surface a photographic rather than digital texture. Static SVG noise, so no
+   image request and no runtime cost beyond one composited layer. */
+.focus-grain {
+  opacity: 0.045;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 140px 140px;
+  animation: focusGrain 900ms steps(1, end) infinite;
+}
+.dark .focus-grain { opacity: 0.07; }
+@keyframes focusGrain {
+  0%   { background-position: 0 0; }
+  25%  { background-position: -37px 19px; }
+  50%  { background-position: 23px -41px; }
+  75%  { background-position: -19px -23px; }
+  100% { background-position: 0 0; }
+}
+
+/* ── The countdown ────────────────────────────────────────────────────────
+   Tabular so digits never jitter, light-weight and open-tracked so it reads as
+   a duration you glance at, not a ticker you watch (§1.2). */
+.focus-clock {
+  font-variant-numeric: tabular-nums;
+  font-weight: 200;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  font-size: clamp(2rem, 13cqmin, 7rem);
+  color: color-mix(in oklab, var(--foreground) 88%, var(--focus-tint));
+}
+/* The final 3 minutes lift the readout with the tint's own light. */
+.focus-clock[data-phase="warning"] {
+  color: color-mix(in oklab, var(--foreground) 55%, var(--focus-tint));
+  text-shadow: 0 0 32px color-mix(in oklab, var(--focus-tint) 45%, transparent);
+}
+.focus-clock[data-phase="ended"] { color: var(--muted-foreground); }
+
+/* The anchor (§1.0). On the container scale too, so a preview card and a
+   full-screen ritual show the same proportion of title to readout. */
+.focus-title {
+  font-size: clamp(1rem, 4.4cqmin, 2.25rem);
+  font-weight: 600;
+  line-height: 1.15;
+  text-wrap: balance;
+  color: var(--foreground);
+}
+.focus-title--quiet { font-weight: 500; font-size: clamp(0.95rem, 3.6cqmin, 1.875rem); }
+/* Vertical rhythm between the anchor group and the readout. Container-scaled so
+   a short surface compresses rather than pushing the anchor out of frame. */
+.focus-lay { gap: clamp(0.6rem, 6cqh, 2.5rem); }
+
+/* Breath puts the readout inside the ring, so it takes the ring's scale. Declared
+   after `.focus-clock` — equal specificity resolves in the modifier's favour. */
+.focus-clock--ring  { font-size: clamp(1.4rem, 8.5cqmin, 4.25rem); }
+
+/* The one line of measurable progress: a hairline that shortens with the block.
+   Deliberately low-contrast — it answers "how far in am I" on a glance down,
+   and disappears again as soon as you look away. */
+.focus-rule {
+  width: min(22rem, 62cqw);
+  height: 1px;
+  background: color-mix(in oklab, var(--foreground) 16%, transparent);
+  overflow: hidden;
+  border-radius: 999px;
+}
+.focus-rule > i {
+  display: block;
+  height: 100%;
+  width: calc(100% - var(--focus-elapsed) * 100%);
+  background: linear-gradient(90deg,
+    transparent,
+    color-mix(in oklab, var(--focus-tint) 85%, transparent));
+  transition: width 900ms linear;
+}
+
+/* Ambient breathing (the final 3 minutes: fade in→out→in, the one deliberately
+   attention-recruiting cue, §1.1). Cadence unchanged from the shipped ritual —
+   it is a *cue*, not decoration. */
 @keyframes focusBreath {
   0%, 100% { opacity: 0.15; }
   50%      { opacity: 0.6; }
 }
 .focus-breath { animation: focusBreath 60s ease-in-out infinite; }
-@media (prefers-reduced-motion: reduce) {
-  .focus-breath { animation: none; opacity: 0.35; }
+
+/* Leaving the ritual. The close button is chrome, not content: it shows for a beat
+   on open, fades when the screen goes idle, and comes back on any pointer/key
+   activity (Escape leaves outright). `:focus-within` forces it visible so keyboard
+   users never tab to an invisible control, and it is inert while hidden so a click
+   on empty space is not silently swallowed. */
+.focus-chrome {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 300ms ease;
 }
+.focus-chrome[data-shown="true"],
+.focus-chrome:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+  .focus-chrome { transition: none; }
+}
+
+/* The "what's next" card lifts off the surface instead of sitting on it. */
+.focus-card {
+  background: color-mix(in oklab, var(--card) 82%, transparent);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  border: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+  box-shadow: 0 24px 60px -18px rgba(0, 0, 0, 0.45);
+  animation: focusRise 420ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+/* ── Style · BREATH ─────────────────────────────────────────────────────
+   Time as a closing ring around a breathing pacer. The halos run an 11s cycle
+   (≈5.5 breaths/min, the coherent-breathing rate) so the surface is something
+   to sync to rather than something to watch; the ring carries the actual clock. */
+.fx-breath { --breath-cadence: 11s; }
+.focus-ring-box { width: min(52cqmin, 21rem); height: min(52cqmin, 21rem); }
+.fx-breath[data-phase="warning"] { --breath-cadence: 7s; }
+.fx-breath .fx-halo {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border-radius: 50%;
+  transform: translate(-50%, -50%) scale(0.96);
+  opacity: 0.45;
+  background: radial-gradient(circle,
+    color-mix(in oklab, var(--focus-tint) 34%, transparent) 0%,
+    color-mix(in oklab, var(--focus-tint) 10%, transparent) 58%,
+    transparent 74%);
+  animation: focusHalo var(--breath-cadence) cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+@keyframes focusHalo {
+  0%, 100% { transform: translate(-50%, -50%) scale(0.84); opacity: 0.3; }
+  50%      { transform: translate(-50%, -50%) scale(1.08); opacity: 0.62; }
+}
+.fx-breath .fx-ring-track { stroke: color-mix(in oklab, var(--foreground) 18%, transparent); }
+.fx-breath .fx-ring-arc {
+  stroke: var(--focus-tint);
+  filter: drop-shadow(0 0 10px color-mix(in oklab, var(--focus-tint) 55%, transparent));
+  transition: stroke-dasharray 900ms linear;
+}
+
+/* ── Motion opt-out ───────────────────────────────────────────────────────
+   Decoration stops; the custom-property ramps (arc length, wash opacity, rule
+   width) are data and keep tracking the clock. Both the platform preference and
+   the Focus Lab's explicit switch land on the same rules. */
+@media (prefers-reduced-motion: reduce) {
+  .focus-stage,
+  .focus-stage *,
+  .focus-breath { animation: none !important; }
+  .focus-breath { opacity: 0.35; }
+}
+.focus-stage[data-motion="reduced"],
+.focus-stage[data-motion="reduced"] * { animation: none !important; }
+.focus-stage[data-motion="reduced"] .focus-breath { opacity: 0.35; }
 
 /* ── Drawer layout ────────────────────────────────────────────────────────
    The docked details drawer and its resize rail. Every colour resolves through
