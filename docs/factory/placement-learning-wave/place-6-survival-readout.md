@@ -116,9 +116,9 @@ New `server/test/placement-routes.test.ts`:
 - [ ] The existing route-registration / smoke suite passes with the new router mounted
 
 ```bash
-pnpm --filter server exec vitest run server/test/placement-routes.test.ts
-pnpm --filter server exec vitest run server/test/placement-learning.test.ts
-pnpm --filter server exec vitest run server/test/baseline.characterization.test.ts
+pnpm --filter server exec vitest run test/placement-routes.test.ts
+pnpm --filter server exec vitest run test/placement-learning.test.ts
+pnpm --filter server exec vitest run test/baseline.characterization.test.ts
 pnpm typecheck
 ```
 

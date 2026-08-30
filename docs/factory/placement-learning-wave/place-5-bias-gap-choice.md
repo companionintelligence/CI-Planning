@@ -142,11 +142,11 @@ New `server/test/placement-bias.test.ts`:
       pass unchanged
 
 ```bash
-pnpm --filter server exec vitest run server/test/placement-bias.test.ts
-pnpm --filter server exec vitest run server/test/auto-placement.test.ts
-pnpm --filter server exec vitest run server/test/patterns-place.test.ts
-pnpm --filter server exec vitest run server/test/blocks-place.test.ts
-pnpm --filter server exec vitest run server/test/reflow-wipe.test.ts
+pnpm --filter server exec vitest run test/placement-bias.test.ts
+pnpm --filter server exec vitest run test/auto-placement.test.ts
+pnpm --filter server exec vitest run test/patterns-place.test.ts
+pnpm --filter server exec vitest run test/blocks-place.test.ts
+pnpm --filter server exec vitest run test/reflow-wipe.test.ts
 pnpm typecheck
 ```
 

@@ -185,10 +185,10 @@ New `server/test/placement-learning.test.ts`, modelled on
 - [ ] `jobs.test.ts` and `jobs-multiowner.test.ts` pass with the new kind registered
 
 ```bash
-pnpm --filter server exec vitest run server/test/placement-learning.test.ts
-pnpm --filter server exec vitest run server/test/placement-capture.test.ts
-pnpm --filter server exec vitest run server/test/migrate.test.ts
-pnpm --filter server exec vitest run server/test/learning-loops.test.ts
+pnpm --filter server exec vitest run test/placement-learning.test.ts
+pnpm --filter server exec vitest run test/placement-capture.test.ts
+pnpm --filter server exec vitest run test/migrate.test.ts
+pnpm --filter server exec vitest run test/learning-loops.test.ts
 pnpm typecheck
 ```
 

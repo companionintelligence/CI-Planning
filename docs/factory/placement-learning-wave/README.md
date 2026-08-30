@@ -264,7 +264,7 @@ fails with `ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT`. The working form, used throughout
 tickets, is:
 
 ```bash
-pnpm --filter server exec vitest run server/test/<file>.test.ts
+pnpm --filter server exec vitest run test/<file>.test.ts
 ```
 
 ## Open follow-ups this wave will produce

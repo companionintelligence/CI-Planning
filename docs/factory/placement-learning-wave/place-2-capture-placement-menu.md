@@ -145,11 +145,11 @@ New `server/test/placement-capture.test.ts`, modelled on
       — the proof that placement behaviour did not move
 
 ```bash
-pnpm --filter server exec vitest run server/test/placement-capture.test.ts
-pnpm --filter server exec vitest run server/test/auto-placement.test.ts
-pnpm --filter server exec vitest run server/test/auto-defense.test.ts
-pnpm --filter server exec vitest run server/test/reflow-wipe.test.ts
-pnpm --filter server exec vitest run server/test/auto-undo.test.ts
+pnpm --filter server exec vitest run test/placement-capture.test.ts
+pnpm --filter server exec vitest run test/auto-placement.test.ts
+pnpm --filter server exec vitest run test/auto-defense.test.ts
+pnpm --filter server exec vitest run test/reflow-wipe.test.ts
+pnpm --filter server exec vitest run test/auto-undo.test.ts
 pnpm typecheck
 ```
 

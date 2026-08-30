@@ -226,10 +226,10 @@ CREATE TABLE IF NOT EXISTS placement_survival (
 - [ ] `schema-parity.test.ts` and `baseline.characterization.test.ts` pass with no churn
 
 ```bash
-pnpm --filter server exec vitest run server/test/migrate.test.ts
-pnpm --filter server exec vitest run server/test/schema-parity.test.ts
-pnpm --filter server exec vitest run server/test/baseline.characterization.test.ts
-pnpm --filter server exec vitest run server/test/owner-delete.test.ts
+pnpm --filter server exec vitest run test/migrate.test.ts
+pnpm --filter server exec vitest run test/schema-parity.test.ts
+pnpm --filter server exec vitest run test/baseline.characterization.test.ts
+pnpm --filter server exec vitest run test/owner-delete.test.ts
 pnpm typecheck
 ```
 

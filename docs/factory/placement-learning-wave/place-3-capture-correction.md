@@ -134,10 +134,10 @@ Extend `server/test/placement-capture.test.ts`:
       pass unchanged
 
 ```bash
-pnpm --filter server exec vitest run server/test/placement-capture.test.ts
-pnpm --filter server exec vitest run server/test/blocks-service.test.ts
-pnpm --filter server exec vitest run server/test/reflow-wipe.test.ts
-pnpm --filter server exec vitest run server/test/jobs-autoschedule-move.test.ts
+pnpm --filter server exec vitest run test/placement-capture.test.ts
+pnpm --filter server exec vitest run test/blocks-service.test.ts
+pnpm --filter server exec vitest run test/reflow-wipe.test.ts
+pnpm --filter server exec vitest run test/jobs-autoschedule-move.test.ts
 pnpm typecheck
 ```
 
