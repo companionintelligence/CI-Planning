@@ -258,16 +258,26 @@ for b in $(git for-each-ref --format='%(refname:short)' refs/heads refs/remotes 
 done
 ```
 
-Cron slot **Monday 04:30**. Verified against the seeds rather than inherited: the brief's
-"`calibrate_estimates` Sun 04:00" is its **pre-0107** value — `0083_learning_loops.ts:42`
-seeds `'0 4 * * 0'` and `0107_calibration_scope.ts:67` moves it to nightly `'30 1 * * *'`,
-so on any current DB it runs at **01:30 daily**. Live neighbours: `enrich_tasks` 03:20
-nightly, `calibrate_triality` Mon 03:50, `calibrate_classification` Mon 04:10,
-`advance_objectives` Mon 05:00, and the now-merged close-loop wave's `calibrate_dismissals`
-at Mon 04:20 (`0158_calibrate_dismissals_job.ts`, confirmed on `main`). `04:30` is clear,
-verified against the real seed rows on `main`, not the planning doc. Running last of the
-weekly per-owner learning passes keeps this pure-SQL job from contending with the two that
-may call a model on a single-GPU box.
+Cron slot **Monday 04:50**, moved off `04:30` while merging `main` for this wave's PR.
+`04:30` was verified clear against every seed on `main` at the time this doc was written
+— true then, but `calibrate_plan_loop` (revision-loop wave, `0163`) merged to `main` and
+claimed the identical `'30 4 * * 1'` before this branch caught up, so by the time of the
+merge the two would have collided at runtime (not an idempotency problem — `INSERT OR
+IGNORE` still inserts both distinct job rows — a real single-GPU-box scheduling clash).
+Caught by a sibling session cross-referencing schemas post-merge, not by re-deriving the
+slot list here. Real Monday slots as of the merge: `calibrate_triality` 03:50,
+`calibrate_classification` 04:10, `calibrate_dismissals` 04:20, `calibrate_plan_loop`
+04:30, `snapshot_balance` 04:40, `advance_objectives` 05:00. `enrich_tasks` (03:20
+nightly) and `calibrate_estimates` (`'30 1 * * *'`, moved off its original Sun 04:00 by
+0107) run outside the Monday block entirely. `04:50` is the first clear slot after all of
+them — still last among the Monday per-owner learning passes, which is still the right
+place for a loop that never calls a model on a single-GPU box.
+
+**The lesson, stated plainly: a slot verified clear against a snapshot goes stale the
+moment another branch merges.** This wave's own migration-number collision (see § Reserved
+slots above) already made this point once, for table numbers; this is the same failure
+mode for cron minutes. Re-verify against the live seed rows immediately before a merge or
+a release, never trust a planning doc's claim by itself.
 
 ## Re-entrancy
 

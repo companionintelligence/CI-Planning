@@ -48,18 +48,21 @@ Verified against the tree — do not substitute.
   a block comment naming every neighbouring cron slot and why this one is clear, then
   ```ts
   db.prepare(`INSERT OR IGNORE INTO scheduled_jobs (id, name, kind, cron) VALUES (?, ?, ?, ?)`)
-    .run(newId(), 'calibrate_placement', 'calibrate_placement', '30 4 * * 1');
+    .run(newId(), 'calibrate_placement', 'calibrate_placement', '50 4 * * 1');
   ```
   Register in `migrations/index.ts` with a `.js` import in numeric order.
-- **Cron slot.** `'30 4 * * 1'` — Monday 04:30. Live neighbours, verified against the seeds:
-  `enrich_tasks` `'20 3 * * *'`, `calibrate_triality` `'50 3 * * 1'`,
-  `calibrate_classification` `'10 4 * * 1'`, `advance_objectives` `'0 5 * * 1'`, and
-  `calibrate_estimates` `'30 1 * * *'` — **nightly, not Sunday 04:00**:
+- **Cron slot.** `'50 4 * * 1'` — Monday 04:50, **moved off the originally-pinned 04:30
+  during the wave's merge with `main`** (see [README.md](README.md) § the cron slot
+  paragraph for the full story — `calibrate_plan_loop` claimed 04:30 first on `main`).
+  Live neighbours as of the merge, verified against the real seeds: `enrich_tasks`
+  `'20 3 * * *'`, `calibrate_triality` `'50 3 * * 1'`, `calibrate_classification`
+  `'10 4 * * 1'`, `calibrate_dismissals` `'20 4 * * 1'`, `calibrate_plan_loop`
+  `'30 4 * * 1'`, `snapshot_balance` `'40 4 * * 1'`, `advance_objectives` `'0 5 * * 1'`,
+  and `calibrate_estimates` `'30 1 * * *'` — **nightly, not Sunday 04:00**:
   `0083_learning_loops.ts:42` seeds `'0 4 * * 0'` and `0107_calibration_scope.ts:67` moves
-  it. Mon 04:20 is **merged and real** — the close-loop wave's `0158_calibrate_dismissals_job.ts`
-  seeds `'20 4 * * 1'` on `main`. Do not copy the slot list from
-  `0150`'s comment; it names an `03:30 calibrate_estimates` that has never existed. Last of
-  the weekly learning passes deliberately: this one never calls a model, so it must not sit
+  it. Do not copy the slot list from `0150`'s comment; it names an `03:30
+  calibrate_estimates` that has never existed. Last of the weekly learning passes
+  deliberately: this one never calls a model, so it must not sit
   ahead of the two that might on a single-GPU box.
 - **Job wiring.** Add `case 'calibrate_placement':` to the `execute()` switch in
   `server/src/jobs/index.ts`. Line numbers below are current as of this ticket's last
