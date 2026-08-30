@@ -26,7 +26,7 @@ import { AUTO_PLACED_SQL, REFLOW_CANDIDATE_SQL } from './mobility.js';
 import { broadcast } from '../routes/sse.js';
 import { serverTimezone, zonedWallTimeToUTC, utcDayBounds, localDateInTZ, todayInTZ } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
-import { inheritContainerDirection, removeEntityTags, entityTagLevels, splitTagString, entityCategoryIds } from '../services/tags.js';
+import { inheritContainerDirection, removeEntityTags, entityTagLevels, splitTagString, entityCategoryIds, categoryIdsForOwner } from '../services/tags.js';
 import { localISODate } from '../lib/dates.js';
 import { newId } from '../lib/ids.js';
 import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
@@ -35,10 +35,16 @@ import { getPatternBlocks, directionWindowsByName, FALLBACK_FILL_DIRECTION_NAMES
 import { resolveDayType } from '../services/day-types.js';
 import { getPatternPrefs } from '../services/pattern-prefs.js';
 import { nestCandidatesInRange, preferredContainers, taskNestCoords } from '../services/auto-nest.js';
+import { dimensionShortfalls, biasLeadDimensions } from '../services/balance-budget.js';
+import { logger } from '../lib/logger.js';
 
 const DEFAULT_EST_MIN = 30;
 const MIN_SESSION_MS = 15 * MS_PER_MIN;
 const CANDIDATE_LIMIT = 20;
+// bal-3: how much further than CANDIDATE_LIMIT the fill looks when a life dimension
+// is running short, so a backlog task in a neglected category can still be seen —
+// wide enough to surface it, bounded so the fill can't scan an unbounded backlog.
+const WIDEN_FACTOR = 3;
 
 export interface AutoResult {
   step: 'fill' | 'place';
@@ -755,17 +761,11 @@ async function ownerToday(owner: string): Promise<string> {
   return todayInTZ((await prefsOf(owner))?.timezone || serverTimezone());
 }
 
-export async function fillFlightPlanCandidates(
-  owner: string = currentOwnerId(),
-  opts: { requireEstimate?: boolean; date?: string } = {},
-): Promise<number> {
-  const fillDate = opts.date ?? await ownerToday(owner);
-  // TM-3: the auto-block path stages only estimate-bearing tasks (we won't fabricate a
-  // block duration for a task the user never sized). Default false ⇒ unchanged staging.
-  const estimateClause = opts.requireEstimate ? `AND estimated_minutes IS NOT NULL` : '';
-  const candidates = await store()
-    .prepare(
-      `SELECT id FROM tasks
+/** The open-task WHERE clause fillFlightPlanCandidates has always used, shared by the
+ *  base (unbiased) fetch and bal-3's widened fetch — only `limit` differs between them,
+ *  so the two paths can never drift apart on eligibility. */
+function openCandidateSql(estimateClause: string): string {
+  return `SELECT id FROM tasks
         WHERE owner_id = ? AND status = 'open'
           AND subtype IS NOT 'habit'
           AND parent_id IS NULL
@@ -778,16 +778,87 @@ export async function fillFlightPlanCandidates(
                         AND tb.status NOT IN ('completed','skipped','cancelled'))))
           AND id NOT IN (SELECT task_id FROM flight_plan WHERE owner_id = ?)
         ORDER BY priority, COALESCE(due_at, '9999-12-31'), id
-        LIMIT ?`
+        LIMIT ?`;
+}
+
+async function openCandidateIds(owner: string, fillDate: string, estimateClause: string, limit: number): Promise<string[]> {
+  const rows = await store().prepare(openCandidateSql(estimateClause)).all(owner, fillDate, owner, limit) as { id: string }[];
+  return rows.map((r) => r.id);
+}
+
+/** bal-3: which dimensions (life_priorities.category names) should lead this fill's
+ *  candidate ordering — [] whenever bias doesn't apply, so the caller's fallback to
+ *  the original single-query path is always correct. Gate order is cheapest-first:
+ *  the pref flag (absent row ⇒ ON, matching the column DEFAULT) short-circuits before
+ *  the shortfall service ever runs. */
+async function biasLeadDimensionsForFill(owner: string, fillDate: string): Promise<string[]> {
+  const row = await store().prepare(`SELECT balance_bias_enabled FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as
+    { balance_bias_enabled: number | null } | undefined;
+  if (row?.balance_bias_enabled === 0) return [];
+  const shortfalls = await dimensionShortfalls(owner, fillDate);
+  return biasLeadDimensions(shortfalls);
+}
+
+/** bal-3: partition a widened candidate-id list into [leads, rest], preserving each
+ *  half's original (priority, due_at, id) order — a stable partition, not a re-sort.
+ *  Lead membership is a single batched `entity_categories` IN query over the whole
+ *  widened list, never a per-task lookup. */
+async function partitionLeadCandidates(owner: string, ids: string[], leadDimensions: string[]): Promise<string[]> {
+  if (ids.length === 0 || leadDimensions.length === 0) return ids;
+  const leadTagIds = await categoryIdsForOwner(leadDimensions, owner);
+  if (leadTagIds.length === 0) return ids;
+
+  const tagPlaceholders = leadTagIds.map(() => '?').join(',');
+  const idPlaceholders = ids.map(() => '?').join(',');
+  const rows = await store()
+    .prepare(
+      `SELECT DISTINCT entity_id AS id FROM entity_categories
+        WHERE entity_kind = 'task' AND category_tag_id IN (${tagPlaceholders}) AND entity_id IN (${idPlaceholders})`
     )
-    .all(owner, fillDate, owner, CANDIDATE_LIMIT) as { id: string }[];
+    .all(...leadTagIds, ...ids) as { id: string }[];
+  const leadIds = new Set(rows.map((r) => r.id));
+  if (leadIds.size === 0) return ids;
+
+  const leads: string[] = [];
+  const rest: string[] = [];
+  for (const id of ids) (leadIds.has(id) ? leads : rest).push(id);
+  return [...leads, ...rest];
+}
+
+export async function fillFlightPlanCandidates(
+  owner: string = currentOwnerId(),
+  opts: { requireEstimate?: boolean; date?: string } = {},
+): Promise<number> {
+  const fillDate = opts.date ?? await ownerToday(owner);
+  // TM-3: the auto-block path stages only estimate-bearing tasks (we won't fabricate a
+  // block duration for a task the user never sized). Default false ⇒ unchanged staging.
+  const estimateClause = opts.requireEstimate ? `AND estimated_minutes IS NOT NULL` : '';
+
+  // bal-3: bias which dimensions get proposed, without ever excluding what the
+  // original query would have staged (bounded by the same CANDIDATE_LIMIT slice).
+  // Any failure anywhere in the bias path degrades to the exact original result —
+  // a broken bias must not break staging.
+  let candidateIds: string[];
+  try {
+    const leadDimensions = await biasLeadDimensionsForFill(owner, fillDate);
+    if (leadDimensions.length === 0) {
+      candidateIds = await openCandidateIds(owner, fillDate, estimateClause, CANDIDATE_LIMIT);
+    } else {
+      const widened = await openCandidateIds(owner, fillDate, estimateClause, CANDIDATE_LIMIT * WIDEN_FACTOR);
+      candidateIds = (await partitionLeadCandidates(owner, widened, leadDimensions)).slice(0, CANDIDATE_LIMIT);
+    }
+  } catch (err) {
+    logger.debug('fillFlightPlanCandidates: balance-bias path failed, falling back to unbiased fill', { err: (err as Error).message });
+    candidateIds = await openCandidateIds(owner, fillDate, estimateClause, CANDIDATE_LIMIT);
+  }
+
   const { m } = await store().prepare(`SELECT COALESCE(MAX(position), -1) AS m FROM flight_plan WHERE owner_id = ?`).get(owner) as { m: number };
   // Filled candidates arrive SELECTED (deselect-to-exclude model, req 8): manual
   // staging already inserts selected = 1, so both paths now align.
   const ins = store().prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, ?)`);
   let pos = m + 1;
   let added = 0;
-  for (const c of candidates) if ((await ins.run(owner, c.id, pos++)).changes > 0) added++;
+  for (const id of candidateIds) if ((await ins.run(owner, id, pos++)).changes > 0) added++;
   return added;
 }
 
