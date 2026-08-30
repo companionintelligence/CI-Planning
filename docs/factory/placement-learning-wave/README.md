@@ -187,7 +187,7 @@ just its own three. Confirm the regenerated diff is purely additive before commi
 
 ## Reserved slots — renumbered once already; re-verify before implementing
 
-This wave assumes **`0164`** (tables) and **`0165`** (cron seed), following the
+This wave assumes **`0166`** (tables) and **`0167`** (cron seed), following the
 `0149` → `0150` precedent of splitting tables and cron seed into two files.
 
 **These are not the original numbers.** This README first claimed `0159`/`0160`, verified
@@ -201,17 +201,26 @@ pair. Re-sweeping on 2026-08-29 found:
 | close-loop wave | `0157`/`0158` — **merged to `main`** (`aade3a64` → `main` via #586/#587). No longer "on paper"; these are real. |
 | *(unrelated)* `close-ritual` 1–5 score | `0161` — merged to `main` (#588), landed **after** a gap at 0159/0160, for reasons unrelated to any of these three waves. |
 | revision-loop wave (§A0 log, the sibling this brief fenced out) | Planned `0159`/`0160` for the same reason this wave did, **found the triple-claim first**, and moved to `0162`/`0163` — its own commit says: *"0159/0160 turned out to be triple-claimed: placement-learning-wave (G-INT) and balance-targets-wave (N2) both independently planned the identical pair."* Slot `0162` is now a real file (`docs/factory/revision-loop-wave/`, branch `claude/silly-solomon-5ab111`); `0163` is claimed on paper for its second migration. |
-| balance-targets wave (N2, the life-balance sibling this brief also fenced out) | Still states `0159`/`0160` in `docs/factory/balance-targets-wave/README.md` (branch `claude/sad-merkle-5aaa0c`), **unimplemented** — its own README already anticipated this and punts the exact number to whoever implements first: *"Whoever implements renumbers to the actual head at merge time."* |
+| balance-targets wave (N2, the life-balance sibling this brief also fenced out) | Was still stating `0159`/`0160` in `docs/factory/balance-targets-wave/README.md` (branch `claude/sad-merkle-5aaa0c`), **unimplemented** — assigned `0164`/`0165`, below. |
 
-Revision-loop wave moved to `0162`/`0163` rather than `0164`/`0165` — it checked first and
-found only itself and the two doc-only claims (this wave and balance-targets), with `0161`
-already real. This wave checks one step later, with `0162` now also real and `0163` also
-claimed, so it takes `0164`/`0165` — clear of every real file and every doc claim on every
-branch and remote-tracking ref as of this sweep. This does not resolve the `G-INT`/N2
-collision on `0159`/`0160` between this wave and balance-targets — there is no collision
-left to resolve, since this wave is the one moving off the number. Nothing else in this
-wave's tickets references the old numbers; the rename touched only the four files that
-named a slot.
+**Resolved by explicit ordering, not by re-sweeping to whatever's clear.** Three waves
+converging on the same sweep-and-claim convention is what produced the triple-claim in the
+first place — a fourth independent sweep would just as easily re-collide with a fifth wave.
+So instead of each wave picking its own "next free" pair, the three in-flight claimants were
+put in one order and the owner assigned the ranges directly:
+
+1. **Revision-loop wave keeps `0162`/`0163`** — it landed first (`0162` is a real,
+   already-implemented file) and re-litigating a merged migration's number is real churn a
+   still-unimplemented plan's number is not.
+2. **Balance-targets wave (N2) is assigned `0164`/`0165`** — immediately after
+   revision-loop's pair. Communicated directly to that session
+   (`claude/sad-merkle-5aaa0c`); its README should update from `0159`/`0160` to `0164`
+   (ticket 2, `bal-2-balance-bias-pref.md`) / `0165` (ticket 6, `bal-6-week-log.md`).
+3. **This wave takes `0166`/`0167`** — immediately after balance-targets'. Both siblings
+   were notified.
+
+Nothing else in this wave's tickets references the old numbers; the rename touched only the
+four files that named a slot.
 
 **Re-verify before implementing anyway.** Two renumbers in one afternoon is the base rate
 on this tree, not an anomaly — sweep again immediately before ticket 1 lands:
