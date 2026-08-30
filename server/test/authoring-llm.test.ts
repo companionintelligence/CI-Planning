@@ -111,11 +111,15 @@ describe('authorPlanOrder — robustness (b4-1, a0-1, a02-1)', () => {
     expect(auditCount('plan_needs_review')).toBeGreaterThanOrEqual(1); // NOT a silent revert (§A0 clause 6)
   });
 
-  it('a02-1: the real auditRecord sink writes plan_revision rows (default record path, not a stub)', async () => {
+  it("a02-1: authorPlanOrder's custom record callback still writes plan_revision audit rows via auditRecord", async () => {
     const a = insertTask('A'); const b = insertTask('B');
     stage(a, 0); stage(b, 1);
 
-    await authorPlanOrder(OWNER, DATE); // smart path, default record = auditRecord (no mock injected)
+    // Smart path. plan.ts always wires an explicit `record` (recordPlanRevision) into
+    // runLoop's options, so loop.ts's own `options.record ?? auditRecord` default
+    // fallback is never reached here — recordPlanRevision calls the re-exported
+    // auditRecord itself, which is what this test actually exercises.
+    await authorPlanOrder(OWNER, DATE);
 
     expect(auditCount('plan_revision')).toBeGreaterThanOrEqual(1); // each loop revision is logged
   });

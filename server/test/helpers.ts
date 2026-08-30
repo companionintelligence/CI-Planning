@@ -77,6 +77,12 @@ export function resetDb(): void {
     DELETE FROM copy_history;
     DELETE FROM life_priorities;
     DELETE FROM planning_sessions;
+    -- 0162: plan_revision_log/plan_loop_runs are append-only by design (the §A0
+    -- authoring loop's evidence) — same cross-test contamination argument as
+    -- calibration_history above.
+    DELETE FROM plan_revision_log;
+    DELETE FROM plan_loop_runs;
+    DELETE FROM plan_loop_stats;
     -- 0157: append-only evidence log (the dismissal-learning corpus) — same
     -- cross-test contamination argument as classification_log/triality_log above.
     DELETE FROM possible_outcome_log;
