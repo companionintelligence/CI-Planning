@@ -59,6 +59,27 @@ Each is a small icon button in a row beneath the name; tapping expands that pane
 
 > **Why hide, not show:** an open description or a wall of tags during focus is exactly the peripheral load §1.2 warns about. Progressive disclosure keeps the detail retrievable without letting it sit in the visual field draining attention.
 
+### 1.0a The surface layer, the style pref, and the Focus Lab
+
+The ritual is split in two. `FocusRitual.tsx` owns the clock, the cues (§1.1) and the T4 engine calls; **`FocusSurface.tsx` owns what that state looks like**. The surface is handed three numbers and a hue — `elapsedFrac`, `depletionFrac`, `remainingMs`, and the tint — and exposes them to CSS as `--focus-elapsed`, `--focus-settle` and `--focus-tint`. Every ambient layer in `index.css` (search "FOCUS RITUAL") is a pure function of those three properties, so a style cannot drift from the real timing.
+
+Two styles ship: **Breath** (the default — a 5.5-breaths/min pacer inside a ring that closes with the block, the anchor sitting *below* the ring so the pacer is what your eyes rest on) and **Signal** (ambient light from below, with one hairline of progress under the readout). The owner picks between them in **Settings → Routine Settings → Focus screen style**.
+
+The stage is a **size query container**: type scale and every ambient dimension are `cq*` units, measured against the surface rather than the viewport. The same component is therefore correct full-screen, on a phone, and inside the Focus Lab's preview. (A caller must give it a definite height — `container-type: size` resolves an auto height to zero.)
+
+**Focus Lab** (`components/FocusLab.tsx`) is the pop-up behind the FOCUS header's tuner button. It carries two display-only settings and previews the chosen style live:
+
+- **Session length** — what a "Start now" from FOCUS anchors: a fixed 15/25/50/90, or *Task estimate* (the default, i.e. the task's own `estimated_minutes`). `resolveSessionMinutes` keeps the pre-existing 15-minute floor and 30-minute no-estimate fallback.
+- **Colour** — what the timer is lit with. Default is **Direction**: the task's Work / Home / Community colour, the same one it wears everywhere else. An explicit pick overrides it **for the focus screen only** — `resolveFocusTint` never writes to the task or the block, and the choice is recorded as a token key so it survives.
+
+All three prefs live in the `view_prefs.focus` JSON blob (no migration — the column takes any plain object), read and written through the pure helpers in `lib/focus-appearance.ts` so Settings, FOCUS and the ritual share one definition of the defaults.
+
+Motion is decorative in every layer: `prefers-reduced-motion` drops all of it, and each animated element carries a static mid-cycle appearance. The property ramps above are **data**, not decoration, and keep tracking the clock either way.
+
+**Getting out.** A calm full-screen surface must never be a trap: **Escape** leaves the ritual (the block stays), and the close button shows for a beat on open, fades when the screen goes idle, and returns on any pointer or key activity. It is `pointer-events: none` while hidden and forced visible by `:focus-within`, so keyboard users never tab to an invisible control.
+
+The ritual renders through a `Portal`. Both hosts (FOCUS, Today) carry `.page-enter`, whose `both` fill-mode leaves a transform on the view container — which makes it the containing block for `position: fixed`, so the overlay was previously clipped to the scrolling content column instead of covering the screen.
+
 ### 1.1 The four default timers
 
 All four are **defaults**; every one is individually configurable and disableable (§4). None is load-bearing — with all cues off, the block still runs, completes, and feeds calibration exactly the same.
