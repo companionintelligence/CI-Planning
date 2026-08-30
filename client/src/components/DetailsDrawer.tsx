@@ -1293,6 +1293,13 @@ export function DetailsDrawer() {
   window.addEventListener('keydown', onEsc);
   onCleanup(() => window.removeEventListener('keydown', onEsc));
 
+  // On mobile the drawer is a fixed bottom sheet — with nothing selected (and no
+  // Planner grid to show instead) it has no content of its own, but still sat over
+  // the bottom of the screen and ate clicks meant for the FAB and other bottom
+  // controls underneath it. Desktop is unaffected: there it's a docked side panel,
+  // and an empty side panel doesn't cover anything.
+  const isEmptyState = () => !task() && !block() && !entity() && !(hasPlannerTab() && drawerTab() === 'planner');
+
   return (
     <Show when={detailsOpen()}>
       <div
@@ -1312,7 +1319,12 @@ export function DetailsDrawer() {
         onDblClick={() => setDetailsWidth(DETAILS_DEFAULT_W)}
         onKeyDown={onRailKey}
       />
-      <aside class="details-drawer" style={{ '--details-w': `${detailsWidth()}px` }} aria-label="Details">
+      <aside
+        class="details-drawer"
+        classList={{ 'details-drawer-empty': isEmptyState() }}
+        style={{ '--details-w': `${detailsWidth()}px` }}
+        aria-label="Details"
+      >
         <div class="drawer-head">
           <div class="min-w-0 flex-1">
             <div class="drawer-kind">{kind()}</div>
