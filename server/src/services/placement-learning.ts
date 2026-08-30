@@ -484,3 +484,30 @@ export async function calibratePlacement(
     },
   };
 }
+
+// ── Read: survival trend (ticket 6) ────────────────────────────────────────────
+
+/** One `placement_survival` reading, as `survivalTrend` renders it. */
+export interface SurvivalTrendRow {
+  computed_date: string;
+  period_days: number;
+  decided: number;
+  accepted: number;
+  corrected: number;
+  survival_rate: number | null;
+  keys_learned: number;
+  biased: number;
+}
+
+/** The measured survival trend, newest run first — what turns "the scheduler got
+ *  better" from a claim into a number. Mirrors `accuracyTrend`
+ *  (classification-learning.ts). */
+export async function survivalTrend(ownerId: string, limit = 12): Promise<SurvivalTrendRow[]> {
+  return await store()
+    .prepare(
+      `SELECT computed_date, period_days, decided, accepted, corrected, survival_rate, keys_learned, biased
+         FROM placement_survival WHERE owner_id = ?
+        ORDER BY computed_date DESC LIMIT ?`,
+    )
+    .all(ownerId, limit);
+}
