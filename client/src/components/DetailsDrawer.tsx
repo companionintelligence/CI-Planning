@@ -1,7 +1,7 @@
 import { Show, For, Switch, Match, createSignal, createEffect, createResource, on, onCleanup } from 'solid-js';
 import { useLocation } from '@solidjs/router';
 import { Planner } from './Planner.js';
-import { X, PanelRight, Inbox, Pencil, Sparkles, Check, ChevronDown, ChevronRight } from 'lucide-solid';
+import { X, PanelRight, Inbox, Pencil, Sparkles, Check, ChevronDown, ChevronRight, Rocket } from 'lucide-solid';
 import {
   detailsOpen, detailsWidth, setDetailsOpen, setDetailsWidth,
   drawerTab, setDrawerTab, DETAILS_MIN_W, DETAILS_MAX_W, DETAILS_DEFAULT_W,
@@ -590,28 +590,79 @@ function JobPanel(props: { id: string }) {
   );
 }
 
-/** One list row: a title, an optional repeat count, and an optional right-hand meta. */
-function RollupRow(props: { group: TitleGroup<any>; meta?: string; onClick?: () => void; done?: boolean }) {
+/**
+ * One list row: a title, an optional repeat count, and an optional right-hand meta.
+ *
+ * `stage` adds a second, sibling action — a small icon button that stages the row's
+ * task into the flight-plan (Open list only, see `DimensionPanel`). A native
+ * `<button>` cannot host a nested `<button>`, so a row carrying a stage action
+ * renders its root as a `div[role=button]` instead; the stage button stops
+ * propagation so tapping it does not also fire the row's own click.
+ */
+function RollupRow(props: {
+  group: TitleGroup<any>;
+  meta?: string;
+  onClick?: () => void;
+  done?: boolean;
+  stage?: { onStage: () => void };
+}) {
   return (
-    <button
-      type="button"
-      class="flex items-center gap-2 w-full text-left py-1 text-xs hover:text-primary group/row"
-      onClick={() => props.onClick?.()}
+    <Show
+      when={props.stage}
+      fallback={
+        <button
+          type="button"
+          class="flex items-center gap-2 w-full text-left py-1 text-xs hover:text-primary group/row"
+          onClick={() => props.onClick?.()}
+        >
+          <span class="truncate group-hover/row:underline" classList={{ 'line-through text-muted-foreground': props.done }}>
+            {props.group.title}
+          </span>
+          {/* The repeat count, as a digit — a recurring task collapses to one row rather
+              than N identical ones. Absent at count 1 so a one-off carries no "x1" noise. */}
+          <Show when={props.group.count > 1}>
+            <span class="flex-shrink-0 text-[10px] font-mono px-1.5 rounded-full bg-muted text-muted-foreground border border-border">
+              x{props.group.count}
+            </span>
+          </Show>
+          <Show when={props.meta}>
+            <span class="ml-auto flex-shrink-0 text-[10px] text-muted-foreground font-mono">{props.meta}</span>
+          </Show>
+        </button>
+      }
     >
-      <span class="truncate group-hover/row:underline" classList={{ 'line-through text-muted-foreground': props.done }}>
-        {props.group.title}
-      </span>
-      {/* The repeat count, as a digit — a recurring task collapses to one row rather
-          than N identical ones. Absent at count 1 so a one-off carries no "x1" noise. */}
-      <Show when={props.group.count > 1}>
-        <span class="flex-shrink-0 text-[10px] font-mono px-1.5 rounded-full bg-muted text-muted-foreground border border-border">
-          x{props.group.count}
-        </span>
-      </Show>
-      <Show when={props.meta}>
-        <span class="ml-auto flex-shrink-0 text-[10px] text-muted-foreground font-mono">{props.meta}</span>
-      </Show>
-    </button>
+      {(stage) => (
+        <div
+          role="button"
+          tabIndex={0}
+          class="flex items-center gap-2 w-full text-left py-1 text-xs hover:text-primary group/row cursor-pointer"
+          onClick={() => props.onClick?.()}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); props.onClick?.(); }
+          }}
+        >
+          <span class="truncate group-hover/row:underline" classList={{ 'line-through text-muted-foreground': props.done }}>
+            {props.group.title}
+          </span>
+          <Show when={props.group.count > 1}>
+            <span class="flex-shrink-0 text-[10px] font-mono px-1.5 rounded-full bg-muted text-muted-foreground border border-border">
+              x{props.group.count}
+            </span>
+          </Show>
+          <Show when={props.meta}>
+            <span class="ml-auto flex-shrink-0 text-[10px] text-muted-foreground font-mono">{props.meta}</span>
+          </Show>
+          <button
+            type="button"
+            class="ml-auto flex-shrink-0 text-[11px] text-muted-foreground hover:text-foreground"
+            title="Stage this task"
+            onClick={(e) => { e.stopPropagation(); stage().onStage(); }}
+          >
+            <Rocket size={11} />
+          </button>
+        </div>
+      )}
+    </Show>
   );
 }
 
@@ -657,7 +708,31 @@ function DimensionPanel(props: { dimension: string }) {
         && ['open', 'scheduled', 'in_progress'].includes(t.status ?? '')
         && !scheduledTaskIds().has(t.id),
     );
-  const openGroups = () => groupByTitle(openTasks(), (t) => t.title, (t) => t.estimated_minutes ?? 0);
+  // Candidate-fill order (engine/autoplan.ts:780): priority, then due date (undated
+  // sorts last), then id as a stable tiebreaker. openTasks() itself is not sorted —
+  // ordering it here, right before grouping, is what makes the list an owner already
+  // sees also consistently ordered.
+  const openGroups = () =>
+    groupByTitle(
+      openTasks().sort((a, b) =>
+        a.priority - b.priority
+        || (a.due_at ?? '9999-12-31').localeCompare(b.due_at ?? '9999-12-31')
+        || a.id.localeCompare(b.id)),
+      (t) => t.title,
+      (t) => t.estimated_minutes ?? 0,
+    );
+
+  // Stage a task straight from the Open list — the human tap is the only write; on
+  // success the panel refetches `tasks()` (same resource every other mutation in this
+  // file refreshes through) so the list reflects the change immediately.
+  async function stageTask(id: string) {
+    try {
+      await api.flightPlan.addTask(id);
+      refetchTasks();
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    }
+  }
 
   const doneTasks = () =>
     (tasks() ?? [])
@@ -745,7 +820,13 @@ function DimensionPanel(props: { dimension: string }) {
         >
           <div class="flex flex-col">
             <For each={openGroups()}>
-              {(g) => <RollupRow group={g} onClick={() => setActiveTask(g.first.id)} />}
+              {(g) => (
+                <RollupRow
+                  group={g}
+                  onClick={() => setActiveTask(g.first.id)}
+                  stage={unallocated() > 0 ? { onStage: () => stageTask(g.first.id) } : undefined}
+                />
+              )}
             </For>
           </div>
         </Show>
