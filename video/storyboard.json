@@ -177,6 +177,12 @@
             "waitFor": "button.fab",
             "before": [
               {
+                "eval": "() => { const b = document.querySelector('button[aria-label=\"Close details\"]'); if (b) b.click(); }"
+              },
+              {
+                "wait": 200
+              },
+              {
                 "click": "button.fab"
               },
               {
@@ -216,6 +222,12 @@
             "waitUntil": "domcontentloaded",
             "waitFor": "button.fab",
             "before": [
+              {
+                "eval": "() => { const b = document.querySelector('button[aria-label=\"Close details\"]'); if (b) b.click(); }"
+              },
+              {
+                "wait": 200
+              },
               {
                 "click": "button.fab"
               },
@@ -524,6 +536,12 @@
             "waitUntil": "domcontentloaded",
             "waitFor": "h2:text-is(\"Step 1: Current Satisfaction\")",
             "before": [
+              {
+                "eval": "() => { const b = document.querySelector('button[aria-label=\"Close details\"]'); if (b) b.click(); }"
+              },
+              {
+                "wait": 200
+              },
               {
                 "click": "button:has-text(\"Next: Desired Focus\")"
               },
