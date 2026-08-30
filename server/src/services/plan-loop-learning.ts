@@ -226,3 +226,32 @@ export async function calibratePlanLoop(
 
   return { stages };
 }
+
+// ── Trend: the read surface (ticket 4) ──────────────────────────────────────
+
+/** The most recent measured `plan_loop_stats` rows per stage — what `routes/plan-loop.ts`
+ *  hands the client, mirroring `accuracyTrend` (classification-learning.ts). */
+export async function planLoopTrend(
+  ownerId: string,
+  limit = 26,
+): Promise<
+  {
+    stage: string;
+    computed_date: string;
+    period_days: number;
+    runs: number;
+    passed: number;
+    escaped: number;
+    first_try_pass: number;
+    avg_iterations: number | null;
+    pass_rate: number | null;
+  }[]
+> {
+  return await store()
+    .prepare(
+      `SELECT stage, computed_date, period_days, runs, passed, escaped, first_try_pass, avg_iterations, pass_rate
+         FROM plan_loop_stats WHERE owner_id = ?
+        ORDER BY computed_date DESC, stage LIMIT ?`,
+    )
+    .all(ownerId, limit);
+}
