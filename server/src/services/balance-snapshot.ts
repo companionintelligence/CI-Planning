@@ -4,6 +4,7 @@ import { localDateInTZ } from '../lib/tz.js';
 import { ownerTimezone } from '../engine/recurrence-generate.js';
 import { dimensionShortfalls, weekBoundsFor } from './balance-budget.js';
 import { priorWeekAnchor } from './plan-week-review.js';
+import { SQL_CATEGORY_ENTRIES, entryMinutes } from './triality-vector.js';
 
 /**
  * services/balance-snapshot.ts — the balance-targets wave's durable-evidence stage
@@ -27,10 +28,12 @@ export interface SnapshotBalanceWeekResult {
 }
 
 /** Bal-7 (docs/factory/balance-targets-wave/bal-7-history-readout.md) — the most weeks
- *  of frozen history the readout will ever look back over. The retrieval SQL uses
- *  `HISTORY_WEEKS_MAX * 6` as its row LIMIT (six being a generous per-owner dimension
- *  count), so the query itself is bounded regardless of how long the log has been
- *  accruing — never unbounded. */
+ *  of frozen history the readout will ever look back over, per dimension. Enforced by
+ *  a `ROW_NUMBER() OVER (PARTITION BY category ...)` window in `balanceHistory`'s
+ *  query, not by a total-row LIMIT — `life_priorities.category` has no server-side cap
+ *  on how many distinct dimensions an owner can have (code-review fix: an earlier
+ *  version used `LIMIT HISTORY_WEEKS_MAX * 6`, assuming at most 6 categories, which
+ *  silently under-reported history for any owner with more). */
 export const HISTORY_WEEKS_MAX = 12;
 
 interface BalanceWeekLogRow {
@@ -58,44 +61,31 @@ export interface BalanceHistoryResult {
   dimensions: BalanceHistoryDimension[];
 }
 
-// Finished time_entries attributed to a dimension via their task's category — the
-// SQL_CATEGORY_ENTRIES shape (services/triality-vector.ts:206), narrowed to the target
-// week's UTC range instead of a rolling "recent" window. Unlike
-// `scheduledMinutesByDimension` (services/balance-budget.ts), this does NOT clamp an
-// entry's minutes to the window — it filters on `started_at` falling inside it, exactly
-// as SQL_CATEGORY_ENTRIES does; a timed entry is a point-in-time actual, not a span that
-// straddles week edges the way a calendar block can.
-const SQL_TIMED_CATEGORY_ENTRIES = `
-  SELECT g.name AS category, e.started_at, e.ended_at
-    FROM time_entries e
-    JOIN entity_categories ec ON ec.entity_kind = 'task' AND ec.entity_id = e.task_id
-    JOIN tags g ON g.id = ec.category_tag_id AND g.kind = 'category' AND g.is_base = 1 AND g.owner_id = ?
-   WHERE e.owner_id = ? AND e.ended_at IS NOT NULL
-     AND e.started_at >= ? AND e.started_at <= ?
-`;
-
-/** Finished-entry minutes; a malformed pair (end before start) contributes nothing —
- *  mirrors `entryMinutes` (services/triality-vector.ts:243). */
-function entryMinutes(startedAt: string, endedAt: string): number {
-  const mins = (Date.parse(endedAt) - Date.parse(startedAt)) / 60_000;
-  return Number.isFinite(mins) && mins > 0 ? mins : 0;
-}
-
 /** Timed minutes this week per dimension (category name) for `ownerId`, keyed by the
  *  same UTC range `weekBoundsFor` produces. Sparse: a dimension with zero finished
- *  entries this week is simply absent from the map. */
+ *  entries this week is simply absent from the map.
+ *
+ *  Reuses `SQL_CATEGORY_ENTRIES`/`entryMinutes` from `services/triality-vector.ts`
+ *  (code-review fix: this used to be a private near-duplicate of both, differing only
+ *  in the query's output alias — `cat` there, which this now reads directly instead
+ *  of re-aliasing to `category`). Narrowed to the target week's UTC range instead of
+ *  triality's rolling "recent" window; does NOT clamp an entry's minutes to the
+ *  window like `scheduledMinutesByDimension` (services/balance-budget.ts) does for
+ *  calendar blocks — it filters on `started_at` falling inside it, exactly as
+ *  `SQL_CATEGORY_ENTRIES` does, because a timed entry is a point-in-time actual, not
+ *  a span that straddles week edges the way a calendar block can. */
 async function timedMinutesByDimension(
   ownerId: string,
   startUtc: string,
   endUtc: string,
 ): Promise<Map<string, number>> {
   const rows = await store()
-    .prepare(SQL_TIMED_CATEGORY_ENTRIES)
-    .all<{ category: string; started_at: string; ended_at: string }>(ownerId, ownerId, startUtc, endUtc);
+    .prepare(SQL_CATEGORY_ENTRIES)
+    .all<{ cat: string; started_at: string; ended_at: string }>(ownerId, ownerId, startUtc, endUtc);
   const out = new Map<string, number>();
   for (const r of rows) {
     const minutes = entryMinutes(r.started_at, r.ended_at);
-    if (minutes > 0) out.set(r.category, (out.get(r.category) ?? 0) + minutes);
+    if (minutes > 0) out.set(r.cat, (out.get(r.cat) ?? 0) + minutes);
   }
   return out;
 }
@@ -157,24 +147,31 @@ export async function snapshotBalanceWeek(ownerId: string, now: Date): Promise<S
  * number that would silently disagree with it. (`timed_minutes` stays recorded in the
  * table for a future wave.)
  *
- * Bounded retrieval: the query pulls at most `HISTORY_WEEKS_MAX * 6` rows (newest
- * `week_start` first) across every dimension, never unbounded. Each dimension is then
- * capped to the newest `HISTORY_WEEKS_MAX` of ITS OWN rows in that set — the SQL LIMIT
- * only bounds the total fetch; a log with fewer than six dimensions could otherwise
- * return more than 12 weeks for one of them.
+ * Bounded retrieval: a `ROW_NUMBER() OVER (PARTITION BY category ORDER BY
+ * week_start DESC)` window caps each dimension to its own newest `HISTORY_WEEKS_MAX`
+ * rows independently — never unbounded, and correct regardless of how many distinct
+ * dimensions the owner has (code-review fix: a plain `LIMIT HISTORY_WEEKS_MAX * 6`
+ * across all dimensions combined assumed at most 6 categories and silently
+ * under-reported history for any owner with more, since `life_priorities.category`
+ * has no such server-side cap).
  */
 export async function balanceHistory(ownerId: string): Promise<BalanceHistoryResult> {
   const rows = await store()
     .prepare(
-      `SELECT week_start, category, target_hours, scheduled_minutes
-         FROM balance_week_log WHERE owner_id = ? ORDER BY week_start DESC LIMIT ?`,
+      `SELECT week_start, category, target_hours, scheduled_minutes FROM (
+         SELECT week_start, category, target_hours, scheduled_minutes,
+                ROW_NUMBER() OVER (PARTITION BY category ORDER BY week_start DESC) AS rn
+           FROM balance_week_log WHERE owner_id = ?
+       ) WHERE rn <= ?
+       ORDER BY category, week_start DESC`,
     )
-    .all<BalanceWeekLogRow>(ownerId, HISTORY_WEEKS_MAX * 6);
+    .all<BalanceWeekLogRow>(ownerId, HISTORY_WEEKS_MAX);
 
   const weeksRecorded = new Set(rows.map((r) => r.week_start)).size;
 
-  // Rows arrive week_start DESC already (the SQL ORDER BY), so grouping preserves that
-  // order within each category — no re-sort needed before capping/slicing below.
+  // Rows arrive week_start DESC within each category already (the SQL ORDER BY), so
+  // grouping preserves that order — no re-sort needed, and every group is already
+  // capped to HISTORY_WEEKS_MAX by the window filter above.
   const byCategory = new Map<string, BalanceWeekLogRow[]>();
   for (const r of rows) {
     const list = byCategory.get(r.category);
@@ -183,8 +180,7 @@ export async function balanceHistory(ownerId: string): Promise<BalanceHistoryRes
   }
 
   const dimensions: BalanceHistoryDimension[] = [];
-  for (const [category, all] of byCategory) {
-    const capped = all.slice(0, HISTORY_WEEKS_MAX);
+  for (const [category, capped] of byCategory) {
     const counted = capped.filter((r) => r.target_hours > 0);
     const metRows = counted.filter((r) => r.scheduled_minutes >= r.target_hours * 60);
     dimensions.push({

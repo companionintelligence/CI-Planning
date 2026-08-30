@@ -638,7 +638,18 @@ function RollupRow(props: {
           class="flex items-center gap-2 w-full text-left py-1 text-xs hover:text-primary group/row cursor-pointer"
           onClick={() => props.onClick?.()}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); props.onClick?.(); }
+            // Code-review fix: only handle Enter/Space when the ROW ITSELF is the
+            // keydown target, not when it bubbled up from the nested Stage button.
+            // Without the `e.target === e.currentTarget` guard, preventDefault() here
+            // fired on every keydown that bubbles through this div — including one
+            // that started on the focused Stage button — which suppresses the
+            // browser's native Enter/Space-to-click synthesis for that button, so a
+            // keyboard user could never activate Stage at all (Enter/Space on it
+            // always opened the task instead).
+            if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
+              e.preventDefault();
+              props.onClick?.();
+            }
           }}
         >
           <span class="truncate group-hover/row:underline" classList={{ 'line-through text-muted-foreground': props.done }}>

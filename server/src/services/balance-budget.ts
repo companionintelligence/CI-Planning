@@ -1,4 +1,5 @@
 import { store } from '../db/store.js';
+import { weekDays } from '../lib/tz.js';
 
 /**
  * services/balance-budget.ts — the single deterministic READ answering, per life
@@ -37,19 +38,9 @@ export interface DimensionShortfall {
   shortfall_minutes: number;
 }
 
-// ── week math — byte-identical to the `weekDays` rule (services/weekly-review.ts:75-84) ──
-
-function addDays(dateStr: string, n: number): string {
-  const dt = new Date(dateStr + 'T12:00:00Z');
-  dt.setUTCDate(dt.getUTCDate() + n);
-  return dt.toISOString().slice(0, 10);
-}
-
-function weekDays(anchor: string): string[] {
-  const dow = new Date(anchor + 'T12:00:00Z').getUTCDay(); // 0=Sun
-  const monday = addDays(anchor, -(dow === 0 ? 6 : dow - 1));
-  return Array.from({ length: 7 }, (_, i) => addDays(monday, i));
-}
+// ── week math — `weekDays` from `lib/tz.js` (code-review fix: this used to be a
+// private copy, byte-identical to services/weekly-review.ts's own private copy and to
+// a third copy inlined in lib/tz.ts's isoWeekKey — all three now share one) ──
 
 /**
  * Owner-local Monday-start week bounds for `anchorLocalDate` (a `YYYY-MM-DD` — callers

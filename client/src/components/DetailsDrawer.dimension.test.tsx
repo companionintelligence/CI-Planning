@@ -211,6 +211,38 @@ describe('DetailsDrawer — dimension panel', () => {
     expect(setActiveTaskMock).toHaveBeenCalledWith('t-c-mid');
   });
 
+  it('keyboard Enter on the Stage button stages it, without also opening the task (code-review fix)', async () => {
+    // Before the fix, the row's own onKeyDown fired props.onClick() (opening the task)
+    // on ANY keydown bubbling through it, regardless of which element the keydown
+    // actually targeted — so Enter/Space on the focused Stage button both (a) never
+    // actually staged, because preventDefault() suppressed the browser's native
+    // Enter/Space-to-click synthesis for that button, and (b) opened the task instead.
+    setEntity({ kind: 'dimension', id: 'career' });
+    render(() => <DetailsDrawer />);
+    await waitFor(() => expect(text()).toContain('Unallocated'));
+    const row = screen.getByText('Ship release').closest('[role="button"]') as HTMLElement;
+    const stageButton = row.querySelector('button') as HTMLButtonElement;
+    fireEvent.keyDown(stageButton, { key: 'Enter' });
+    // The row's own click-equivalent must NOT fire from a keydown targeting the
+    // nested button — this is the actual regression: it used to fire here.
+    expect(setActiveTaskMock).not.toHaveBeenCalled();
+    // Real browsers synthesize a click from Enter/Space on a focused button; jsdom
+    // doesn't, so fire it explicitly to confirm the rest of the Stage flow still works
+    // once the row correctly gets out of the way.
+    fireEvent.click(stageButton);
+    await waitFor(() => expect(flightPlanAddTaskMock).toHaveBeenCalledWith('t-other'));
+    expect(setActiveTaskMock).not.toHaveBeenCalled();
+  });
+
+  it('keyboard Enter on the row itself (not the Stage button) still opens the task', async () => {
+    setEntity({ kind: 'dimension', id: 'career' });
+    render(() => <DetailsDrawer />);
+    await waitFor(() => expect(text()).toContain('Unallocated'));
+    const row = screen.getByText('Ship release').closest('[role="button"]') as HTMLElement;
+    fireEvent.keyDown(row, { key: 'Enter' });
+    expect(setActiveTaskMock).toHaveBeenCalledWith('t-other');
+  });
+
   it('stages the first occurrence of a grouped (repeated-title) row', async () => {
     setEntity({ kind: 'dimension', id: 'career' });
     render(() => <DetailsDrawer />);

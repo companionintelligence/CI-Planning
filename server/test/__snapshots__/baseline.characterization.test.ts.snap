@@ -844,6 +844,19 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   },
   {
     "columns": [
+      "category",
+      "created_at",
+      "id",
+      "owner_id",
+      "scheduled_minutes",
+      "target_hours",
+      "timed_minutes",
+      "week_start",
+    ],
+    "table": "balance_week_log",
+  },
+  {
+    "columns": [
       "default_minutes",
       "id",
       "name",

@@ -507,6 +507,7 @@ export function checkOrder(
   themeTag?: string | null,
   memoryRelated?: Set<string>,
   balanceLead?: Set<string>,
+  newToday?: Set<string>,
 ): Defect[] {
   const defects: Defect[] = [];
   const todayMs = Date.parse(today + 'T00:00:00Z');
@@ -514,6 +515,13 @@ export function checkOrder(
   const related = (t: PlanTask): boolean => (memoryRelated ? memoryRelated.has(t.task_id) : false);
   // Balance-targets wave (bal-4): same compositional shape as `related` above.
   const leading = (t: PlanTask): boolean => (balanceLead ? balanceLead.has(t.task_id) : false);
+  // Code-review follow-up: `deterministicIndices` places `new_today` BETWEEN memory
+  // and balance (theme > memory > new_today > balance > due/priority — see its own
+  // band comments), but until this fix `checkOrder` had no freshness predicate at
+  // all, so the balance exemption below could fire across a newToday/non-newToday
+  // pair it was never meant to cover: a stale, low-priority, balance-lead task could
+  // wrongly skip an inversion check against a fresh, higher-priority, non-lead task.
+  const fresh = (t: PlanTask): boolean => (newToday ? newToday.has(t.task_id) : false);
 
   for (let i = 0; i < order.length && defects.length < 5; i++) {
     const a = tasks[order[i]];
@@ -522,6 +530,7 @@ export function checkOrder(
     const aThemed = themed(a);
     const aRelated = related(a);
     const aLeading = leading(a);
+    const aFresh = fresh(a);
 
     for (let j = i + 1; j < order.length && defects.length < 5; j++) {
       const b = tasks[order[j]];
@@ -536,9 +545,12 @@ export function checkOrder(
       // unrelated one — memory is the next band after theme, so this isn't an inversion.
       if (aThemed === themed(b) && aRelated && !related(b)) continue;
 
-      // bal-4: within the SAME theme AND memory band, a balance-lead task legitimately
-      // leads a non-lead one — balance is the band after memory, so this isn't an inversion.
-      if (aThemed === themed(b) && aRelated === related(b) && aLeading && !leading(b)) continue;
+      // bal-4: within the SAME theme, memory AND new_today band, a balance-lead task
+      // legitimately leads a non-lead one — balance is the band after new_today, so
+      // this isn't an inversion. The `aFresh === fresh(b)` guard is the fix: without
+      // it, this exemption could fire across the new_today boundary it was never
+      // meant to cover.
+      if (aThemed === themed(b) && aRelated === related(b) && aFresh === fresh(b) && aLeading && !leading(b)) continue;
 
       // Priority inversion: b (later) has higher priority (lower number) than a (earlier),
       // and a does not have an earlier deadline to justify being placed first.
@@ -597,7 +609,10 @@ export function genPrompt(
   themeTag?: string | null,
   constraint = '',
   memoryLine = '',
-  balanceLine = '',
+  // Named `balLine`, not `balanceLine` — a parameter named `balanceLine` shadows the
+  // module-level `balanceLine(shortfalls)` function (above) within this function's own
+  // scope, which is a real footgun even though nothing here ever needs to call it.
+  balLine = '',
 ): string {
   const themeLine = themeTag
     ? `\nToday's theme: ${themeTag} — favour ${themeTag}-tagged tasks earlier.`
@@ -607,7 +622,7 @@ export function genPrompt(
     `1) hard deadlines (sooner due = earlier); 2) priority (P1 highest);\n` +
     `3) momentum — group related work, minimize context switches;\n` +
     `4) front-load demanding work while focus is fresh.\n` +
-    `Capacity today: ~${capacityMin} focused minutes.${themeLine}${constraint}${memoryLine}${balanceLine}\n\n` +
+    `Capacity today: ~${capacityMin} focused minutes.${themeLine}${constraint}${memoryLine}${balLine}\n\n` +
     `Tasks (index: [priority] title (due) ~estimate tags):\n${lines.join('\n')}\n\n` +
     `Reply with ONLY a JSON array containing every index exactly once, in your chosen order. Example: [3,0,1,2]`
   );
@@ -804,7 +819,7 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
   const persistDeterministic = async () => {
     const detIndices = deterministicIndices(staged, themeTag, fillOrder, memoryRelated, newToday, balanceLead);
     const postPassed = tagGroupPostPass(detIndices, staged);
-    const defects = checkOrder(postPassed, staged, date, themeTag, memoryRelated, balanceLead);
+    const defects = checkOrder(postPassed, staged, date, themeTag, memoryRelated, balanceLead, newToday);
     const final = defects.length === 0 ? postPassed : detIndices;
     await persistOrder(owner, date, staged, final, 'deterministic');
   };
@@ -855,7 +870,7 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
         check: (order) => {
           // §A2: apply post-pass before checking
           const postPassed = tagGroupPostPass(order, staged);
-          return checkOrder(postPassed, staged, date, themeTag, memoryRelated, balanceLead);
+          return checkOrder(postPassed, staged, date, themeTag, memoryRelated, balanceLead, newToday);
         },
 
         judge: async (order): Promise<JudgeScore> => {
@@ -910,7 +925,7 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
 
     // §A2: apply post-pass to the final LLM result
     const finalCandidate = tagGroupPostPass(result.candidate, staged);
-    const finalDefects = checkOrder(finalCandidate, staged, date, themeTag, memoryRelated, balanceLead);
+    const finalDefects = checkOrder(finalCandidate, staged, date, themeTag, memoryRelated, balanceLead, newToday);
     const finalIndices = finalDefects.length === 0 ? finalCandidate : result.candidate;
 
     // §A3: only an LLM-authored order carries per-task rationales; an escape-hatch

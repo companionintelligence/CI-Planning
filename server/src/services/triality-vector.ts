@@ -203,7 +203,10 @@ const SQL_PRIORITIES = `
 // Finished entries only (a running entry has no duration yet), attributed through the
 // TASK's categories. g.owner_id is re-checked even though the entry scope implies it —
 // owner-scoped SQL always filters owner_id, no exceptions.
-const SQL_CATEGORY_ENTRIES = `
+// Exported (code-review fix): services/balance-snapshot.ts's timed-minutes query used
+// to be a near-verbatim private copy of this one, differing only in the output alias
+// (`cat` here vs `category` there) — shared now so the two can't silently drift apart.
+export const SQL_CATEGORY_ENTRIES = `
   SELECT g.name AS cat, e.started_at, e.ended_at
     FROM time_entries e
     JOIN entity_categories ec ON ec.entity_kind = 'task' AND ec.entity_id = e.task_id
@@ -239,8 +242,10 @@ const SQL_MOTIVATION_ENTRIES = `
 
 const MOTIVATIONS = new Set(['me', 'us', 'them']);
 
-/** Finished-entry minutes; a malformed pair (end before start) contributes nothing. */
-function entryMinutes(startedAt: string, endedAt: string): number {
+/** Finished-entry minutes; a malformed pair (end before start) contributes nothing.
+ *  Exported (code-review fix): services/balance-snapshot.ts had a byte-for-byte
+ *  private copy of this function, shared now instead. */
+export function entryMinutes(startedAt: string, endedAt: string): number {
   const mins = (Date.parse(endedAt) - Date.parse(startedAt)) / 60_000;
   return Number.isFinite(mins) && mins > 0 ? mins : 0;
 }

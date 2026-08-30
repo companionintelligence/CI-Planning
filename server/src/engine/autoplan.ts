@@ -76,6 +76,11 @@ interface PrefsRow {
   auto_fill_workday: number | null;
   fill_order: string | null;
   default_time_block_minutes: number | null;
+  // bal-3: fetched here so fillFlightPlanCandidates can gate its bias path off the
+  // same prefsOf() call it already needs for the owner's timezone — see
+  // biasLeadDimensionsForFill, which used to issue its own second scheduling_prefs
+  // query for just this column.
+  balance_bias_enabled: number | null;
 }
 interface PlanRow {
   id: string;
@@ -163,7 +168,7 @@ async function recordRun(owner: string, runId: string, blocksCreated: number): P
 
 async function prefsOf(owner: string): Promise<PrefsRow | undefined> {
   return await store()
-    .prepare(`SELECT timezone, min_break_minutes, max_focus_block_minutes, auto_fill_workday, fill_order, default_time_block_minutes FROM scheduling_prefs WHERE owner_id = ?`)
+    .prepare(`SELECT timezone, min_break_minutes, max_focus_block_minutes, auto_fill_workday, fill_order, default_time_block_minutes, balance_bias_enabled FROM scheduling_prefs WHERE owner_id = ?`)
     .get(owner) as PrefsRow | undefined;
 }
 
@@ -790,11 +795,12 @@ async function openCandidateIds(owner: string, fillDate: string, estimateClause:
  *  candidate ordering — [] whenever bias doesn't apply, so the caller's fallback to
  *  the original single-query path is always correct. Gate order is cheapest-first:
  *  the pref flag (absent row ⇒ ON, matching the column DEFAULT) short-circuits before
- *  the shortfall service ever runs. */
-async function biasLeadDimensionsForFill(owner: string, fillDate: string): Promise<string[]> {
-  const row = await store().prepare(`SELECT balance_bias_enabled FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as
-    { balance_bias_enabled: number | null } | undefined;
-  if (row?.balance_bias_enabled === 0) return [];
+ *  the shortfall service ever runs. `balanceBiasEnabled` is the caller's already-fetched
+ *  `PrefsRow.balance_bias_enabled` — this used to issue its own second `scheduling_prefs`
+ *  query for just this column, redundant with the `prefsOf()` call the caller already
+ *  makes for the owner's timezone. */
+async function biasLeadDimensionsForFill(owner: string, fillDate: string, balanceBiasEnabled: number | null): Promise<string[]> {
+  if (balanceBiasEnabled === 0) return [];
   const shortfalls = await dimensionShortfalls(owner, fillDate);
   return biasLeadDimensions(shortfalls);
 }
@@ -829,7 +835,11 @@ export async function fillFlightPlanCandidates(
   owner: string = currentOwnerId(),
   opts: { requireEstimate?: boolean; date?: string } = {},
 ): Promise<number> {
-  const fillDate = opts.date ?? await ownerToday(owner);
+  // Fetched once — reused below both for the owner's today (when opts.date is
+  // omitted, replacing a separate ownerToday()->prefsOf() round-trip) and for the
+  // bias gate (replacing biasLeadDimensionsForFill's old standalone query).
+  const prefs = await prefsOf(owner);
+  const fillDate = opts.date ?? todayInTZ(prefs?.timezone || serverTimezone());
   // TM-3: the auto-block path stages only estimate-bearing tasks (we won't fabricate a
   // block duration for a task the user never sized). Default false ⇒ unchanged staging.
   const estimateClause = opts.requireEstimate ? `AND estimated_minutes IS NOT NULL` : '';
@@ -840,7 +850,7 @@ export async function fillFlightPlanCandidates(
   // a broken bias must not break staging.
   let candidateIds: string[];
   try {
-    const leadDimensions = await biasLeadDimensionsForFill(owner, fillDate);
+    const leadDimensions = await biasLeadDimensionsForFill(owner, fillDate, prefs?.balance_bias_enabled ?? null);
     if (leadDimensions.length === 0) {
       candidateIds = await openCandidateIds(owner, fillDate, estimateClause, CANDIDATE_LIMIT);
     } else {

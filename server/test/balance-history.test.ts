@@ -85,6 +85,23 @@ describe('GET /api/priorities/history', () => {
     expect(dimOf(r.body, 'health')).toMatchObject({ met_weeks: 12, counted_weeks: 12 });
   });
 
+  it('more than 6 categories, 12 weeks each, still caps every category at 12 (code-review fix)', async () => {
+    // life_priorities.category has no server-side cap at 6 — an earlier version of
+    // this query used a combined LIMIT sized for exactly 6 categories, which silently
+    // truncated every dimension's window once a 7th+ category existed. 8 categories x
+    // 14 real weeks each (112 rows) must still resolve to 12 counted weeks PER category,
+    // not a shrunk combined total.
+    const categories = ['health', 'career', 'relationships', 'growth', 'leisure', 'finance', 'side-project', 'volunteering'];
+    for (const cat of categories) {
+      for (let i = 0; i < 14; i++) insertWeek(weekStart(i), cat, 5, 300); // all "met"
+    }
+    const r = await get();
+    for (const cat of categories) {
+      expect(dimOf(r.body, cat), `category ${cat}`).toMatchObject({ met_weeks: 12, counted_weeks: 12 });
+      expect(dimOf(r.body, cat)!.recent).toHaveLength(12);
+    }
+  });
+
   it('exactly-met boundary (scheduled_minutes == target_hours * 60) counts as met', async () => {
     insertWeek(weekStart(0), 'health', 5, 300); // 5 * 60 == 300, exactly
     const r = await get();

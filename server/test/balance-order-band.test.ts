@@ -95,6 +95,25 @@ describe('bal-4 checkOrder balance exemption', () => {
     // index 0, so the inversion (P3 before P1, same due) is still flagged.
     expect(checkOrder([0, 1], tasks, '2026-06-24', null, undefined, new Set(['other']))).toHaveLength(1);
   });
+
+  it('does NOT exempt a stale balance-lead task from a real inversion against a fresh non-lead one (code-review fix)', () => {
+    // 'lead' is balance-lead but not newToday; 'other' is newToday but not balance-lead.
+    // The band order is theme > memory > new_today > balance, so a task that is only
+    // "fresh" outranks a task that is only "balance-lead" — the balance exemption must
+    // not fire across that boundary. Without the `aFresh === fresh(b)` guard, this
+    // inversion (P3 lead before P1 fresh, same due) was silently missed.
+    expect(
+      checkOrder([0, 1], tasks, '2026-06-24', null, undefined, new Set(['lead']), new Set(['other'])),
+    ).toHaveLength(1);
+  });
+
+  it('still exempts a balance-lead task when BOTH tasks share the same newToday status', () => {
+    // Neither task is newToday here, so the two are in the same freshness band and the
+    // balance exemption should apply exactly as the plain band-legal-lead test above.
+    expect(
+      checkOrder([0, 1], tasks, '2026-06-24', null, undefined, new Set(['lead']), new Set()),
+    ).toHaveLength(0);
+  });
 });
 
 // ─── Pure: balanceLine rendering ────────────────────────────────────────────
