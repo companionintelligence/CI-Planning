@@ -131,10 +131,10 @@ target; `completed` does. Categories resolve block-own-else-task
 |---|---|---|---|---|
 | 1 | [shortfall service](bal-1-shortfall-service.md) | Backend | ✅ landed `59651309` | — |
 | 2 | [balance_bias_enabled pref](bal-2-balance-bias-pref.md) | DB Migration + Frontend | ✅ landed `90fb7b47` | — |
-| 3 | [candidate-fill bias](bal-3-candidate-bias.md) | Backend | ⬜ not started | 1, 2 |
-| 4 | [day-order balance band](bal-4-order-band.md) | Backend | ⬜ not started | 1, 2 |
+| 3 | [candidate-fill bias](bal-3-candidate-bias.md) | Backend | ✅ landed `519f3a7c` | 1, 2 |
+| 4 | [day-order balance band](bal-4-order-band.md) | Backend | ✅ landed `f55652e1` | 1, 2 |
 | 5 | [suggest surface](bal-5-suggest-surface.md) | Frontend | ✅ landed `21f65e4f` | — |
-| 6 | [weekly history log](bal-6-week-log.md) | DB Migration + Backend | ⬜ not started | 1 |
+| 6 | [weekly history log](bal-6-week-log.md) | DB Migration + Backend | ✅ landed `d041633f` | 1 |
 | 7 | [history readout](bal-7-history-readout.md) | Backend + Frontend | ⬜ not started | 6 |
 
 1 and 2 are independent and can land in parallel. 3 and 4 fork off them; 5 is now
@@ -236,11 +236,23 @@ response to what's already merged, not to a sibling wave still in flight.
 Wave-level, from the repo root: `pnpm typecheck && pnpm test`.
 
 The factory template's `pnpm --filter server vitest run` fails with
-`ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT`. The working form, used throughout:
+`ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT`. **Correction, verified 2026-08-29 during
+implementation:** the form this wave's own tickets originally documented —
+`pnpm --filter server exec vitest run server/test/<file>.test.ts` — is ALSO
+wrong; `--filter server exec` already sets cwd to `server/`, so the leading
+`server/` double-nests the path and vitest reports "No test files found."
+Three independent implementing agents (tickets 1, 3, 6) hit this and
+self-corrected; confirmed directly, twice, by running both forms here. The
+actually-working form, used from here on:
 
 ```bash
-pnpm --filter server exec vitest run server/test/<file>.test.ts
+pnpm --filter server exec vitest run test/<file>.test.ts
 ```
+
+(Tickets 1–6's own `.md` files still show the old, wrong form in their Tests
+sections — left as historical record since the actual landed code and tests
+are correct regardless; each implementing agent's commit documents the
+correction it made. Ticket 7's commands below use the corrected form.)
 
 ## Open follow-ups this wave will produce
 

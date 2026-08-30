@@ -95,7 +95,7 @@ None.
 - [ ] Owner isolation; empty log ⇒ `weeks_recorded: 0`, no throw
 
 ```bash
-pnpm --filter server exec vitest run server/test/balance-history.test.ts
+pnpm --filter server exec vitest run test/balance-history.test.ts
 pnpm typecheck && pnpm test
 ```
 
