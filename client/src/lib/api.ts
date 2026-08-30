@@ -1306,6 +1306,19 @@ export interface ViewPrefs {
     /** Routine/direction background textures on cards & planner chips. Absent = on. */
     direction_textures?: boolean;
   };
+  /**
+   * Phase Z · Z3b — how the Focus Ritual looks and how long a "Start now" session
+   * runs. Display-only: nothing here is ever written back onto a task or a block.
+   * See lib/focus-appearance.ts for the defaults and the resolution order.
+   */
+  focus?: {
+    /** Ritual surface. Absent = 'breath'. */
+    style?: 'breath' | 'signal';
+    /** Owner's tint override (a token key, e.g. 'tag-6'). Absent/null = follow the task's direction. */
+    colorToken?: string | null;
+    /** Fixed "Start now" length in minutes. Absent/null = use the task's own estimate. */
+    sessionMinutes?: number | null;
+  };
 }
 
 export interface Prefs {

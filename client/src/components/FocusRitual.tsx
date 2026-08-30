@@ -1,9 +1,11 @@
 import { createSignal, createMemo, createEffect, createResource, onCleanup, onMount, Show, For } from 'solid-js';
+import { Portal } from 'solid-js/web';
 import { X, FileText, ListChecks, Tag, Check, RotateCcw, ArrowRight } from 'lucide-solid';
 import { api, type Block, type ExtendMove } from '../lib/api.js';
-import { colorVar } from '../lib/pattern-meta.js';
-import { tasks, taskOf, refetchTasks, refetchBlocks, showToast, prefs, openCloseRitual } from '../stores/index.js';
-import { focusState, focusCues, formatRemaining, overrunNote, type Cue } from '../lib/focus.js';
+import { tasks, taskOf, refetchTasks, refetchBlocks, showToast, prefs, tags, patternPrefs, categoryPrefs, focusAppearance, openCloseRitual } from '../stores/index.js';
+import { resolveFocusTint } from '../lib/focus-appearance.js';
+import { focusState, focusCues, overrunNote, type Cue } from '../lib/focus.js';
+import { FocusSurface } from './FocusSurface.js';
 
 /**
  * Phase Z · Z3b (Time-Sense) — the Focus Ritual screen.
@@ -17,7 +19,25 @@ import { focusState, focusCues, formatRemaining, overrunNote, type Cue } from '.
  *
  * Cues are tick-driven (not setTimeout) so a backgrounded tab catches up on
  * refocus; background delivery is handled by the Z4 reminders armed on open.
+ *
+ * Rendered through a Portal: both hosts (Focus, Today) carry `.page-enter`, whose
+ * `both` fill-mode leaves a transform on the view container — which makes it the
+ * containing block for `position: fixed`, so the overlay was being clipped to the
+ * scrolling content column instead of covering the screen.
+ *
+ * The *look* lives in FocusSurface.tsx — this file owns the clock, the cues and
+ * the engine calls, and hands the surface three numbers (elapsed, depletion,
+ * remaining) plus the tint. Which surface, what colour, and how long a "Start now"
+ * session runs are owner prefs in `view_prefs.focus` (lib/focus-appearance.ts);
+ * none of them is ever written back onto the task or the block.
+ *
+ * Leaving is always available: Escape exits, and the close button re-appears on any
+ * pointer/key activity and fades again after a few idle seconds, so a quiet screen
+ * is never a trap.
  */
+
+/** How long the close button stays up after the last pointer/key activity. */
+const CHROME_IDLE_MS = 2600;
 
 const CUE_VIBRATE: Record<Cue['kind'], number[]> = {
   start: [200],
@@ -130,131 +150,169 @@ export function FocusRitual(props: { block: Block; next?: Block | null; onClose:
     } catch (e) { showToast((e as Error).message, 'error'); setBusy(false); }
   }
 
-  // Ambient tint fades as the block depletes; the final 3 minutes breathe (unless
-  // reduced motion, which keeps a steady tint + the discrete haptic/text cues).
-  const tint = () => colorVar(props.block.color_token);
-  const ambientOpacity = () => {
-    const s = state();
-    if (s.phase === 'warning') return reducedMotion ? 0.35 : undefined; // breathing class drives it
-    if (s.phase === 'ended') return 0.5;
-    return 0.65 - 0.55 * s.depletionFrac; // strong → faint across the block
-  };
+  // The hue the whole surface is lit with: the owner's Focus Lab override if they
+  // set one, else this task's direction colour (Work / Home / Community), else the
+  // block's own category colour. Always a token var, never a literal.
+  const tint = () =>
+    resolveFocusTint({
+      override: focusAppearance().colorToken,
+      task: task(),
+      tagDefs: tags() ?? [],
+      patternPrefs: patternPrefs()?.prefs ?? {},
+      block: props.block,
+      categoryPrefs: categoryPrefs()?.prefs ?? {},
+    });
+
+  // ── Getting out ────────────────────────────────────────────────────────────
+  // Escape leaves the ritual (keeping the block), and the close button is only on
+  // screen when the user is doing something: it shows for a beat on open, hides
+  // when they settle, and comes back on any pointer/key activity.
+  const [chromeShown, setChromeShown] = createSignal(true);
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  function wakeChrome() {
+    setChromeShown(true);
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => setChromeShown(false), CHROME_IDLE_MS);
+  }
+  onMount(() => {
+    wakeChrome();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); exit(); return; }
+      wakeChrome();
+    };
+    for (const ev of ['pointermove', 'pointerdown', 'wheel', 'touchstart'] as const) {
+      window.addEventListener(ev, wakeChrome, { passive: true });
+    }
+    window.addEventListener('keydown', onKey);
+    onCleanup(() => {
+      clearTimeout(idleTimer);
+      for (const ev of ['pointermove', 'pointerdown', 'wheel', 'touchstart'] as const) {
+        window.removeEventListener(ev, wakeChrome);
+      }
+      window.removeEventListener('keydown', onKey);
+    });
+  });
 
   return (
-    <div class="fixed inset-0 z-[1100] flex flex-col bg-background" role="dialog" aria-label="Focus">
-      {/* Ambient category-color layer (Z5: only when the owner's arm/pref enables it) */}
-      <Show when={colorEnabled()}>
-        <div
-          class="pointer-events-none absolute inset-0 transition-opacity duration-1000"
-          classList={{ 'focus-breath': state().phase === 'warning' && !reducedMotion }}
-          style={{ background: tint(), opacity: ambientOpacity() as number | undefined }}
-        />
-      </Show>
-
-      {/* Close (exit ritual, keep the block) */}
-      <button class="absolute top-4 right-4 z-10 btn-icon opacity-60 hover:opacity-100" onClick={() => exit()} title="Leave focus">
-        <X size={18} />
-      </button>
-
-      {/* Center: the anchor + disclosure + countdown */}
-      <div class="relative z-[1] flex-1 flex flex-col items-center justify-center gap-6 px-6 text-center">
-        <div class="max-w-lg w-full flex flex-col items-center gap-4">
-          <h1 class="text-3xl md:text-4xl font-semibold text-foreground leading-tight">{props.block.title}</h1>
-
-          {/* Disclosure toggles — one detail at a time, collapsed by default (§1.0). */}
-          <div class="flex items-center gap-2">
-            <Show when={task()?.description}>
-              <DiscButton active={panel() === 'desc'} label="Description" onClick={() => togglePanel('desc')}><FileText size={15} /></DiscButton>
-            </Show>
-            <Show when={subtasks().length > 0}>
-              <DiscButton active={panel() === 'subs'} label="Subtasks" onClick={() => togglePanel('subs')}><ListChecks size={15} /></DiscButton>
-            </Show>
-            <Show when={tagList().length > 0}>
-              <DiscButton active={panel() === 'tags'} label="Tags" onClick={() => togglePanel('tags')}><Tag size={15} /></DiscButton>
-            </Show>
-          </div>
-
-          <Show when={panel() === 'desc'}>
-            <p class="text-sm text-muted-foreground whitespace-pre-line max-w-md">{task()?.description}</p>
-          </Show>
-          <Show when={panel() === 'subs'}>
-            <ul class="text-sm text-left w-full max-w-md flex flex-col gap-1.5">
-              <For each={subtasks()}>
-                {(s) => (
-                  <li class="flex items-center gap-2">
-                    <span
-                      class="flex-shrink-0 w-4 h-4 rounded-full border flex items-center justify-center"
-                      classList={{ 'bg-primary border-primary': s.status === 'done', 'border-border': s.status !== 'done' }}
-                    >
-                      <Show when={s.status === 'done'}><Check size={10} class="text-primary-foreground" /></Show>
-                    </span>
-                    <span classList={{ 'line-through text-muted-foreground': s.status === 'done', 'text-foreground': s.status !== 'done' }}>{s.title}</span>
-                  </li>
-                )}
-              </For>
-            </ul>
-          </Show>
-          <Show when={panel() === 'tags'}>
-            <div class="flex flex-wrap gap-1.5 justify-center max-w-md">
-              <For each={tagList()}>{(t) => <span class="badge-neutral text-[11px]">#{t}</span>}</For>
-            </div>
-          </Show>
-        </div>
-
-        {/* Countdown — the felt-duration readout, not an anxious ticker. */}
-        <div class="tabular-nums text-5xl md:text-6xl font-light text-foreground/90" aria-live="off">
-          {formatRemaining(state().remainingMs)}
-        </div>
-      </div>
-
-      {/* T4 — the "what's next" modal (rendered in place at the end). */}
-      <Show when={ended()}>
-        <div class="relative z-[2] mx-auto mb-10 w-full max-w-md rounded-xl border border-border bg-card p-4 shadow-lg">
-          <div class="text-sm font-semibold text-foreground mb-1">Time's up — what's next?</div>
-          <Show when={whatsNext()?.text ?? props.next}>
-            <div class="text-xs text-muted-foreground mb-3">
-              {/* Server text is rendered in the owner's zone; the local fallback formats
-                  in the browser zone (never slice the UTC ISO — it'd show the wrong time). */}
-              {whatsNext()?.text ??
-                `Next: ${props.next!.title} at ${new Date(props.next!.start_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`}
-            </div>
-          </Show>
-
-          <Show when={blockedBy()}>
-            <div class="text-xs text-amber-500 mb-2">Runs into {blockedBy()} (fixed). Add less time, or schedule again.</div>
-          </Show>
-          <Show when={pendingMoves()}>
-            <div class="text-xs text-muted-foreground mb-2">
-              Moves {pendingMoves()!.length} later block{pendingMoves()!.length === 1 ? '' : 's'}. Confirm?
-              <div class="flex gap-2 mt-2">
-                <button class="btn-primary text-xs px-3 py-1" disabled={busy()} onClick={() => keepWorking(true)}>Move &amp; continue</button>
-                <button class="btn-ghost text-xs px-3 py-1" onClick={() => setPendingMoves(null)}>Cancel</button>
-              </div>
-            </div>
-          </Show>
-
-          <Show when={!pendingMoves()}>
-            <div class="flex flex-col gap-2">
-              <div class="flex gap-2">
-                <button class="btn-ghost flex-1 text-sm py-2" disabled={busy()} onClick={() => keepWorking(false)}>
-                  <RotateCcw size={14} /> Keep working
-                  <span class="text-[10px] text-muted-foreground ml-1">+10m</span>
-                </button>
-                <button class="btn-ghost flex-1 text-sm py-2" disabled={busy()} onClick={scheduleAgain}>
-                  <ArrowRight size={14} /> Schedule again
-                </button>
-              </div>
-              <button class="btn-primary text-sm py-2" disabled={busy()} onClick={objectiveComplete}>
-                <Check size={14} /> Objective complete
+    <Portal>
+      <div class="fixed inset-0 z-[1100]" role="dialog" aria-label="Focus">
+        <FocusSurface
+          style={focusAppearance().style}
+          class="h-full w-full focus-enter"
+          title={props.block.title}
+          phase={state().phase}
+          elapsedFrac={state().elapsedFrac}
+          depletionFrac={state().depletionFrac}
+          remainingMs={state().remainingMs}
+          tint={tint()}
+          ambient={colorEnabled()}
+          reducedMotion={reducedMotion}
+          chrome={
+            /* Leave the ritual (the block stays). Fades out when the screen is idle
+               and returns on any activity; keyboard focus forces it visible, so it
+               is never an invisible-but-focusable control. */
+            <div class="focus-chrome absolute top-4 right-4 z-[4] flex items-center gap-2" data-shown={chromeShown()}>
+              <span class="hidden sm:inline text-[11px] text-muted-foreground">Esc to leave</span>
+              <button class="btn-icon opacity-70 hover:opacity-100" onClick={() => exit()} title="Leave focus (Esc)">
+                <X size={18} />
               </button>
-              <Show when={overNote()}>
-                <div class="text-[10px] text-muted-foreground text-center">{overNote()}</div>
-              </Show>
             </div>
-          </Show>
-        </div>
-      </Show>
-    </div>
+          }
+          details={
+            <>
+              {/* Disclosure toggles — one detail at a time, collapsed by default (§1.0). */}
+              <div class="flex items-center gap-2">
+                <Show when={task()?.description}>
+                  <DiscButton active={panel() === 'desc'} label="Description" onClick={() => togglePanel('desc')}><FileText size={15} /></DiscButton>
+                </Show>
+                <Show when={subtasks().length > 0}>
+                  <DiscButton active={panel() === 'subs'} label="Subtasks" onClick={() => togglePanel('subs')}><ListChecks size={15} /></DiscButton>
+                </Show>
+                <Show when={tagList().length > 0}>
+                  <DiscButton active={panel() === 'tags'} label="Tags" onClick={() => togglePanel('tags')}><Tag size={15} /></DiscButton>
+                </Show>
+              </div>
+
+              <Show when={panel() === 'desc'}>
+                <p class="text-sm text-muted-foreground whitespace-pre-line max-w-md animate-slide-down">{task()?.description}</p>
+              </Show>
+              <Show when={panel() === 'subs'}>
+                <ul class="text-sm text-left w-full max-w-md flex flex-col gap-1.5 animate-slide-down">
+                  <For each={subtasks()}>
+                    {(s) => (
+                      <li class="flex items-center gap-2">
+                        <span
+                          class="flex-shrink-0 w-4 h-4 rounded-full border flex items-center justify-center"
+                          classList={{ 'bg-primary border-primary': s.status === 'done', 'border-border': s.status !== 'done' }}
+                        >
+                          <Show when={s.status === 'done'}><Check size={10} class="text-primary-foreground" /></Show>
+                        </span>
+                        <span classList={{ 'line-through text-muted-foreground': s.status === 'done', 'text-foreground': s.status !== 'done' }}>{s.title}</span>
+                      </li>
+                    )}
+                  </For>
+                </ul>
+              </Show>
+              <Show when={panel() === 'tags'}>
+                <div class="flex flex-wrap gap-1.5 justify-center max-w-md animate-slide-down">
+                  <For each={tagList()}>{(t) => <span class="badge-neutral text-[11px]">#{t}</span>}</For>
+                </div>
+              </Show>
+            </>
+          }
+          footer={
+            /* T4 — the "what's next" card, in flow at the foot of the surface. Handed
+               over as `undefined` until the block ends so nothing reserves space. */
+            !ended() ? undefined : (
+              <div class="focus-card w-full max-w-md rounded-2xl p-4">
+                <div class="text-sm font-semibold text-foreground mb-1">Time's up — what's next?</div>
+                <Show when={whatsNext()?.text ?? props.next}>
+                  <div class="text-xs text-muted-foreground mb-3">
+                    {/* Server text is rendered in the owner's zone; the local fallback formats
+                        in the browser zone (never slice the UTC ISO — it'd show the wrong time). */}
+                    {whatsNext()?.text ??
+                      `Next: ${props.next!.title} at ${new Date(props.next!.start_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`}
+                  </div>
+                </Show>
+
+                <Show when={blockedBy()}>
+                  <div class="text-xs text-amber-500 mb-2">Runs into {blockedBy()} (fixed). Add less time, or schedule again.</div>
+                </Show>
+                <Show when={pendingMoves()}>
+                  <div class="text-xs text-muted-foreground mb-2">
+                    Moves {pendingMoves()!.length} later block{pendingMoves()!.length === 1 ? '' : 's'}. Confirm?
+                    <div class="flex gap-2 mt-2">
+                      <button class="btn-primary text-xs px-3 py-1" disabled={busy()} onClick={() => keepWorking(true)}>Move &amp; continue</button>
+                      <button class="btn-ghost text-xs px-3 py-1" onClick={() => setPendingMoves(null)}>Cancel</button>
+                    </div>
+                  </div>
+                </Show>
+
+                <Show when={!pendingMoves()}>
+                  <div class="flex flex-col gap-2">
+                    <div class="flex gap-2">
+                      <button class="btn-ghost flex-1 text-sm py-2" disabled={busy()} onClick={() => keepWorking(false)}>
+                        <RotateCcw size={14} /> Keep working
+                        <span class="text-[10px] text-muted-foreground ml-1">+10m</span>
+                      </button>
+                      <button class="btn-ghost flex-1 text-sm py-2" disabled={busy()} onClick={scheduleAgain}>
+                        <ArrowRight size={14} /> Schedule again
+                      </button>
+                    </div>
+                    <button class="btn-primary text-sm py-2" disabled={busy()} onClick={objectiveComplete}>
+                      <Check size={14} /> Objective complete
+                    </button>
+                    <Show when={overNote()}>
+                      <div class="text-[10px] text-muted-foreground text-center">{overNote()}</div>
+                    </Show>
+                  </div>
+                </Show>
+              </div>
+            )
+          }
+        />
+      </div>
+    </Portal>
   );
 }
 
