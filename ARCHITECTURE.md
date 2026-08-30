@@ -356,7 +356,7 @@ class diagram in §5.3.
 
 | Table | Purpose | ORM | Added |
 |---|---|---|---|
-| `tasks` | Core work atom — UUIDv7 PK, status, priority, subtype, recurrence. `texture_enabled`/`texture_color_token` (0135) — per-element striped-texture override (§1.2); `completion_mood`/`completion_note`/`reaction_at` close-ritual columns, all nullable (0137); `motivation` (`me`\|`us`\|`them`, NULL = unlabeled — and NULL is never read as `us`) + `motivation_source` (`user`\|`llm`; a user label is never re-tagged) (0141) | ✓ | 0001, 0135, 0137, 0141 |
+| `tasks` | Core work atom — UUIDv7 PK, status, priority, subtype, recurrence. `texture_enabled`/`texture_color_token` (0135) — per-element striped-texture override (§1.2); `completion_score`/`completion_note`/`reaction_at` close-ritual columns, all nullable (0137, rescored to a 1–5 score by 0161 with 0 = "prompted and declined"); `motivation` (`me`\|`us`\|`them`, NULL = unlabeled — and NULL is never read as `us`) + `motivation_source` (`user`\|`llm`; a user label is never re-tagged) (0141) | ✓ | 0001, 0135, 0137, 0141, 0161 |
 | `task_dependencies` | Blocked-by edges between tasks | ✓ | 0005 |
 | `time_entries` | Actual work logged per task; running timer = `ended_at IS NULL` | ✓ | 0007 |
 | `possible_tasks` | Inbox — AI-proposed items pending promote / dismiss; owner-scoped `(proposed_owner_id, source_kind, source_ref)` uniqueness (0114) + `proposed_estimated_minutes` (0114) + `proposed_scheduled_for`/`proposed_task_time` START intent (0115) | ✓ | 0001, 0114, 0115 |
@@ -485,7 +485,7 @@ class tasks {
   due_at, scheduled_for, defer_until
   estimated_minutes, actual_minutes
   recurrence_rule/_parent_id/_exdates
-  motivation, completion_mood, reaction_at
+  motivation, completion_score, reaction_at
   version, field_ts
 }
 class time_blocks {
@@ -924,6 +924,7 @@ rubric-governed verdict, over N≥5 runs, and assert the completion is non-empty
 | `prune_sync_events` | daily 03:00 | Trim old `sync_events` rows beyond retention window |
 | `enrich_tasks` | daily 03:20 | Per owner: fill blank description / direction / categories on thin tasks from Companion Memory (fill-blanks-only; no-op when memory is off) (0136) |
 | `calibrate_triality` | Mon 03:50 | Re-tune the per-slot Triality weights from 90 days of `triality_log` outcomes — batch, each weight clamped to ½×–2× of its default and then renormalized so the slot's weights still sum to the default total, and inert below 20 decided rows for a slot. **Owner-scoped** (in `OWNER_SCOPED_KINDS`): weights are per-owner by construction, and pooling one owner's feedback into another's ranking is ruled out absolutely (0143) |
+| `calibrate_dismissals` | Mon 04:20 | Close-loop wave (ticket 3): rebuild `possible_dismissal_exemplars` wholesale from settled `possible_outcome_log` evidence (inert below `DISMISSAL_FLOOR` = 5 settled dismissals) and append one `possible_dismissal_rate` reading. **Owner-scoped**: dismissal evidence is per-owner by construction, never pooled. Runs after `calibrate_classification` (Mon 04:10) so the weekly per-owner learning passes don't compete for one GPU (0158) |
 | `advance_objectives` | Mon 05:00 | Stage tasks for active objectives into flight-plan |
 
 ---

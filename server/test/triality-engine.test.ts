@@ -35,19 +35,23 @@ const daysAgo = (d: number) => new Date(NOW.getTime() - d * 86_400_000).toISOStr
 function insertTask(
   title: string,
   o: {
-    status?: string; estimate?: number | null; completedAt?: string; mood?: string;
+    status?: string; estimate?: number | null; completedAt?: string; score?: number;
     motivation?: string; priority?: number; owner?: string;
   } = {},
 ): string {
   return (
     sqlite
       .prepare(
-        `INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, completed_at, completion_mood, motivation, priority)
-         VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        // reaction_at mirrors completed_at whenever a score is given: closeTask stamps one
+        // for every real rating, and confirmedCompletionCount keys the refusal floor off
+        // reaction_at (0161), so a fixture without it would not count as ritual-confirmed.
+        `INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, completed_at, completion_score, reaction_at, motivation, priority)
+         VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       )
       .get(
         title, o.owner ?? OWNER, o.status ?? 'open', o.estimate === undefined ? 30 : o.estimate,
-        o.completedAt ?? null, o.mood ?? null, o.motivation ?? null, o.priority ?? 3,
+        o.completedAt ?? null, o.score ?? null, o.score != null ? (o.completedAt ?? null) : null,
+        o.motivation ?? null, o.priority ?? 3,
       ) as { id: string }
   ).id;
 }
@@ -63,7 +67,7 @@ function seedConfirmedHistory(
       insertTask(opts.title?.(i) ?? `done-${i}`, {
         status: 'done',
         completedAt: daysAgo(1 + (i % 30)),
-        mood: 'flat',
+        score: 3,
         owner: opts.owner,
       }),
     );
@@ -204,11 +208,11 @@ describe('H — habit strength recency (§5)', () => {
     seedConfirmedHistory(10, { title: () => 'noise' });
     // Class A: 3 recent completions with category 'health'; class B: 3 ancient with 'career'.
     for (let i = 0; i < 3; i++) {
-      const id = insertTask(`gym-${i}`, { status: 'done', completedAt: daysAgo(1 + i), mood: 'happy' });
+      const id = insertTask(`gym-${i}`, { status: 'done', completedAt: daysAgo(1 + i), score: 5 });
       addCategory(id, 'health');
     }
     for (let i = 0; i < 3; i++) {
-      const id = insertTask(`ledger-${i}`, { status: 'done', completedAt: daysAgo(80 + i), mood: 'flat' });
+      const id = insertTask(`ledger-${i}`, { status: 'done', completedAt: daysAgo(80 + i), score: 3 });
       addCategory(id, 'career');
     }
     const recentClass = insertTask('gym session', { estimate: 30 });
@@ -237,12 +241,12 @@ describe('Q — sequence fit (§5)', () => {
     seedConfirmedHistory(10, { title: () => 'noise' });
     // Build alternating A→B pairs; last completion is class A (category 'growth').
     for (let i = 0; i < 4; i++) {
-      const a = insertTask(`study-${i}`, { status: 'done', completedAt: daysAgo(20 - i * 4), mood: 'flat' });
+      const a = insertTask(`study-${i}`, { status: 'done', completedAt: daysAgo(20 - i * 4), score: 3 });
       addCategory(a, 'growth');
-      const b = insertTask(`journal-${i}`, { status: 'done', completedAt: daysAgo(20 - i * 4 - 1), mood: 'flat' });
+      const b = insertTask(`journal-${i}`, { status: 'done', completedAt: daysAgo(20 - i * 4 - 1), score: 3 });
       addCategory(b, 'leisure');
     }
-    const lastA = insertTask('study-last', { status: 'done', completedAt: daysAgo(0.02), mood: 'flat' });
+    const lastA = insertTask('study-last', { status: 'done', completedAt: daysAgo(0.02), score: 3 });
     addCategory(lastA, 'growth');
 
     const bCand = insertTask('journal now', { estimate: 20 });
@@ -421,7 +425,7 @@ describe('deficit pull (§6) — pulled, not required', () => {
     // History: 'career' is the strong habit class (recent + many).
     seedConfirmedHistory(10, { title: () => 'noise' });
     for (let i = 0; i < 5; i++) {
-      const id = insertTask(`work-${i}`, { status: 'done', completedAt: daysAgo(1 + i), mood: 'flat' });
+      const id = insertTask(`work-${i}`, { status: 'done', completedAt: daysAgo(1 + i), score: 3 });
       addCategory(id, 'career');
     }
     // Stated+measured deficit: health matters (9) but satisfaction 2 and zero minutes.
@@ -549,13 +553,13 @@ function seedSpreadPool(): Record<'ship' | 'run' | 'read' | 'inbox', string> {
   // clears REFUSAL_FLOOR with room to spare. Interleaved with the classed rows so the
   // (prev → next) pairs Q reads are not all same-class.
   for (const d of [30, 28, 26, 24, 22, 11, 7, 6, 5, 0.5]) {
-    insertTask(`noise-${d}`, { status: 'done', completedAt: daysAgo(d), mood: 'flat' });
+    insertTask(`noise-${d}`, { status: 'done', completedAt: daysAgo(d), score: 3 });
   }
   for (const d of [10, 9]) {
-    addCategory(insertTask(`health-done-${d}`, { status: 'done', completedAt: daysAgo(d), mood: 'flat' }), 'health');
+    addCategory(insertTask(`health-done-${d}`, { status: 'done', completedAt: daysAgo(d), score: 3 }), 'health');
   }
   for (const d of [6.5, 5.5, 4.5]) {
-    addCategory(insertTask(`career-done-${d}`, { status: 'done', completedAt: daysAgo(d), mood: 'flat' }), 'career');
+    addCategory(insertTask(`career-done-${d}`, { status: 'done', completedAt: daysAgo(d), score: 3 }), 'career');
   }
   setPriorities([
     { category: 'health', importance: 9, satisfaction: 2, target: 10 },
@@ -620,7 +624,7 @@ function seedNormalityPool(classes: { cat: string; doneDaysAgo: number[] }[]): R
   // Old, unclassified completions: they clear the refusal floor without touching any
   // candidate's H (no candidate carries the empty category set).
   for (const d of [40, 41, 42, 43]) {
-    insertTask(`noise-${d}`, { status: 'done', completedAt: daysAgo(d), mood: 'flat' });
+    insertTask(`noise-${d}`, { status: 'done', completedAt: daysAgo(d), score: 3 });
   }
   const refs: Record<string, string> = {};
   for (const c of classes) {
@@ -629,7 +633,7 @@ function seedNormalityPool(classes: { cat: string; doneDaysAgo: number[] }[]): R
         insertTask(`${c.cat}-done-${d}`, {
           status: 'done',
           completedAt: daysAgo(d + MORNING_SHIFT_DAYS),
-          mood: 'flat',
+          score: 3,
         }),
         c.cat,
       );
@@ -897,12 +901,12 @@ describe('E9–E11 — the honest-zero branches and the dims that are actually r
     // argument): every class below is counted, so a rowid-resolved tie would make the
     // counts depend on insert order rather than on the predicate.
     for (const d of [30, 31, 32, 33, 34, 35, 36, 37, 38, 39]) {
-      insertTask(`noise-${d}`, { status: 'done', completedAt: daysAgo(d), mood: 'flat' });
+      insertTask(`noise-${d}`, { status: 'done', completedAt: daysAgo(d), score: 3 });
     }
 
     // A plain task class with three completions behind it.
     for (const d of [1, 2, 3]) {
-      addCategory(insertTask(`health-done-${d}`, { status: 'done', completedAt: daysAgo(d), mood: 'flat' }), 'health');
+      addCategory(insertTask(`health-done-${d}`, { status: 'done', completedAt: daysAgo(d), score: 3 }), 'health');
     }
     const healthTask = insertTask('health thing', { estimate: 30 });
     addCategory(healthTask, 'health');
@@ -924,7 +928,7 @@ describe('E9–E11 — the honest-zero branches and the dims that are actually r
     sqlite.prepare(`UPDATE tasks SET defer_until = ? WHERE id = ?`).run(iso(3 * 1440), member);
     addMember.run(routine, member, 0);
     for (const [i, d] of [5, 6].entries()) {
-      addMember.run(routine, insertTask(`member-done-${d}`, { status: 'done', completedAt: daysAgo(d), mood: 'flat' }), i + 1);
+      addMember.run(routine, insertTask(`member-done-${d}`, { status: 'done', completedAt: daysAgo(d), score: 3 }), i + 1);
     }
 
     // A saved block has no completion trail by construction.
@@ -1073,7 +1077,7 @@ describe('E12–E16 — the situation, the isolation, and what gets written', ()
     // Owner A: ten unclassified completions (the floor) and two in the health class.
     seedConfirmedHistory(10);
     for (const d of [15, 16]) {
-      addCategory(insertTask(`a-health-${d}`, { status: 'done', completedAt: daysAgo(d), mood: 'flat' }), 'health');
+      addCategory(insertTask(`a-health-${d}`, { status: 'done', completedAt: daysAgo(d), score: 3 }), 'health');
     }
     const mine = insertTask('my run', { estimate: 20 });
     addCategory(mine, 'health');
@@ -1081,7 +1085,7 @@ describe('E12–E16 — the situation, the isolation, and what gets written', ()
     // Owner B: ten completions in the SAME category name, through B's own tag row.
     for (let i = 0; i < 10; i++) {
       addCategory(
-        insertTask(`b-health-${i}`, { status: 'done', completedAt: daysAgo(1 + i), mood: 'flat', owner: other }),
+        insertTask(`b-health-${i}`, { status: 'done', completedAt: daysAgo(1 + i), score: 3, owner: other }),
         'health',
         other,
       );
@@ -1253,12 +1257,12 @@ describe('v2.3 §3.2 — the time band is a pairing, and it reads the OWNER’s 
       // The refusal floor, in a class no candidate carries (no categories).
       for (let i = 0; i < 10; i++) {
         insertTask(`noise-${i}`, {
-          status: 'done', mood: 'flat', owner,
+          status: 'done', score: 3, owner,
           completedAt: new Date(TZ_NOW.getTime() - (20 + i) * 86_400_000).toISOString(),
         });
       }
       for (const at of CLASS_DONE) {
-        addCategory(insertTask(`ran-${at}`, { status: 'done', completedAt: at, mood: 'flat', owner }), 'health', owner);
+        addCategory(insertTask(`ran-${at}`, { status: 'done', completedAt: at, score: 3, owner }), 'health', owner);
       }
       // estimateMin null on purpose: it keeps the energy pairing inactive, so with no
       // priorities, no direction and no motivation the band pair is the ONLY one left.
@@ -1307,13 +1311,13 @@ describe('v2.3 §3.2 — the time band is a pairing, and it reads the OWNER’s 
     const twice = insertTask('twice-only', { estimate: null });
     addCategory(twice, 'health');
     for (const t of [at('27', '14'), at('26', '14')]) {
-      addCategory(insertTask(`h-${t}`, { status: 'done', completedAt: t, mood: 'flat' }), 'health');
+      addCategory(insertTask(`h-${t}`, { status: 'done', completedAt: t, score: 3 }), 'health');
     }
 
     const scattered = insertTask('all over the place', { estimate: null });
     addCategory(scattered, 'career');
     for (const t of [at('27', '08'), at('26', '14'), at('25', '20')]) {
-      addCategory(insertTask(`c-${t}`, { status: 'done', completedAt: t, mood: 'flat' }), 'career');
+      addCategory(insertTask(`c-${t}`, { status: 'done', completedAt: t, score: 3 }), 'career');
     }
 
     const res = await trialityNext(OWNER, NOW, { embedFn: null });
@@ -1369,7 +1373,7 @@ describe('v2.3 §3.3 — the weekday pairing has a +arm and no −arm', () => {
     addCategory(cand, 'growth');
     for (const day of ['22', '15', '08']) {
       addCategory(
-        insertTask(`wed-${day}`, { status: 'done', mood: 'flat', completedAt: `2026-07-${day}T08:00:00.000Z` }),
+        insertTask(`wed-${day}`, { status: 'done', score: 3, completedAt: `2026-07-${day}T08:00:00.000Z` }),
         'growth',
       );
     }
@@ -1428,17 +1432,17 @@ describe('v2.3 — the two temporal pairings modulate F; they do not decide it',
     const abandonedOnly = insertTask('the thing I gave up', { estimate: null });
     addCategory(abandonedOnly, 'career');
     for (const d of stale) {
-      addCategory(insertTask(`old-career-${d}`, { status: 'done', mood: 'flat', completedAt: `2026-${d}T20:00:00.000Z` }), 'career');
+      addCategory(insertTask(`old-career-${d}`, { status: 'done', score: 3, completedAt: `2026-${d}T20:00:00.000Z` }), 'career');
     }
 
     // The moved class: the same six-strong evening history, plus three recent mornings.
     const moved = insertTask('the thing I moved', { estimate: null });
     addCategory(moved, 'health');
     for (const d of stale) {
-      addCategory(insertTask(`old-health-${d}`, { status: 'done', mood: 'flat', completedAt: `2026-${d}T20:00:00.000Z` }), 'health');
+      addCategory(insertTask(`old-health-${d}`, { status: 'done', score: 3, completedAt: `2026-${d}T20:00:00.000Z` }), 'health');
     }
     for (const d of ['07-28', '07-27', '07-26']) {
-      addCategory(insertTask(`new-health-${d}`, { status: 'done', mood: 'flat', completedAt: `2026-${d}T08:00:00.000Z` }), 'health');
+      addCategory(insertTask(`new-health-${d}`, { status: 'done', score: 3, completedAt: `2026-${d}T08:00:00.000Z` }), 'health');
     }
 
     const res = await trialityNext(OWNER, MORNING_NOW, { embedFn: null });
@@ -1463,11 +1467,11 @@ describe('v2.3 — the two temporal pairings modulate F; they do not decide it',
  */
 function seedDirectionPool(): { deep: string; fresh: string; foreign: string } {
   for (let i = 0; i < 6; i++) {
-    insertTask(`noise-${i}`, { status: 'done', completedAt: daysAgo(20 + i), mood: 'flat' });
+    insertTask(`noise-${i}`, { status: 'done', completedAt: daysAgo(20 + i), score: 3 });
   }
   for (const d of [2, 3, 4, 5, 6, 7]) {
     const id = insertTask(`work-done-${d}`, {
-      status: 'done', mood: 'flat',
+      status: 'done', score: 3,
       completedAt: daysAgo(d + MORNING_SHIFT_DAYS),
     });
     addCategory(id, 'career');
@@ -1523,7 +1527,7 @@ describe('v2.3 — H stays a well-formed number, and the run stays deterministic
     const scenarios: Array<[string, () => void]> = [
       ['one enormous class', () => {
         for (let i = 0; i < 60; i++) {
-          const id = insertTask(`bulk-${i}`, { status: 'done', completedAt: daysAgo(0.1 + i * 0.3), mood: 'flat' });
+          const id = insertTask(`bulk-${i}`, { status: 'done', completedAt: daysAgo(0.1 + i * 0.3), score: 3 });
           addCategory(id, 'career');
           addDirection(id, 'work');
         }
@@ -1536,7 +1540,7 @@ describe('v2.3 — H stays a well-formed number, and the run stays deterministic
       ['every candidate in the one direction the owner ever uses', () => {
         seedConfirmedHistory(12);
         for (const cat of ['career', 'growth', 'health'] as const) {
-          const done = insertTask(`d-${cat}`, { status: 'done', completedAt: daysAgo(1), mood: 'flat' });
+          const done = insertTask(`d-${cat}`, { status: 'done', completedAt: daysAgo(1), score: 3 });
           addCategory(done, cat);
           addDirection(done, 'work');
           const c = insertTask(`c-${cat}`, { estimate: null });
@@ -1558,7 +1562,7 @@ describe('v2.3 — H stays a well-formed number, and the run stays deterministic
         ).id;
         const addMember = sqlite.prepare(`INSERT INTO pattern_tasks (pattern_id, task_id, position) VALUES (?, ?, ?)`);
         addMember.run(routine, insertTask('open member', { estimate: 10 }), 0);
-        addMember.run(routine, insertTask('member-done', { status: 'done', completedAt: daysAgo(1), mood: 'flat' }), 1);
+        addMember.run(routine, insertTask('member-done', { status: 'done', completedAt: daysAgo(1), score: 3 }), 1);
         sqlite
           .prepare(`INSERT INTO block_templates (id, owner_id, name, default_minutes) VALUES (uuid7(), ?, 'Deep work', 60)`)
           .run(OWNER);

@@ -160,13 +160,38 @@ async function ollamaError(op: string, res: Response, model: string): Promise<Ol
   );
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+/**
+ * `timeoutMs` is this request's own ceiling. `callerSignal` is an OUTER deadline the
+ * caller owns — a whole-stage budget that has run out, say — and the two are combined so
+ * either can end the request.
+ *
+ * The caller half exists because a per-request timeout cannot express "stop, I no longer
+ * want this answer". A caller racing N of these against one budget used to walk away from
+ * the loser while every request kept running to its own ceiling, so the deadline bounded
+ * the caller's latency but not the work: the model stayed just as busy, which made the
+ * next request likelier to blow the same budget.
+ */
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  callerSignal?: AbortSignal,
+): Promise<Response> {
+  const timeout = new AbortController();
+  const timer = setTimeout(() => timeout.abort(), timeoutMs);
+  const signal = callerSignal ? AbortSignal.any([timeout.signal, callerSignal]) : timeout.signal;
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    return await fetch(url, { ...init, signal });
   } catch (err) {
     if ((err as Error).name === 'AbortError') {
+      // Report which deadline ended it — "timed out after 4000ms" about a call the
+      // caller itself cancelled sends whoever reads the log hunting a slow model.
+      if (callerSignal?.aborted && !timeout.signal.aborted) {
+        // Still OllamaUnavailable, deliberately: it is the retryable half of the degrade
+        // contract (see llmAttempt), and "we gave up early" is exactly retryable. A new
+        // error class here would escape that contract and surface as a 500.
+        throw new OllamaUnavailable('Ollama request cancelled — the caller\'s budget ran out');
+      }
       throw new OllamaUnavailable(`Ollama request timed out after ${timeoutMs}ms`);
     }
     throw new OllamaUnavailable(`Ollama unreachable at ${config.ollamaUrl}: ${(err as Error).message}`);
@@ -266,12 +291,48 @@ export async function generateJson<T = unknown>(prompt: string, opts: GenerateOp
  * 503) keep their own branch on the `null` — but never a bare `catch {}`.
  */
 export async function llmOrNull<T>(op: string, fn: () => Promise<T>): Promise<T | null> {
+  const attempt = await llmAttempt(op, fn);
+  return attempt.ok ? attempt.value : null;
+}
+
+/**
+ * Why a degraded call degraded.
+ *
+ * 'unavailable' — Ollama was unreachable, timed out, or the model isn't pulled. The
+ *   REQUEST never got an answer, so the same call later may well succeed. A caller that
+ *   can retry (anything driven by a cron) should treat this as "not yet", never as a
+ *   verdict, and above all must not record a degraded result as if it were final.
+ * 'unparseable' — the model DID answer, just not with the JSON we asked for. That is a
+ *   model-quality outcome, not a transport one: re-asking gets another roll of the same
+ *   dice, so a caller is entitled to treat it as this item's answer and move on.
+ */
+export type LlmDegradeReason = 'unavailable' | 'unparseable';
+
+export type LlmAttempt<T> =
+  | { ok: true; value: T }
+  | { ok: false; reason: LlmDegradeReason };
+
+/**
+ * {@link llmOrNull}'s richer sibling: the same degrade contract, but it says WHICH of
+ * the two failures happened instead of flattening both to `null`.
+ *
+ * Both live here, and `llmOrNull` is defined in terms of this one, so there is still
+ * exactly ONE place that decides which errors are degradable and which re-throw — the
+ * property the degrade contract's doc above is really asserting.
+ *
+ * Reach for this only when the two reasons genuinely lead to different behaviour.
+ * `agents/ingest.ts` is the motivating caller: it advances a persisted watermark past
+ * everything it processes, so treating "Ollama was down" as this message's final answer
+ * permanently lost the extraction for a whole batch. Everywhere the distinction doesn't
+ * change what happens next, `llmOrNull` remains the simpler and correct choice.
+ */
+export async function llmAttempt<T>(op: string, fn: () => Promise<T>): Promise<LlmAttempt<T>> {
   try {
-    return await fn();
+    return { ok: true, value: await fn() };
   } catch (err) {
     if (err instanceof OllamaUnavailable || err instanceof LlmParseError) {
       logger.warn('llm degraded', { op, err: (err as Error).message });
-      return null;
+      return { ok: false, reason: err instanceof OllamaUnavailable ? 'unavailable' : 'unparseable' };
     }
     throw err;
   }
@@ -309,7 +370,13 @@ export function parseJsonLoose<T = unknown>(raw: string): T {
 }
 
 /** Return an embedding vector for a single piece of text. */
-export async function embed(text: string, timeoutMs = 30_000): Promise<number[]> {
+export async function embed(
+  text: string,
+  timeoutMs = 30_000,
+  /** An outer budget. Aborting it cancels this request instead of leaving it to run out
+   *  its own `timeoutMs` against a model nobody is waiting on any more. */
+  signal?: AbortSignal,
+): Promise<number[]> {
   const model = await resolveEmbedModel();
   const res = await fetchWithTimeout(
     `${config.ollamaUrl}/api/embeddings`,
@@ -318,7 +385,8 @@ export async function embed(text: string, timeoutMs = 30_000): Promise<number[]>
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model, prompt: text }),
     },
-    timeoutMs
+    timeoutMs,
+    signal,
   );
   if (!res.ok) throw await ollamaError('embeddings', res, model);
   const data = await decodeJson<{ embedding?: number[] }>(res, 'embeddings');

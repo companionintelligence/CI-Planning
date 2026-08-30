@@ -6,7 +6,10 @@ import { writeAudit } from '../lib/audit.js';
 import { broadcast } from '../routes/sse.js';
 import { taskToApi } from '../lib/serialize.js';
 import { logger } from '../lib/logger.js';
+import { newId } from '../lib/ids.js';
+import { localDateInTZ } from '../lib/tz.js';
 import { autoScheduleOnIngest, placeStartAnchoredTask } from '../engine/autoplan.js';
+import { ownerTimezone } from '../engine/recurrence-generate.js';
 import { dedupePossibles } from '../agents/groom.js';
 import { requiresReview } from './review-gate.js';
 import { attachMachinePeople, resolveOrCreateByEmail, selfPersonId } from './people.js';
@@ -127,6 +130,46 @@ async function carryPossiblePeople(owner: string, possibleId: string, taskId: st
   await attachMachinePeople(owner, 'task', taskId, 'responsible', ordered, source);
 }
 
+// ── outcome evidence (close-loop wave, ticket 2) ──────────────────────────────
+//
+// One durable `possible_outcome_log` row per decided suggestion — what was proposed,
+// what the owner did with it, and when. This is the corpus ticket 3's calibration
+// batch rolls up and ticket 4/5 feed back into the extraction prompt as history
+// (never a filter — see README.md "Decisions of record"). Raw SQL, matching the rest
+// of the learning path (classification-learning.ts logAssignment); possibles.ts uses
+// Drizzle for its own queries, but the log write does not need it. Append-only: a
+// repeated dismiss of the same row writes a second row on purpose — ticket 3 collapses
+// repeats at read time via ix_possible_outcome_log_possible.
+const SQL_INSERT_OUTCOME_LOG = `
+  INSERT INTO possible_outcome_log
+    (id, owner_id, possible_task_id, source_kind, input_text, outcome, decided_at, local_date)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+
+/**
+ * Append one row of evidence for a decided suggestion. Total try/catch — a logging
+ * failure must never surface to the owner as a failed dismiss/promote (Non-goals): the
+ * caller's return value is built before this runs and is never touched by a throw here.
+ *
+ * Owner scope comes from the row's `proposed_owner_id` (T4's owner key on
+ * `possible_tasks`), not `owner_id` — that column doesn't exist on this table. Both
+ * callers already have the row in hand (dismissPossible via `.returning()`, promotePossible
+ * via the `getPossible` lookup it already did), so this never issues a second query.
+ */
+async function recordPossibleOutcome(row: PossibleTaskRow, outcome: 'dismissed' | 'promoted'): Promise<void> {
+  try {
+    const owner = row.proposedOwnerId;
+    if (!owner) return; // nothing to attribute the evidence to
+    const decidedAt = new Date().toISOString();
+    const localDate = localDateInTZ(decidedAt, await ownerTimezone(owner));
+    const inputText = row.rawSummary && row.rawSummary.trim() ? `${row.rawTitle} ${row.rawSummary}` : row.rawTitle;
+    await store()
+      .prepare(SQL_INSERT_OUTCOME_LOG)
+      .run(newId(), owner, row.id, row.sourceKind ?? null, inputText, outcome, decidedAt, localDate);
+  } catch (err) {
+    logger.warn('possibles: could not record outcome', { possibleId: row.id, outcome, err: (err as Error).message });
+  }
+}
+
 // ── reads (owner-scoped by proposed_owner_id) ─────────────────────────────────
 
 /** The owner's possible tasks in a given status (default 'pending'). */
@@ -182,6 +225,23 @@ export async function getPossible(owner: string, id: string): Promise<PossibleTa
 /** Client-supplied overrides for a promote (both the REST snake_case + GraphQL forms map here). */
 export type PromoteOverrides = { title?: string; due_at?: string; priority?: number };
 
+/**
+ * Who drove a promote. Load-bearing for the close-loop wave and nothing else: only an
+ * OWNER decision is evidence about what that owner considers noise.
+ *
+ * Since AF-3 most promotes are NOT owner decisions — `promoteAllPending` (every ingest
+ * and memory-suggest batch) and `promotePossibles` (the nightly grooming sweeper)
+ * auto-promote every non-review-gated possible by machine. Recording those as
+ * `possible_outcome_log` rows would put one machine row per ingested item into the
+ * denominator of ticket 6's noise rate (`dismissed / decided`), pinning it near zero
+ * however noisy the queue actually is, and would grow an append-only table forever.
+ *
+ * Defaults to `'owner'` so the two human surfaces (routes/possibles.ts, the GraphQL
+ * mutation) need no ceremony; the machine sweepers below pass `'auto'` explicitly.
+ * A dismiss needs no such flag — nothing dismisses on the owner's behalf.
+ */
+export type PromoteActor = 'owner' | 'auto';
+
 export type PromoteResult =
   | { ok: true; task: typeof tasks.$inferSelect; taskId: string }
   | { ok: false; error: 'not_found' };
@@ -200,6 +260,7 @@ export async function promotePossible(
   owner: string,
   id: string,
   overrides: PromoteOverrides = {},
+  opts: { actor?: PromoteActor } = {},
 ): Promise<PromoteResult> {
   const possible = await getPossible(owner, id);
   if (!possible) return { ok: false, error: 'not_found' };
@@ -235,6 +296,9 @@ export async function promotePossible(
     .where(and(eq(possibleTasks.id, id), eq(possibleTasks.proposedOwnerId, owner)));
 
   writeAudit({ ownerId: owner, actor: 'owner', action: 'promote', entity: `possible:${id}` });
+  // Evidence, unlike the audit row above, is only written for a real owner decision —
+  // see PromoteActor. An auto-promote says nothing about what the owner considers noise.
+  if (opts.actor !== 'auto') await recordPossibleOutcome(possible, 'promoted');
 
   return { ok: true, task, taskId: task.id };
 }
@@ -291,7 +355,9 @@ export async function promoteAllPending(
   for (const p of pending) {
     let res: PromoteResult;
     try {
-      res = await promotePossible(owner, p.id);
+      // 'auto': AF-3 promotes on the owner's behalf, so this is not a decision and
+      // must not enter the dismissal-learning corpus (see PromoteActor).
+      res = await promotePossible(owner, p.id, {}, { actor: 'auto' });
     } catch (err) {
       // Poison isolation (same philosophy as ingest's dead-letter): one bad row —
       // e.g. a UNIQUE(source_kind, source_ref) collision with an existing task —
@@ -345,5 +411,6 @@ export async function dismissPossible(owner: string, id: string): Promise<Dismis
     .returning();
   if (!row) return { ok: false, error: 'not_found' };
   writeAudit({ ownerId: owner, actor: 'owner', action: 'dismiss', entity: `possible:${id}` });
+  await recordPossibleOutcome(row, 'dismissed');
   return { ok: true, row };
 }

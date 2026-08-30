@@ -1,5 +1,5 @@
 import { store } from '../db/store.js';
-import { MOODS, type Mood } from './task-close.js';
+import { isRating, type Score } from './task-close.js';
 import { resolveDayType } from './day-types.js';
 import { directionWindowsByName, FALLBACK_FILL_DIRECTION_NAMES } from './pattern-blocks.js';
 import { localDateInTZ, serverTimezone, utcDayBounds, zonedWallTimeToUTC } from '../lib/tz.js';
@@ -92,8 +92,10 @@ export interface DimContext {
   nowMs: number;
   /** Today's workday bounds as UTC ms; null when the prefs row / hours are missing. */
   workHours: { startMs: number; endMs: number } | null;
-  /** Latest close-ritual mood whose reaction_at falls within 3h of now; null = no recent reading. */
-  recentMood: Mood | null;
+  /** Latest close-ritual RATING whose reaction_at falls within 3h of now; null = no recent reading.
+   *  Only real 1-5 ratings qualify: a DECLINED never stamps reaction_at, so a dismissal
+   *  cannot displace a genuine reading given earlier in the window. */
+  recentScore: Score | null;
   /** Minutes from now to the next locked/meeting block today; null = no such block (no calendar data). */
   freeGapMinutes: number | null;
   /** resolveDayType key for the owner-tz date of `now`. */
@@ -139,12 +141,22 @@ const SQL_PREFS = `
     FROM scheduling_prefs WHERE owner_id = ?
 `;
 
-// Latest reflected mood by reaction_at — NOT completed_at: reacting later is normal, and
-// the reaction is the reading's timestamp (0137). Window bounds are passed in, not now().
-const SQL_RECENT_MOOD = `
-  SELECT completion_mood AS mood
+// Latest reflected rating by reaction_at — NOT completed_at: reacting later is normal,
+// and the reaction is the reading's timestamp (0137). Window bounds are passed in, not
+// now(). Habits are deliberately IN scope here (no recurrence filter): "how am I feeling
+// right now" is answered as well by a habit as by a one-off task. That is a different
+// question from the Metrics tab's, which reports the two populations separately — the two
+// queries are not meant to agree, and never were.
+//
+// `BETWEEN 1 AND 5` rather than `IS NOT NULL` is load-bearing, not defensive. A DECLINED
+// normally stamps no reaction_at and so cannot appear here — but it DOES when the user
+// writes a note without picking a face, and the note stamps one. Filtering only in JS
+// would be too late: this row would already have won `ORDER BY reaction_at DESC LIMIT 1`,
+// and a rating given an hour earlier would be silently displaced by a non-answer.
+const SQL_RECENT_SCORE = `
+  SELECT completion_score AS score
     FROM tasks
-   WHERE owner_id = ? AND completion_mood IS NOT NULL
+   WHERE owner_id = ? AND completion_score BETWEEN 1 AND 5
      AND reaction_at IS NOT NULL AND reaction_at >= ? AND reaction_at <= ?
    ORDER BY reaction_at DESC
    LIMIT 1
@@ -191,7 +203,10 @@ const SQL_PRIORITIES = `
 // Finished entries only (a running entry has no duration yet), attributed through the
 // TASK's categories. g.owner_id is re-checked even though the entry scope implies it —
 // owner-scoped SQL always filters owner_id, no exceptions.
-const SQL_CATEGORY_ENTRIES = `
+// Exported (code-review fix): services/balance-snapshot.ts's timed-minutes query used
+// to be a near-verbatim private copy of this one, differing only in the output alias
+// (`cat` here vs `category` there) — shared now so the two can't silently drift apart.
+export const SQL_CATEGORY_ENTRIES = `
   SELECT g.name AS cat, e.started_at, e.ended_at
     FROM time_entries e
     JOIN entity_categories ec ON ec.entity_kind = 'task' AND ec.entity_id = e.task_id
@@ -227,8 +242,10 @@ const SQL_MOTIVATION_ENTRIES = `
 
 const MOTIVATIONS = new Set(['me', 'us', 'them']);
 
-/** Finished-entry minutes; a malformed pair (end before start) contributes nothing. */
-function entryMinutes(startedAt: string, endedAt: string): number {
+/** Finished-entry minutes; a malformed pair (end before start) contributes nothing.
+ *  Exported (code-review fix): services/balance-snapshot.ts had a byte-for-byte
+ *  private copy of this function, shared now instead. */
+export function entryMinutes(startedAt: string, endedAt: string): number {
   const mins = (Date.parse(endedAt) - Date.parse(startedAt)) / 60_000;
   return Number.isFinite(mins) && mins > 0 ? mins : 0;
 }
@@ -262,10 +279,10 @@ async function buildDimContext(ownerId: string, now: Date): Promise<DimContext> 
     };
   }
 
-  const moodRow = await store().prepare(SQL_RECENT_MOOD).get<{ mood: string }>(
+  const scoreRow = await store().prepare(SQL_RECENT_SCORE).get<{ score: number }>(
     ownerId, new Date(nowMs - MOOD_WINDOW_MS).toISOString(), nowIso,
   );
-  const recentMood = moodRow && (MOODS as readonly string[]).includes(moodRow.mood) ? (moodRow.mood as Mood) : null;
+  const recentScore = scoreRow && isRating(scoreRow.score) ? scoreRow.score : null;
 
   const dayEnd = utcDayBounds(localDate, tz).end;
   const nextFixed = await store().prepare(SQL_NEXT_FIXED_BLOCK).get<{ start_at: string }>(ownerId, nowIso, dayEnd);
@@ -343,7 +360,7 @@ async function buildDimContext(ownerId: string, now: Date): Promise<DimContext> 
   return {
     nowMs,
     workHours,
-    recentMood,
+    recentScore,
     freeGapMinutes,
     dayTypeKey,
     timerRunning,
@@ -370,13 +387,18 @@ export const DIM_REGISTRY: readonly DimEntry[] = [
     active: (ctx) => ctx.workHours !== null,
   },
   {
-    // §3: happy → +1, flat → 0, frustrated/stressed → −1, no reading within 3h → 0.
+    // §3: 4-5 → +1, 3 → 0, 1-2 → −1, no reading within 3h → 0.
+    //
+    // 0161 restated the source as a 1-5 score; this mapping is chosen to PRESERVE the
+    // pre-0161 ternary exactly — the old happy → +1, flat → 0, frustrated|stressed → −1
+    // partitioned the four faces into good / neutral / bad, and 4-5 / 3 / 1-2 partitions
+    // the five points the same way. Nothing about the vector's behaviour changes here.
     name: 'day_energy',
     encode: (ctx) => {
-      if (ctx.recentMood === null) return 0;
-      if (ctx.recentMood === 'happy') return 1;
-      if (ctx.recentMood === 'flat') return 0;
-      return -1; // frustrated | stressed
+      if (ctx.recentScore === null) return 0;
+      if (ctx.recentScore >= 4) return 1;
+      if (ctx.recentScore === 3) return 0;
+      return -1; // 1 | 2
     },
   },
   {

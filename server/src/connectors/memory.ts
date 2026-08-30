@@ -98,6 +98,13 @@ type MemoryBlob = ManualBlob | OidcBlob;
 /** Refresh a hair EARLY so an in-flight request never races the expiry boundary. */
 const REFRESH_SKEW_MS = 60_000;
 
+/**
+ * Ceiling on every live network call this file makes (token refresh, GET, POST) — the
+ * token refresh is single-flighted (see `refreshInFlight`), so a hang there stalls
+ * every OTHER caller sharing it too, not just the request that triggered it.
+ */
+const HTTP_TIMEOUT_MS = 10_000;
+
 /** Normalized graph node (CI-Server GraphController response shape, camelCased). */
 export interface MemoryNode {
   id: string;
@@ -325,6 +332,7 @@ async function refreshOidcBlob(owner: string, blob: OidcBlob): Promise<string> {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
       body: params.toString(),
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
   } catch (err) {
     throw new MemoryUnavailable(`CI-Portal token refresh unreachable: ${(err as Error).message}`);
@@ -409,7 +417,7 @@ async function getJson<T>(owner: string, path: string, params: Record<string, st
   try {
     // redirect: 'manual' — undici drops Authorization on cross-origin redirects but
     // NOT the custom x-api-key header, so following a 3xx could exfiltrate the key.
-    res = await fetch(url, { headers: memoryHeaders(creds), redirect: 'manual' });
+    res = await fetch(url, { headers: memoryHeaders(creds), redirect: 'manual', signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) });
   } catch (err) {
     throw new MemoryUnavailable(`CI-Server unreachable at ${creds.url}: ${(err as Error).message}`);
   }
@@ -491,6 +499,7 @@ export async function postEvents(owner: string, events: MemoryEvent[]): Promise<
       headers: { ...memoryHeaders(creds), 'Content-Type': 'application/json' },
       body,
       redirect: 'manual',
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
   } catch (err) {
     throw new MemoryUnavailable(`CI-Server unreachable at ${creds.url}: ${(err as Error).message}`);

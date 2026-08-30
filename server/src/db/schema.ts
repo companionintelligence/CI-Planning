@@ -71,8 +71,11 @@ export const tasks = sqliteTable('tasks', {
   sourceRef: text('source_ref'),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
   completedAt: text('completed_at'),
-  // ── Close ritual (0137) — all optional; the plain checkbox never sets them. ──
-  completionMood: text('completion_mood'),   // 'happy' | 'flat' | 'frustrated' | 'stressed'
+  // ── Close ritual (0137, rescored 0161) — all optional; the plain checkbox never sets them. ──
+  // 1-5 from the three-face picker (frown=1 · frown+flat=2 · flat=3 · flat+smile=4 · smile=5).
+  // 0 is the DECLINED sentinel (prompted, skipped) — not a rating, and excluded from every
+  // score aggregate. NULL = never prompted.
+  completionScore: integer('completion_score'),
   completionNote: text('completion_note'),   // the closing reflection — NOT `notes` (the description)
   // WHEN the reflection was recorded. Distinct from completed_at (the assumed task end):
   // reacting later is normal, and `reaction_at − completed_at` is the freshness of the read.
@@ -336,6 +339,12 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   // 0156: replaces the removed workday_start/workday_end as the source for the
   // AI-authoring "capacity today" hint. Default 56 = 8h/day × 7.
   capacityHoursPerWeek: integer('capacity_hours_per_week').notNull().default(56),
+  // 0164 (balance-targets wave, bal-2): master gate for the auto-planning bias
+  // tickets 3/4 add — nudges candidate ordering/placement toward life dimensions
+  // running behind their weekly target. Default ON (owner ruling 2026-08-29). Not a
+  // Time-Sense channel; the suggest surface and weekly snapshot are deliberately NOT
+  // gated by this flag.
+  balanceBiasEnabled: integer('balance_bias_enabled', { mode: 'boolean' }).notNull().default(true),
 });
 
 export const tags = sqliteTable('tags', {

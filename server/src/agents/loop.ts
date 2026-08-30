@@ -130,7 +130,7 @@ export function median(xs: number[]): number {
 }
 
 /** Default revision sink: append one compact row to audit_log (never throws — audit is fire-and-forget). */
-function auditRecord(ownerId: string, stage: string, rev: Revision): void {
+export function auditRecord(ownerId: string, stage: string, rev: Revision): void {
   writeAudit({
     ownerId,
     actor: 'system',
@@ -211,7 +211,15 @@ export async function runLoop<C>(stage: LoopStage<C>, options: LoopOptions = {})
       revisions.push(rev);
       record(stage.ownerId, stage.stage, rev);
 
-      if (score > bestScore) bestScore = score;
+      // Only a round that CLEARED the deterministic gate counts toward the best score.
+      // `score` is 0 for a deterministic-fail round by construction (never judged), and
+      // `0 > -1` is true — so without this guard the very first deterministic failure
+      // dragged bestScore up to 0 regardless of whether anything was ever judged,
+      // making the documented "-1 if none did" (LoopResult.score) impossible to
+      // observe. That is a real distinction a caller may need: "every candidate was
+      // rejected outright by a hard rule" and "candidates passed the rules and still
+      // judged at 0" are different failures with different fixes.
+      if (reason !== 'deterministic-fail' && score > bestScore) bestScore = score;
 
       if (defects.length === 0 && score >= passThreshold) {
         return { candidate: cand, passed: true, escaped: false, score: bestScore, iterations: iter, revisions };

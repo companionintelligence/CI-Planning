@@ -19,7 +19,7 @@ import { snapToSlot, minuteToHHMM, isSlotOccupied } from '../lib/create-click.js
 import { useDropZone } from '../lib/draggable.js';
 import { isSelected, toggleSelection, setActiveTask, setActiveBlock, selection, setRoutineModal } from '../stores/selection.js';
 import { layoutBlocks } from './CalendarGrid.js';
-import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay, tags, categoryPrefs, patternPrefs, patternBlocks, tasks, plannerAxisState, togglePlannerTop, togglePlannerBottom, texturesEnabled, objectiveAccentByBlock, askRecurringScope, isRecurringOccurrence, conflictedBlockIds } from '../stores/index.js';
+import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay, tags, categoryPrefs, patternPrefs, patternBlocks, tasks, plannerAxisState, togglePlannerTop, togglePlannerBottom, texturesEnabled, objectiveAccentByBlock, askRecurringScope, isRecurringOccurrence, conflictedBlockIds, openCloseRitual } from '../stores/index.js';
 import { accentColor } from '../lib/objective-accent.js';
 import { isAllDay } from '../lib/overlay.js';
 import { elementTextureStyle, blockColorVar, doneHatchStyle } from '../lib/textures.js';
@@ -478,7 +478,13 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
       // One PATCH: the server mirrors a task-linked block's done-state onto the task
       // (and emits task:updated), so there's no non-atomic client dual write.
       await api.blocks.update(blk.id, { status: next ? 'completed' : 'planned' });
-      if (next) setGlow(true);
+      if (next) {
+        setGlow(true);
+        // The server mirrors a task-linked block's done-state onto the task, so this chip
+        // completes a TASK too — and must offer the same ritual the checkbox does. Pinned
+        // to this block: it is exactly the span the user just marked done.
+        if (blk.task_id) openCloseRitual(taskOf(blk.task_id), blk.id);
+      }
       refetchBlocks();
     } catch (err) { showToast((err as Error).message, 'error'); }
   }

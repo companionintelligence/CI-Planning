@@ -4,6 +4,7 @@ import type { Database } from 'better-sqlite3';
 import { runMigrations, rebuildTable } from '../src/db/migrate.js';
 import { MIGRATIONS } from '../src/db/migrations/index.js';
 import { up as dropAutoMode } from '../src/db/migrations/0123_drop_auto_mode.js';
+import { up as dismissalEvidenceUp } from '../src/db/migrations/0157_dismissal_evidence.js';
 
 import { SYSTEM_OWNER_ID } from '../src/lib/ids.js';
 
@@ -190,6 +191,41 @@ describe('0123 drop auto_mode (Z · W4)', () => {
     expect(trust('plain-suggest')).toBe('balanced');
     // Idempotent: a re-run (column already gone) is a no-op.
     dropAutoMode(db);
+    db.close();
+  });
+});
+
+describe('0157 dismissal evidence schema', () => {
+  const tableNames = (db: Database) =>
+    (db.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all() as { name: string }[]).map((t) => t.name);
+  const indexNames = (db: Database) =>
+    (db.prepare(`SELECT name FROM sqlite_master WHERE type='index'`).all() as { name: string }[]).map((i) => i.name);
+
+  it('creates possible_outcome_log, possible_dismissal_exemplars and possible_dismissal_rate', () => {
+    const db = fresh();
+    runMigrations(db);
+    const tables = tableNames(db);
+    expect(tables).toContain('possible_outcome_log');
+    expect(tables).toContain('possible_dismissal_exemplars');
+    expect(tables).toContain('possible_dismissal_rate');
+    db.close();
+  });
+
+  it('creates both possible_outcome_log indexes', () => {
+    const db = fresh();
+    runMigrations(db);
+    const indexes = indexNames(db);
+    expect(indexes).toContain('ix_possible_outcome_log_owner_date');
+    expect(indexes).toContain('ix_possible_outcome_log_possible');
+    db.close();
+  });
+
+  it('is idempotent: re-running up() on an already-migrated DB throws nothing', () => {
+    const db = fresh();
+    runMigrations(db);
+    // Whole-runner idempotency is asserted by 'is a no-op on re-run' above; this
+    // additionally proves the 0157 statement itself is safe to re-execute directly.
+    expect(() => dismissalEvidenceUp(db)).not.toThrow();
     db.close();
   });
 });

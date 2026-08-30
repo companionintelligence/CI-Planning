@@ -82,11 +82,12 @@ describe('flag off (R4)', () => {
   it('404s /next and writes nothing — v2.2 changes none of that', async () => {
     // A fixture that would rank: over the refusal floor, with something to suggest.
     const done = sqlite.prepare(
-      `INSERT INTO tasks (id, title, owner_id, status, completed_at, completion_mood)
-       VALUES (uuid7(), ?, ?, 'done', ?, 'flat')`,
+      `INSERT INTO tasks (id, title, owner_id, status, completed_at, completion_score, reaction_at)
+       VALUES (uuid7(), ?, ?, 'done', ?, 3, ?)`,
     );
     for (let i = 0; i < 12; i++) {
-      done.run(`done-${i}`, SYSTEM_OWNER, new Date(Date.now() - (i + 1) * 86_400_000).toISOString());
+      const at = new Date(Date.now() - (i + 1) * 86_400_000).toISOString();
+      done.run(`done-${i}`, SYSTEM_OWNER, at, at);
     }
     sqlite
       .prepare(`INSERT INTO tasks (id, title, owner_id, status, estimated_minutes) VALUES (uuid7(), ?, ?, 'open', 20)`)

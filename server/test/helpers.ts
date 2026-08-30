@@ -3,7 +3,7 @@ import type { Server } from 'node:http';
 import { buildApp } from '../src/app.js';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { status } from '../src/mcp/ollama.js';
+import { embed, generate, status } from '../src/mcp/ollama.js';
 import { setInstalledModels } from '../src/lib/models.js';
 // NOTE: the data facade's SQLite backend is installed by src/db/index.ts on import, so
 // it is live for every test — including the many that never import this harness. Doing
@@ -77,6 +77,26 @@ export function resetDb(): void {
     DELETE FROM copy_history;
     DELETE FROM life_priorities;
     DELETE FROM planning_sessions;
+    -- 0157: append-only evidence log (the dismissal-learning corpus) — same
+    -- cross-test contamination argument as classification_log/triality_log above.
+    DELETE FROM possible_outcome_log;
+    -- 0157: rollup is read by a production path (the extraction prompt), so a
+    -- leftover row would silently bend another test file's prompt.
+    DELETE FROM possible_dismissal_exemplars;
+    -- 0157: measurement is appended per (owner, computed_date) run; clear so a
+    -- backdated reading from one test doesn't collide with the next test's.
+    DELETE FROM possible_dismissal_rate;
+    -- 0162: plan_revision_log/plan_loop_runs are append-only by design (the §A0
+    -- authoring loop's evidence) — same cross-test contamination argument as
+    -- calibration_history above.
+    DELETE FROM plan_revision_log;
+    DELETE FROM plan_loop_runs;
+    DELETE FROM plan_loop_stats;
+    -- 0165: append-only weekly balance snapshot (first-freeze-wins, UNIQUE(owner_id,
+    -- week_start, category)) — same cross-test contamination argument as
+    -- calibration_history/triality_log/possible_outcome_log above: a leftover row for
+    -- the same (owner, week, category) would silently no-op a later test's insert.
+    DELETE FROM balance_week_log;
     -- 0166: durable placement evidence, append-only by design — same cross-test
     -- contamination argument as calibration_history / triality_log above.
     DELETE FROM placement_log;
@@ -152,7 +172,8 @@ export function resetDb(): void {
       memory_last_synced_at = NULL,
       triality_enabled = 0,
       sleep_hours_per_week = 63,
-      capacity_hours_per_week = 56;
+      capacity_hours_per_week = 56,
+      balance_bias_enabled = 1;
   `);
 }
 
@@ -267,16 +288,96 @@ function hasModel(installed: string[], want: string | null | undefined): boolean
   });
 }
 
+/**
+ * Per-probe budget below. Generous on purpose: it has to cover a COLD model load on a
+ * healthy box (tens of seconds for a large quality model), because skipping a suite that
+ * would actually have passed is the worse error of the two. Past this it is not a slow
+ * box, it is a box that cannot run these tests.
+ *
+ * `hookTimeout` in vitest.config.ts must clear THREE of these, since several suites spend
+ * this call from `beforeAll` and a healthy-but-cold box pays each probe in turn. If the
+ * hook is killed first the suite fails instead of skipping, which is what the probe exists
+ * to prevent. The two move together.
+ */
+const OLLAMA_PROBE_TIMEOUT_MS = 45_000;
+
 let _ollamaUp: boolean | null = null;
-/** Cached Ollama readiness so LLM-dependent tests can skip when service/models are unavailable. */
+/**
+ * Cached Ollama readiness so LLM-dependent tests can skip when the service, the models,
+ * or the machine itself cannot actually serve them.
+ *
+ * Reachability and model presence are necessary but NOT sufficient, and treating them as
+ * sufficient is what made this gate lie. On a box where another process holds the GPU the
+ * daemon still answers and still lists every model, so the gate said "up", the suites ran,
+ * and every generation then timed out. That used to hide behind the old ingest fallback —
+ * a timeout became a title-only stub, so `possibles > 0` and the test passed without a
+ * single real extraction having happened. Now that an outage correctly DEFERS instead of
+ * stubbing, the same condition surfaces as a bare assertion failure: honest, but pointing
+ * at the wrong thing, because the code under test is fine and the box simply cannot serve it.
+ *
+ * Hence the last check exercises all THREE capabilities the presence check above already
+ * promises — a fast generation, a quality generation, and an embedding. Symmetry is the
+ * point: proving one model serves proves nothing about the other two, and the failure
+ * this guards against is precisely a box that can load ONE more model and then thrashes.
+ * `think: false` stops a thinking-capable model spending a whole budget reasoning about a
+ * one-word prompt. Probes run in sequence and stop at the first failure, so a box that
+ * cannot serve pays one budget, not three.
+ *
+ * A passing probe also leaves the models warm, which is a real side-benefit: the cold load
+ * is paid here, inside a hook sized for it, instead of inside the first test that happens
+ * to need it and is timed as though the model were already resident.
+ */
 export async function ollamaAvailable(): Promise<boolean> {
   if (_ollamaUp === null) {
     const s = await status();
-    _ollamaUp =
+    const present =
       s.available &&
       hasModel(s.models, s.fastModel) &&
       hasModel(s.models, s.qualityModel) &&
       hasModel(s.models, s.embedModel);
+    if (!present) {
+      _ollamaUp = false;
+    } else {
+      const probes: [string, () => Promise<boolean>][] = [
+        ['fast generation', async () =>
+          (await generate('Reply with the single word: ok', {
+            tier: 'fast', timeoutMs: OLLAMA_PROBE_TIMEOUT_MS, think: false,
+          })).trim().length > 0],
+        ['quality generation', async () =>
+          (await generate('Reply with the single word: ok', {
+            tier: 'quality', timeoutMs: OLLAMA_PROBE_TIMEOUT_MS, think: false,
+          })).trim().length > 0],
+        ['embedding', async () => (await embed('ok', OLLAMA_PROBE_TIMEOUT_MS)).length > 0],
+      ];
+      _ollamaUp = true;
+      for (const [what, run] of probes) {
+        try {
+          if (await run()) continue;
+          // Reachable, in budget, and still useless — an empty answer would surface
+          // downstream as a baffling assertion rather than an outage.
+          throw new Error('returned an empty result');
+        } catch (err) {
+          // Names the capability that failed, so a developer whose LLM suites all skipped
+          // can tell it was the machine and not their change — the one condition the old
+          // gate could not distinguish from a healthy run.
+          //
+          // Worth knowing where this actually shows up: the gated suites use
+          // `if (!up) return;`, so a skipped test PASSES, and vitest's default reporter
+          // hides console output for a file that passed. It surfaces under
+          // `--reporter=verbose` and in a CI log, but NOT in a plain local run — where the
+          // symptom is instead an LLM suite that finishes suspiciously fast. Making those
+          // skips render as skips means moving five suites off that idiom onto
+          // `ctx.skip()`, which is a separate change from fixing the gate.
+          console.warn(
+            `[test] Ollama is reachable and the models are installed, but a ${what} probe ` +
+              `did not succeed within ${OLLAMA_PROBE_TIMEOUT_MS}ms — skipping LLM-dependent ` +
+              `suites. Usually another process is holding the GPU. (${(err as Error).message})`,
+          );
+          _ollamaUp = false;
+          break;
+        }
+      }
+    }
   }
   return _ollamaUp;
 }

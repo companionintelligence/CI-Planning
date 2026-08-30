@@ -59,6 +59,40 @@ export function onReconnect(handler: ReconnectHandler): () => void {
 
 // ── EventSource wiring ─────────────────────────────────────────────────────────
 
+/** Reconnect backoff: 5s doubling to 30s (matches stores/mutations.ts's flush retry). */
+const RECONNECT_BASE_MS = 5_000;
+const RECONNECT_MAX_MS  = 30_000;
+
+let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+let reconnectDelayMs = RECONNECT_BASE_MS;
+
+/**
+ * Arm the ONE reconnect timer, doubling the delay each consecutive failure.
+ *
+ * `connect()` used to fire a bare `setTimeout(connect, 5_000)` with no stored handle
+ * and no backoff. Two failures, at scale: a `on(event, handler)` call arriving DURING
+ * that 5s gap — a component mounting mid-outage, and this app has dozens of `on()`
+ * call sites, so during any real outage that is likely, not hypothetical — passed
+ * `connect()`'s only guard (`if (es) return`, false while disconnected) and opened a
+ * SECOND EventSource, which itself errored and scheduled its OWN untracked timer;
+ * repeat for as long as the outage lasted and `on()` kept firing, and the number of
+ * live sockets and pending timers only grows. Separately, a sustained outage hammered
+ * the server on a fixed 5s cadence forever, with no backoff at all.
+ *
+ * `connect()`'s guard now checks this timer too, so a call arriving mid-gap is a
+ * clean no-op — the handler is still registered (see `on()`) and gets wired up on
+ * whichever `connect()` succeeds, scheduled or not.
+ */
+function scheduleReconnect(): void {
+  if (reconnectTimer !== undefined) return; // a reconnect is already armed
+  const delay = reconnectDelayMs;
+  reconnectDelayMs = Math.min(reconnectDelayMs * 2, RECONNECT_MAX_MS);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = undefined;
+    connect();
+  }, delay);
+}
+
 // Attach exactly one EventSource listener per event type. It dispatches to every
 // handler currently in the map, so adding/removing handlers never adds or leaks
 // EventSource listeners — the handlers map is the single source of truth.
@@ -75,7 +109,7 @@ function attach(event: string): void {
 }
 
 function connect(): void {
-  if (es) return;
+  if (es || reconnectTimer !== undefined) return; // already live, or a reconnect is already pending
 
   // Flush pending ops before opening (or reopening) the stream so our own edits
   // are server-acked and won't arrive as surprising "remote" catch-up frames.
@@ -89,6 +123,7 @@ function connect(): void {
   es = new EventSource(url);
 
   es.addEventListener('open', () => {
+    reconnectDelayMs = RECONNECT_BASE_MS; // connectivity is back — drop the accumulated backoff
     if (hasConnectedOnce) reconnectHandlers.forEach((h) => h());
     hasConnectedOnce = true;
   });
@@ -97,7 +132,7 @@ function connect(): void {
     es?.close();
     es = null;
     attached.clear(); // a fresh EventSource needs its per-event listeners re-attached
-    setTimeout(connect, 5_000);
+    scheduleReconnect();
   });
 
   // Named events don't fire the generic 'message' handler — attach one per event.

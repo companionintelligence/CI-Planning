@@ -125,23 +125,43 @@ export function todayInTZ(tz: string): string {
 }
 
 /**
+ * `dateStr` (YYYY-MM-DD) plus `n` days, as YYYY-MM-DD. Noon-UTC pivot so the
+ * arithmetic is DST-safe (a midnight pivot can land on the wrong day around a
+ * DST transition in some runtimes' local-time handling).
+ *
+ * Code-review fix: this was a private, byte-identical copy in THREE places
+ * (this function's own former `isoWeekKey` closure, `services/weekly-review.ts`,
+ * and `services/balance-budget.ts`) — consolidated here since `lib/tz.ts` already
+ * hosts the sibling date-math (`todayInTZ`, `isoWeekKey`) all three callers use.
+ */
+export function addDays(dateStr: string, n: number): string {
+  const dt = new Date(dateStr + 'T12:00:00Z');
+  dt.setUTCDate(dt.getUTCDate() + n);
+  return dt.toISOString().slice(0, 10);
+}
+
+/** The Monday-start week (7 YYYY-MM-DD dates, Mon..Sun) containing `anchor`. Same
+ *  consolidation as `addDays` above — was duplicated in `weekly-review.ts` and
+ *  `balance-budget.ts`. */
+export function weekDays(anchor: string): string[] {
+  const dow = new Date(anchor + 'T12:00:00Z').getUTCDay(); // 0=Sun
+  const monday = addDays(anchor, -(dow === 0 ? 6 : dow - 1));
+  return Array.from({ length: 7 }, (_, i) => addDays(monday, i));
+}
+
+/**
  * ISO-8601 week key — `YYYY-Www` — for a local calendar date (YYYY-MM-DD).
  * Monday-start; Thursday rule: a week belongs to the year that contains its Thursday.
  * Uses the noon-UTC pivot so arithmetic is DST-safe. Mirror of the client's isoWeekKey.
  */
 export function isoWeekKey(dateStr: string): string {
-  const addD = (d: string, n: number): string => {
-    const dt = new Date(d + 'T12:00:00Z');
-    dt.setUTCDate(dt.getUTCDate() + n);
-    return dt.toISOString().slice(0, 10);
-  };
   const dow = new Date(dateStr + 'T12:00:00Z').getUTCDay();
-  const thursday = addD(dateStr, dow === 0 ? -3 : 4 - dow);
+  const thursday = addDays(dateStr, dow === 0 ? -3 : 4 - dow);
   const year = Number(thursday.slice(0, 4));
   const jan4 = `${year}-01-04`;
   const jan4Dow = new Date(jan4 + 'T12:00:00Z').getUTCDay();
-  const w1Monday = addD(jan4, -(jan4Dow === 0 ? 6 : jan4Dow - 1));
-  const monday = addD(dateStr, -(dow === 0 ? 6 : dow - 1));
+  const w1Monday = addDays(jan4, -(jan4Dow === 0 ? 6 : jan4Dow - 1));
+  const monday = addDays(dateStr, -(dow === 0 ? 6 : dow - 1));
   const days = Math.round(
     (new Date(monday + 'T12:00:00Z').getTime() - new Date(w1Monday + 'T12:00:00Z').getTime()) / 86_400_000,
   );

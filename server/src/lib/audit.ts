@@ -1,4 +1,5 @@
 import { store } from '../db/store.js';
+import { logger } from './logger.js';
 
 /**
  * Append one row to audit_log. Fire-and-forget — never throws, so a failed audit write
@@ -30,7 +31,16 @@ export function writeAudit(e: { ownerId: string; actor: string; action: string; 
     .run(e.ownerId, e.actor, e.action, e.entity)
     .then(
       () => {},
-      () => {}, // silent — audit must never break the main path
+      // NEVER re-thrown or awaited by the caller — that contract doesn't change. But a
+      // failed write used to vanish with zero trace anywhere: no log, no metric, nothing.
+      // For a security-relevant record, "we don't know it's missing" is worse than the
+      // loss itself. `action`/`entity` only (never a full payload) — this is a log line
+      // about the audit system, not a second copy of what it was trying to record.
+      (err: unknown) => {
+        logger.error('audit write failed — this event is not recorded', {
+          ownerId: e.ownerId, action: e.action, err: (err as Error).message,
+        });
+      },
     )
     .finally(() => {
       inFlight.delete(p);

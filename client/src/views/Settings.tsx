@@ -48,12 +48,15 @@ interface SettingsForm {
   // 0156: replaces workday_start/workday_end as the source for the AI-authoring
   // "capacity today" hint. Stored weekly (matches sleep_hours_per_week); default 56.
   capacity_hours_per_week: number;
+  // 0164 (balance-targets wave, bal-2): bias gate — nudges auto-planning toward life
+  // dimensions running behind their weekly target. NOT a Time-Sense channel; default ON.
+  balance_bias_enabled: boolean;
 }
 
 /** The boolean fields of the form — for the reusable Toggle. */
 type BoolField =
   | 'auto_fill_workday' | 'plan_allday_always' | 'plan_daylong_for_promoted' | 'plan_autofill_gaps' | 'concept_autosurface' | 'recall_keeps_pattern' | 'time_sense_enabled'
-  | 'focus_ritual_enabled' | 'haptic_cues_enabled' | 'ambient_color_enabled' | 'calibration_loop_enabled' | 'triality_enabled' | 'llm_thinking_enabled';
+  | 'focus_ritual_enabled' | 'haptic_cues_enabled' | 'ambient_color_enabled' | 'calibration_loop_enabled' | 'triality_enabled' | 'llm_thinking_enabled' | 'balance_bias_enabled';
 
 const DEFAULTS: SettingsForm = {
   auto_fill_workday: true,
@@ -74,6 +77,7 @@ const DEFAULTS: SettingsForm = {
   ambient_color_enabled: true, calibration_loop_enabled: true,
   triality_enabled: false,
   capacity_hours_per_week: 56,
+  balance_bias_enabled: true,
 };
 
 export function Settings() {
@@ -231,6 +235,7 @@ export function Settings() {
       email_lookback_days:        p.email_lookback_days ?? 7,
       triality_enabled:           p.triality_enabled ?? false,
       capacity_hours_per_week:    p.capacity_hours_per_week ?? 56,
+      balance_bias_enabled:       p.balance_bias_enabled ?? true,
     });
   });
 
@@ -579,7 +584,17 @@ export function Settings() {
       const { url } = await api.oauth.googleStart();
       window.location.href = url;
     } catch (err) {
-      showToast((err as Error).message, 'error');
+      // The server's fail-closed codes are identifiers, not sentences. Translate the
+      // ones a user can actually act on — an untranslated `google_client_id_missing`
+      // toast is barely better than the Google error page it exists to replace.
+      const raw = (err as Error).message;
+      const friendly: Record<string, string> = {
+        google_client_id_missing:
+          'No Google OAuth client is configured yet — paste a Web client ID and secret into Connections above, then try again.',
+        google_mode_not_live: 'Google integration is not in live mode.',
+        oauth_disabled_in_test_mode: 'Google sign-in is disabled while the server runs in test auth mode.',
+      };
+      showToast(friendly[raw] ?? raw, 'error');
     }
   }
 
@@ -1020,6 +1035,12 @@ export function Settings() {
                 label="Fill work hours for undirected tasks"
                 hint="Auto Schedule fills open workday time with tasks that have no direction tag. Per-direction fill (above) is independent."
               />
+            </div>
+            {/* 0164 (balance-targets wave, bal-2): bias gate for tickets 3/4's
+                auto-planning nudge. NOT a Time-Sense channel — renders unconditionally. */}
+            <div class="mt-4 pt-3 border-t border-border">
+              <Toggle field="balance_bias_enabled" label="Balance bias"
+                hint="Nudge auto-planning toward life dimensions running behind their weekly target." />
             </div>
             {/* 0156: replaces workday_start/workday_end as the source for the AI-authoring
                 "capacity today" hint — not a placement window, just a weekly total. */}

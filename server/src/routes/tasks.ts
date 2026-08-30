@@ -29,13 +29,28 @@ import {
   type CreateTaskInput, type UpdateTaskInput,
 } from '../services/tasks.js';
 import { writeAudit } from '../lib/audit.js';
-import { closeTask } from '../services/task-close.js';
+import { closeTask, isScore, DECLINED_SCORE, MIN_SCORE, MAX_SCORE } from '../services/task-close.js';
 import { classificationInput, logAssignment } from '../services/classification-learning.js';
 import { getEntityPeople, getEntityPeopleBulk } from '../services/people.js';
 
 // Task business logic lives in services/tasks.ts (Phase W step 3.1, shared with the
 // coming GraphQL resolvers). These handlers are thin HTTP shells: parse → call the
 // service → map error→status → serialize (taskToApi + tag/dep reads) → broadcast.
+
+/**
+ * GET /api/tasks has no pagination — unlike the GraphQL `tasks` connection
+ * (listTasks/countTasks, keyset-paginated), it returns every matching row in one
+ * response. That is a real, still-open gap (AllTasks.tsx, RoutinesPanel.tsx and the
+ * central task store all currently assume "every matching task comes back," so wiring
+ * real pagination through here means changing THEM too, not just this route).
+ *
+ * This cap is deliberately not that fix. It bounds only the pathological case — a
+ * script, a seed, a bug that leaves an owner with an unbounded row count — at a
+ * ceiling far above anything a real owner could ever reach by using the app: even a
+ * task or two a day, every day, for a decade is a small fraction of this. No real
+ * caller should ever notice it fire.
+ */
+const DEFAULT_TASKS_LIMIT = 20_000;
 
 /**
  * The two people-sets, shaped for spreading into a task payload (0151).
@@ -55,7 +70,7 @@ export function tasksRouter() {
 
   // GET /api/tasks
   router.get('/api/tasks', async (ctx) => {
-    const { status, owner_id, tag, q, due_before, priority, include_fast } = ctx.query as Record<string, string>;
+    const { status, owner_id, tag, q, due_before, priority, include_fast, limit } = ctx.query as Record<string, string>;
 
     // The list is ALWAYS scoped to the current owner — a plain `db.select()` here
     // is a cross-tenant read leak (IDOR). An explicit `owner_id` param can only
@@ -71,11 +86,36 @@ export function tasksRouter() {
     // Filter on the canonical subtype (W1-A); equivalent to the is_fast_task alias.
     if (include_fast !== '1') conditions.push(ne(tasks.subtype, 'quick'));
 
+    // A caller may narrow below the default cap; nobody may raise it above — the cap
+    // is the ceiling this route promises, not a suggestion a query param can override.
+    const parsedLimit = Number(limit);
+    const effectiveLimit =
+      Number.isFinite(parsedLimit) && parsedLimit > 0
+        ? Math.min(parsedLimit, DEFAULT_TASKS_LIMIT)
+        : DEFAULT_TASKS_LIMIT;
+
     const result = await db
       .select()
       .from(tasks)
       .where(and(...conditions))
-      .orderBy(asc(tasks.priority), asc(tasks.dueAt));
+      // `id` (uuid7 — time-ordered) is a pure tiebreak: priority/dueAt alone leave
+      // many rows tied, and without a stable final key a LIMIT's boundary is whichever
+      // tied row the engine happens to return first — different on every call.
+      .orderBy(asc(tasks.priority), asc(tasks.dueAt), asc(tasks.id))
+      .limit(effectiveLimit);
+
+    // A full page is the cheap, standard heuristic for "there may be more" — exactly
+    // `effectiveLimit` real matches with nothing beyond it is indistinguishable from
+    // this without a second COUNT(*) query on every request, which is a real cost to
+    // pay on every call for a signal this route's only callers don't consume today.
+    // `tag` filters AFTER this fetch (below) — a tag match beyond the cap is invisible
+    // to it. Both are the same trade this whole cap makes: correct and unbounded, or
+    // bounded with an edge a real owner will never reach.
+    if (result.length === effectiveLimit) {
+      logger.warn('GET /api/tasks hit its row cap — results are truncated', {
+        ownerId: currentOwnerId(), limit: effectiveLimit,
+      });
+    }
 
     // Attach tags + dependency info, serialize to snake_case
     const blocked = await blockedTaskIds();
@@ -110,7 +150,10 @@ export function tasksRouter() {
       ? withTags.filter((t) => (t.tags as string[]).includes(tag) || (t.secondary_tags as string[]).includes(tag))
       : withTags;
 
-    ctx.body = { tasks: filtered };
+    // Additive-only: existing callers read `.tasks` and stay correct without ever
+    // reading `truncated`. It exists for whoever picks this cap up in the future,
+    // whether that's a client-side "there may be more" affordance or a diagnostic.
+    ctx.body = { tasks: filtered, truncated: result.length === effectiveLimit };
   });
 
   // POST /api/tasks
@@ -652,16 +695,24 @@ export function tasksRouter() {
     ctx.body = { entry };
   });
 
-  // POST /api/tasks/:id/close { mood?, note?, actual_minutes? } — the close ritual.
-  // Completes the task if it is still open, records an optional mood/note, and stamps
-  // reaction_at (only when a mood or note was actually given — see services/task-close.ts).
+  // POST /api/tasks/:id/close { score?, note?, actual_minutes? } — the close ritual.
+  // Completes the task if it is still open, records an optional score/note, and stamps
+  // reaction_at (only when a real 1-5 rating or a note was given — see task-close.ts).
   // Also accepted on an ALREADY-DONE task, which is the point: reflecting later is normal,
   // and the completed_at ↔ reaction_at gap is what makes the lag measurable.
   router.post('/api/tasks/:id/close', async (ctx) => {
     const owner = currentOwnerId();
     const id = ctx.params.id;
-    const body = (ctx.request.body ?? {}) as { mood?: unknown; note?: unknown; actual_minutes?: unknown };
-    const res = await closeTask(owner, id, { mood: body.mood, note: body.note, actualMinutes: body.actual_minutes });
+    const body = (ctx.request.body ?? {}) as { score?: unknown; note?: unknown; actual_minutes?: unknown };
+    // A present-but-invalid score is a 400, not a silent drop. Until 0161 an unknown value
+    // returned 200 having written nothing, so a client bug looked exactly like a success
+    // and the rating vanished without a word.
+    if (body.score !== undefined && body.score !== null && !isScore(body.score)) {
+      ctx.status = 400;
+      ctx.body = { error: `score must be an integer ${DECLINED_SCORE} (declined) or ${MIN_SCORE}-${MAX_SCORE}` };
+      return;
+    }
+    const res = await closeTask(owner, id, { score: body.score, note: body.note, actualMinutes: body.actual_minutes });
     if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
     const [task] = await db.select().from(tasks).where(and(eq(tasks.id, id), eq(tasks.ownerId, owner)));
@@ -675,7 +726,7 @@ export function tasksRouter() {
       blocked: (await blockedTaskIds()).has(id),
     };
     broadcast(owner, 'task:updated', out);
-    ctx.body = { task: out, closed: { completed_at: res.completedAt, reaction_at: res.reactionAt, mood: res.mood, actual_minutes: res.actualMinutes } };
+    ctx.body = { task: out, closed: { completed_at: res.completedAt, reaction_at: res.reactionAt, score: res.score, actual_minutes: res.actualMinutes } };
   });
 
   // POST /api/tasks/:id/timer/stop — stop the (single) running timer. 409 when

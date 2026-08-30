@@ -94,6 +94,7 @@ type SchedulingPrefsType implements Node {
   hapticCuesEnabled: Boolean!
   ambientColorEnabled: Boolean!
   calibrationLoopEnabled: Boolean!
+  balanceBiasEnabled: Boolean!      # 0164 — bias gate for the balance-targets wave (default true)
   deepWorkWindows: JSON             # [{ start, end }] or null
   dayTheme: JSON                    # Record<string,string> or null
   conceptTags: JSON                 # [{ name, minutes }] or null
@@ -160,6 +161,7 @@ input UpdateSchedulingPrefsInput {
   hapticCuesEnabled: Boolean
   ambientColorEnabled: Boolean
   calibrationLoopEnabled: Boolean
+  balanceBiasEnabled: Boolean
   deepWorkWindows: JSON
   dayTheme: JSON
   conceptTags: JSON

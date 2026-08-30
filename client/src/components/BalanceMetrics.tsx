@@ -1,6 +1,6 @@
 import { createResource, createSignal, For, Show } from 'solid-js';
-import { Laugh, Meh, Frown, Zap, TrendingUp, TrendingDown, Minus } from 'lucide-solid';
-import { api, type AxisMetrics, type MoodBreakdown } from '../lib/api.js';
+import { TrendingUp, TrendingDown, Minus } from 'lucide-solid';
+import { api, type AxisMetrics, type MetricsGroup, type ScoreDistribution } from '../lib/api.js';
 import { TrialityMetricsTiles } from './TrialityMetricsTiles.js';
 
 /**
@@ -8,41 +8,63 @@ import { TrialityMetricsTiles } from './TrialityMetricsTiles.js';
  * in — DIRECTION (Work / Home / Community) and CATEGORY (the six life priorities).
  *
  * Everything here is measured, never inferred: counts and timed minutes come from real
- * rows, mood comes only from tasks closed with the ritual, and estimate bias is the
+ * rows, ratings come only from tasks closed with the ritual, and estimate bias is the
  * median actual/estimated with a 3-sample floor. Where there is no data the tile says so
  * rather than rendering a confident zero — an empty axis and a genuinely balanced one
  * must not look the same.
+ *
+ * TASKS and HABITS are reported as two separate sections over disjoint populations
+ * (0161). Blending them would let a daily habit's twenty ratings drown out five one-off
+ * tasks and make the mean read as "how my habits feel" while labelled "how my work feels".
  */
 
 const WINDOWS = [7, 30, 90] as const;
 
-const MOOD_META: { key: keyof MoodBreakdown; icon: typeof Laugh; color: string; label: string }[] = [
-  { key: 'happy',      icon: Laugh, color: '#58ebbf', label: 'Good' },
-  { key: 'flat',       icon: Meh,   color: '#94a3b8', label: 'Fine' },
-  { key: 'frustrated', icon: Frown, color: '#f97316', label: 'Frustrated' },
-  { key: 'stressed',   icon: Zap,   color: '#ef4444', label: 'Stressed' },
+/** 1-5, worst → best. The ramp is the scale, so the colours are ordered, not categorical. */
+const SCORE_META: { key: 1 | 2 | 3 | 4 | 5; color: string; label: string }[] = [
+  { key: 1, color: '#ef4444', label: '1 — bad' },
+  { key: 2, color: '#f97316', label: '2' },
+  { key: 3, color: '#94a3b8', label: '3 — fine' },
+  { key: 4, color: '#5eead4', label: '4' },
+  { key: 5, color: '#58ebbf', label: '5 — good' },
 ];
 
 const fmtHours = (min: number) => (min >= 60 ? `${(min / 60).toFixed(1)}h` : `${min}m`);
 
-/** Stacked mood bar — proportions of the reflected completions for one axis value. */
-function MoodBar(props: { mood: MoodBreakdown; samples: number }) {
+/** Stacked 1-5 bar — proportions of the rated completions for one axis value. */
+function ScoreBar(props: { score: ScoreDistribution }) {
+  const d = () => props.score;
   return (
     <Show
-      when={props.samples > 0}
-      fallback={<div class="text-[10px] text-muted-foreground italic">no reflections yet</div>}
+      when={d().samples > 0}
+      fallback={
+        <div class="text-[10px] text-muted-foreground italic">
+          {/* Declines are worth surfacing: "asked 8 times, answered none" is a finding
+              about the prompt, and it must not look identical to "never asked". */}
+          <Show when={d().declined > 0} fallback="no ratings yet">
+            no ratings yet — {d().declined} skipped
+          </Show>
+        </div>
+      }
     >
-      <div class="flex h-2 rounded-full overflow-hidden bg-muted">
-        <For each={MOOD_META}>
-          {(m) => (
-            <Show when={props.mood[m.key] > 0}>
-              <div
-                style={{ width: `${(props.mood[m.key] / props.samples) * 100}%`, background: m.color }}
-                title={`${m.label}: ${props.mood[m.key]}`}
-              />
-            </Show>
-          )}
-        </For>
+      <div class="flex items-center gap-2">
+        <div class="flex h-2 rounded-full overflow-hidden bg-muted flex-1">
+          <For each={SCORE_META}>
+            {(m) => (
+              <Show when={d().counts[m.key] > 0}>
+                <div
+                  style={{ width: `${(d().counts[m.key] / d().samples) * 100}%`, background: m.color }}
+                  title={`${m.label}: ${d().counts[m.key]}`}
+                />
+              </Show>
+            )}
+          </For>
+        </div>
+        <Show when={d().mean !== null}>
+          <span class="text-[10px] font-mono text-foreground flex-shrink-0" title={`Mean of ${d().samples} ratings`}>
+            {d().mean!.toFixed(1)}
+          </span>
+        </Show>
       </div>
     </Show>
   );
@@ -92,8 +114,68 @@ function AxisCard(props: { m: AxisMetrics }) {
         </Show>
       </div>
 
-      <MoodBar mood={props.m.mood} samples={props.m.moodSamples} />
+      <ScoreBar score={props.m.score} />
     </div>
+  );
+}
+
+/**
+ * One population's numbers: totals, then the two axes. Rendered once for tasks and once
+ * for habits — identical shape so the two are directly comparable at a glance.
+ */
+function GroupSection(props: { group: MetricsGroup; label: string }) {
+  const g = () => props.group;
+  return (
+    <>
+      <div>
+        <h3 class="text-sm font-bold text-foreground mb-3">{props.label}</h3>
+        {/* Totals — computed server-side from the unjoined task set, NOT by summing
+            the axes below (a task can carry 0 or 3 categories). */}
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div class="card p-4">
+            <div class="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Completed</div>
+            <div class="text-2xl font-mono font-extrabold text-foreground">{g().totals.completed}</div>
+          </div>
+          <div class="card p-4">
+            <div class="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Still open</div>
+            <div class="text-2xl font-mono font-extrabold text-foreground">{g().totals.open}</div>
+          </div>
+          <div class="card p-4">
+            <div class="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Time tracked</div>
+            <div class="text-2xl font-mono font-extrabold text-foreground">{fmtHours(g().totals.actualMinutes)}</div>
+          </div>
+          <div class="card p-4">
+            <div class="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Rated</div>
+            <div class="text-2xl font-mono font-extrabold text-foreground">{g().totals.score.samples}</div>
+            <div class="mt-1.5"><ScoreBar score={g().totals.score} /></div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <h4 class="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Work · Home · Community</h4>
+        <Show
+          when={g().directions.length > 0}
+          fallback={<div class="card p-5 text-xs text-muted-foreground">Nothing carries a direction yet — the Auto-tag button on Tasks fills these in.</div>}
+        >
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <For each={g().directions}>{(d) => <AxisCard m={d} />}</For>
+          </div>
+        </Show>
+      </div>
+
+      <div>
+        <h4 class="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Life priorities</h4>
+        <Show
+          when={g().categories.length > 0}
+          fallback={<div class="card p-5 text-xs text-muted-foreground">Nothing carries a category yet — set them in the Add/Edit wizard.</div>}
+        >
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <For each={g().categories}>{(c) => <AxisCard m={c} />}</For>
+          </div>
+        </Show>
+      </div>
+    </>
   );
 }
 
@@ -141,51 +223,15 @@ export function BalanceMetrics() {
       <Show when={metrics()} fallback={<div class="card p-6 text-center text-xs text-muted-foreground">Loading metrics…</div>}>
         {(m) => (
           <>
-            {/* Totals — computed server-side from the unjoined task set, NOT by summing
-                the axes below (a task can carry 0 or 3 categories). */}
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div class="card p-4">
-                <div class="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Completed</div>
-                <div class="text-2xl font-mono font-extrabold text-foreground">{m().totals.completed}</div>
+            <GroupSection group={m()} label="Tasks" />
+            {/* Habits: same rollup, disjoint population. Hidden entirely when the owner
+                keeps no habits — an empty section would read as "your habits are going
+                badly" rather than "you have none". */}
+            <Show when={m().habits.totals.completed > 0 || m().habits.totals.open > 0}>
+              <div class="border-t border-border pt-6">
+                <GroupSection group={m().habits} label="Habits" />
               </div>
-              <div class="card p-4">
-                <div class="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Still open</div>
-                <div class="text-2xl font-mono font-extrabold text-foreground">{m().totals.open}</div>
-              </div>
-              <div class="card p-4">
-                <div class="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Time tracked</div>
-                <div class="text-2xl font-mono font-extrabold text-foreground">{fmtHours(m().totals.actualMinutes)}</div>
-              </div>
-              <div class="card p-4">
-                <div class="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Reflections</div>
-                <div class="text-2xl font-mono font-extrabold text-foreground">{m().totals.moodSamples}</div>
-                <div class="mt-1.5"><MoodBar mood={m().totals.mood} samples={m().totals.moodSamples} /></div>
-              </div>
-            </div>
-
-            <div>
-              <h3 class="text-sm font-bold text-foreground mb-3">Work · Home · Community</h3>
-              <Show
-                when={m().directions.length > 0}
-                fallback={<div class="card p-5 text-xs text-muted-foreground">No tasks carry a direction yet — the Auto-tag button on Tasks fills these in.</div>}
-              >
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <For each={m().directions}>{(d) => <AxisCard m={d} />}</For>
-                </div>
-              </Show>
-            </div>
-
-            <div>
-              <h3 class="text-sm font-bold text-foreground mb-3">Life priorities</h3>
-              <Show
-                when={m().categories.length > 0}
-                fallback={<div class="card p-5 text-xs text-muted-foreground">No tasks carry a category yet — set them in the Add/Edit wizard.</div>}
-              >
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <For each={m().categories}>{(c) => <AxisCard m={c} />}</For>
-                </div>
-              </Show>
-            </div>
+            </Show>
           </>
         )}
       </Show>

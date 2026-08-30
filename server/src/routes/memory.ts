@@ -23,6 +23,10 @@ import {
 import { suggestFromMemory } from '../agents/memory-suggest.js';
 
 const STATE_TTL_MS = 10 * 60 * 1000; // authorize redirects are short-lived (10 min)
+// A hung CI-Portal token endpoint must not hang the callback the browser is sitting on
+// mid-redirect. 10s (vs oidcDiscovery's 5s): this is a POST the provider does real work
+// for (validate the code, mint tokens), not a static document GET.
+const TOKEN_EXCHANGE_TIMEOUT_MS = 10_000;
 
 /** Where the SPA settings page lives; the connector callback bounces back here. */
 function settingsRedirect(query: string): string {
@@ -267,6 +271,7 @@ export function memoryRouter() {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
         body: new URLSearchParams(tokenParams).toString(),
+        signal: AbortSignal.timeout(TOKEN_EXCHANGE_TIMEOUT_MS),
       });
       if (!res.ok) {
         logger.warn('memory CI-Portal token exchange failed', { status: res.status });
