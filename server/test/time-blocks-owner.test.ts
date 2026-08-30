@@ -94,14 +94,17 @@ describe('0099 time_blocks.owner_id — migrated schema', () => {
     db.close();
   });
 
-  it('the owner-scoped range read plans against ix_time_blocks_owner_start (not a scan)', () => {
+  it('the owner-scoped range read plans against an owner index (not a scan)', () => {
     const db = fresh();
     runMigrations(db);
     const plan = db
       .prepare(`EXPLAIN QUERY PLAN SELECT id FROM time_blocks WHERE owner_id = ? AND start_at >= ? AND end_at <= ?`)
       .all(SYSTEM_OWNER_ID, '2026-06-22T00:00:00Z', '2026-06-22T23:59:59Z') as { detail: string }[];
     const detail = plan.map((r) => r.detail).join(' | ');
-    expect(detail).toMatch(/USING (COVERING )?INDEX ix_time_blocks_owner_start/);
+    // 0168 added a second owner-scoped index (ix_time_blocks_owner_end); the planner
+    // may pick either it or the 0099 index (ix_time_blocks_owner_start) depending on
+    // its cost estimate. Either proves the intended thing: an index seek, not a scan.
+    expect(detail).toMatch(/USING (COVERING )?INDEX ix_time_blocks_owner_(start|end)/);
     expect(detail).not.toMatch(/SCAN time_blocks/);
     db.close();
   });
