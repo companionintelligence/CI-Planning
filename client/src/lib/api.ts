@@ -1335,6 +1335,7 @@ export interface Prefs {
   haptic_cues_enabled?: boolean; // T1–T4 haptics (arm-derived on first enable)
   ambient_color_enabled?: boolean; // depletion + breathing animation (arm-derived)
   calibration_loop_enabled?: boolean; // estimate prompt + scoped nudge (§2)
+  balance_bias_enabled?: boolean; // balance-targets wave: bias gate (default true)
   z_experiment_arm?: 'A' | 'B' | 'C' | 'D' | null; // fixed A/B bucket, server-assigned; read-only
   day_theme?: Record<string, string>; planning_mode: string;
   timezone?: string; planning_horizon_days?: number;

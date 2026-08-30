@@ -38,6 +38,7 @@ describe('W11 — SchedulingPrefsType query', () => {
         timeSenseEnabled
         viewPrefs
         capacityHoursPerWeek
+        balanceBiasEnabled
         limits { maxFocusBlockMinutes minBreakMinutes maxTimeBlockMinutes minTimeBlockMinutes defaultTimeBlockMinutes conceptDefaultMinutes }
         planning { horizonDays recurrenceHorizonDays }
         models { fast quality embed }
@@ -51,6 +52,7 @@ describe('W11 — SchedulingPrefsType query', () => {
     expect(p.timeSenseEnabled).toBe(false);
     expect(p.viewPrefs).toBeNull();
     expect(p.capacityHoursPerWeek).toBe(56); // 0156 default (8h/day x 7)
+    expect(p.balanceBiasEnabled).toBe(true); // 0164 default ON (owner ruling 2026-08-29)
     expect(p.limits).toEqual({
       maxFocusBlockMinutes: 90,
       minBreakMinutes: 10,
@@ -109,6 +111,17 @@ describe('W11 — updateSchedulingPrefs', () => {
     const r = await gql('mutation { updateSchedulingPrefs(input: { limits: { minBreakMinutes: 20 } }) { prefs { capacityHoursPerWeek limits { minBreakMinutes } } } }');
     expect(r.body.data.updateSchedulingPrefs.prefs.capacityHoursPerWeek).toBe(40); // untouched by the second call
     expect(r.body.data.updateSchedulingPrefs.prefs.limits.minBreakMinutes).toBe(20);
+  });
+
+  // 0164 (balance-targets wave, bal-2) — bias gate, default ON.
+  describe('balanceBiasEnabled', () => {
+    it('round-trips false, visible via REST GET', async () => {
+      const m = await gql('mutation { updateSchedulingPrefs(input: { balanceBiasEnabled: false }) { success prefs { balanceBiasEnabled } } }');
+      expect(m.body.errors).toBeUndefined();
+      expect(m.body.data.updateSchedulingPrefs.prefs.balanceBiasEnabled).toBe(false);
+      const rest = await api(srv.url, '/api/prefs');
+      expect(rest.body.prefs.balance_bias_enabled).toBe(false);
+    });
   });
 
   describe('recurrenceHorizonDays validation', () => {

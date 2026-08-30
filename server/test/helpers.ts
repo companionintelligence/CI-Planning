@@ -158,7 +158,8 @@ export function resetDb(): void {
       memory_last_synced_at = NULL,
       triality_enabled = 0,
       sleep_hours_per_week = 63,
-      capacity_hours_per_week = 56;
+      capacity_hours_per_week = 56,
+      balance_bias_enabled = 1;
   `);
 }
 
