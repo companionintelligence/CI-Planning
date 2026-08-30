@@ -23,6 +23,7 @@ import { ownerTimezone } from '../engine/recurrence-generate.js';
 import { localDateInTZ, utcToZonedWallTime, zonedWallTimeToUTC } from '../lib/tz.js';
 import { syncTaskReminders } from '../engine/reminders.js';
 import { stampRow } from '../sync/apply.js';
+import { recordPlacementMove } from './placement-learning.js';
 
 /**
  * TERMINAL time_block statuses — settled history the scheduling engine must never
@@ -316,7 +317,16 @@ export async function syncBlockFromTask(taskId: string, ownerId: string, opts: {
   // `clientTs >= ''`) and snaps the block back, leaving block and task desynced — the one
   // invariant this module exists to hold. Gated on the owner-scoped UPDATE landing, since
   // stampRow keys on id alone. (`is_auto` is outside the sync allowlist, so it needs none.)
-  if (info.changes > 0) await stampRow('block', block.id, ['startAt', 'endAt']);
+  //
+  // Placement-learning: from the owner's standpoint, rescheduling via the task's own
+  // date/time field is the same corrective act as dragging the block — the scheduler's
+  // slot choice didn't hold either way. Counting only the drag path would systematically
+  // under-weight owners who reschedule from the task list/detail view. Safe no-op when
+  // the block never carried an open placement_log row.
+  if (info.changes > 0) {
+    await stampRow('block', block.id, ['startAt', 'endAt']);
+    await recordPlacementMove(ownerId, block.id, newStart, newEnd);
+  }
   return block.id;
 }
 

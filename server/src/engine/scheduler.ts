@@ -97,12 +97,14 @@ export function pickGap(
     const free = g.end - g.cursor;
     return free >= wantMs && free - wantMs <= fitLeftover + MAX_FRAGMENT_COST_MS;
   });
+  // No explicit start-ascending tie-break needed: buildGaps emits strictly
+  // ascending, never-duplicate starts, `.filter()` preserves that order into
+  // `eligible`, and `Array.prototype.sort` has been stable since ES2019 — a
+  // remaining tie already keeps day order for free.
   eligible.sort((a, b) => {
     const byScore = score(b.cursor) - score(a.cursor);
     if (byScore !== 0) return byScore;
-    const byLeftover = (a.end - a.cursor - wantMs) - (b.end - b.cursor - wantMs);
-    if (byLeftover !== 0) return byLeftover;
-    return a.start - b.start;
+    return (a.end - a.cursor - wantMs) - (b.end - b.cursor - wantMs);
   });
   return { gap: eligible[0], len: wantMs };
 }

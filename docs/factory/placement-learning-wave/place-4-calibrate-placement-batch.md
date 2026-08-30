@@ -145,7 +145,11 @@ None beyond ticket 1's tables. Migration `0167` inserts **one row** into the exi
       `SURVIVAL_PERIOD_DAYS = 28`
 - [ ] `placementOutcome` implements the table above exactly
 - [ ] `calibratePlacement(ownerId, now?)` returns
-      `{ keys: [{ slotKey, decided, corrections, p25, p50, p75, written }], floor, survival }`
+      `{ keys: [{ slotKey, decided, corrections, p25, p75, written, reason }], floor, survival }`
+      — no `p50` (found unused in code review, dropped from the schema and the result;
+      `reason` (`'written' | 'below-floor' | 'band-too-wide' | 'capped'`) added so a
+      caller never has to re-derive why a key wasn't written from `written` alone, which
+      can't tell "ranked past `MAX_PREFERENCE_KEYS`" apart from "band too wide"
 - [ ] A key with fewer than `CORRECTION_FLOOR` corrected rows writes **no** preference row
 - [ ] A key whose band is wider than `MAX_BAND_HOURS` (`p75 - p25 > 6`) writes **no** row —
       a six-hour-plus spread is "any time", not a preference, and biasing on it would buy
@@ -170,7 +174,7 @@ New `server/test/placement-learning.test.ts`, modelled on
       reflow-churn guard
 - [ ] Below the floor → no preference row; and an existing row for that key is **deleted**,
       not left stale
-- [ ] At the floor → a row whose `p50_hour` is the median resting hour
+- [ ] At the floor → a row whose `p25_hour`/`p75_hour` are the resting-hour quantiles
 - [ ] Resting-hour rule: 20 accepted at 09 + 5 corrected to 19 → band centred near 09, not 19
 - [ ] A spread wider than `MAX_BAND_HOURS` → no row
 - [ ] More than `MAX_PREFERENCE_KEYS` keys → exactly 50 rows, the highest `sample_count` kept

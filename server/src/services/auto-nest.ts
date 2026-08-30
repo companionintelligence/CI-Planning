@@ -194,7 +194,7 @@ export async function nestCandidatesInRange(
 }
 
 /** A task's level-1 direction tag names. */
-async function taskDirectionNames(ownerId: string, taskId: string): Promise<string[]> {
+export async function taskDirectionNames(ownerId: string, taskId: string): Promise<string[]> {
   const rows = (await store()
     .prepare(
       `SELECT tg.name FROM entity_tags et

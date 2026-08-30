@@ -127,14 +127,13 @@ describe('pickGap — biasing within the fragmentation budget', () => {
 const OWNER = SYSTEM_OWNER;
 
 function seedBand(ownerId: string, slotKey: string, p25: number, p75: number): void {
-  const p50 = (p25 + p75) / 2;
   sqlite
     .prepare(
       `INSERT INTO placement_preferences
-         (owner_id, slot_key, p25_hour, p50_hour, p75_hour, corrections, sample_count, computed_date)
-       VALUES (?, ?, ?, ?, ?, 10, 20, '2026-01-01')`,
+         (owner_id, slot_key, p25_hour, p75_hour, corrections, sample_count, computed_date)
+       VALUES (?, ?, ?, ?, 10, 20, '2026-01-01')`,
     )
-    .run(ownerId, slotKey, p25, p50, p75);
+    .run(ownerId, slotKey, p25, p75);
 }
 const atUTC = (hh: number, mm = 0) => Date.parse(`2026-06-22T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00.000Z`);
 

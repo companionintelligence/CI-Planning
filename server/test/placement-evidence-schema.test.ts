@@ -42,7 +42,7 @@ describe('0166 placement evidence schema', () => {
     for (const t of ['placement_log', 'placement_preferences', 'placement_survival']) {
       expect(tableExists(db, t), `table ${t} exists`).toBe(true);
     }
-    expect(indexExists(db, 'ix_placement_log_owner_key_date')).toBe(true);
+    expect(indexExists(db, 'ix_placement_log_owner_date')).toBe(true);
     expect(indexExists(db, 'ix_placement_log_block')).toBe(true);
 
     // placement_log: surrogate TEXT PK, no CHECK constraints (enums enforced in code).
@@ -96,8 +96,8 @@ describe('0166 placement evidence schema', () => {
 
     insertLog(db, { id: 'pl-cascade', ownerId });
     db.prepare(
-      `INSERT INTO placement_preferences (owner_id, slot_key, p25_hour, p50_hour, p75_hour, corrections, sample_count, computed_date)
-       VALUES (?, 'work', 8.5, 9.0, 9.5, 5, 20, '2026-07-01')`,
+      `INSERT INTO placement_preferences (owner_id, slot_key, p25_hour, p75_hour, corrections, sample_count, computed_date)
+       VALUES (?, 'work', 8.5, 9.5, 5, 20, '2026-07-01')`,
     ).run(ownerId);
     db.prepare(
       `INSERT INTO placement_survival (owner_id, computed_date, period_days, decided, accepted, corrected, survival_rate, keys_learned, biased)

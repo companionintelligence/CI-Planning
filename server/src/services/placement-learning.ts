@@ -3,7 +3,7 @@ import { newId } from '../lib/ids.js';
 import { localDateInTZ, utcToZonedWallTime } from '../lib/tz.js';
 import { ownerTimezone } from '../engine/recurrence-generate.js';
 import { logger } from '../lib/logger.js';
-import { taskNestCoords } from './auto-nest.js';
+import { taskDirectionNames } from './auto-nest.js';
 
 /**
  * Placement capture — the write half of the scheduler-learns-from-corrections loop.
@@ -16,10 +16,15 @@ import { taskNestCoords } from './auto-nest.js';
  *
  * `logPlacement` is called from exactly one place: the Auto placement loop
  * (`engine/autoplan.ts`, `placeIntoWindow`), right after each successful
- * `INSERT INTO time_blocks`. Pattern and container placements
- * (`engine/patterns-place.ts`, `engine/blocks-place.ts`) and the stated-time path
- * (`autoplan.ts`'s start-anchored insert) do not call this — the scheduler made no
- * choice on those paths, so there is nothing to learn.
+ * `INSERT INTO time_blocks`. Two other paths don't call it, for two DIFFERENT reasons:
+ * the stated-time path (`autoplan.ts`'s start-anchored insert) genuinely makes no
+ * choice — the owner stated the time, so there is nothing to learn. Pattern and
+ * container placements (`engine/patterns-place.ts`, `engine/blocks-place.ts`) DO make
+ * the same `pickGap` best-fit choice `placeIntoWindow` does; they're excluded on
+ * purpose, not because nothing happened — routines already carry explicit
+ * user-configured windows, and both files are being rewritten on an in-flight branch
+ * (`wip/patterns-place-pinning`) this ticket would collide with. See the wave's
+ * README § Scope fence for the full reasoning.
  *
  * Never throws, never reads `placement_log` or `placement_preferences`, never biases a
  * placement: this ticket is capture only. A dropped `placement_log` table logs a
@@ -117,10 +122,21 @@ export async function slotKeyFor(
 ): Promise<string> {
   const cached = cache.get(taskId);
   if (cached !== undefined) return cached;
-  const coords = await taskNestCoords(ownerId, taskId);
-  const key = [...coords.directions].sort()[0] ?? '(none)';
+  // taskDirectionNames directly, not taskNestCoords: the latter also runs a category
+  // query neither the caller nor this key uses (found in code review) — every extra
+  // round trip here is paid once per placed task, per Auto run.
+  const directions = await taskDirectionNames(ownerId, taskId);
+  const key = [...directions].sort()[0] ?? '(none)';
   cache.set(taskId, key);
   return key;
+}
+
+/** Owner-local fractional hour (e.g. 9.5 for 09:30) of a UTC instant. Every hour this
+ *  module writes or scores derives from this one parse of `utcToZonedWallTime`'s
+ *  `"HH:MM"` — callers wanting a whole hour `Math.trunc` the result. */
+function wallHour(iso: string, tz: string): number {
+  const wall = utcToZonedWallTime(iso, tz);
+  return Number(wall.slice(0, 2)) + Number(wall.slice(3, 5)) / 60;
 }
 
 /**
@@ -138,8 +154,7 @@ export async function logPlacement(
 ): Promise<void> {
   try {
     const tz = await ownerTimezone(ownerId);
-    const wall = utcToZonedWallTime(input.chosenStartAt, tz);
-    const chosenHour = Number(wall.slice(0, 2));
+    const chosenHour = Math.trunc(wallHour(input.chosenStartAt, tz));
     const candidates = input.candidates.slice(0, MAX_CANDIDATES_LOGGED);
     await store().prepare(INSERT_LOG).run(
       newId(), ownerId, input.blockId, input.taskId, input.slotKey, input.autoRunId,
@@ -198,7 +213,7 @@ export async function recordPlacementMove(
     if (!open) return false;
     if (startAt === open.chosen_start_at && endAt === open.chosen_end_at) return false;
     const tz = await ownerTimezone(ownerId);
-    const movedHour = Number(utcToZonedWallTime(startAt, tz).slice(0, 2));
+    const movedHour = Math.trunc(wallHour(startAt, tz));
     const r = await store().prepare(CLOSE_PLACEMENT).run(startAt, endAt, movedHour, now.toISOString(), open.id);
     return r.changes > 0;
   } catch (err) {
@@ -236,12 +251,22 @@ export async function placementScorer(
     if (!row) return null;
     const tz = await ownerTimezone(ownerId);
     const { p25_hour, p75_hour } = row;
+    // The closure runs later, once per candidate gap, inside pickGap's sort — outside
+    // this function's own try/catch, whose dynamic scope has long since exited by
+    // then. It needs its own guard so a single malformed startMs (a corrupted
+    // obstacle's timestamp, say) can't throw out of pickGap and fail the whole
+    // placement run. A constant score for every gap on failure IS "unbiased": pickGap's
+    // comparator falls straight through to its leftover/day-order tiebreakers.
     return (startMs: number): number => {
-      const wall = utcToZonedWallTime(new Date(startMs).toISOString(), tz);
-      const localHour = Number(wall.slice(0, 2)) + Number(wall.slice(3, 5)) / 60;
-      if (localHour >= p25_hour && localHour <= p75_hour) return 1;
-      const hoursOutside = localHour < p25_hour ? p25_hour - localHour : localHour - p75_hour;
-      return Math.max(0, 1 - hoursOutside / BAND_FALLOFF_HOURS);
+      try {
+        const localHour = wallHour(new Date(startMs).toISOString(), tz);
+        if (localHour >= p25_hour && localHour <= p75_hour) return 1;
+        const hoursOutside = localHour < p25_hour ? p25_hour - localHour : localHour - p75_hour;
+        return Math.max(0, 1 - hoursOutside / BAND_FALLOFF_HOURS);
+      } catch (err) {
+        logger.debug('placement-learning: scorer failed for a candidate gap', { err: (err as Error).message });
+        return 0;
+      }
     };
   } catch (err) {
     logger.warn('placement-learning: could not resolve scorer', { err: (err as Error).message });
@@ -321,8 +346,8 @@ function hourQuantile(sorted: number[], frac: number): number {
 const DELETE_PREFERENCES = `DELETE FROM placement_preferences WHERE owner_id = ?`;
 const INSERT_PREFERENCE = `
   INSERT INTO placement_preferences
-    (owner_id, slot_key, p25_hour, p50_hour, p75_hour, corrections, sample_count, computed_date)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+    (owner_id, slot_key, p25_hour, p75_hour, corrections, sample_count, computed_date)
+  VALUES (?, ?, ?, ?, ?, ?, ?)`;
 
 /** `(owner_id, computed_date)` is the table's PK (0166): a manual re-run or a cron
  *  retry on the same owner-local day overwrites today's reading rather than stacking a
@@ -348,10 +373,14 @@ export interface PlacementKeyResult {
   /** Corrected rows among them — what `CORRECTION_FLOOR` gates on. */
   corrections: number;
   p25: number;
-  p50: number;
   p75: number;
   /** Whether this key actually got a `placement_preferences` row this run. */
   written: boolean;
+  /** Why (or that) it was written — computed once here rather than re-derived by a
+   *  caller from `written`/`corrections`/the band, which can't distinguish "ranked
+   *  below MAX_PREFERENCE_KEYS" from "band too wide" (both look like `written: false,
+   *  corrections >= floor`). */
+  reason: 'written' | 'below-floor' | 'band-too-wide' | 'capped';
 }
 
 export interface PlacementSurvivalResult {
@@ -433,18 +462,21 @@ export async function calibratePlacement(
         decided: agg.hours.length,
         corrections: agg.corrections,
         p25: hourQuantile(sorted, 0.25),
-        p50: hourQuantile(sorted, 0.5),
         p75: hourQuantile(sorted, 0.75),
         written: false,
+        reason: 'below-floor' as const,
       };
     })
     .sort((a, b) => b.decided - a.decided || a.slotKey.localeCompare(b.slotKey));
 
   let writtenCount = 0;
   for (const k of keys) {
-    const eligible = k.corrections >= CORRECTION_FLOOR && k.p75 - k.p25 <= MAX_BAND_HOURS;
+    const belowFloor = k.corrections < CORRECTION_FLOOR;
+    const bandTooWide = !belowFloor && k.p75 - k.p25 > MAX_BAND_HOURS;
+    const eligible = !belowFloor && !bandTooWide;
     k.written = eligible && writtenCount < MAX_PREFERENCE_KEYS;
     if (k.written) writtenCount++;
+    k.reason = k.written ? 'written' : belowFloor ? 'below-floor' : bandTooWide ? 'band-too-wide' : 'capped';
   }
 
   // `biased` records whether the owner already had a rollup BEFORE this run's wholesale
@@ -467,7 +499,7 @@ export async function calibratePlacement(
     const ins = store().prepare(INSERT_PREFERENCE);
     for (const k of keys) {
       if (!k.written) continue;
-      await ins.run(ownerId, k.slotKey, k.p25, k.p50, k.p75, k.corrections, k.decided, computedDate);
+      await ins.run(ownerId, k.slotKey, k.p25, k.p75, k.corrections, k.decided, computedDate);
     }
     await store().prepare(UPSERT_SURVIVAL).run(
       ownerId, computedDate, SURVIVAL_PERIOD_DAYS,

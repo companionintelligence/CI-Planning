@@ -449,19 +449,25 @@ describe('closing the placement log when the owner moves an auto block', () => {
     expect(logRowFor(blockId)!.moved_at).toBeNull();
   });
 
-  it('structural exclusion: syncBlockFromTask (via a task time edit) leaves its row open', async () => {
+  it('a task time edit (syncBlockFromTask) closes the row, same as a direct drag', async () => {
     const taskId = insertTask('Write the report', 30);
     stage(taskId);
     await placeFlightPlan(OWNER, { date: DAY });
     const block = blockFor(taskId)!;
-    expect(logRowFor(block.id)!.moved_at).toBeNull();
+    const before = logRowFor(block.id)!;
+    expect(before.moved_at).toBeNull();
 
     await updateTask(OWNER, taskId, { task_time: '15:00' }); // mirrors onto the block via syncBlockFromTask
 
     const moved = blockFor(taskId)!;
     expect(moved.start_at).not.toBe(block.start_at); // the mirror really moved it
 
-    expect(logRowFor(block.id)!.moved_at).toBeNull();
+    const after = logRowFor(block.id)!;
+    expect(after.moved_start_at).toBe(moved.start_at);
+    expect(after.moved_end_at).toBe(moved.end_at);
+    expect(after.moved_hour).toBe(15);
+    expect(after.moved_at).not.toBeNull();
+    expect(after.chosen_hour).toBe(before.chosen_hour); // the original choice is untouched
   });
 
   it('structural exclusion: moveBlockGroup leaves every member row open', async () => {

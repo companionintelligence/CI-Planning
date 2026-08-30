@@ -50,7 +50,12 @@ export function up(db: Database): void {
       -- 'community' | ...), or the literal '(none)'. A name, never a tag id — a renamed or
       -- deleted tag must not orphan the evidence.
       slot_key        TEXT    NOT NULL,
-      auto_run_id     TEXT,              -- the Auto run that made this placement (0052); NULL outside a run
+      -- The Auto run that made this placement (0052); NULL outside a run. No current
+      -- reader (flagged in code review) — kept anyway, unlike this table's other
+      -- write-only column that was cut (this one's dropped p50_hour sibling): this is
+      -- denormalized provenance time_blocks.auto_run_id can't substitute for once the
+      -- block is gone, since this log deliberately outlives it.
+      auto_run_id     TEXT,
       -- What the scheduler chose.
       chosen_start_at TEXT    NOT NULL,
       chosen_end_at   TEXT    NOT NULL,
@@ -72,9 +77,13 @@ export function up(db: Database): void {
       moved_at        TEXT,
       local_date      TEXT    NOT NULL   -- 'YYYY-MM-DD', owner-local day of placed_at
     );
-    -- The learning read: one owner's rows for one key over a date window.
-    CREATE INDEX IF NOT EXISTS ix_placement_log_owner_key_date
-      ON placement_log(owner_id, slot_key, local_date);
+    -- The learning read: one owner's rows over a date window, grouped by key in
+    -- application code (calibratePlacement reads every slot_key for the owner in one
+    -- pass, then groups). local_date leads slot_key so the batch can seek the window
+    -- cutoff and get ORDER BY local_date, id for free, instead of an owner-wide scan
+    -- plus a temp-sort that a slot_key-first index would force.
+    CREATE INDEX IF NOT EXISTS ix_placement_log_owner_date
+      ON placement_log(owner_id, local_date, id);
     -- The correction read: the still-open row for a block, which updateBlock closes on a drag.
     CREATE INDEX IF NOT EXISTS ix_placement_log_block
       ON placement_log(block_id);
@@ -82,11 +91,12 @@ export function up(db: Database): void {
     CREATE TABLE IF NOT EXISTS placement_preferences (
       owner_id      TEXT    NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
       slot_key      TEXT    NOT NULL,
-      -- Owner-local hours (0-23, fractional) of where corrections LANDED. Same p25/p50/p75
-      -- idiom as estimate_calibration / calibration_history (0138): a BAND, not a point, so
-      -- the bias is neutral across a span instead of pulling everything to one hour.
+      -- Owner-local hours (0-23, fractional) of where corrections LANDED — a BAND, not a
+      -- point, so the bias is neutral across a span instead of pulling everything to one
+      -- hour. No p50_hour: unlike estimate_calibration/calibration_history (0138), which
+      -- this idiom otherwise mirrors, nothing here ever reads a midpoint back — only the
+      -- band edges bias placementScorer. Found unused in code review; not carried over.
       p25_hour      REAL    NOT NULL,
-      p50_hour      REAL    NOT NULL,
       p75_hour      REAL    NOT NULL,
       corrections   INTEGER NOT NULL,   -- corrected rows the band was built from
       sample_count  INTEGER NOT NULL,   -- decided rows (corrected + accepted) for the key

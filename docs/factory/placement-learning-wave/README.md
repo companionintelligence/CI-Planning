@@ -62,12 +62,39 @@ There are exactly three `is_auto → 0` update sites, and a fourth mover that fl
 |---|---|---|
 | `services/blocks.ts:653` (`updateBlock`) | the real drag / resize, via `PATCH /api/blocks/:id` | **yes — the correction** |
 | `engine/day-reflow.ts:227` (`applyDayReflow`) | owner confirmed an agent proposal | no |
-| `services/block-task-sync.ts:312` (`syncBlockFromTask`) | a task-side time edit mirrored onto its block | no — see below |
+| `services/block-task-sync.ts:312` (`syncBlockFromTask`) | a task-side time edit mirrored onto its block | **yes — see below** |
 | `services/blocks.ts:762` (`moveBlockGroup`) | shifts a Plan and its members by a delta; never touches `is_auto` | no |
 
-`updateBlock` is the **single** hook point, and the other three are excluded *by not
-calling it* rather than by a filter — a structural exclusion, not one a later refactor can
-silently erode. Ticket 3 pins that.
+Originally `updateBlock` was the single hook point and the other three were excluded by
+not calling it. That held through the wave's initial implementation but did not survive
+code review, which surfaced two real gaps:
+
+**`engine/extend-block.ts`'s "Keep working" cascade was never enumerated at all** — a
+fifth block-time-mutation site, missed because the table above was written from an audit
+of `is_auto`-flipping sites, and `extendBlock` (like `moveBlockGroup`) never touches
+`is_auto`. It pushes real blocks to real new times via its own raw `UPDATE`s. Fixed:
+`extendBlock` now calls `recordPlacementMove` for the anchor (a resize — same hour,
+longer duration) and for every block its cascade displaces (a real move to a new start).
+
+**`syncBlockFromTask`'s exclusion was deliberate, not missed — and was reversed.** The
+reasoning (task-side stated intent vs. a direct correction to the scheduler's slot) was
+real and is preserved below for the record, but doesn't survive an owner's-eye view:
+rescheduling by editing the task's date/time field and rescheduling by dragging the block
+are the same corrective act from where the owner sits. Counting only the drag path
+silently under-weighted owners who reschedule from the task list/detail view rather than
+the calendar. `syncBlockFromTask` now calls `recordPlacementMove` too.
+
+**Original reasoning for the `syncBlockFromTask` exclusion (superseded, kept for
+context):** *"a task-side time edit mirrored onto its block; the owner expressed an
+intent about the task, and the block followed. Do not touch `block-task-sync.ts`."* This
+reasoning has real architectural grounding (`task_time` is elsewhere in the codebase
+reserved for USER-stated intent, never an engine choice) and is not wrong on its own
+terms — it was reversed because the owner-fairness argument outweighs it, not because it
+was mistaken.
+
+`moveBlockGroup` remains excluded — see the Open follow-ups table below, unchanged.
+`applyDayReflow` remains excluded — it's the owner *confirming* a proposal, never a
+correction, and recording it as one would teach the opposite of the truth.
 
 ## Decisions of record
 
@@ -266,6 +293,62 @@ tickets, is:
 ```bash
 pnpm --filter server exec vitest run test/<file>.test.ts
 ```
+
+## Fixed in code review
+
+An xhigh-effort multi-angle review ran against the implemented diff after all six
+tickets landed. Two candidates from the finder pass were REFUTED during verification and
+never reached the final report — the review, without this README's context, re-discovered
+two deliberate, already-documented decisions (`moveBlockGroup` and pattern/routine
+placements staying uncaptured — see § Corrections to the brief and § Scope fence). Of the
+13 findings that did survive, all 13 are now fixed. The `extend-block.ts` gap and the
+`syncBlockFromTask` reversal are covered above; the rest landed as follow-up fixes on top
+of the six ticket commits:
+
+- **`placement_log`'s index didn't match the batch's query.** `ix_placement_log_owner_key_date
+  (owner_id, slot_key, local_date)` couldn't seek the date window `SELECT_WINDOW` actually
+  filters on (`owner_id, local_date`, no `slot_key` predicate) — confirmed via
+  `EXPLAIN QUERY PLAN` to force a full owner-scoped scan plus a temp-sort every week.
+  Renamed to `ix_placement_log_owner_date (owner_id, local_date, id)`, edited directly in
+  migration `0166` (unreleased — no reason to churn history with an add-then-fix pair).
+- **`scheduling_prefs` had no index on `owner_id`.** `recordPlacementMove`'s `ownerTimezone`
+  call (like 15+ other call sites) did a full table scan on every drag/resize PATCH.
+  Migration `0169_scheduling_prefs_owner_index.ts` adds it — negligible today (one row per
+  owner), cheap to have before the owner base grows.
+- **Placement caches were per-window, not per-run.** `slotKeyCache`/`scorerCache` lived
+  inside `placeIntoWindow`, but one Auto run calls it many times (per Plan, per
+  direction-window range, per candidate container retry) — contradicting the documented
+  "at most once per run" contract. Both caches are now owned by `placeFlightPlan` and
+  `fillByPriority` (each mints its own `runId`, so each gets its own pair) and threaded
+  through every call site, including `placeHintWindows` and `placeIntoContainers`.
+- **A misleading comment.** `placement-learning.ts`'s header claimed `patterns-place.ts`/
+  `blocks-place.ts` "made no choice" — false; they run the same `pickGap` decision
+  `placeIntoWindow` does, just out of scope for a different, deliberate reason (already
+  documented in § Scope fence). Corrected to say why, not that nothing happened.
+- **The `calibrate_placement` job log mislabeled rank-capped keys.** A key excluded only
+  by `MAX_PREFERENCE_KEYS` (ranked below the top 50, otherwise eligible) was reported as
+  "spread too wide." `PlacementKeyResult` now carries a `reason` field
+  (`'written' | 'below-floor' | 'band-too-wide' | 'capped'`) computed once, alongside the
+  eligibility check, instead of the job re-deriving (and getting wrong) which case applied.
+- **`placementScorer`'s returned closure could throw outside its own try/catch.** The
+  closure runs later, inside `pickGap`'s sort, after the function's try/catch has already
+  exited. Now wrapped in its own try/catch, degrading to a constant score (unbiased) on
+  any failure rather than risking the whole Auto run.
+- **`slotKeyFor` wasted a query.** It called `taskNestCoords` (two DB round trips:
+  directions and categories) but only ever read `.directions`. `auto-nest.ts`'s
+  `taskDirectionNames` is now exported and called directly.
+- **`p50_hour` was dead weight.** Computed and persisted, but — unlike the
+  `estimate_calibration`/`calibration_history` idiom it claimed to mirror, where `p50` has
+  real route readers — nothing here ever read it back. Dropped from the schema (edited
+  directly in `0166`), the batch, and every test fixture. `auto_run_id` survived the same
+  "unused" scrutiny: kept, because it's denormalized provenance `time_blocks.auto_run_id`
+  can't substitute for once a block is deleted — the migration comment now says so.
+- **Hour-parsing was copy-pasted three times.** `logPlacement`, `recordPlacementMove`, and
+  `placementScorer` each independently sliced `utcToZonedWallTime`'s `"HH:MM"`. Collapsed
+  into one module-private `wallHour(iso, tz)` helper.
+- **`pickGap`'s sort carried a redundant tie-break.** `a.start - b.start` was dead weight:
+  `buildGaps` emits strictly ascending, never-duplicate starts, `.filter()` preserves that
+  order into `eligible`, and `Array.prototype.sort` has been stable since ES2019. Removed.
 
 ## Open follow-ups this wave will produce
 

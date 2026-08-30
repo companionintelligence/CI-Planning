@@ -19,15 +19,23 @@ One new exported function, `recordPlacementMove`, and one call site — `updateB
   applies a proposal the owner **confirmed**, i.e. the owner agreeing with the scheduler.
   Logging it as a correction would teach the exact opposite of the truth. Do not touch
   `day-reflow.ts` at all.
-- **Do not hook `syncBlockFromTask`** (`services/block-task-sync.ts:312`). That mirrors a
-  *task-side* time edit onto its block; the owner expressed an intent about the task, and the
-  block followed. Do not touch `block-task-sync.ts`.
+- ~~**Do not hook `syncBlockFromTask`**~~ **Superseded by code review — this one IS
+  hooked.** The original reasoning (a *task-side* time edit mirrors onto its block; the
+  owner expressed an intent about the task, not a correction to the scheduler's slot) has
+  real grounding and is not wrong on its own terms, but doesn't survive an owner's-eye
+  view: rescheduling via the task's date/time field and rescheduling by dragging the block
+  are the same corrective act from where the owner sits. Excluding only the drag path
+  silently under-weighted owners who reschedule from the task list/detail view. See
+  [README.md](README.md) § Corrections to the brief for the full reversal. `syncBlockFromTask`
+  now calls `recordPlacementMove` the same way `updateBlock` does.
 - **Do not hook `moveBlockGroup`** (`services/blocks.ts:762`). It shifts a Plan and every
   member by one delta and deliberately never flips `is_auto`. One gesture about a container
-  is not per-block placement evidence. Do not touch it.
-- **Do not add a filter to exclude those three.** They are excluded *structurally* — none of
-  them calls `updateBlock`. Assert that with a test rather than defending it with a
-  condition a later refactor could erode.
+  is not per-block placement evidence. Do not touch it. **Still excluded** — this one was
+  not reversed.
+- **Do not add a filter to exclude `applyDayReflow`/`moveBlockGroup`.** They are excluded
+  *structurally* — neither calls `updateBlock` (or, since the reversal above, the other
+  hooked paths). Assert that with a test rather than defending it with a condition a later
+  refactor could erode.
 - **Do not reopen or re-close a settled row.** A second drag of the same block is a no-op,
   mirroring `recordCorrection`, which no-ops on an already-settled row
   (`classification-learning.ts:232-250`). The first move away from the scheduler's slot is
@@ -127,7 +135,9 @@ Extend `server/test/placement-capture.test.ts`:
 - [ ] A title-only `PATCH` → row untouched
 - [ ] A block with no `placement_log` row → `PATCH` succeeds, nothing written, nothing thrown
 - [ ] **Structural exclusion:** `applyDayReflow` moving an auto block leaves its row open
-- [ ] **Structural exclusion:** `syncBlockFromTask` (via a task time edit) leaves its row open
+- [ ] **Reversed by code review — `syncBlockFromTask` (via a task time edit) now CLOSES
+      its row**, the same as a direct drag; see [README.md](README.md) § Corrections to
+      the brief. The original DoD line asserted the opposite; this line supersedes it.
 - [ ] **Structural exclusion:** `moveBlockGroup` leaves every member row open
 - [ ] With `placement_log` renamed away, a `PATCH` still succeeds and does not throw
 - [ ] `blocks-service.test.ts`, `blocks-place.test.ts` and `jobs-autoschedule-move.test.ts`

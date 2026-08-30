@@ -79,7 +79,7 @@ const preferenceRows = (owner = OWNER) =>
   sqlite
     .prepare(`SELECT * FROM placement_preferences WHERE owner_id = ? ORDER BY slot_key`)
     .all(owner) as {
-      slot_key: string; p25_hour: number; p50_hour: number; p75_hour: number;
+      slot_key: string; p25_hour: number; p75_hour: number;
       corrections: number; sample_count: number; computed_date: string;
     }[];
 
@@ -151,8 +151,8 @@ describe('calibratePlacement', () => {
     // A stale row from a prior run — must be gone, not left behind.
     sqlite
       .prepare(
-        `INSERT INTO placement_preferences (owner_id, slot_key, p25_hour, p50_hour, p75_hour, corrections, sample_count, computed_date)
-         VALUES (?, 'home', 18, 19, 20, 6, 6, '2026-08-01')`,
+        `INSERT INTO placement_preferences (owner_id, slot_key, p25_hour, p75_hour, corrections, sample_count, computed_date)
+         VALUES (?, 'home', 18, 20, 6, 6, '2026-08-01')`,
       )
       .run(OWNER);
 
@@ -166,7 +166,7 @@ describe('calibratePlacement', () => {
     expect(preferenceRows().find((p) => p.slot_key === 'home')).toBeUndefined();
   });
 
-  it('at the floor, writes a row whose p50_hour is the median resting hour', async () => {
+  it('at the floor, writes a row whose band edges are the resting-hour quantiles', async () => {
     const movedHours = [8, 9, 10, 11, 12];
     expect(movedHours).toHaveLength(CORRECTION_FLOOR);
     for (const h of movedHours) {
@@ -176,7 +176,8 @@ describe('calibratePlacement', () => {
     const row = preferenceRows().find((p) => p.slot_key === 'work')!;
     expect(row).toBeDefined();
     expect(row.sample_count).toBe(CORRECTION_FLOOR);
-    expect(row.p50_hour).toBe(10); // the median of [8,9,10,11,12]
+    expect(row.p25_hour).toBe(9);  // the same index-quantile Phase N used (0083)
+    expect(row.p75_hour).toBe(11); // — not an interpolated median, an actual resting hour
   });
 
   it('resting-hour rule: 20 accepted at 09 + 5 corrected to 19 bands near 09, not 19', async () => {
@@ -192,7 +193,6 @@ describe('calibratePlacement', () => {
     expect(row.corrections).toBe(5);
     // Five corrections outvoted by two hundred (here twenty) untouched acceptances must
     // not drag the band to the evening.
-    expect(row.p50_hour).toBe(9);
     expect(row.p25_hour).toBe(9);
   });
 
@@ -217,11 +217,26 @@ describe('calibratePlacement', () => {
     }
     for (let c = 0; c < CORRECTION_FLOOR; c++) placement({ slotKey: 'low', chosenAt: at(2, 8), movedAt: at(2, 10) });
 
-    await calibratePlacement(OWNER, NOW);
+    const result = await calibratePlacement(OWNER, NOW);
     const rows = preferenceRows();
     expect(rows).toHaveLength(MAX_PREFERENCE_KEYS);
     expect(rows.find((p) => p.slot_key === 'low')).toBeUndefined(); // lowest sample_count, dropped
     expect(rows.every((p) => p.sample_count === 10)).toBe(true);
+
+    // The dropped key cleared the floor and its band is well inside MAX_BAND_HOURS —
+    // it was excluded ONLY by the rank cap, not because it was actually ineligible.
+    // Its own reason must say so, not "band too wide" (the report-only bug found in
+    // code review: jobs/index.ts used to re-derive the reason from `written` +
+    // `corrections < floor` alone, which can't tell "capped" apart from "too wide").
+    const low = result.keys.find((k) => k.slotKey === 'low')!;
+    expect(low.written).toBe(false);
+    expect(low.corrections).toBeGreaterThanOrEqual(CORRECTION_FLOOR);
+    expect(low.p75 - low.p25).toBeLessThanOrEqual(MAX_BAND_HOURS);
+    expect(low.reason).toBe('capped');
+
+    const kept = result.keys.find((k) => k.slotKey === 'k00')!;
+    expect(kept.written).toBe(true);
+    expect(kept.reason).toBe('written');
   });
 
   it('ignores rows older than PLACEMENT_WINDOW_DAYS, and a key that ages out entirely loses its row', async () => {
@@ -246,8 +261,8 @@ describe('calibratePlacement', () => {
     }
     await calibratePlacement(OWNER, NOW);
     await calibratePlacement(SECOND_OWNER_ID, NOW);
-    expect(preferenceRows(OWNER)[0].p50_hour).toBe(9);
-    expect(preferenceRows(SECOND_OWNER_ID)[0].p50_hour).toBe(20);
+    expect(preferenceRows(OWNER)[0].p25_hour).toBe(9);
+    expect(preferenceRows(SECOND_OWNER_ID)[0].p25_hour).toBe(20);
   });
 
   it('is idempotent — same rows, same clock, same output, one survival row', async () => {

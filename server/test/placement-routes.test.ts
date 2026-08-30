@@ -47,8 +47,8 @@ function seedSurvival(
 function seedPreference(owner: string, slotKey: string): void {
   sqlite
     .prepare(
-      `INSERT INTO placement_preferences (owner_id, slot_key, p25_hour, p50_hour, p75_hour, corrections, sample_count, computed_date)
-       VALUES (?, ?, 9, 10, 11, 5, 5, '2026-08-01')`,
+      `INSERT INTO placement_preferences (owner_id, slot_key, p25_hour, p75_hour, corrections, sample_count, computed_date)
+       VALUES (?, ?, 9, 11, 5, 5, '2026-08-01')`,
     )
     .run(owner, slotKey);
 }

@@ -163,9 +163,13 @@ CREATE TABLE IF NOT EXISTS placement_log (
   moved_at        TEXT,
   local_date      TEXT    NOT NULL   -- 'YYYY-MM-DD', owner-local day of placed_at
 );
--- The learning read: one owner's rows for one key over a date window.
-CREATE INDEX IF NOT EXISTS ix_placement_log_owner_key_date
-  ON placement_log(owner_id, slot_key, local_date);
+-- The learning read: one owner's rows over a date window (ticket 4 groups by slot_key
+-- in application code, not SQL) — local_date leads so the batch can seek the window
+-- cutoff and get its ORDER BY for free. Fixed post-review: an earlier (owner_id,
+-- slot_key, local_date) ordering couldn't seek the date range at all — verified via
+-- EXPLAIN QUERY PLAN.
+CREATE INDEX IF NOT EXISTS ix_placement_log_owner_date
+  ON placement_log(owner_id, local_date, id);
 -- The correction read: the still-open row for a block, which updateBlock closes on a drag.
 CREATE INDEX IF NOT EXISTS ix_placement_log_block
   ON placement_log(block_id);
@@ -173,11 +177,12 @@ CREATE INDEX IF NOT EXISTS ix_placement_log_block
 CREATE TABLE IF NOT EXISTS placement_preferences (
   owner_id      TEXT    NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
   slot_key      TEXT    NOT NULL,
-  -- Owner-local hours (0-23, fractional) of where corrections LANDED. Same p25/p50/p75
-  -- idiom as estimate_calibration / calibration_history (0138): a BAND, not a point, so
-  -- the bias is neutral across a span instead of pulling everything to one hour.
+  -- Owner-local hours (0-23, fractional) of where corrections LANDED — a BAND, not a
+  -- point, so the bias is neutral across a span instead of pulling everything to one
+  -- hour. No p50_hour: unlike estimate_calibration/calibration_history (0138), which
+  -- this idiom otherwise mirrors, nothing here ever reads a midpoint back — only the
+  -- band edges bias placementScorer. Found unused in code review; not carried over.
   p25_hour      REAL    NOT NULL,
-  p50_hour      REAL    NOT NULL,
   p75_hour      REAL    NOT NULL,
   corrections   INTEGER NOT NULL,   -- corrected rows the band was built from
   sample_count  INTEGER NOT NULL,   -- decided rows (corrected + accepted) for the key

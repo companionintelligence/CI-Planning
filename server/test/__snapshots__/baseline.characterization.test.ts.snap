@@ -1312,7 +1312,6 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "owner_id",
       "slot_key",
       "p25_hour",
-      "p50_hour",
       "p75_hour",
       "corrections",
       "sample_count",
