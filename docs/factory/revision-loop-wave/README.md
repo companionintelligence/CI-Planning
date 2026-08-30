@@ -49,8 +49,8 @@ pure SQL aggregation over evidence the loop already paid for.
 
 | # | Ticket | Type | Status | Blocked by |
 |---|---|---|---|---|
-| 1 | [evidence + stats schema](rev-1-plan-loop-evidence-schema.md) | DB Migration | ✅ merged-ready (uncommitted) | — |
-| 2 | [capture revision evidence](rev-2-capture-revision-evidence.md) | Backend | ⬜ not started | 1 |
+| 1 | [evidence + stats schema](rev-1-plan-loop-evidence-schema.md) | DB Migration | ✅ committed (`67bfd190`) | — |
+| 2 | [capture revision evidence](rev-2-capture-revision-evidence.md) | Backend | ✅ committed (`0555dc32`) | 1 |
 | 3 | [calibrate batch + cron](rev-3-calibrate-plan-loop-batch.md) | Backend | ⬜ not started | 2 |
 | 4 | [trend readout](rev-4-plan-loop-trend-readout.md) | Backend | ⬜ not started | 3 |
 
@@ -145,6 +145,22 @@ advance_objectives.
   reaches the wire with the field names the client reads") fails identically on a
   clean `main` checkout with no plan-loop changes present — pre-existing, not
   caused by ticket 1.
+
+## Corrections found while implementing ticket 2
+
+- **A verification agent used bare `git stash -u` / `git stash pop` to test
+  whether a failure was pre-existing, and got away with it.** This repo's stash
+  stack is shared across every concurrent worktree, and this box had 25+ peer
+  Claude sessions active at the time — a bare pop can lift a different session's
+  entry than the one just pushed. The round-trip happened to land cleanly here
+  (verified after the fact: working tree diff intact, stash list held only two
+  pre-existing entries from unrelated branches), but it was a real risk that
+  should never have been taken, not a safe technique that happened to work.
+  Ticket 1 had already established the correct way to answer "is this
+  pre-existing" — run the single failing test against a clean checkout of `main`
+  in a *different* directory, never touch this worktree's own stash. Tickets 3–4
+  reuse that method exclusively; do not delegate a "verify via git stash" step to
+  any agent in this wave again.
 
 ## Verification
 
