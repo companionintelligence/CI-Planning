@@ -135,7 +135,7 @@ target; `completed` does. Categories resolve block-own-else-task
 | 4 | [day-order balance band](bal-4-order-band.md) | Backend | ✅ landed `f55652e1` | 1, 2 |
 | 5 | [suggest surface](bal-5-suggest-surface.md) | Frontend | ✅ landed `21f65e4f` | — |
 | 6 | [weekly history log](bal-6-week-log.md) | DB Migration + Backend | ✅ landed `d041633f` | 1 |
-| 7 | [history readout](bal-7-history-readout.md) | Backend + Frontend | ⬜ not started | 6 |
+| 7 | [history readout](bal-7-history-readout.md) | Backend + Frontend | ✅ landed `d4bf4daf` | 6 |
 
 1 and 2 are independent and can land in parallel. 3 and 4 fork off them; 5 is now
 fully independent (client-only, no server dependency — see the 2026-08-29 rebase
