@@ -1,5 +1,7 @@
 import { store } from '../db/store.js';
 import { newId } from '../lib/ids.js';
+import { localDateInTZ } from '../lib/tz.js';
+import { ownerTimezone } from '../engine/recurrence-generate.js';
 import { auditRecord } from '../agents/loop.js';
 import type { LoopResult, Revision } from '../agents/loop.js';
 
@@ -29,6 +31,14 @@ import type { LoopResult, Revision } from '../agents/loop.js';
  * {@link flushPlanLoopWrites} exists solely so tests can await durability before
  * asserting — production code never calls it.
  */
+
+// ── Named constants — cited by tests and reviewers, not configurable ──────────
+
+/** Trailing window the weekly `calibrate_plan_loop` batch pass measures, in days.
+ *  Cited by `plan-loop-calibrate.test.ts` and the 0163 cron seed's doc comment.
+ *  No env var, no preference — same "no learning-rate knob" rule as
+ *  classification-learning's `CORRECTION_FLOOR`/`MAX_EXEMPLARS`. */
+export const STATS_WINDOW_DAYS = 7;
 
 /** In-flight evidence writes, so {@link flushPlanLoopWrites} can wait for them. */
 const inFlight = new Set<Promise<void>>();
@@ -118,4 +128,101 @@ export async function flushPlanLoopWrites(): Promise<void> {
   while (inFlight.size > 0) {
     await Promise.all([...inFlight]);
   }
+}
+
+// ── Calibration: the batch pass (ticket 3) ─────────────────────────────────────
+
+/** One measured stage for one owner's trailing {@link STATS_WINDOW_DAYS}. */
+export interface PlanLoopCalibrationResult {
+  stages: {
+    stage: string;
+    runs: number;
+    passed: number;
+    escaped: number;
+    firstTryPass: number;
+    avgIterations: number | null;
+    passRate: number | null;
+  }[];
+}
+
+/**
+ * Roll one owner's trailing {@link STATS_WINDOW_DAYS} of `plan_loop_runs` into one
+ * `plan_loop_stats` row per stage present in the window. Pure SQL aggregation over
+ * evidence already paid for — no Ollama, no `audit_log` read, no adjustment of any
+ * loop option from what it measures. Deterministic given the same rows and clock:
+ * fixed window, one GROUP BY, no sampling.
+ *
+ * A stage with zero runs in the window gets no row, in either direction: nothing is
+ * read out of it here, and nothing is written for it below — absence is the gap a
+ * trend must draw, never a false floor (the `classification_accuracy` rationale
+ * ticket 1 cites).
+ */
+export async function calibratePlanLoop(
+  ownerId: string,
+  now: Date = new Date(),
+): Promise<PlanLoopCalibrationResult> {
+  const tz = await ownerTimezone(ownerId);
+  const computedDate = localDateInTZ(now.toISOString(), tz);
+  const windowStart = new Date(now.getTime() - STATS_WINDOW_DAYS * 86_400_000).toISOString();
+
+  const rows = await store()
+    .prepare(
+      `SELECT stage, COUNT(*) as runs, SUM(passed) as passed, SUM(escaped) as escaped,
+              SUM(CASE WHEN passed = 1 AND iterations = 1 THEN 1 ELSE 0 END) as first_try_pass,
+              AVG(iterations) as avg_iterations
+         FROM plan_loop_runs
+        WHERE owner_id = ? AND at >= ?
+        GROUP BY stage`,
+    )
+    .all<{
+      stage: string;
+      runs: number;
+      passed: number;
+      escaped: number;
+      first_try_pass: number;
+      avg_iterations: number;
+    }>(ownerId, windowStart);
+
+  const stages: PlanLoopCalibrationResult['stages'] = [];
+  for (const row of rows) {
+    const passRate = row.passed / row.runs;
+    await store()
+      .prepare(
+        `INSERT INTO plan_loop_stats
+           (owner_id, stage, computed_date, period_days, runs, passed, escaped, first_try_pass, avg_iterations, pass_rate)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(owner_id, stage, computed_date) DO UPDATE SET
+           period_days = excluded.period_days,
+           runs = excluded.runs,
+           passed = excluded.passed,
+           escaped = excluded.escaped,
+           first_try_pass = excluded.first_try_pass,
+           avg_iterations = excluded.avg_iterations,
+           pass_rate = excluded.pass_rate`,
+      )
+      .run(
+        ownerId,
+        row.stage,
+        computedDate,
+        STATS_WINDOW_DAYS,
+        row.runs,
+        row.passed,
+        row.escaped,
+        row.first_try_pass,
+        row.avg_iterations,
+        passRate,
+      );
+
+    stages.push({
+      stage: row.stage,
+      runs: row.runs,
+      passed: row.passed,
+      escaped: row.escaped,
+      firstTryPass: row.first_try_pass,
+      avgIterations: row.avg_iterations,
+      passRate,
+    });
+  }
+
+  return { stages };
 }

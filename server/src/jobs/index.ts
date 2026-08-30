@@ -25,6 +25,7 @@ import { calibrateEstimates } from './calibrate-estimates.js';
 import { calibrateTriality } from '../services/triality-learning.js';
 import { calibrateClassification } from '../services/classification-learning.js';
 import { ollamaScorer } from '../services/classification-score.js';
+import { calibratePlanLoop } from '../services/plan-loop-learning.js';
 import { freezeStars } from './freeze-stars.js';
 import { resetRoutineTasks } from './reset-routines.js';
 import { config } from '../lib/config.js';
@@ -408,6 +409,20 @@ async function execute(kind: string): Promise<JobOutcome> {
       const scoped = r.scopes != null ? `, ${r.scopes} scope(s)` : '';
       return { itemsCreated: 0, itemsUpdated: r.sample_count, log: `Estimate calibration: ${label}${scoped}` };
     }
+    case 'calibrate_plan_loop': {
+      // Phase M §A0 — the weekly deterministic BATCH pass over `plan_loop_runs`.
+      // Owner-scoped (see OWNER_SCOPED_KINDS): every read filters on the owner, and
+      // evidence is never pooled across owners. Pure SQL aggregation — no Ollama, no
+      // audit_log read. A cron/agent write, so it deliberately does NOT stamp owner
+      // attribution (WHO rule, owner ruling 2026-07-16).
+      const r = await calibratePlanLoop(currentOwnerId(), new Date());
+      const parts = r.stages.map((s) =>
+        `${s.stage}: ${s.runs} run(s), ${Math.round((s.passRate ?? 0) * 100)}% pass, ` +
+          `${s.escaped} escape(s), avg ${(s.avgIterations ?? 0).toFixed(1)} iteration(s)`,
+      );
+      const label = parts.length > 0 ? parts.join('; ') : 'no runs in the last 7 days — nothing to measure';
+      return { itemsCreated: 0, itemsUpdated: r.stages.length, log: `Plan-loop stats — ${label}` };
+    }
     case 'freeze_stars': {
       // Freezing is an INSERT (first-freeze-wins): a create, or a no-op if the
       // day was already frozen — never an update. Report counters accordingly.
@@ -503,6 +518,8 @@ const OWNER_SCOPED_KINDS = new Set([
   // Phase 8: the correction log is per-owner by construction — one owner's vocabulary
   // must never teach another's classifier.
   'calibrate_classification',
+  // Phase M §A0: plan-loop evidence is per-owner by construction, never pooled.
+  'calibrate_plan_loop',
   'freeze_stars',
   'reset_routines',
 ]);
