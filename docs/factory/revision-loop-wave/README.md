@@ -51,7 +51,7 @@ pure SQL aggregation over evidence the loop already paid for.
 |---|---|---|---|---|
 | 1 | [evidence + stats schema](rev-1-plan-loop-evidence-schema.md) | DB Migration | ✅ committed (`67bfd190`) | — |
 | 2 | [capture revision evidence](rev-2-capture-revision-evidence.md) | Backend | ✅ committed (`0555dc32`) | 1 |
-| 3 | [calibrate batch + cron](rev-3-calibrate-plan-loop-batch.md) | Backend | ⬜ not started | 2 |
+| 3 | [calibrate batch + cron](rev-3-calibrate-plan-loop-batch.md) | Backend | ✅ committed (`66476b89`) | 2 |
 | 4 | [trend readout](rev-4-plan-loop-trend-readout.md) | Backend | ⬜ not started | 3 |
 
 Strictly ordered 1 → 2 → 3 → 4. Merge 2 early even if 3–4 trail: the corpus starts
