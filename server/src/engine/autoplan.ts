@@ -35,6 +35,7 @@ import { getPatternBlocks, directionWindowsByName, FALLBACK_FILL_DIRECTION_NAMES
 import { resolveDayType } from '../services/day-types.js';
 import { getPatternPrefs } from '../services/pattern-prefs.js';
 import { nestCandidatesInRange, preferredContainers, taskNestCoords } from '../services/auto-nest.js';
+import { logPlacement, slotKeyFor, placementScorer, type CandidateGap } from '../services/placement-learning.js';
 import { dimensionShortfalls, biasLeadDimensions } from '../services/balance-budget.js';
 import { logger } from '../lib/logger.js';
 
@@ -362,7 +363,7 @@ function orderByNewToday(cands: StagedTask[], todayISO: string, tz: string): Sta
 const insBlock = () =>
   store().prepare(
     `INSERT INTO time_blocks (id, task_id, owner_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, parent_block_id, auto_run_id, tag)
-     VALUES (uuid7(), ?, ?, ?, 'task', ?, ?, 0, 1, 'agent', 'planned', ?, ?, ?)`
+     VALUES (uuid7(), ?, ?, ?, 'task', ?, ?, 0, 1, 'agent', 'planned', ?, ?, ?) RETURNING id`
   );
 
 /**
@@ -413,7 +414,18 @@ async function placeIntoWindow(
   windowStartMs: number,
   windowEndMs: number,
   prefs: PrefsRow | undefined,
-  opts: { parentBlockId?: string | null; includePlans?: boolean; runId?: string | null; notBeforeMs?: number | null }
+  opts: {
+    parentBlockId?: string | null;
+    includePlans?: boolean;
+    runId?: string | null;
+    notBeforeMs?: number | null;
+    /** Ticket 5 (placement-learning wave): owned by the caller so a whole Auto RUN
+     *  resolves each task's coordinates / each slot_key's scorer at most once, however
+     *  many windows/passes that run calls this with — a cache created here instead
+     *  would only ever cover one window, not the run. */
+    slotKeyCache: Map<string, string>;
+    scorerCache: Map<string, ((startMs: number) => number) | null>;
+  }
 ): Promise<{ blocksCreated: number; placedTaskIds: Set<string> }> {
   const placedTaskIds = new Set<string>();
   // R3 clamp: an engine-chosen slot never starts before `now` (set by the caller only
@@ -432,6 +444,12 @@ async function placeIntoWindow(
   const gaps = buildGaps(windowStartMs, windowEndMs, fixed, breakMs);
   const ins = insBlock();
   let blocksCreated = 0;
+  // Ticket 2: at most one coordinate read per task, however many sessions it splits
+  // into. Ticket 5: a run resolves each slot_key's scorer at most once. `undefined` =
+  // not yet resolved; `null` = resolved to "no learned band" (stored, not re-queried).
+  // Both caches are the CALLER's (see the opts type above) — they span every window
+  // one Auto run places into, not just this one.
+  const { slotKeyCache, scorerCache } = opts;
 
   // AD2: when placing INTO a Plan/container (parentBlockId set), read the container's
   // direction (`time_blocks.tag`) so each child task inherits it as its level-1 primary
@@ -444,17 +462,38 @@ async function placeIntoWindow(
 
   for (const t of tasks) {
     if (opts.parentBlockId) await inheritContainerDirection(t.task_id, containerTag, owner);
+    const slotKey = await slotKeyFor(owner, t.task_id, slotKeyCache);
+    let scorer = scorerCache.get(slotKey);
+    if (scorer === undefined) {
+      scorer = await placementScorer(owner, slotKey);
+      scorerCache.set(slotKey, scorer);
+    }
     const sessions = splitIntoSessions((t.estimated_minutes ?? DEFAULT_EST_MIN) * MS_PER_MIN, maxFocusMs);
     let placedAny = false;
     for (const want of sessions) {
-      const pick = pickGap(gaps, want);
+      // Snapshot the menu BEFORE the pick — `pick.gap.cursor` mutates below as sessions
+      // pack in, so a snapshot taken after would show the wrong cursor for this choice.
+      const candidateSnapshot: CandidateGap[] = gaps.map((g) => ({ s: g.start, e: g.end, c: g.cursor }));
+      const pick = pickGap(gaps, want, scorer ?? undefined);
       if (!pick) break;
       const startMs = pick.gap.cursor;
       const endMs = startMs + pick.len;
-      await ins.run(t.task_id, owner, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), opts.parentBlockId ?? null, opts.runId ?? null, opts.parentBlockId ? containerTag : null);
+      const startISO = new Date(startMs).toISOString();
+      const endISO = new Date(endMs).toISOString();
+      const { id: blockId } = (await ins.get<{ id: string }>(t.task_id, owner, t.title, startISO, endISO, opts.parentBlockId ?? null, opts.runId ?? null, opts.parentBlockId ? containerTag : null))!;
       pick.gap.cursor = endMs + breakMs;
       blocksCreated++;
       placedAny = true;
+      await logPlacement(owner, {
+        blockId,
+        taskId: t.task_id,
+        slotKey,
+        autoRunId: opts.runId ?? null,
+        chosenStartAt: startISO,
+        chosenEndAt: endISO,
+        fit: pick.len === want ? 1 : 0,
+        candidates: candidateSnapshot,
+      });
     }
     if (placedAny) {
       placedTaskIds.add(t.task_id);
@@ -633,7 +672,9 @@ async function placeHintWindows(
   prefs: PrefsRow | undefined,
   tz: string,
   runId: string,
-  notBeforeMs?: number | null,
+  notBeforeMs: number | null | undefined,
+  slotKeyCache: Map<string, string>,
+  scorerCache: Map<string, ((startMs: number) => number) | null>,
 ): Promise<{ placedTaskIds: Set<string>; constrainedIds: Set<string>; blocksCreated: number }> {
   const placedTaskIds = new Set<string>();
   const constrainedIds = new Set<string>();
@@ -677,7 +718,7 @@ async function placeHintWindows(
     if (!matched) continue;
     constrainedIds.add(t.task_id); // hard: caller excludes these from the unconstrained fill
     if (end <= start) continue;    // contradictory/empty window → leave unplaced today
-    const r = await placeIntoWindow(owner, [t], start, end, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs });
+    const r = await placeIntoWindow(owner, [t], start, end, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs, slotKeyCache, scorerCache });
     r.placedTaskIds.forEach((id) => placedTaskIds.add(id));
     blocksCreated += r.blocksCreated;
   }
@@ -712,7 +753,9 @@ async function placeIntoContainers(
   prefs: PrefsRow | undefined,
   tz: string,
   runId: string,
-  notBeforeMs?: number | null,
+  notBeforeMs: number | null | undefined,
+  slotKeyCache: Map<string, string>,
+  scorerCache: Map<string, ((startMs: number) => number) | null>,
 ): Promise<{ placedTaskIds: Set<string>; blocksCreated: number }> {
   const placedTaskIds = new Set<string>();
   let blocksCreated = 0;
@@ -740,6 +783,8 @@ async function placeIntoContainers(
         parentBlockId: container.id,
         runId,
         notBeforeMs,
+        slotKeyCache,
+        scorerCache,
       });
       if (!r.placedTaskIds.has(t.task_id)) continue; // full → the next container, then L01
       placedTaskIds.add(t.task_id);
@@ -901,6 +946,12 @@ export async function placeFlightPlan(
   const nowMs = opts.nowMs ?? Date.now();
   const notBeforeMs = date === localDateInTZ(new Date(nowMs).toISOString(), tz) ? nowMs : null;
   const runId = newId(); // stamps every block this run creates, so Undo can target it (D2)
+  // Ticket 5 (placement-learning wave): owned by THIS run, not by placeIntoWindow — the
+  // run below calls placeIntoWindow many times (per Plan, per hint/container/direction
+  // pass), and these must span all of them to actually resolve each slot_key at most
+  // once per run, not once per window.
+  const slotKeyCache = new Map<string, string>();
+  const scorerCache = new Map<string, ((startMs: number) => number) | null>();
 
   // ── Legacy single-Plan scope: place tag-matched staged tasks into one Plan ──
   if (opts.blockId != null) {
@@ -938,7 +989,7 @@ export async function placeFlightPlan(
     // the Plan lose their prior agent blocks — a staged task that doesn't match this
     // Plan keeps its existing placement.
     await clearPriorAutoInWindow(owner, Date.parse(block.start_at), Date.parse(block.end_at), cands.map((t) => t.task_id));
-    const r = await placeIntoWindow(owner, ordered, Date.parse(block.start_at), Date.parse(block.end_at), prefs, { parentBlockId: opts.blockId, runId, notBeforeMs });
+    const r = await placeIntoWindow(owner, ordered, Date.parse(block.start_at), Date.parse(block.end_at), prefs, { parentBlockId: opts.blockId, runId, notBeforeMs, slotKeyCache, scorerCache });
     await recordRun(owner, runId, r.blocksCreated);
     // A candidate whose block was cleared but found no room is back off the board.
     for (const t of cands) if (!r.placedTaskIds.has(t.task_id)) await revertTaskPlacementStatus(t.task_id, owner);
@@ -1013,7 +1064,7 @@ export async function placeFlightPlan(
       ordered = orderForPlan(cands, weights);
     }
     if (cands.length === 0) continue;
-    const r = await placeIntoWindow(owner, ordered, Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id, runId, notBeforeMs });
+    const r = await placeIntoWindow(owner, ordered, Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id, runId, notBeforeMs, slotKeyCache, scorerCache });
     r.placedTaskIds.forEach((id) => placedIds.add(id));
     blocksCreated += r.blocksCreated;
   }
@@ -1027,7 +1078,7 @@ export async function placeFlightPlan(
   for (const plan of await dayCategoryPlans(owner, date, tz)) {
     const filtered = (await categoryCandidates(staged, plan.category_id, owner)).filter((t) => !placedIds.has(t.task_id));
     if (filtered.length === 0) continue;
-    const r = await placeIntoWindow(owner, filtered, Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id, runId, notBeforeMs });
+    const r = await placeIntoWindow(owner, filtered, Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id, runId, notBeforeMs, slotKeyCache, scorerCache });
     r.placedTaskIds.forEach((id) => placedIds.add(id));
     blocksCreated += r.blocksCreated;
   }
@@ -1039,7 +1090,7 @@ export async function placeFlightPlan(
   // from the direction-window pass AND the workday fill below, so a hinted task never
   // lands outside its window (HARD: a full/empty window leaves it unplaced). Reflow honours
   // this automatically — it re-runs placeFlightPlan, which re-reads `plan_hints`.
-  const hintPass = await placeHintWindows(owner, date, staged.filter((s) => !placedIds.has(s.task_id)), prefs, tz, runId, notBeforeMs);
+  const hintPass = await placeHintWindows(owner, date, staged.filter((s) => !placedIds.has(s.task_id)), prefs, tz, runId, notBeforeMs, slotKeyCache, scorerCache);
   hintPass.placedTaskIds.forEach((id) => placedIds.add(id));
   blocksCreated += hintPass.blocksCreated;
   const hintConstrainedIds = hintPass.constrainedIds;
@@ -1056,6 +1107,8 @@ export async function placeFlightPlan(
     tz,
     runId,
     notBeforeMs,
+    slotKeyCache,
+    scorerCache,
   );
   containerPass.placedTaskIds.forEach((id) => placedIds.add(id));
   blocksCreated += containerPass.blocksCreated;
@@ -1093,7 +1146,7 @@ export async function placeFlightPlan(
         if (placedIds.has(t.task_id)) break;
         const winStart = Date.parse(zonedWallTimeToUTC(date, range.start_time, tz));
         const winEnd = Date.parse(zonedWallTimeToUTC(date, range.end_time, tz));
-        const r = await placeIntoWindow(owner, [t], winStart, winEnd, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs });
+        const r = await placeIntoWindow(owner, [t], winStart, winEnd, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs, slotKeyCache, scorerCache });
         r.placedTaskIds.forEach((id) => placedIds.add(id));
         blocksCreated += r.blocksCreated;
       }
@@ -1129,7 +1182,7 @@ export async function placeFlightPlan(
       for (const range of await directionWindowsMs(owner, dayType, date, tz, FALLBACK_FILL_DIRECTION_NAMES)) {
         const stillOpen = ordered.filter((t) => !placedIds.has(t.task_id));
         if (stillOpen.length === 0) break;
-        const r = await placeIntoWindow(owner, stillOpen, range.start, range.end, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs });
+        const r = await placeIntoWindow(owner, stillOpen, range.start, range.end, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs, slotKeyCache, scorerCache });
         r.placedTaskIds.forEach((id) => placedIds.add(id));
         blocksCreated += r.blocksCreated;
         placedInWorkday += r.placedTaskIds.size;
@@ -1211,10 +1264,15 @@ export async function fillByPriority(owner: string = currentOwnerId(), opts: { d
   // orderForPlan with no weights sorts priority-first (P1 first). includePlans flows
   // around Plans and the tag-matched blocks tap 2 already created.
   const runId = newId();
+  // Ticket 5: this top-up mints its OWN runId, so it gets its own fresh cache pair —
+  // "at most once per run" means once per runId, and this is a different run from
+  // whatever placeFlightPlan already did today.
+  const slotKeyCache = new Map<string, string>();
+  const scorerCache = new Map<string, ((startMs: number) => number) | null>();
   // A4: honour NL tag-window hints here too. A hint-constrained task is placed only within
   // its window (or left unplaced) and excluded from the unconstrained priority fill, so the
   // explicit top-up can't leak "no errands before noon" past its window.
-  const hintPass = await placeHintWindows(owner, date, remaining, prefs, tz, runId, notBeforeMs);
+  const hintPass = await placeHintWindows(owner, date, remaining, prefs, tz, runId, notBeforeMs, slotKeyCache, scorerCache);
   const unconstrained = orderForPlan(remaining.filter((t) => !hintPass.constrainedIds.has(t.task_id)));
   // 0156: fallback-fill union (work+community pattern_blocks) replaces the flat
   // workday_start/workday_end window — same range-by-range placement as Pass 2b.
@@ -1224,7 +1282,7 @@ export async function fillByPriority(owner: string = currentOwnerId(), opts: { d
   for (const range of await directionWindowsMs(owner, dayType, date, tz, FALLBACK_FILL_DIRECTION_NAMES)) {
     const stillOpen = unconstrained.filter((t) => !placedByFill.has(t.task_id));
     if (stillOpen.length === 0) break;
-    const r = await placeIntoWindow(owner, stillOpen, range.start, range.end, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs });
+    const r = await placeIntoWindow(owner, stillOpen, range.start, range.end, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs, slotKeyCache, scorerCache });
     r.placedTaskIds.forEach((id) => placedByFill.add(id));
     fillBlocksCreated += r.blocksCreated;
   }

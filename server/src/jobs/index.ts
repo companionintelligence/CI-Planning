@@ -26,6 +26,7 @@ import { calibrateTriality } from '../services/triality-learning.js';
 import { calibrateClassification } from '../services/classification-learning.js';
 import { calibrateDismissals } from '../services/dismissal-learning.js';
 import { ollamaScorer } from '../services/classification-score.js';
+import { calibratePlacement, MAX_PREFERENCE_KEYS } from '../services/placement-learning.js';
 import { calibratePlanLoop } from '../services/plan-loop-learning.js';
 import { snapshotBalanceWeek } from '../services/balance-snapshot.js';
 import { freezeStars } from './freeze-stars.js';
@@ -457,6 +458,31 @@ async function execute(kind: string): Promise<JobOutcome> {
       const scoped = r.scopes != null ? `, ${r.scopes} scope(s)` : '';
       return { itemsCreated: 0, itemsUpdated: r.sample_count, log: `Estimate calibration: ${label}${scoped}` };
     }
+    case 'calibrate_placement': {
+      // Placement-learning wave, ticket 4 — bounded batch learning over placement_log.
+      // Owner-scoped (see OWNER_SCOPED_KINDS): every read filters on the owner, and
+      // evidence is never pooled across owners. A cron/agent write, so it deliberately
+      // does NOT stamp owner attribution (WHO rule, owner ruling 2026-07-16).
+      const r = await calibratePlacement(currentOwnerId(), new Date());
+      const parts = r.keys.map((k) => {
+        switch (k.reason) {
+          case 'written':
+            return `${k.slotKey}: ${k.decided} decided, ${k.corrections} correction(s), band ${k.p25}-${k.p75}h`;
+          case 'below-floor':
+            return `${k.slotKey}: ${k.corrections} correction(s), under the ${r.floor} floor — stock scheduler stands`;
+          case 'band-too-wide':
+            return `${k.slotKey}: ${k.decided} decided, ${k.corrections} correction(s), spread too wide — no preference`;
+          case 'capped':
+            return `${k.slotKey}: ${k.decided} decided, ${k.corrections} correction(s), eligible but ranked past the top ${MAX_PREFERENCE_KEYS} keys this run`;
+        }
+      });
+      const written = r.keys.filter((k) => k.written).length;
+      return {
+        itemsCreated: 0,
+        itemsUpdated: written,
+        log: parts.length > 0 ? `Placement calibration — ${parts.join('; ')}` : 'Placement calibration: no placement evidence yet',
+      };
+    }
     case 'calibrate_plan_loop': {
       // Phase M §A0 — the weekly deterministic BATCH pass over `plan_loop_runs`.
       // Owner-scoped (see OWNER_SCOPED_KINDS): every read filters on the owner, and
@@ -591,6 +617,9 @@ const OWNER_SCOPED_KINDS = new Set([
   // Phase 8: the correction log is per-owner by construction — one owner's vocabulary
   // must never teach another's classifier.
   'calibrate_classification',
+  // Placement-learning wave: placement_log is per-owner by construction — one owner's
+  // corrections must never bias another owner's scheduler.
+  'calibrate_placement',
   // Phase M §A0: plan-loop evidence is per-owner by construction, never pooled.
   'calibrate_plan_loop',
   // Close-loop wave, ticket 3: the dismissal evidence log is per-owner by

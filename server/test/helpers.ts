@@ -85,12 +85,6 @@ export function resetDb(): void {
     DELETE FROM copy_history;
     DELETE FROM life_priorities;
     DELETE FROM planning_sessions;
-    -- 0162: plan_revision_log/plan_loop_runs are append-only by design (the §A0
-    -- authoring loop's evidence) — same cross-test contamination argument as
-    -- calibration_history above.
-    DELETE FROM plan_revision_log;
-    DELETE FROM plan_loop_runs;
-    DELETE FROM plan_loop_stats;
     -- 0157: append-only evidence log (the dismissal-learning corpus) — same
     -- cross-test contamination argument as classification_log/triality_log above.
     DELETE FROM possible_outcome_log;
@@ -100,11 +94,26 @@ export function resetDb(): void {
     -- 0157: measurement is appended per (owner, computed_date) run; clear so a
     -- backdated reading from one test doesn't collide with the next test's.
     DELETE FROM possible_dismissal_rate;
+    -- 0162: plan_revision_log/plan_loop_runs are append-only by design (the §A0
+    -- authoring loop's evidence) — same cross-test contamination argument as
+    -- calibration_history above.
+    DELETE FROM plan_revision_log;
+    DELETE FROM plan_loop_runs;
+    DELETE FROM plan_loop_stats;
     -- 0165: append-only weekly balance snapshot (first-freeze-wins, UNIQUE(owner_id,
     -- week_start, category)) — same cross-test contamination argument as
     -- calibration_history/triality_log/possible_outcome_log above: a leftover row for
     -- the same (owner, week, category) would silently no-op a later test's insert.
     DELETE FROM balance_week_log;
+    -- 0166: durable placement evidence, append-only by design — same cross-test
+    -- contamination argument as calibration_history / triality_log above.
+    DELETE FROM placement_log;
+    -- 0166: placement_preferences is a regenerable rollup, but it is read by a
+    -- production path (pickGap), so a leftover row would silently bend another
+    -- test file's Auto placement.
+    DELETE FROM placement_preferences;
+    -- 0166: placement_survival is per-owner-per-day measurement output.
+    DELETE FROM placement_survival;
   `);
   // Prune any extra owners a multi-tenant isolation test created, so they don't
   // leak across the shared pid-keyed DB into later files (resetDb kept only the

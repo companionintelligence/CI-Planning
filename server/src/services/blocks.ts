@@ -16,6 +16,7 @@ import { removeEntityTags, splitTagString, syncLeveledEntityTags, entityTagLevel
 import { setEntityPeople, getEntityPeople, getEntityPeopleBulk, type EntityPeople, type PersonRole } from './people.js';
 import { getCategoryPrefs } from './category-prefs.js';
 import { syncTaskFromBlock, mirrorBlockStatusToTask, applyTaskPlacementStatus, revertTaskPlacementStatus, TERMINAL_BLOCK_STATUS_SQL } from './block-task-sync.js';
+import { recordPlacementMove } from './placement-learning.js';
 import { resolveAutoNestParent } from './auto-nest.js';
 
 /**
@@ -738,6 +739,16 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
   let syncedTaskId: string | null = null;
   if (input.start_at !== undefined || input.end_at !== undefined) syncedTaskId = await syncTaskFromBlock(id, ownerId);
   if (input.status !== undefined) syncedTaskId = await mirrorBlockStatusToTask(id, ownerId) ?? syncedTaskId;
+
+  // Placement-learning wave ticket 3: close the placement_log row this block's
+  // auto-placement opened (ticket 2), recording where the owner actually put it — the
+  // correction half of the capture loop. Placed after the REQ2 mirror so a failing
+  // learning write can never be mistaken for a sync failure. Reads the new times from
+  // the returned row (never `input` — a PATCH may set only one of the two, and the row
+  // is authoritative).
+  if (input.start_at !== undefined || input.end_at !== undefined) {
+    await recordPlacementMove(ownerId, id, block.startAt, block.endAt);
+  }
 
   // Phase L: stamp version/field_ts for sync versioning (W3.3 — moved IN from the
   // route so a GraphQL updateBlock mutation, which calls the service directly, versions

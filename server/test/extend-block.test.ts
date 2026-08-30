@@ -16,6 +16,24 @@ import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
 const D = '2026-06-15';
 const at = (hhmm: string) => `${D}T${hhmm}:00.000Z`;
 
+/** Hand-seed an open placement_log row for a block, mirroring placement-capture.test.ts's
+ *  helper — extendBlock never places anything itself, so its tests seed the row directly. */
+function openPlacementLog(blockId: string, startAt: string, endAt: string): void {
+  sqlite
+    .prepare(
+      `INSERT INTO placement_log
+         (id, owner_id, block_id, task_id, slot_key, auto_run_id,
+          chosen_start_at, chosen_end_at, chosen_hour, fit, candidates, placed_at, local_date)
+       VALUES (uuid7(), ?, ?, NULL, 'work', NULL, ?, ?, ?, 1, '[]', ?, ?)`,
+    )
+    .run(SYSTEM_OWNER, blockId, startAt, endAt, Number(startAt.slice(11, 13)), startAt, D);
+}
+function openPlacementRow(blockId: string): { moved_at: string | null; moved_start_at: string | null; moved_end_at: string | null; moved_hour: number | null } | undefined {
+  return sqlite
+    .prepare(`SELECT moved_at, moved_start_at, moved_end_at, moved_hour FROM placement_log WHERE block_id = ?`)
+    .get(blockId) as { moved_at: string | null; moved_start_at: string | null; moved_end_at: string | null; moved_hour: number | null } | undefined;
+}
+
 function makeBlock(opts: {
   start: string; end: string; kind?: string; type?: string | null; parent?: string | null;
   locked?: boolean; status?: string; task?: string | null; title?: string;
@@ -336,5 +354,54 @@ describe('extend route — moved blocks re-sync their task scheduling intent', (
     expect(startOf(b1)).toBe(at('11:30')); // block moved
     const task = sqlite.prepare(`SELECT task_time FROM tasks WHERE id = ?`).get(t) as { task_time: string | null };
     expect(task.task_time).toBe('11:30'); // task intent re-synced to the moved block, not left at 11:00
+  });
+});
+
+describe('extendBlock closes placement_log rows for the anchor and every cascaded block', () => {
+  it('a silent-fit extension (resize only, start unchanged) closes the anchor row', async () => {
+    const a = makeBlock({ start: '10:00', end: '11:00', title: 'A' });
+    openPlacementLog(a, at('10:00'), at('11:00'));
+    await extendBlock(a, 30, { commit: true }, SYSTEM_OWNER);
+    const row = openPlacementRow(a)!;
+    expect(row.moved_at).not.toBeNull();
+    expect(row.moved_start_at).toBe(at('10:00')); // start never changed
+    expect(row.moved_end_at).toBe(at('11:30'));
+    expect(row.moved_hour).toBe(10); // same hour — a resize, not a time-of-day correction
+  });
+
+  it('a cascaded block closes its row with the pushed start, not just the anchor', async () => {
+    const a = makeBlock({ start: '10:00', end: '11:00', title: 'A' });
+    const b1 = makeBlock({ start: '11:00', end: '11:30', title: 'B1' }); // no gap, must push
+    openPlacementLog(a, at('10:00'), at('11:00'));
+    openPlacementLog(b1, at('11:00'), at('11:30'));
+    const r = await extendBlock(a, 30, { commit: true }, SYSTEM_OWNER);
+    expect(r.movedSet.map((m) => m.block_id)).toEqual([b1]);
+    expect(startOf(b1)).toBe(at('11:30'));
+
+    const anchorRow = openPlacementRow(a)!;
+    expect(anchorRow.moved_end_at).toBe(at('11:30'));
+
+    const cascadeRow = openPlacementRow(b1)!;
+    expect(cascadeRow.moved_at).not.toBeNull();
+    expect(cascadeRow.moved_start_at).toBe(at('11:30')); // pushed 30m later
+    expect(cascadeRow.moved_end_at).toBe(at('12:00'));
+    expect(cascadeRow.moved_hour).toBe(11); // still 11:xx, just later within the hour
+  });
+
+  it('a block with no open placement_log row extends without creating one', async () => {
+    const a = makeBlock({ start: '10:00', end: '11:00', title: 'A' }); // never auto-placed
+    const r = await extendBlock(a, 30, { commit: true }, SYSTEM_OWNER);
+    expect(r.committed).toBe(true);
+    expect(endOf(a)).toBe(at('11:30'));
+    expect(openPlacementRow(a)).toBeUndefined();
+  });
+
+  it('a plan-only call (commit: false) never touches placement_log', async () => {
+    const a = makeBlock({ start: '10:00', end: '11:00', title: 'A' });
+    openPlacementLog(a, at('10:00'), at('11:00'));
+    await extendBlock(a, 30, {}, SYSTEM_OWNER); // commit defaults to false
+    const row = openPlacementRow(a)!;
+    expect(row.moved_at).toBeNull(); // still open — nothing was actually applied
+    expect(endOf(a)).toBe(at('11:00')); // unchanged
   });
 });
