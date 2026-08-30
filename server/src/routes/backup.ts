@@ -111,6 +111,11 @@ const OWNER_TABLES = [
   // Added in v9: post-v8-audit tables (migrations 0127/0131) the export dropped.
   'life_priorities',
   'planning_sessions',
+  // Balance-targets wave (bal-6, 0165): the weekly target/scheduled/timed snapshot
+  // log. Append-only and unrecoverable if dropped — like calibration_history, it is a
+  // trend that cannot be regenerated (missed weeks have no backfill), so it is exported
+  // even though nothing app-side reads it via Drizzle (see the migration's raw-SQL note).
+  'balance_week_log',
 ] as const;
 
 // Owner-scoped tables INTENTIONALLY excluded from export/import. Audited against every
@@ -410,6 +415,8 @@ export function backupRouter() {
       // v9: post-v8-audit tables (0127/0131).
       life_priorities: ownerData['life_priorities'],
       planning_sessions: ownerData['planning_sessions'],
+      // Balance-targets wave (bal-6, 0165): the weekly snapshot log.
+      balance_week_log: ownerData['balance_week_log'],
     };
 
     const date = new Date().toISOString().slice(0, 10);
@@ -562,6 +569,8 @@ export function backupRouter() {
       // v9: standalone owner tables (no children, no junctions).
       counts['life_priorities']  = await insertRows('life_priorities', g('life_priorities'), ownerId);
       counts['planning_sessions'] = await insertRows('planning_sessions', g('planning_sessions'), ownerId);
+      // Balance-targets wave (bal-6, 0165): standalone, no children, no junctions.
+      counts['balance_week_log'] = await insertRows('balance_week_log', g('balance_week_log'), ownerId);
     });
 
     writeAudit({ ownerId, actor: 'owner', action: 'import', entity: 'import' });
