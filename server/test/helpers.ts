@@ -74,6 +74,14 @@ export function resetDb(): void {
     -- 0142: learned weights are derived state, but a row left behind would
     -- silently re-weight another test file's scoring (the engine reads them).
     DELETE FROM triality_weights;
+    -- 0149: classification_log is append-only by design (durable learning evidence,
+    -- the twin of triality_log) — same cross-test contamination argument as
+    -- triality_log above. classification_exemplars and classification_accuracy are
+    -- derived/measured state keyed by (owner, field, date), so a row left behind by
+    -- one test file collides with or leaks into another's on that key.
+    DELETE FROM classification_log;
+    DELETE FROM classification_exemplars;
+    DELETE FROM classification_accuracy;
     DELETE FROM copy_history;
     DELETE FROM life_priorities;
     DELETE FROM planning_sessions;
