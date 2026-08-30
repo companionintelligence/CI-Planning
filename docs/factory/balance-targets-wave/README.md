@@ -97,22 +97,79 @@ independent of each other. 6 forks off 1; 7 needs 6. Merge 6 early even if 7 tra
 the history corpus starts accruing only when the cron row exists, and nothing can
 recover missed weeks.
 
-## Cross-wave dependencies (two sibling waves plan in parallel)
+## Cross-wave dependencies — verified against every branch, 2026-08-29
 
-- **Migration slots.** Head on this base is `0156_capacity_hours_per_week`. The
-  close-loop wave (commit `aade3a64`) reserves **0157/0158**. This wave assumes
-  **0159** (ticket 2) and **0160** (ticket 6). The G-INT and revision-log waves will
-  also want slots. **Whoever implements renumbers to the actual head at merge time**
-  — the ids inside the files must be renamed with the filenames, and `index.ts`
-  registration order must match.
-- **`G-INT` (placement-override learning) will touch the same engine files** —
-  `engine/autoplan.ts` and `agents/plan.ts` ordering. If it also adds a band to
-  `deterministicIndices`, band ORDER between the two must be decided at merge time;
-  this wave pins its band LAST before due/priority precisely so a sibling band can
-  slot ahead of it without re-litigating. Flagging per the scope fence; not planning
-  their side.
-- **Cron slot.** Ticket 6 takes **Monday 04:40** (`'40 4 * * 1'`), clear of every
-  seeded row (03:50, 04:10, 05:00 Mondays; 04:20 reserved by the close-loop wave).
+This worktree's `main` is **7 commits behind `origin/main`** (merge-base
+`cb072d07`; `origin/main` is at `cfc5e753`). Re-check this before implementing —
+the state below is a snapshot, not a standing guarantee.
+
+**Real (merged to `origin/main`):**
+
+| Slot | What | PR |
+|---|---|---|
+| 0157/0158 | `dismissal_evidence` + `calibrate_dismissals` cron (the close-loop wave, dismissed suggestions) | #584 |
+| 0161 | `completion_score` (close-ritual 1-5 rating; unrelated feature, not one of the three loops) | #588 |
+
+Migration head on `origin/main` is therefore **0161**, not 0156.
+
+**Claimed on paper, unmerged (each verified by reading the actual branch, not
+inferred from a README):**
+
+| Slot | Wave | Branch | Status |
+|---|---|---|---|
+| 0159/0160 | G-INT — placement-override learning (`placement-learning-wave`) | `claude/silly-golick-0b3078` | 6 tickets + README only, no implementation |
+| 0162 | Agent loop's write-only revision log (`revision-loop-wave`) | `claude/silly-solomon-5ab111` | 6 tickets + README, **plus one real file**: `db/migrations/0162_plan_loop_learning.ts` and a `test/helpers.ts` teardown addition |
+
+**The collision:** G-INT's `place-1`/`place-4` tickets claim 0159/0160 with the
+identical reasoning this wave originally used ("0157/0158 taken, so next is
+0159/0160") — two independent planning sessions reserved the same free slots
+because neither could see the other's worktree. Since I can't edit G-INT's
+tickets (scope fence) and their claim is just as valid as mine, **this wave now
+assumes 0163/0164** (tickets 2 and 6, updated) — past every real slot (0157,
+0158, 0161) and every paper claim (0159, 0160, 0162) currently visible.
+**Re-run this check at implementation time**; if another wave has since landed
+past 0164, renumber again. The ids inside the migration files must be renamed
+together with the filenames, and `migrations/index.ts` registration order must
+match the actual head.
+
+**Code-level overlap, checked function-by-function, not just file-by-file:**
+
+- **G-INT vs this wave — no overlap found.** G-INT's `place-5` ticket touches
+  `engine/scheduler.ts` (untouched by this wave) and one `pickGap` call inside
+  `engine/autoplan.ts` at line 439 (`placeIntoWindow`). This wave's ticket 3
+  touches a different function in the same file, `fillFlightPlanCandidates`
+  (line 758) — no shared lines. Ticket 4 touches `agents/plan.ts`, which G-INT's
+  tickets never mention.
+- **Revision-loop-wave vs this wave — one real, localized overlap.** Its `rev-2`
+  ticket wires a `record:` callback into the single production `runLoop(...)`
+  call inside `authorPlanOrder` (`agents/plan.ts`, ~line 747) — the same call
+  this wave's ticket 4 extends with a `check:` callback change, in the same
+  object literal a few lines apart. Orthogonal concerns (their evidence capture,
+  this wave's ordering bias), but a textual merge conflict is likely if both
+  land close together — flagged in `bal-4-order-band.md` directly. Not a design
+  conflict; whoever merges second keeps both new fields.
+- **Close-loop-wave (merged, #584) vs this wave — no overlap.** It touches
+  `agents/extract.ts`, `agents/groom.ts`, `agents/ingest.ts`,
+  `services/possibles.ts`, `routes/oauth.ts` — none of which this wave touches.
+  It does share `jobs/index.ts`, `db/migrations/index.ts` and
+  `client/Settings.tsx` with this wave's tickets 2/6, but only as
+  every-wave-appends-a-line registries — routine, not a design collision, and
+  now moot for `jobs/index.ts`/`migrations/index.ts` since #584 is already on
+  `origin/main` (this wave's diff will apply against the real head, not a stale one).
+- **Cron slot.** Ticket 6 takes **Monday 04:40** (`'40 4 * * 1'`), checked
+  against all 21 cron rows actually merged to `origin/main` (nearest neighbors:
+  03:50, 04:10, 04:20 Monday — the last is `calibrate_dismissals`, confirmed
+  real at `'20 4 * * 1'`) and against G-INT's paper-claimed 04:30 Monday
+  (`calibrate_placement`). Clear of both.
+
+**Bottom line: this wave's 7 tickets can be implemented in parallel with both
+sibling waves.** No two waves write the same lines of the same function. The
+only two coordination points are (a) the 0163/0164 slot re-check above, both
+mechanical renumbers with no design implication, and (b) the `agents/plan.ts`
+`runLoop` call-site adjacency with the revision-loop-wave, a normal merge-order
+issue, not a blocker — implement, test, and land any of the three waves
+independently; whichever merges second does a small manual resolve on those
+two spots, nothing more.
 
 ## Verification
 

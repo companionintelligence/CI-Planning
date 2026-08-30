@@ -4,6 +4,15 @@
 > **Commit style:** `feat(planner): balance band in day-order authoring`
 > **Design:** [README.md](README.md)
 > **Dependencies:** Blocked by tickets 1 (service) and 2 (pref); independent of 3
+> **Merge-adjacency (not a blocker, verified 2026-08-29):** the unmerged
+> revision-loop-wave (`claude/silly-solomon-5ab111`, ticket rev-2, not yet
+> implemented) wires a `record:` callback into the SAME `runLoop(...)` call this
+> ticket's `check:` callback change sits beside, in `authorPlanOrder`
+> (`agents/plan.ts`, ~line 707-840 today — the single production call site). The
+> two changes are orthogonal (rev-2 adds evidence capture; this ticket adds
+> ordering bias) but land in the same few lines of the same object literal.
+> Whoever implements second should expect a textual merge conflict there, not a
+> design conflict — resolve by keeping both new fields in the options object.
 
 ## Goal
 

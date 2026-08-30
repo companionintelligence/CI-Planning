@@ -23,13 +23,21 @@ wire it end-to-end: migration → schema.ts mirror → GraphQL prefs map → cli
 
 ## Pinned conventions
 
-- **Migration:** `server/src/db/migrations/0159_balance_bias_pref.ts` — **slot
-  assumed**: head here is 0156; the close-loop wave reserves 0157/0158; two sibling
-  waves are planning in parallel. Renumber file, `export const id`, and the
-  `migrations/index.ts` import position to the actual head at implementation time
-  (README, cross-wave section). Skeleton (copy 0156 exactly):
+- **Migration:** `server/src/db/migrations/0163_balance_bias_pref.ts` — **slot
+  verified 2026-08-29** against every active branch, not just this worktree's stale
+  `main` (7 commits behind `origin/main` at last check): 0157/0158 (dismissal
+  evidence) and 0161 (completion_score) are MERGED to `origin/main`; 0159/0160 are
+  double-claimed on paper by the G-INT placement-learning-wave
+  (`claude/silly-golick-0b3078`, unmerged — its README states the identical
+  "0157/0158 reserved, so 0159/0160" reasoning this wave originally used); 0162 is
+  claimed on paper by the revision-loop-wave (`claude/silly-solomon-5ab111`,
+  unmerged). This wave deliberately steps past all four rather than contest
+  G-INT's claim. **Re-verify at implementation time** — replay the checks in
+  README "Cross-wave dependencies" before trusting 0163 is still free; renumber
+  file, `export const id`, and the `migrations/index.ts` import position to
+  whatever is actually free then. Skeleton (copy 0156 exactly):
   - Line 1 `import type { Database } from 'better-sqlite3';`
-  - `export const id = '0159_balance_bias_pref';`
+  - `export const id = '0163_balance_bias_pref';`
   - Block comment saying WHY (targets-reach-placement wave; bias gate; default on by
     owner ruling; suggest surface deliberately not gated)
   - `hasColumn` guard via `PRAGMA table_info` (SQLite has no ADD COLUMN IF NOT
@@ -72,7 +80,7 @@ enumerate every wiring point.
 ## Files impacted
 
 **New:**
-- `server/src/db/migrations/0159_balance_bias_pref.ts`
+- `server/src/db/migrations/0163_balance_bias_pref.ts`
 
 **Changed:**
 - `server/src/db/migrations/index.ts`

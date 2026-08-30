@@ -28,16 +28,21 @@ past calendars mutate and `life_priorities` has no history).
 
 ## Pinned conventions
 
-- **Migration:** `server/src/db/migrations/0160_balance_week_log.ts` — **slot
-  assumed** (head 0156; 0157/0158 reserved by close-loop wave; 0159 = ticket 2;
-  renumber to actual head at implementation, README cross-wave section). Skeleton
-  per 0127 (line-1 type import, `export const id`, why-comment, `up`, idempotent
+- **Migration:** `server/src/db/migrations/0164_balance_week_log.ts` — **slot
+  verified 2026-08-29** (ticket 2's note applies identically: 0157/0158/0161 are
+  merged to `origin/main`; 0159/0160 double-claimed on paper by G-INT; 0162 claimed
+  by the revision-loop-wave; this ticket steps past all four to 0164). **Re-verify
+  at implementation time** per README "Cross-wave dependencies." Skeleton per 0127
+  (line-1 type import, `export const id`, why-comment, `up`, idempotent
   `CREATE TABLE IF NOT EXISTS`, register in `index.ts` with `.js` import). Same
   file also seeds the cron row (0150 shows job-seed style):
   `INSERT OR IGNORE INTO scheduled_jobs (id, name, kind, cron) VALUES (newId(), 'snapshot_balance', 'snapshot_balance', '40 4 * * 1')`
-  — Monday 04:40, clear of 03:50 / 04:10 / 05:00 Mondays and the close-loop wave's
-  reserved 04:20; runs after the calibrate_* passes (single-GPU serialisation
-  reasoning in 0150's comment — cite it even though this job needs no model).
+  — Monday 04:40. Checked against every cron row actually merged to `origin/main`
+  (`grep -ohE "'[0-9]+ [0-9*]+ \* \* [0-9*]+'" server/src/db/migrations/*.ts`, 21
+  rows, nearest neighbors 03:50/04:10/04:20/05:00 Monday) AND against G-INT's
+  claimed-on-paper 04:30 Monday (`calibrate_placement`) — 04:40 is clear of both.
+  Runs after the calibrate_* passes (single-GPU serialisation reasoning in 0150's
+  comment — cite it even though this job needs no model).
 - **Table** (raw SQL only — deliberately NOT mirrored in `schema.ts`: the parity
   test asserts only modelled tables, and nothing app-side reads this via Drizzle;
   same doctrine as the close-loop wave's log tables — say so in the migration
@@ -87,7 +92,7 @@ Read `db/migrations/0127_life_priorities.ts` and `0150_calibrate_classification_
 ## Files impacted
 
 **New:**
-- `server/src/db/migrations/0160_balance_week_log.ts`
+- `server/src/db/migrations/0164_balance_week_log.ts`
 - `server/src/services/balance-snapshot.ts`
 - `server/test/balance-snapshot.test.ts`
 
