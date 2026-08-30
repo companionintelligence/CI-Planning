@@ -486,6 +486,71 @@ classDiagram
         +real accuracy  null = nothing measured
     }
 
+    class PossibleOutcomeLog {
+        +string possibleTaskId  no FK, evidence outlives the row
+        +string sourceKind
+        +string inputText
+        +string outcome  dismissed|promoted
+        +string decidedAt  load-bearing: no dismissed_at on possible_tasks
+        +string localDate
+    }
+
+    class PossibleDismissalExemplars {
+        +string logId
+        +string inputText
+        +string sourceKind
+        +blob embedding  nullable, no embedder at calibration time
+        +string computedDate
+    }
+
+    class PossibleDismissalRate {
+        +int periodDays
+        +int created
+        +int decided
+        +int dismissed
+        +real rate  null when decided = 0, never 0
+        +int exemplars
+        +bool hinted
+    }
+
+    class PlanLoopRun {
+        +string stage  'order' today
+        +bool passed
+        +bool escaped
+        +string escapeReason  plateau|max-iterations|budget
+        +real score  best judge median, 0..1
+        +int iterations
+    }
+
+    class PlanRevisionLog {
+        +string runId  no FK, written before the run row exists
+        +string stage
+        +int iter
+        +real score
+        +string reason  deterministic-fail|judged|passed-no-judge
+        +string defects  JSON rule codes
+        +string critique
+    }
+
+    class PlanLoopStats {
+        +string stage
+        +string computedDate
+        +int periodDays
+        +int runs
+        +int passed
+        +int firstTryPass
+        +real avgIterations  null when runs = 0
+        +real passRate  null when runs = 0
+    }
+
+    class BalanceWeekLog {
+        +string weekStart  owner-local Monday
+        +string category  life_priorities.category, no FK
+        +int targetHours  frozen at snapshot time
+        +int scheduledMinutes
+        +int timedMinutes  finished time_entries
+    }
+
     Owner "1" --> "*" Objective : owns
     Owner "1" --> "*" Reflection : writes
     Owner "1" --> "*" DailyRecap : one per day
@@ -497,6 +562,13 @@ classDiagram
     Owner "1" --> "*" ClassificationLog : append-only evidence
     Owner "1" --> "*" ClassificationExemplars : learned, resettable
     Owner "1" --> "*" ClassificationAccuracy : measured trend
+    Owner "1" --> "*" PossibleOutcomeLog : append-only evidence
+    Owner "1" --> "*" PossibleDismissalExemplars : learned, resettable
+    Owner "1" --> "*" PossibleDismissalRate : measured trend
+    Owner "1" --> "*" PlanLoopRun : append-only
+    Owner "1" --> "*" PlanRevisionLog : append-only evidence
+    Owner "1" --> "*" PlanLoopStats : measured trend
+    Owner "1" --> "*" BalanceWeekLog : frozen weekly history
 
     Objective "1" --> "*" Objective : parent of
     Objective "1" --> "*" ObjectiveTask : progressed by
@@ -505,6 +577,10 @@ classDiagram
     Reflection ..> Objective : optional source link
     TrialityLog ..> TrialityWeights : weekly calibration
     ClassificationLog ..> ClassificationExemplars : weekly calibration
+    PossibleOutcomeLog ..> PossibleDismissalExemplars : weekly calibration
+    PlanRevisionLog ..> PlanLoopRun : run_id, no FK
+    PlanLoopRun ..> PlanLoopStats : weekly calibration
+    BalanceWeekLog ..> LifePriority : category name match, no FK
 ```
 
 **3. Automation, integrations, and sync** — everything that runs without you:
@@ -1338,6 +1414,8 @@ all of them are listed and manually runnable from the **Jobs** view.
 | `calibrate_triality` | `50 3 * * 1` | Weekly re-tune of the per-slot Triality weights from the outcome log |
 | `calibrate_classification` | `10 4 * * 1` | Weekly re-tune of the classify/parse LLM's few-shot exemplars from the owner's own corrections; runs after `calibrate_triality` so the two weekly learning passes don't compete for one GPU |
 | `calibrate_dismissals` | `20 4 * * 1` | Weekly rebuild of the dismissal-evidence exemplar rollup + one noise-rate reading, from settled `possible_outcome_log` evidence; runs after `calibrate_classification` for the same single-GPU reason |
+| `calibrate_plan_loop` | `30 4 * * 1` | Weekly batch over `plan_loop_runs` — the §A0 authoring loop's pass rate, first-try pass rate, escapes and average iterations per stage; pure SQL, no model calls, but stays inside the weekly learning block so the schedule reads as one unit |
+| `snapshot_balance` | `40 4 * * 1` | Weekly freeze of each life dimension's target/scheduled/timed hours for the week just closed into `balance_week_log` — history for a future learning surface, not read by anything yet; `INSERT OR IGNORE`, first-freeze-wins |
 | `advance_objectives` | `0 5 * * 1` | Stage the next action for each active objective into the flight plan |
 | `promote_possibles` | *(no cron row)* | Runnable on demand only — ingestion auto-promotes, and `nightly_grooming` sweeps stragglers |
 
@@ -1993,6 +2071,7 @@ All from the repo root:
 | POST | `/api/objectives/:id/restore` | Un-archive (root-only — a cascaded member restores from its root) |
 | POST/DELETE | `/api/objectives/:id/purge` | Request / cancel permanent deletion. 48h window, reaped hourly by `purge_objectives` |
 | GET/POST | `/api/priorities` | Life-priorities self-audit — backs `/priorities` + `/balance` |
+| GET | `/api/priorities/history` | Per-dimension `balance_week_log` history — newest-first, capped to the last 12 weeks per category: how many weeks the target was met vs. counted, and a `met` flag per week. `target_hours`/`scheduled_minutes` are frozen at snapshot time, so past rows never redraw when today's target changes. Pure read; ungated |
 | POST | `/api/review/sweep` | Manually run the same missed-task review + backoff the `review_day` job runs nightly — backs the top-bar sweep button |
 | GET | `/api/review/week?period=YYYY-MM-DD` | Weekly review stats — scheduled/focus minutes, capacity, completion %, calibration (Phase N) |
 | GET | `/api/calibration` | Personal estimate bias stats (bias ratio, quartiles, sample count) (Phase N) |
