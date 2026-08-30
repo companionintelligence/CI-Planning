@@ -129,11 +129,11 @@ target; `completed` does. Categories resolve block-own-else-task
 
 | # | Ticket | Type | Status | Blocked by |
 |---|---|---|---|---|
-| 1 | [shortfall service](bal-1-shortfall-service.md) | Backend | ⬜ not started | — |
-| 2 | [balance_bias_enabled pref](bal-2-balance-bias-pref.md) | DB Migration + Frontend | ⬜ not started | — |
+| 1 | [shortfall service](bal-1-shortfall-service.md) | Backend | ✅ landed `59651309` | — |
+| 2 | [balance_bias_enabled pref](bal-2-balance-bias-pref.md) | DB Migration + Frontend | ✅ landed `90fb7b47` | — |
 | 3 | [candidate-fill bias](bal-3-candidate-bias.md) | Backend | ⬜ not started | 1, 2 |
 | 4 | [day-order balance band](bal-4-order-band.md) | Backend | ⬜ not started | 1, 2 |
-| 5 | [suggest surface](bal-5-suggest-surface.md) | Frontend | ⬜ not started | — |
+| 5 | [suggest surface](bal-5-suggest-surface.md) | Frontend | ✅ landed `21f65e4f` | — |
 | 6 | [weekly history log](bal-6-week-log.md) | DB Migration + Backend | ⬜ not started | 1 |
 | 7 | [history readout](bal-7-history-readout.md) | Backend + Frontend | ⬜ not started | 6 |
 
