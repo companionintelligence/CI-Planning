@@ -2,6 +2,7 @@ import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { stampRow } from '../sync/apply.js';
 import { PLACED_TIMEBLOCK_SQL } from './mobility.js';
+import { recordPlacementMove } from '../services/placement-learning.js';
 
 /**
  * Phase Z · Z3 (Time-Sense) — "Keep working" block extension (§1.1a).
@@ -174,23 +175,36 @@ export async function extendBlock(
 
   let committed = false;
   if (fits && opts.commit) {
-    const now = new Date().toISOString();
+    const nowDate = new Date();
+    const now = nowDate.toISOString();
     await store().transaction(async () => {
       // Phase L: an extend is an owner edit, so both the anchor and everything its
       // cascade displaces must stamp — otherwise a queued op holding the pre-extend
       // times wins LWW and the whole shift unwinds. Gated on the owner-scoped UPDATE
       // landing: stampRow keys on id alone (see cascadeArchiveToDescendants).
       // `last_moved_at` needs no stamp — it isn't in the sync allowlist.
+      //
+      // Placement-learning: an extend is a real correction to the scheduler's choice
+      // (the anchor keeps its start but runs longer than placed; a cascaded block is
+      // pushed to a new start entirely), the same signal a manual drag/resize through
+      // updateBlock records. recordPlacementMove no-ops safely when a block never
+      // carried an open placement_log row (manual or pattern-placed blocks).
       const anchor = await store()
         .prepare(`UPDATE time_blocks SET end_at = ?, last_moved_at = ? WHERE id = ? AND owner_id = ?`)
         .run(newEndAt, now, blockId, owner);
-      if (anchor.changes > 0) await stampRow('block', blockId, ['endAt']);
+      if (anchor.changes > 0) {
+        await stampRow('block', blockId, ['endAt']);
+        await recordPlacementMove(owner, blockId, block.start_at, newEndAt, nowDate);
+      }
       const upd = store().prepare(
         `UPDATE time_blocks SET start_at = ?, end_at = ?, last_moved_at = ? WHERE id = ? AND owner_id = ?`,
       );
       for (const m of movedSet) {
         const info = await upd.run(m.after.start_at, m.after.end_at, now, m.block_id, owner);
-        if (info.changes > 0) await stampRow('block', m.block_id, ['startAt', 'endAt']);
+        if (info.changes > 0) {
+          await stampRow('block', m.block_id, ['startAt', 'endAt']);
+          await recordPlacementMove(owner, m.block_id, m.after.start_at, m.after.end_at, nowDate);
+        }
       }
     });
     committed = true;
