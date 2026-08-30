@@ -25,6 +25,7 @@ import { calibrateEstimates } from './calibrate-estimates.js';
 import { calibrateTriality } from '../services/triality-learning.js';
 import { calibrateClassification } from '../services/classification-learning.js';
 import { ollamaScorer } from '../services/classification-score.js';
+import { calibratePlacement } from '../services/placement-learning.js';
 import { freezeStars } from './freeze-stars.js';
 import { resetRoutineTasks } from './reset-routines.js';
 import { config } from '../lib/config.js';
@@ -408,6 +409,28 @@ async function execute(kind: string): Promise<JobOutcome> {
       const scoped = r.scopes != null ? `, ${r.scopes} scope(s)` : '';
       return { itemsCreated: 0, itemsUpdated: r.sample_count, log: `Estimate calibration: ${label}${scoped}` };
     }
+    case 'calibrate_placement': {
+      // Placement-learning wave, ticket 4 — bounded batch learning over placement_log.
+      // Owner-scoped (see OWNER_SCOPED_KINDS): every read filters on the owner, and
+      // evidence is never pooled across owners. A cron/agent write, so it deliberately
+      // does NOT stamp owner attribution (WHO rule, owner ruling 2026-07-16).
+      const r = await calibratePlacement(currentOwnerId(), new Date());
+      const parts = r.keys.map((k) => {
+        if (k.written) {
+          return `${k.slotKey}: ${k.decided} decided, ${k.corrections} correction(s), band ${k.p25}-${k.p75}h`;
+        }
+        if (k.corrections < r.floor) {
+          return `${k.slotKey}: ${k.corrections} correction(s), under the ${r.floor} floor — stock scheduler stands`;
+        }
+        return `${k.slotKey}: ${k.decided} decided, ${k.corrections} correction(s), spread too wide — no preference`;
+      });
+      const written = r.keys.filter((k) => k.written).length;
+      return {
+        itemsCreated: 0,
+        itemsUpdated: written,
+        log: parts.length > 0 ? `Placement calibration — ${parts.join('; ')}` : 'Placement calibration: no placement evidence yet',
+      };
+    }
     case 'freeze_stars': {
       // Freezing is an INSERT (first-freeze-wins): a create, or a no-op if the
       // day was already frozen — never an update. Report counters accordingly.
@@ -503,6 +526,9 @@ const OWNER_SCOPED_KINDS = new Set([
   // Phase 8: the correction log is per-owner by construction — one owner's vocabulary
   // must never teach another's classifier.
   'calibrate_classification',
+  // Placement-learning wave: placement_log is per-owner by construction — one owner's
+  // corrections must never bias another owner's scheduler.
+  'calibrate_placement',
   'freeze_stars',
   'reset_routines',
 ]);
