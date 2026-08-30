@@ -30,7 +30,7 @@ One new exported function, `recordPlacementMove`, and one call site — `updateB
   condition a later refactor could erode.
 - **Do not reopen or re-close a settled row.** A second drag of the same block is a no-op,
   mirroring `recordCorrection`, which no-ops on an already-settled row
-  (`classification-learning.ts:229-246`). The first move away from the scheduler's slot is
+  (`classification-learning.ts:232-250`). The first move away from the scheduler's slot is
   the correction; later fiddling is the owner arranging their own day.
 - **Do not open a new row here.** `recordPlacementMove` only ever closes an existing one. A
   block with no `placement_log` row (manually created, pattern-placed, pre-dating this wave)
@@ -81,7 +81,7 @@ Verified against the tree — do not substitute.
 ## Before implementation
 
 Read `services/blocks.ts` lines 601–748 (the whole of `updateBlock`, especially the REQ2
-mirror and `stampRow` at the end), `services/classification-learning.ts` lines 229–246
+mirror and `stampRow` at the end), `services/classification-learning.ts` lines 232–250
 (`recordCorrection` — the settle-once template), `services/placement-learning.ts` from
 ticket 2, and `engine/day-reflow.ts` lines 219–255 plus `services/block-task-sync.ts` lines
 276–322 to confirm for yourself that neither calls `updateBlock`.

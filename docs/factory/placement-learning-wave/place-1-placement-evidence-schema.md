@@ -25,7 +25,9 @@ This ticket lands three empty tables and nothing else.
 ## Non-goals
 
 - **No `time_blocks` column.** Do not add `moved_from`, `placed_hour` or anything else.
-  `time_blocks` **is** modelled in `schema.ts:138`, so a column there would need a
+  `time_blocks` **is** modelled in `schema.ts` (`timeBlocks`, line 141 as of this sweep —
+  it moved from 138 when 0161 added `completionScore` to `tasks`; re-verify), so a column
+  there would need a
   `schema.ts` edit and would churn `baseline.characterization.test.ts.snap`.
 - **No `schema.ts` change.** These are raw-SQL-only tables, exactly like the 0149
   classification trio, `triality_weights` (0142) and `calibration_history` (0138).
@@ -99,10 +101,14 @@ Verified against the tree — do not substitute.
   serves. No index redundant with a PK prefix.
 - **Rollup shape.** `classification_exemplars` has a composite PK, no surrogate `id` and no
   index — every read is a PK-prefix scan on `owner_id`. Mirror that for both rollups.
-- **`resetDb()`** (`server/test/helpers.ts:32`) — add one `DELETE FROM` per new table with a
-  `-- 0166:` comment, alongside the existing `triality_log` / `triality_weights` entries.
-  `placement_preferences` is read by a production path, so a leftover row would silently
-  bend another test file's Auto placement.
+- **`resetDb()`** (`server/test/helpers.ts:32`, function start unchanged) — add one
+  `DELETE FROM` per new table with a `-- 0166:` comment, at the end of the same SQL block
+  that already holds `triality_log` / `triality_weights` (0140/0142) and, since this plan
+  was drafted, `possible_outcome_log` / `possible_dismissal_exemplars` /
+  `possible_dismissal_rate` (close-loop wave, 0157) — append after whichever is the actual
+  last entry at implementation time, not necessarily triality's. `placement_preferences`
+  is read by a production path, so a leftover row would silently bend another test file's
+  Auto placement.
 
 ## Before implementation
 

@@ -33,7 +33,9 @@ Also lands migration `0167`, seeding the `calibrate_placement` cron row.
 - **Do not write an `is_auto`, `is_locked` or `last_moved_at` value.** The batch writes only
   to `placement_preferences` and `placement_survival`.
 - **Do not stamp owner attribution on the job's writes.** A cron/agent write deliberately
-  does not (WHO rule, owner ruling 2026-07-16) — stated at `jobs/index.ts:376` and `:387`.
+  does not (WHO rule, owner ruling 2026-07-16) — stated at `jobs/index.ts:403` (triality) and
+  `:414` (classification); the close-loop wave's `calibrate_dismissals` (merged since, `:432`)
+  follows the same rule.
 - **No route, no client change.** The readout is ticket 6.
 
 ## Pinned conventions
@@ -60,10 +62,15 @@ Verified against the tree — do not substitute.
   the weekly learning passes deliberately: this one never calls a model, so it must not sit
   ahead of the two that might on a single-GPU box.
 - **Job wiring.** Add `case 'calibrate_placement':` to the `execute()` switch in
-  `server/src/jobs/index.ts` (beside `calibrate_classification` at line 384), and
-  `'calibrate_placement'` to `OWNER_SCOPED_KINDS` (line 485) with a `//` comment saying the
-  evidence is per-owner by construction — matching the wording already there for
-  `calibrate_triality` and `calibrate_classification`.
+  `server/src/jobs/index.ts`. Line numbers below are current as of this ticket's last
+  verification — re-check with `grep -n "case 'calibrate" server/src/jobs/index.ts` before
+  editing, since this switch has gained a case (`calibrate_dismissals`, close-loop wave)
+  since this plan was drafted and may gain more before you implement. Add the case after
+  `calibrate_classification` (`:410`) — beside `calibrate_dismissals` (`:430`) or
+  `calibrate_estimates` (`:442`), whichever is the actual last per-owner learning case by
+  then — and `'calibrate_placement'` to `OWNER_SCOPED_KINDS` (`:545`) with a `//` comment
+  saying the evidence is per-owner by construction — matching the wording already there for
+  `calibrate_triality`, `calibrate_classification` and `calibrate_dismissals`.
 - **Return shape.** `{ itemsCreated: 0, itemsUpdated: <keys written>, log: '...' }`, matching
   the two neighbouring cases.
 - **Percentiles.** Copy `calibration.ts:41-45` verbatim as a module-private `hourQuantile`,
@@ -103,9 +110,11 @@ the band would only echo what the scheduler already does.
 
 ## Before implementation
 
-Read `services/classification-learning.ts` lines 260–310 (`rowOutcome` / `decidedRows`) and
-464–545 (`calibrateClassification` — the structure to mirror), `services/calibration.ts`
-lines 38–66 (`quantile` / `robustStats`), `jobs/index.ts` lines 373–410 and 485–508,
+Read `services/classification-learning.ts` lines 275–307 (`rowOutcome` / `decidedRows`) and
+467–572 (`calibrateClassification` — the structure to mirror), `services/calibration.ts`
+lines 38–66 (`quantile` / `robustStats`), `jobs/index.ts` lines 399–441 (the three
+per-owner learning cases to mirror) and 545–571 (`OWNER_SCOPED_KINDS`) — re-verify these
+against the live file, which has changed twice since this plan was drafted —
 `server/src/db/migrations/0150_calibrate_classification_job.ts`, and
 `jobs/calibrate-estimates.ts`.
 

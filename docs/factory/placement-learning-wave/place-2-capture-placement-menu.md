@@ -56,7 +56,7 @@ Verified against the tree — do not substitute.
   (`calibrate-estimates.ts:18-20` states this explicitly).
 - **Never throws.** `logPlacement` wraps its whole body in `try/catch` and logs
   `logger.warn('placement-learning: could not log placement', { err: (err as Error).message })`
-  — byte-for-byte the `logAssignment` idiom (`classification-learning.ts:203-219`). A
+  — byte-for-byte the `logAssignment` idiom (`classification-learning.ts:206-222`). A
   learning write must never be able to fail a placement.
 - **Ids.** `newId()` from `../lib/ids.js`.
 - **Timestamps.** `now.toISOString()`; `local_date` via `localDateInTZ(iso, tz)` from
@@ -80,7 +80,7 @@ Verified against the tree — do not substitute.
 
 ## Before implementation
 
-Read `services/classification-learning.ts` lines 1–60 (the contract header) and 203–219
+Read `services/classification-learning.ts` lines 1–60 (the contract header) and 206–222
 (`logAssignment`), `engine/autoplan.ts` lines 351–355 (`insBlock`) and 415–455 (the
 placement loop), `engine/scheduler.ts` lines 16–21 and 44–67 (`Gap`, `pickGap`),
 `engine/blocks-place.ts` lines 88–92 (the `RETURNING id` precedent), and

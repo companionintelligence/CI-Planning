@@ -44,8 +44,10 @@ Verified against the tree — do not substitute.
   that both routes are owner-scoped, and a `//` comment above each route saying what it is
   for.
 - **Registration.** `server/src/routes/index.ts` — `import { placementRouter } from './placement.js';`
-  beside the `classificationRouter` import (line 45), and `placementRouter(),` in the array
-  (after `classificationRouter()`, line 93).
+  beside the `classificationRouter` import (line 45, unchanged), and `placementRouter(),` in
+  the array (after `classificationRouter()`, now line 94 — the close-loop wave's
+  `dismissalLearningRouter()` merged in ahead of it since this plan was drafted; re-verify
+  with `grep -n classificationRouter server/src/routes/index.ts` before editing).
 - **Limit clamp.** `Math.min(Math.max(Number((ctx.query as Record<string, string>).limit) || 12, 1), 100)`
   — byte-identical to `classification.ts:26`.
 - **Null is a gap, never a zero.** `survival_rate` is `NULL` when a period decided nothing.
@@ -53,17 +55,19 @@ Verified against the tree — do not substitute.
 - **Audit.** The reset is an owner-initiated write, so it is audited (WHO rule) —
   `writeAudit({ ownerId: owner, actor: 'owner', action: 'reset', entity: 'placement:preferences' })`,
   and **only when `res.changes > 0`**: a no-op delete is not a mutation worth a row. The
-  batch's own writes stay unaudited, matching `jobs/index.ts:376`.
+  batch's own writes stay unaudited, matching `jobs/index.ts:414` (classification's
+  identical WHO-rule comment — line numbers shift on this file often; re-verify before
+  implementing).
 - **Trend reader.** `survivalTrend(ownerId, limit)` goes in
   `services/placement-learning.ts` beside `calibratePlacement`, mirroring `accuracyTrend`
-  (`classification-learning.ts:581`). `ORDER BY computed_date DESC LIMIT ?` — newest first.
+  (`classification-learning.ts:609`). `ORDER BY computed_date DESC LIMIT ?` — newest first.
 - **Response shape.** `GET` → `{ runs: [...] }`; `DELETE` → `{ ok: true, cleared: <changes> }`,
   matching `classification.ts` exactly.
 
 ## Before implementation
 
 Read `server/src/routes/classification.ts` in full (46 lines — this is a near-copy),
-`services/classification-learning.ts` lines 581 onward (`accuracyTrend`),
+`services/classification-learning.ts` lines 609–620 (`accuracyTrend`),
 `server/src/routes/index.ts` lines 40–100, and the `placement_survival` DDL in ticket 1.
 
 ## Files impacted

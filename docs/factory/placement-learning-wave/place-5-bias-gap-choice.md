@@ -81,7 +81,7 @@ Verified against the tree — do not substitute.
 Read `engine/scheduler.ts` lines 16–67 (`Gap`, `MIN_SESSION_MS`, `pickGap` in full),
 `engine/autoplan.ts` lines 415–455 (the placement loop and the cursor advance),
 `engine/auto-defense.ts` lines 20–50 (the anti-thrash rules and `STABILITY_WINDOW_MS`),
-`services/classification-learning.ts` lines 353–447 (`retrieveExemplars` /
+`services/classification-learning.ts` lines 356–444 (`retrieveExemplars` /
 `classificationHint` — the "apply is a pure read of the last batch" shape), and the
 `placement_preferences` DDL in ticket 1.
 
