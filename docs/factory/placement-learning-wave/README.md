@@ -43,7 +43,7 @@ below is bound by it.
 | 2 | [capture the menu](place-2-capture-placement-menu.md) | Backend | ✅ done | 1 |
 | 3 | [capture the correction](place-3-capture-correction.md) | Backend | ✅ done | 2 |
 | 4 | [calibrate batch](place-4-calibrate-placement-batch.md) | Backend + DB | ✅ done | 3 |
-| 5 | [bias gap choice](place-5-bias-gap-choice.md) | Backend | ⬜ not started | 4 |
+| 5 | [bias gap choice](place-5-bias-gap-choice.md) | Backend | ✅ done | 4 |
 | 6 | [survival readout](place-6-survival-readout.md) | Backend | ⬜ not started | 4 |
 
 Strictly ordered 1 → 2 → 3 → 4 → 5. Ticket 6 forks off 4 and can land in parallel with 5;

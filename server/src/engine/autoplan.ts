@@ -35,7 +35,7 @@ import { getPatternBlocks, directionWindowsByName, FALLBACK_FILL_DIRECTION_NAMES
 import { resolveDayType } from '../services/day-types.js';
 import { getPatternPrefs } from '../services/pattern-prefs.js';
 import { nestCandidatesInRange, preferredContainers, taskNestCoords } from '../services/auto-nest.js';
-import { logPlacement, slotKeyFor, type CandidateGap } from '../services/placement-learning.js';
+import { logPlacement, slotKeyFor, placementScorer, type CandidateGap } from '../services/placement-learning.js';
 
 const DEFAULT_EST_MIN = 30;
 const MIN_SESSION_MS = 15 * MS_PER_MIN;
@@ -425,6 +425,9 @@ async function placeIntoWindow(
   // Ticket 2 (placement-learning wave): at most one coordinate read per task, however
   // many sessions it splits into.
   const slotKeyCache = new Map<string, string>();
+  // Ticket 5: a run resolves each slot_key's scorer at most once. `undefined` = not
+  // yet resolved; `null` = resolved to "no learned band" (stored, not re-queried).
+  const scorerCache = new Map<string, ((startMs: number) => number) | null>();
 
   // AD2: when placing INTO a Plan/container (parentBlockId set), read the container's
   // direction (`time_blocks.tag`) so each child task inherits it as its level-1 primary
@@ -437,13 +440,19 @@ async function placeIntoWindow(
 
   for (const t of tasks) {
     if (opts.parentBlockId) await inheritContainerDirection(t.task_id, containerTag, owner);
+    const slotKey = await slotKeyFor(owner, t.task_id, slotKeyCache);
+    let scorer = scorerCache.get(slotKey);
+    if (scorer === undefined) {
+      scorer = await placementScorer(owner, slotKey);
+      scorerCache.set(slotKey, scorer);
+    }
     const sessions = splitIntoSessions((t.estimated_minutes ?? DEFAULT_EST_MIN) * MS_PER_MIN, maxFocusMs);
     let placedAny = false;
     for (const want of sessions) {
       // Snapshot the menu BEFORE the pick — `pick.gap.cursor` mutates below as sessions
       // pack in, so a snapshot taken after would show the wrong cursor for this choice.
       const candidateSnapshot: CandidateGap[] = gaps.map((g) => ({ s: g.start, e: g.end, c: g.cursor }));
-      const pick = pickGap(gaps, want);
+      const pick = pickGap(gaps, want, scorer ?? undefined);
       if (!pick) break;
       const startMs = pick.gap.cursor;
       const endMs = startMs + pick.len;
@@ -453,7 +462,6 @@ async function placeIntoWindow(
       pick.gap.cursor = endMs + breakMs;
       blocksCreated++;
       placedAny = true;
-      const slotKey = await slotKeyFor(owner, t.task_id, slotKeyCache);
       await logPlacement(owner, {
         blockId,
         taskId: t.task_id,

@@ -65,6 +65,14 @@ export const MAX_BAND_HOURS = 6;
  *  their last quarter. A recorded parameter of the reading, not a tunable. */
 export const SURVIVAL_PERIOD_DAYS = 28;
 
+/**
+ * Ticket 5 (apply side) — how many owner-local hours outside `[p25_hour, p75_hour]`
+ * `placementScorer` takes to fall from a full-preference `1` to a no-preference `0`.
+ * Continuous rather than a cliff: a slot just past the band edge should still beat one
+ * an hour further out, not read as equally "wrong" as noon is to a midnight band.
+ */
+export const BAND_FALLOFF_HOURS = 3;
+
 // ── SQL (module level, prepared inside the function — §5.5) ───────────────────
 
 const INSERT_LOG = `
@@ -196,6 +204,48 @@ export async function recordPlacementMove(
   } catch (err) {
     logger.warn('placement-learning: could not record move', { err: (err as Error).message });
     return false;
+  }
+}
+
+// ── Apply: gap-choice bias (ticket 5) ──────────────────────────────────────────
+
+/** The one row `placementScorer` needs, keyed by the table's own PK. */
+const SELECT_PREFERENCE_BAND = `
+  SELECT p25_hour, p75_hour FROM placement_preferences
+   WHERE owner_id = ? AND slot_key = ?`;
+
+/**
+ * Build the pure scoring function `pickGap` uses to bias gap choice toward the owner's
+ * learned hour band for `slotKey` — or `null` when there is no band, in which case the
+ * caller passes `undefined` on to `pickGap` and nothing about today's placement changes.
+ *
+ * A pure read of what the last `calibratePlacement` run produced, resolving
+ * `ownerTimezone` once up front so the returned closure is cheap to call once per
+ * candidate gap. Never throws, the same rule `retrieveExemplars` follows (the apply
+ * stage is a pure read of the last batch — a bad row or a slow DB should never be able
+ * to fail a placement): any failure degrades to `null`, i.e. unbiased.
+ */
+export async function placementScorer(
+  ownerId: string,
+  slotKey: string,
+): Promise<((startMs: number) => number) | null> {
+  try {
+    const row = await store()
+      .prepare(SELECT_PREFERENCE_BAND)
+      .get<{ p25_hour: number; p75_hour: number }>(ownerId, slotKey);
+    if (!row) return null;
+    const tz = await ownerTimezone(ownerId);
+    const { p25_hour, p75_hour } = row;
+    return (startMs: number): number => {
+      const wall = utcToZonedWallTime(new Date(startMs).toISOString(), tz);
+      const localHour = Number(wall.slice(0, 2)) + Number(wall.slice(3, 5)) / 60;
+      if (localHour >= p25_hour && localHour <= p75_hour) return 1;
+      const hoursOutside = localHour < p25_hour ? p25_hour - localHour : localHour - p75_hour;
+      return Math.max(0, 1 - hoursOutside / BAND_FALLOFF_HOURS);
+    };
+  } catch (err) {
+    logger.warn('placement-learning: could not resolve scorer', { err: (err as Error).message });
+    return null;
   }
 }
 

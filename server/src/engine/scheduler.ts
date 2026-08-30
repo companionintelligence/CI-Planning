@@ -22,6 +22,13 @@ export interface Gap {
 export const MS_PER_MIN = 60_000;
 // Don't carve a focus block shorter than this — sub-quarter-hour slivers aren't useful.
 const MIN_SESSION_MS = 15 * MS_PER_MIN;
+/**
+ * Placement-learning wave, ticket 5 — the fragmentation budget `pickGap`'s optional
+ * `score` may spend. A preferred slot may cost at most one hour of extra day
+ * fragmentation, because fragmentation is a real cost paid by every later placement and
+ * the bias must never be able to shred a day.
+ */
+export const MAX_FRAGMENT_COST_MS = 60 * MS_PER_MIN;
 
 /** Split a duration into focus-sized sessions; the final session may be shorter. */
 export function splitIntoSessions(totalMs: number, maxFocusMs: number): number[] {
@@ -40,8 +47,25 @@ export function splitIntoSessions(totalMs: number, maxFocusMs: number): number[]
  * (best-fit: least leftover, to reduce fragmentation); otherwise falls back to
  * the largest remaining gap and truncates the session to fit. Scans *all* gaps,
  * so smaller tasks backfill holes a bigger task skipped.
+ *
+ * Placement-learning wave, ticket 5 — `score` is an optional pure function from a
+ * candidate start (`Gap.cursor`) to a preference in `[0, 1]`; the caller (the Auto
+ * placement loop) builds it from the owner's learned hour band and passes it in, so
+ * this function stays free of `store`/`ownerTimezone`/learning-service imports. With no
+ * `score`, or when no gap fits at all (`fit` is null — the truncating fallback), this
+ * returns exactly what it always has: `score` never touches the forced-fallback path,
+ * because a forced placement is not a preference. Otherwise, among the gaps that
+ * themselves fit `wantMs` and cost at most `MAX_FRAGMENT_COST_MS` more leftover than the
+ * strict best fit, the highest-scoring gap wins — ties broken by leftover (ascending),
+ * then by start (ascending, day order), the same total order the unscored loop above
+ * produces via its strict `<` (first-seen-wins on a tie), so a neutral or absent scorer
+ * is byte-identical to today.
  */
-export function pickGap(gaps: Gap[], wantMs: number): { gap: Gap; len: number } | null {
+export function pickGap(
+  gaps: Gap[],
+  wantMs: number,
+  score?: (startMs: number) => number
+): { gap: Gap; len: number } | null {
   let fit: Gap | null = null;
   let fitLeftover = Infinity;
   let largest: Gap | null = null;
@@ -60,9 +84,27 @@ export function pickGap(gaps: Gap[], wantMs: number): { gap: Gap; len: number } 
     }
   }
 
-  if (fit) return { gap: fit, len: wantMs };
-  if (largest && largestFree >= MIN_SESSION_MS) return { gap: largest, len: largestFree };
-  return null;
+  if (!score || !fit) {
+    if (fit) return { gap: fit, len: wantMs };
+    if (largest && largestFree >= MIN_SESSION_MS) return { gap: largest, len: largestFree };
+    return null;
+  }
+
+  // Only gaps pickGap had already accepted as fitting are eligible — a low score can
+  // lose a tie-break, never remove an option, and the fragmentation budget bounds how
+  // much extra leftover the preference may spend over the strict best fit.
+  const eligible = gaps.filter((g) => {
+    const free = g.end - g.cursor;
+    return free >= wantMs && free - wantMs <= fitLeftover + MAX_FRAGMENT_COST_MS;
+  });
+  eligible.sort((a, b) => {
+    const byScore = score(b.cursor) - score(a.cursor);
+    if (byScore !== 0) return byScore;
+    const byLeftover = (a.end - a.cursor - wantMs) - (b.end - b.cursor - wantMs);
+    if (byLeftover !== 0) return byLeftover;
+    return a.start - b.start;
+  });
+  return { gap: eligible[0], len: wantMs };
 }
 
 /**
