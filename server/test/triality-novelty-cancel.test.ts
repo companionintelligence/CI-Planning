@@ -26,13 +26,19 @@ const OWNER = SYSTEM_OWNER;
 const NOW = new Date('2026-07-29T14:00:00.000Z');
 const daysAgo = (d: number) => new Date(NOW.getTime() - d * 86_400_000).toISOString();
 
-function insertTask(title: string, o: { status?: string; completedAt?: string; mood?: string } = {}): void {
+function insertTask(title: string, o: { status?: string; completedAt?: string; score?: number } = {}): void {
   sqlite
     .prepare(
-      `INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, completed_at, completion_mood, priority)
-       VALUES (uuid7(), ?, ?, ?, 30, ?, ?, 3)`,
+      // reaction_at mirrors completed_at whenever a score is given: closeTask stamps one
+      // for every real rating, and confirmedCompletionCount keys the refusal floor off
+      // reaction_at (0161), so a fixture without it would not count as ritual-confirmed.
+      `INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, completed_at, completion_score, reaction_at, priority)
+       VALUES (uuid7(), ?, ?, ?, 30, ?, ?, ?, 3)`,
     )
-    .run(title, OWNER, o.status ?? 'open', o.completedAt ?? null, o.mood ?? null);
+    .run(
+      title, OWNER, o.status ?? 'open', o.completedAt ?? null, o.score ?? null,
+      o.score != null ? (o.completedAt ?? null) : null,
+    );
 }
 
 /**
@@ -43,7 +49,7 @@ function insertTask(title: string, o: { status?: string; completedAt?: string; m
  */
 function seedScorableOwner(): void {
   for (let i = 0; i < 12; i++) {
-    insertTask(`done-${i}`, { status: 'done', completedAt: daysAgo(1 + (i % 30)), mood: 'flat' });
+    insertTask(`done-${i}`, { status: 'done', completedAt: daysAgo(1 + (i % 30)), score: 3 });
   }
   for (const t of ['write report', 'call plumber', 'sketch garden plan']) insertTask(t);
 }

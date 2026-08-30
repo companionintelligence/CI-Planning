@@ -50,20 +50,26 @@ const next = (owner: string) => runWithOwner(owner, ALL_SCOPES, () => trialityNe
 function insertTask(
   title: string,
   owner: string,
-  o: { status?: string; completedAt?: string; mood?: string; estimate?: number | null } = {},
+  o: { status?: string; completedAt?: string; score?: number; estimate?: number | null } = {},
 ): void {
   sqlite
     .prepare(
-      `INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, completed_at, completion_mood, priority)
-       VALUES (uuid7(), ?, ?, ?, ?, ?, ?, 3)`,
+      // reaction_at mirrors completed_at whenever a score is given: closeTask stamps one
+      // for every real rating, and confirmedCompletionCount keys the refusal floor off
+      // reaction_at (0161), so a fixture without it would not count as ritual-confirmed.
+      `INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, completed_at, completion_score, reaction_at, priority)
+       VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, 3)`,
     )
-    .run(title, owner, o.status ?? 'open', o.estimate === undefined ? 30 : o.estimate, o.completedAt ?? null, o.mood ?? null);
+    .run(
+      title, owner, o.status ?? 'open', o.estimate === undefined ? 30 : o.estimate, o.completedAt ?? null, o.score ?? null,
+      o.score != null ? (o.completedAt ?? null) : null,
+    );
 }
 
 /** 12 confirmed completions — clears the refusal floor (10) and gives the centroid a
  *  title set well under CENTROID_TITLES (25), so its exact size is easy to assert on. */
 function seedHistory(owner: string): void {
-  for (let i = 0; i < 12; i++) insertTask(`done-${i}`, owner, { status: 'done', completedAt: daysAgo(1 + (i % 30)), mood: 'flat' });
+  for (let i = 0; i < 12; i++) insertTask(`done-${i}`, owner, { status: 'done', completedAt: daysAgo(1 + (i % 30)), score: 3 });
 }
 
 function seedCandidates(owner: string): void {
@@ -153,7 +159,7 @@ describe('centroid cache — invalidation', () => {
     const afterHit = embedCalls.length;
 
     // A 13th, more recent completion — the title SET the centroid is built from changes.
-    insertTask('done-new', OWNER, { status: 'done', completedAt: daysAgo(0.5), mood: 'flat' });
+    insertTask('done-new', OWNER, { status: 'done', completedAt: daysAgo(0.5), score: 3 });
     await next(OWNER);
     // Full rebuild: 13 history titles (still under the 25 cap) + 3 candidates.
     expect(embedCalls.length - afterHit).toBe(16);
