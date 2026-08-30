@@ -670,6 +670,13 @@ function DimensionPanel(props: { dimension: string }) {
   const [prio] = createResource(() => api.priorities.list().then((r) => r.priorities).catch(() => []));
   const row = () => (prio() ?? []).find((x) => x.category === props.dimension);
 
+  // bal-7 (docs/factory/balance-targets-wave/bal-7-history-readout.md): the frozen
+  // balance_week_log readout, "met target N of last M weeks". catch(() => null) +
+  // render-guarded below — an endpoint failure, or a pre-history install with no rows
+  // yet, both just leave this line absent; the rest of the drawer is unaffected.
+  const [history] = createResource(() => api.priorities.history().catch(() => null));
+  const dimHistory = () => history()?.dimensions.find((d) => d.category === props.dimension);
+
   // Week/month scopes the time-bound lists (Scheduled, Completed). Open tasks are not
   // time-bound — filtering a backlog by a window would just hide work.
   const [period, setPeriod] = createSignal<RollupPeriod>('week');
@@ -751,6 +758,14 @@ function DimensionPanel(props: { dimension: string }) {
               <Field label="Gap" when={true}>{r().importance - r().satisfaction > 0 ? '+' : ''}{r().importance - r().satisfaction}</Field>
               <Field label="Target" when={true}>{r().target_hours_per_week}h / week</Field>
             </dl>
+            {/* bal-7: no advice, no trend arrows — a count and the weeks, nothing else
+                (ticket's non-goals). Hidden entirely rather than shown as "0 of 0" when
+                there is no history yet. */}
+            <Show when={dimHistory() && dimHistory()!.counted_weeks > 0}>
+              <p class="text-xs text-muted-foreground mt-1">
+                Met target {dimHistory()!.met_weeks} of last {dimHistory()!.counted_weeks} weeks
+              </p>
+            </Show>
           </Group>
         )}
       </Show>

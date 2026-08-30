@@ -26,6 +26,38 @@ export interface SnapshotBalanceWeekResult {
   rows: number;
 }
 
+/** Bal-7 (docs/factory/balance-targets-wave/bal-7-history-readout.md) — the most weeks
+ *  of frozen history the readout will ever look back over. The retrieval SQL uses
+ *  `HISTORY_WEEKS_MAX * 6` as its row LIMIT (six being a generous per-owner dimension
+ *  count), so the query itself is bounded regardless of how long the log has been
+ *  accruing — never unbounded. */
+export const HISTORY_WEEKS_MAX = 12;
+
+interface BalanceWeekLogRow {
+  week_start: string;
+  category: string;
+  target_hours: number;
+  scheduled_minutes: number;
+}
+
+export interface BalanceHistoryWeek {
+  week_start: string;
+  met: boolean;
+}
+
+export interface BalanceHistoryDimension {
+  category: string;
+  met_weeks: number;
+  counted_weeks: number;
+  /** Newest-first, already capped to `HISTORY_WEEKS_MAX`. */
+  recent: BalanceHistoryWeek[];
+}
+
+export interface BalanceHistoryResult {
+  weeks_recorded: number;
+  dimensions: BalanceHistoryDimension[];
+}
+
 // Finished time_entries attributed to a dimension via their task's category — the
 // SQL_CATEGORY_ENTRIES shape (services/triality-vector.ts:206), narrowed to the target
 // week's UTC range instead of a rolling "recent" window. Unlike
@@ -108,4 +140,63 @@ export async function snapshotBalanceWeek(ownerId: string, now: Date): Promise<S
   });
 
   return { weekStart, rows };
+}
+
+/**
+ * Read back the frozen history for `ownerId`, per dimension, for the drawer's
+ * "met target N of last M weeks" readout (bal-7). This is `balance_week_log`'s ONLY
+ * reader — the wave invariant (ticket 6's header): bias, prompts and the engine never
+ * see this table, only this function does.
+ *
+ * "Met" = `scheduled_minutes >= target_hours * 60` for a week-row with
+ * `target_hours > 0`. A `target_hours = 0` week is excluded from BOTH `met_weeks` and
+ * `counted_weeks` (and always reports `met: false` in `recent`) — a week with no
+ * target can be neither met nor missed. Deliberately keyed on `scheduled_minutes`
+ * (the calendar), not `timed_minutes`: the wave's apply acts on the calendar, so the
+ * readout has to track the same measure the bias acts on, not a different "actuals"
+ * number that would silently disagree with it. (`timed_minutes` stays recorded in the
+ * table for a future wave.)
+ *
+ * Bounded retrieval: the query pulls at most `HISTORY_WEEKS_MAX * 6` rows (newest
+ * `week_start` first) across every dimension, never unbounded. Each dimension is then
+ * capped to the newest `HISTORY_WEEKS_MAX` of ITS OWN rows in that set — the SQL LIMIT
+ * only bounds the total fetch; a log with fewer than six dimensions could otherwise
+ * return more than 12 weeks for one of them.
+ */
+export async function balanceHistory(ownerId: string): Promise<BalanceHistoryResult> {
+  const rows = await store()
+    .prepare(
+      `SELECT week_start, category, target_hours, scheduled_minutes
+         FROM balance_week_log WHERE owner_id = ? ORDER BY week_start DESC LIMIT ?`,
+    )
+    .all<BalanceWeekLogRow>(ownerId, HISTORY_WEEKS_MAX * 6);
+
+  const weeksRecorded = new Set(rows.map((r) => r.week_start)).size;
+
+  // Rows arrive week_start DESC already (the SQL ORDER BY), so grouping preserves that
+  // order within each category — no re-sort needed before capping/slicing below.
+  const byCategory = new Map<string, BalanceWeekLogRow[]>();
+  for (const r of rows) {
+    const list = byCategory.get(r.category);
+    if (list) list.push(r);
+    else byCategory.set(r.category, [r]);
+  }
+
+  const dimensions: BalanceHistoryDimension[] = [];
+  for (const [category, all] of byCategory) {
+    const capped = all.slice(0, HISTORY_WEEKS_MAX);
+    const counted = capped.filter((r) => r.target_hours > 0);
+    const metRows = counted.filter((r) => r.scheduled_minutes >= r.target_hours * 60);
+    dimensions.push({
+      category,
+      met_weeks: metRows.length,
+      counted_weeks: counted.length,
+      recent: capped.map((r) => ({
+        week_start: r.week_start,
+        met: r.target_hours > 0 && r.scheduled_minutes >= r.target_hours * 60,
+      })),
+    });
+  }
+
+  return { weeks_recorded: weeksRecorded, dimensions };
 }

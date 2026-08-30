@@ -768,6 +768,7 @@ export const api = {
   priorities: {
     list: () => request<{ priorities: Priority[] }>('GET', '/priorities'),
     save: (priorities: Priority[]) => request<{ priorities: Priority[] }>('POST', '/priorities', { priorities }),
+    history: () => request<BalanceHistory>('GET', '/priorities/history'),
   },
 
   patternBlocks: {
@@ -1553,6 +1554,19 @@ export interface Priority {
   satisfaction: number;
   importance: number;
   target_hours_per_week: number;
+}
+
+/** GET /api/priorities/history (bal-7) — the frozen balance_week_log readout, per
+ *  dimension. `recent` is newest-first and already capped server-side; a dimension with
+ *  no logged weeks simply does not appear. */
+export interface BalanceHistory {
+  weeks_recorded: number;
+  dimensions: Array<{
+    category: string;
+    met_weeks: number;
+    counted_weeks: number;
+    recent: Array<{ week_start: string; met: boolean }>;
+  }>;
 }
 
 export interface Integrations {

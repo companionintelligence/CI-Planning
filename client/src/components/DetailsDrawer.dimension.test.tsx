@@ -53,6 +53,11 @@ vi.mock('../lib/api.js', () => ({
           { category: 'mind', satisfaction: 8, importance: 8, target_hours_per_week: 0 },
         ],
       }),
+      // bal-7's history readout (docs/factory/balance-targets-wave/bal-7-history-readout.md):
+      // no recorded weeks here — this file's contracts are all about the Scheduled/Open/
+      // Completed lists, not the history line, so keep it absent rather than mocking data
+      // the assertions below don't touch.
+      history: async () => ({ weeks_recorded: 0, dimensions: [] }),
     },
     blocks: { list: (...a: unknown[]) => blocksListMock(...(a as [])) },
     flightPlan: { addTask: (...a: unknown[]) => flightPlanAddTaskMock(...(a as [])) },
