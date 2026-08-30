@@ -116,3 +116,59 @@ export async function logPlacement(
     logger.warn('placement-learning: could not log placement', { err: (err as Error).message });
   }
 }
+
+/**
+ * The still-open placement_log row for a block, newest first. Owner-scoped even though
+ * `block_id` is already unique — defence in depth, matching `SELECT_OPEN_ASSIGNMENT`.
+ * `ORDER BY ..., id DESC` because uuid7 ties are random within a millisecond, so
+ * `placed_at` alone is not a total order.
+ */
+const SELECT_OPEN_PLACEMENT = `
+  SELECT id, chosen_start_at, chosen_end_at FROM placement_log
+   WHERE block_id = ? AND owner_id = ? AND moved_at IS NULL
+   ORDER BY placed_at DESC, id DESC LIMIT 1`;
+
+/** `moved_at IS NULL` in the WHERE makes the settle-once rule atomic rather than a
+ *  read-then-write race — a second close on the same row is a no-op by construction. */
+const CLOSE_PLACEMENT = `
+  UPDATE placement_log SET moved_start_at = ?, moved_end_at = ?, moved_hour = ?, moved_at = ?
+   WHERE id = ? AND moved_at IS NULL`;
+
+/**
+ * Close the open `placement_log` row for a block with where the owner actually put it —
+ * the other half of capture: `logPlacement` (ticket 2) records what the scheduler chose
+ * and passed over; this records the owner's answer. Called from `updateBlock` whenever a
+ * PATCH touches `start_at` or `end_at`.
+ *
+ * A no-op ("nothing to settle") when: the block has no open row (manually created,
+ * pattern-placed, pre-dating this wave, or already settled by an earlier move), or the
+ * new times equal the row's `chosen_start_at`/`chosen_end_at` — the owner touched the
+ * block and left it where the scheduler put it, which is not a decision, so the row
+ * stays open and can still settle as an acceptance later.
+ *
+ * Never throws, for the same reason as `logPlacement`: a block edit that succeeded must
+ * not be reported as failed because the learning log had a bad day. Returns whether a
+ * row was closed, for tests and callers that want to know, the same as
+ * `recordCorrection` does.
+ */
+export async function recordPlacementMove(
+  ownerId: string,
+  blockId: string,
+  startAt: string,
+  endAt: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  try {
+    const open = await store().prepare(SELECT_OPEN_PLACEMENT)
+      .get<{ id: string; chosen_start_at: string; chosen_end_at: string }>(blockId, ownerId);
+    if (!open) return false;
+    if (startAt === open.chosen_start_at && endAt === open.chosen_end_at) return false;
+    const tz = await ownerTimezone(ownerId);
+    const movedHour = Number(utcToZonedWallTime(startAt, tz).slice(0, 2));
+    const r = await store().prepare(CLOSE_PLACEMENT).run(startAt, endAt, movedHour, now.toISOString(), open.id);
+    return r.changes > 0;
+  } catch (err) {
+    logger.warn('placement-learning: could not record move', { err: (err as Error).message });
+    return false;
+  }
+}
