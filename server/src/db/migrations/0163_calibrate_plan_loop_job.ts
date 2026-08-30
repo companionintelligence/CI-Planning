@@ -9,7 +9,8 @@ export const id = '0163_calibrate_plan_loop_job';
  * (04:10 Monday), before `advance_objectives` (05:00 Monday). This job makes NO model
  * calls — it is pure SQL aggregation — but the weekly learning passes stay serialized
  * in one block so the schedule reads as one unit. Clear of the daily 03:00
- * `prune_sync_events` / 03:20 `enrich_tasks` and the Sunday 04:00 `calibrate_estimates`.
+ * `prune_sync_events` / 03:20 `enrich_tasks` and the nightly 01:30 `calibrate_estimates`
+ * (moved off its original Sunday 04:00 slot by migration 0107).
  *
  * INSERT OR IGNORE keeps the seed idempotent across re-runs.
  */

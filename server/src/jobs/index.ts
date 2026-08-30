@@ -416,9 +416,13 @@ async function execute(kind: string): Promise<JobOutcome> {
       // audit_log read. A cron/agent write, so it deliberately does NOT stamp owner
       // attribution (WHO rule, owner ruling 2026-07-16).
       const r = await calibratePlanLoop(currentOwnerId(), new Date());
+      // passRate/avgIterations are never null here: calibratePlanLoop only pushes a
+      // stage entry from a non-empty GROUP BY row (runs >= 1), so both are always
+      // real numbers — the `!` documents that guarantee rather than masking a null
+      // with a misleading 0%/0.0 that would otherwise look like a real measurement.
       const parts = r.stages.map((s) =>
-        `${s.stage}: ${s.runs} run(s), ${Math.round((s.passRate ?? 0) * 100)}% pass, ` +
-          `${s.escaped} escape(s), avg ${(s.avgIterations ?? 0).toFixed(1)} iteration(s)`,
+        `${s.stage}: ${s.runs} run(s), ${Math.round(s.passRate! * 100)}% pass, ` +
+          `${s.escaped} escape(s), avg ${s.avgIterations!.toFixed(1)} iteration(s)`,
       );
       const label = parts.length > 0 ? parts.join('; ') : 'no runs in the last 7 days — nothing to measure';
       return { itemsCreated: 0, itemsUpdated: r.stages.length, log: `Plan-loop stats — ${label}` };

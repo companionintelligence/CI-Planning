@@ -10,6 +10,7 @@ import {
   type LoopOptions,
   type LoopResult,
   type LoopStage,
+  type Revision,
 } from '../src/agents/loop.js';
 import { recordPlanRevision, recordPlanRun, flushPlanLoopWrites } from '../src/services/plan-loop-learning.js';
 import { createOwner, resetDb } from './helpers.js';
@@ -248,5 +249,37 @@ describe('plan-loop-learning — capturing runLoop evidence', () => {
     const revs = revisionRows(runId);
     expect(revs[0].critique.length).toBe(1000);
     expect(revs[0].critique).toBe(longCritique.slice(0, 1000));
+  });
+
+  it('a non-serializable candidate (circular reference) is stored as NULL, not thrown', async () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    const rev: Revision = { iter: 1, candidate: circular, defects: [], score: 0.9, critique: '', reason: 'judged' };
+
+    expect(() => recordPlanRevision(newId(), SYSTEM_OWNER, 'order', rev)).not.toThrow();
+    await flushPlanLoopWrites();
+
+    const row = sqlite.prepare(`SELECT candidate FROM plan_revision_log WHERE iter = 1 ORDER BY at DESC LIMIT 1`).get() as {
+      candidate: string | null;
+    };
+    expect(row.candidate).toBeNull();
+  });
+
+  it("a critique ending mid-surrogate-pair at the 1000-char boundary doesn't store a lone surrogate", async () => {
+    // 999 ASCII chars + a 2-code-unit emoji straddling indices 999/1000 — a naive
+    // slice(0, 1000) would cut the pair in half.
+    const critique = 'x'.repeat(999) + '\u{1F600}' + 'trailing text that gets cut off';
+    const judge = vi.fn(async (): Promise<JudgeScore> => ({ overall: 0.9, critique }));
+    const { runId } = await runAndRecord(baseStage({ judge }));
+    await flushPlanLoopWrites();
+
+    const revs = revisionRows(runId);
+    const stored = revs[0].critique;
+    const lastCode = stored.charCodeAt(stored.length - 1);
+    expect(lastCode).not.toBeGreaterThanOrEqual(0xd800);
+    expect(stored.length).toBeLessThanOrEqual(1000);
+    // The whole emoji was dropped rather than half of it kept — the safe truncation
+    // yields 999 chars here, not 1000.
+    expect(stored).toBe('x'.repeat(999));
   });
 });

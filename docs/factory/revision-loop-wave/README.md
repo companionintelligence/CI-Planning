@@ -119,8 +119,10 @@ still forces the other two to renumber on rebase — re-run the worktree sweep b
 merging. 04:30 Monday runs after `calibrate_classification` (04:10) for the same
 reason 0150 documents — even though THIS job makes no model calls, keeping the
 weekly learning passes serialized in one block keeps the schedule legible. Clear of:
-03:20 enrich, 03:50 triality, 04:00 Sun estimates, 04:10 classification, 05:00
-advance_objectives.
+03:20 enrich, 03:50 triality, 04:10 classification, 05:00 advance_objectives — and
+of `calibrate_estimates`, which migration 0107 moved off its original Sunday 04:00
+slot to nightly 01:30 (a fact this README got wrong in an earlier revision, caught
+by /code-review's sweep pass on 2026-08-29 — see ticket 3's migration for the fix).
 
 ## Corrections to the brief that opened this wave
 

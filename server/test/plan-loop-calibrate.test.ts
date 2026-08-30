@@ -21,8 +21,6 @@ const NOW = new Date('2026-08-14T12:00:00.000Z');
 const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000).toISOString();
 const daysAgo = (d: number) => new Date(NOW.getTime() - d * 86_400_000).toISOString();
 
-let seq = 0;
-
 /** Seed one `plan_loop_runs` row directly. Each call gets a fresh id. */
 function seedRun(opts: {
   owner?: string;
@@ -34,7 +32,6 @@ function seedRun(opts: {
   at: string;
   score?: number;
 }): void {
-  seq++;
   sqlite
     .prepare(
       `INSERT INTO plan_loop_runs (id, owner_id, stage, passed, escaped, escape_reason, score, iterations, at)

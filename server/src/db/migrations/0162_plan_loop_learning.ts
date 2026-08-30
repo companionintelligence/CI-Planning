@@ -43,7 +43,7 @@ export function up(db: Database): void {
       passed        INTEGER NOT NULL,           -- 0 | 1 (LoopResult.passed)
       escaped       INTEGER NOT NULL,           -- 0 | 1 (LoopResult.escaped)
       escape_reason TEXT,                       -- 'plateau'|'max-iterations'|'budget'; NULL when passed
-      score         REAL NOT NULL,              -- LoopResult.score (best judge median; -1 if none cleared checks)
+      score         REAL NOT NULL,              -- LoopResult.score (best judge median in [0,1]; 0 when every candidate failed a deterministic check)
       iterations    INTEGER NOT NULL,
       at            TEXT NOT NULL               -- ISO-8601, stamped in code
     );

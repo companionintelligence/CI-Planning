@@ -44,42 +44,74 @@ export const STATS_WINDOW_DAYS = 7;
 const inFlight = new Set<Promise<void>>();
 
 /**
+ * Track a fire-and-forget write so {@link flushPlanLoopWrites} can await it. Swallows
+ * its own rejection — evidence must never break the authoring path — and is shared by
+ * every insert in this module rather than reimplemented per call site.
+ */
+function track(p: Promise<unknown>): void {
+  const tracked: Promise<void> = p.then(
+    () => {},
+    () => {}, // silent — evidence must never break the authoring path
+  );
+  const done = tracked.finally(() => {
+    inFlight.delete(done);
+  });
+  inFlight.add(done);
+}
+
+/**
+ * Truncate to at most `max` UTF-16 code units without splitting a surrogate pair.
+ * A naive `.slice(0, max)` can bisect a pair (e.g. an emoji in a judge's critique),
+ * leaving a lone surrogate that corrupts on UTF-8 encode (SQLite storage) or on a
+ * later `JSON.stringify` round-trip.
+ */
+function truncateText(s: string, max: number): string {
+  const sliced = s.slice(0, max);
+  const lastCode = sliced.charCodeAt(sliced.length - 1);
+  return lastCode >= 0xd800 && lastCode <= 0xdbff ? sliced.slice(0, -1) : sliced;
+}
+
+/**
  * Record one loop iteration: one `plan_revision_log` row (the evidence) AND the
  * unchanged `audit_log` row via the re-exported `auditRecord` (loop.ts's own
  * default sink), so the audit trail keeps being written from exactly the same code
  * path as before this service existed.
  */
 export function recordPlanRevision(runId: string, ownerId: string, stage: string, rev: Revision): void {
-  auditRecord(ownerId, stage, rev);
+  try {
+    auditRecord(ownerId, stage, rev);
+  } catch {
+    // evidence must never break the authoring path — see module header
+  }
 
-  const c = JSON.stringify(rev.candidate);
-  const candidate = c.length > 8000 ? null : c; // NULL over truncation — a sliced JSON string is invalid JSON
-  const p: Promise<void> = store()
-    .prepare(
-      `INSERT INTO plan_revision_log (id, owner_id, run_id, stage, iter, score, reason, defects, critique, candidate, at)
+  let candidate: string | null;
+  try {
+    const c = JSON.stringify(rev.candidate);
+    candidate = c.length > 8000 ? null : c; // NULL over truncation — a sliced JSON string is invalid JSON
+  } catch {
+    candidate = null; // unserializable candidate (circular ref, BigInt, ...) — NULL over throwing
+  }
+
+  track(
+    store()
+      .prepare(
+        `INSERT INTO plan_revision_log (id, owner_id, run_id, stage, iter, score, reason, defects, critique, candidate, at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      newId(),
-      ownerId,
-      runId,
-      stage,
-      rev.iter,
-      rev.score,
-      rev.reason,
-      JSON.stringify(rev.defects.map((d) => d.rule)),
-      rev.critique.slice(0, 1000),
-      candidate,
-      new Date().toISOString(),
-    )
-    .then(
-      () => {},
-      () => {}, // silent — evidence must never break the authoring path
-    )
-    .finally(() => {
-      inFlight.delete(p);
-    });
-  inFlight.add(p);
+      )
+      .run(
+        newId(),
+        ownerId,
+        runId,
+        stage,
+        rev.iter,
+        rev.score,
+        rev.reason,
+        JSON.stringify(rev.defects.map((d) => d.rule)),
+        truncateText(rev.critique, 1000),
+        candidate,
+        new Date().toISOString(),
+      ),
+  );
 }
 
 /** Record the outcome of one completed `runLoop()` invocation: one `plan_loop_runs` row. */
@@ -90,30 +122,24 @@ export function recordPlanRun(
   result: LoopResult<unknown>,
   escapeReason: string | null,
 ): void {
-  const p: Promise<void> = store()
-    .prepare(
-      `INSERT INTO plan_loop_runs (id, owner_id, stage, passed, escaped, escape_reason, score, iterations, at)
+  track(
+    store()
+      .prepare(
+        `INSERT INTO plan_loop_runs (id, owner_id, stage, passed, escaped, escape_reason, score, iterations, at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      runId,
-      ownerId,
-      stage,
-      result.passed ? 1 : 0,
-      result.escaped ? 1 : 0,
-      escapeReason,
-      result.score,
-      result.iterations,
-      new Date().toISOString(),
-    )
-    .then(
-      () => {},
-      () => {}, // silent — evidence must never break the authoring path
-    )
-    .finally(() => {
-      inFlight.delete(p);
-    });
-  inFlight.add(p);
+      )
+      .run(
+        runId,
+        ownerId,
+        stage,
+        result.passed ? 1 : 0,
+        result.escaped ? 1 : 0,
+        escapeReason,
+        result.score,
+        result.iterations,
+        new Date().toISOString(),
+      ),
+  );
 }
 
 /**
