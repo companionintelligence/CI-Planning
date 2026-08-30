@@ -8,10 +8,11 @@ import {
 } from 'lucide-solid';
 import { STAR_GOLD } from '../lib/stars.js';
 import { api, type Objective, type ObjectiveTaskSummary } from '../lib/api.js';
-import { showToast, refetchTasks, setElementModal, elementModal } from '../stores/index.js';
+import { showToast, refetchTasks, setElementModal, elementModal, openCloseRitual, taskOf } from '../stores/index.js';
 import { localISODate } from '../lib/dates.js';
 import { isLeafObjective, visibleLeafTasks, executeQuickAdd } from '../lib/objectives-quickadd.js';
 import { ObjectiveModal } from './ObjectiveModal.js';
+import { setActiveEntity } from '../stores/selection.js';
 
 /** Whether `id` is `o` or anywhere in its subtree — used to auto-expand to a focused node. */
 function subtreeHas(o: Objective, id: string): boolean {
@@ -416,6 +417,10 @@ function ObjectiveNode(props: {
         await api.tasks.update(t.id, { status: 'open', completed_at: null });
       } else {
         await api.tasks.update(t.id, { completed: true });
+        // This panel holds an ObjectiveTaskSummary, not a Task — resolve the full row for
+        // the sheet (it needs the estimate and the placement). A task missing from
+        // `tasks()` simply gets no prompt rather than a sheet with blank fields.
+        openCloseRitual(taskOf(t.id));
       }
       // A done⇄not-done PATCH recomputes progress server-side (updateTask, alongside
       // link/unlink/delete), so onRefetch's re-read of the objective picks up the moved
@@ -487,9 +492,13 @@ function ObjectiveNode(props: {
         {/* Title + meta */}
         <div class="flex-1 min-w-0">
           <div class="flex items-baseline gap-2 flex-wrap">
+            {/* AF-D: the title opens the DETAILS DRAWER, not the edit form. Answering
+                "what is this objective?" with a modal edit form meant the subtasks were
+                only reachable by expanding the row, and the form itself was clipped on a
+                short viewport. Editing keeps its own affordance — the pencil below. */}
             <span
               class={`text-sm font-medium truncate cursor-pointer ${STATUS_CLASSES[obj().status]}`}
-              onClick={() => props.onEdit(obj())}
+              onClick={() => setActiveEntity('objective', obj().id)}
             >
               {obj().title}
             </span>

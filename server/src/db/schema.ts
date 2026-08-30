@@ -71,8 +71,11 @@ export const tasks = sqliteTable('tasks', {
   sourceRef: text('source_ref'),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
   completedAt: text('completed_at'),
-  // ── Close ritual (0137) — all optional; the plain checkbox never sets them. ──
-  completionMood: text('completion_mood'),   // 'happy' | 'flat' | 'frustrated' | 'stressed'
+  // ── Close ritual (0137, rescored 0161) — all optional; the plain checkbox never sets them. ──
+  // 1-5 from the three-face picker (frown=1 · frown+flat=2 · flat=3 · flat+smile=4 · smile=5).
+  // 0 is the DECLINED sentinel (prompted, skipped) — not a rating, and excluded from every
+  // score aggregate. NULL = never prompted.
+  completionScore: integer('completion_score'),
   completionNote: text('completion_note'),   // the closing reflection — NOT `notes` (the description)
   // WHEN the reflection was recorded. Distinct from completed_at (the assumed task end):
   // reacting later is normal, and `reaction_at − completed_at` is the freshness of the read.

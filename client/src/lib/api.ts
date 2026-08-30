@@ -1,14 +1,38 @@
 const BASE = '/api';
 
+/**
+ * A non-OK HTTP response, carrying the status alongside the server's message.
+ *
+ * The status is load-bearing for the op-log flush (stores/mutations.ts): a 4xx is
+ * the server saying "this request is wrong and will stay wrong", while a transport
+ * failure or a 5xx is worth retrying. Without the status those are the same event,
+ * and the retry policy for one becomes the retry policy for both.
+ *
+ * `status` is 0 when the request never got an answer (offline / DNS / abort), which
+ * is why callers must test `status >= 400` rather than truthiness.
+ */
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      method,
+      headers: body ? { 'Content-Type': 'application/json' } : {},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (err) {
+    // Never reached the server — status 0 marks it retryable.
+    throw new ApiError((err as Error).message, 0);
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error((err as any).error ?? res.statusText);
+    throw new ApiError((err as any).error ?? res.statusText, res.status);
   }
   return res.json() as Promise<T>;
 }
@@ -76,7 +100,7 @@ export interface Task {
   secondary_tags?: string[];      // Phase 5: secondary tags (entity_tags level>1)
   categories?: string[];          // Phase B (0134): 1–3 category names, position order (stripe order)
   // Close ritual (0137) — all optional; a task closed by the plain checkbox has none.
-  completion_mood?: Mood | null;
+  completion_score?: Score | typeof DECLINED_SCORE | null;
   completion_note?: string | null;
   /** When the reflection was recorded — NOT completed_at (the assumed task end). */
   reaction_at?: string | null;
@@ -283,10 +307,27 @@ export interface ParsedQuick {
   isComplex?: boolean;
 }
 
-/** The four close-ritual "temperature" faces (server: services/task-close.ts MOODS). */
-export type Mood = 'happy' | 'flat' | 'frustrated' | 'stressed';
+/**
+ * The close-ritual rating, 1-5 (server: services/task-close.ts).
+ *
+ * Produced by the three-face picker with an optional second pick:
+ *   frown = 1 · frown+flat = 2 · flat = 3 · flat+smile = 4 · smile = 5
+ * The opposite pair (frown+smile) is unreachable, so every value is a point on one
+ * ordered scale.
+ */
+export type Score = 1 | 2 | 3 | 4 | 5;
 
-export interface MoodBreakdown { happy: number; flat: number; frustrated: number; stressed: number }
+/** "Prompted, and declined" — written by the queue's skip paths. NOT a rating: it is
+ *  excluded from every aggregate and never stamps `reaction_at`. */
+export const DECLINED_SCORE = 0;
+
+export interface ScoreDistribution {
+  counts: Record<Score, number>;
+  /** Mean of the real ratings, 1dp. null with no samples. */
+  mean: number | null;
+  samples: number;
+  declined: number;
+}
 
 export interface AxisMetrics {
   name: string;
@@ -295,16 +336,20 @@ export interface AxisMetrics {
   actualMinutes: number;
   /** Median actual/estimated; null under 3 samples. >1 means you run long. */
   estimateBias: number | null;
-  mood: MoodBreakdown;
-  moodSamples: number;
+  score: ScoreDistribution;
   medianReactionLagMin: number | null;
 }
 
-export interface TaskMetrics {
-  window: { days: number; since: string };
+export interface MetricsGroup {
   directions: AxisMetrics[];
   categories: AxisMetrics[];
-  totals: { open: number; completed: number; actualMinutes: number; mood: MoodBreakdown; moodSamples: number };
+  totals: { open: number; completed: number; actualMinutes: number; score: ScoreDistribution };
+}
+
+export interface TaskMetrics extends MetricsGroup {
+  window: { days: number; since: string };
+  /** Habits, rolled up over a disjoint population — never blended into the task counts. */
+  habits: MetricsGroup;
 }
 
 export interface CalibrationReading {
@@ -362,8 +407,8 @@ export const api = {
     quickParse: (text: string) => request<{ parsed: ParsedQuick; llm: boolean }>('POST', '/tasks/quick/parse', { text }),
     // The close ritual: complete (if still open) + record mood/note/corrected duration.
     // Accepted on an already-done task too — reflecting later is the normal case.
-    close: (id: string, body: { mood?: Mood; note?: string; actual_minutes?: number }) =>
-      request<{ task: Task; closed: { completed_at: string; reaction_at: string | null; mood: Mood | null; actual_minutes: number } }>(
+    close: (id: string, body: { score?: Score | typeof DECLINED_SCORE; note?: string; actual_minutes?: number }) =>
+      request<{ task: Task; closed: { completed_at: string; reaction_at: string | null; score: Score | null; actual_minutes: number } }>(
         'POST', `/tasks/${id}/close`, body,
       ),
     // Best-effort LLM auto-tag for the wizard, constrained to existing tags ([] if Ollama down).
@@ -788,8 +833,14 @@ export const api = {
 
   // ── Phase L: field-level sync batch endpoint ────────────────────────────────
   sync: {
+    // The route answers `{ results }` (server routes/sync.ts), not a bare array.
+    // This was typed as the array for a long time, so `for (const r of results)` in
+    // the flush loop threw before a single op could be acked — every op stayed
+    // 'inflight' and the outbox only ever grew. Unwrap here so the declared type
+    // and the wire format agree.
     apply: (ops: SyncOp[]) =>
-      request<(SyncResult | SyncError)[]>('POST', '/sync', { ops }),
+      request<{ results: (SyncResult | SyncError)[] }>('POST', '/sync', { ops })
+        .then((r) => r.results),
   },
 
   // ── Phase N0: daily + weekly goals (reflections table) ───────────────────────

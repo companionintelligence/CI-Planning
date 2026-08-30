@@ -193,7 +193,7 @@ and **defaults to 0 when its source has no data**. v1 dimensions:
 | Dim | Source | +1 | 0 | −1 |
 |---|---|---|---|---|
 | `in_work_hours` | `scheduling_prefs` work hours | inside | — | outside |
-| `day_energy` | most recent close-ritual mood with `reaction_at` within 3h ([0137](../server/src/db/migrations/0137_close_ritual.ts)) | happy | flat / **no recent reading** | frustrated · stressed |
+| `day_energy` | most recent close-ritual rating with `reaction_at` within 3h ([0137](../server/src/db/migrations/0137_close_ritual.ts), rescored [0161](../server/src/db/migrations/0161_completion_score.ts)) | 4 · 5 | 3 / **no recent reading** | 1 · 2 |
 | `free_gap` | minutes until next fixed block (locked/meeting `time_blocks`) | ≥ 45m | 15–45m / no calendar data | < 15m |
 | `day_type` | `day_types` resolution for today | work-typed | unset | rest-typed |
 | `momentum` | a `time_entries` row running now, or a completion in the last 30m | yes | no signal | idle > 3h during work hours |
@@ -273,7 +273,7 @@ inheritance pattern — no second column.
    much more me-directed → −1 (pull toward `them`); within band or
    unlabeled-heavy → 0. Share math excludes NULL from numerator *and*
    denominator. Pulled, not required — the same posture as category deficits (§6).
-3. **Metrics for free** — the close ritual already stamps mood per completion,
+3. **Metrics for free** — the close ritual already stamps a rating per completion,
    so *mood by motivation* ("work for them leaves you stressed 38% of the time;
    your own, 9%") costs zero new collection. §9.2 gains the motivation tiles,
    including the llm-vs-user label-share disclosure.

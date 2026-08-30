@@ -94,8 +94,8 @@ export class TasksEntity {
   @Column({ name: 'texture_color_token', type: 'text', nullable: true })
   textureColorToken!: string | null;
 
-  @Column({ name: 'completion_mood', type: 'text', nullable: true })
-  completionMood!: string | null;
+  @Column({ name: 'completion_score', type: 'integer', nullable: true })
+  completionScore!: number | null;
 
   @Column({ name: 'completion_note', type: 'text', nullable: true })
   completionNote!: string | null;

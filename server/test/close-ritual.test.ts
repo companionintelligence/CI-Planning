@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { closeTask, isMood } from '../src/services/task-close.js';
+import { closeTask, isRating, isScore, DECLINED_SCORE } from '../src/services/task-close.js';
 import { taskMetrics } from '../src/services/task-metrics.js';
 import { startTestServer, resetDb, api, type TestServer } from './helpers.js';
 
@@ -18,12 +18,30 @@ function insertTask(title: string, extra?: { status?: string; completedAt?: stri
   ).id;
 }
 const row = (id: string) =>
-  sqlite.prepare(`SELECT status, completed_at, reaction_at, completion_mood, completion_note, actual_minutes, notes FROM tasks WHERE id = ?`).get(id) as Record<string, unknown>;
+  sqlite.prepare(`SELECT status, completed_at, reaction_at, completion_score, completion_note, actual_minutes, notes FROM tasks WHERE id = ?`).get(id) as Record<string, unknown>;
 
-describe('isMood', () => {
-  it('accepts exactly the four faces', () => {
-    for (const m of ['happy', 'flat', 'frustrated', 'stressed']) expect(isMood(m)).toBe(true);
-    for (const m of ['Happy', 'sad', '', 3, null, {}]) expect(isMood(m)).toBe(false);
+/** A habit occurrence — a real task row with a parent, which is what actually gets rated. */
+function insertHabitOccurrence(title: string): string {
+  const parent = (sqlite.prepare(
+    `INSERT INTO tasks (id, title, owner_id, status, subtype, priority) VALUES (uuid7(), ?, ?, 'recurring', 'habit', 3) RETURNING id`,
+  ).get(`${title} template`, OWNER) as { id: string }).id;
+  return (sqlite.prepare(
+    `INSERT INTO tasks (id, title, owner_id, status, subtype, priority, recurrence_parent_id, occurrence_date, estimated_minutes)
+     VALUES (uuid7(), ?, ?, 'open', 'habit', 3, ?, '2026-08-29', 15) RETURNING id`,
+  ).get(title, OWNER, parent) as { id: string }).id;
+}
+
+describe('score vocabulary', () => {
+  it('isRating accepts exactly 1-5', () => {
+    for (const v of [1, 2, 3, 4, 5]) expect(isRating(v)).toBe(true);
+    for (const v of [0, -1, 6, 2.5, '3', null, {}]) expect(isRating(v)).toBe(false);
+  });
+
+  // DECLINED is storable but is NOT a rating — the whole point of keeping them separate.
+  it('isScore additionally accepts DECLINED, which isRating rejects', () => {
+    expect(isScore(DECLINED_SCORE)).toBe(true);
+    expect(isRating(DECLINED_SCORE)).toBe(false);
+    expect(isScore(6)).toBe(false);
   });
 });
 
@@ -35,12 +53,12 @@ describe('closeTask', () => {
 
   it('completes an open task and records the reflection', async () => {
     const id = insertTask('Write the memo');
-    const res = await closeTask(OWNER, id, { mood: 'happy', note: 'went fine', actualMinutes: 45 });
+    const res = await closeTask(OWNER, id, { score: 5, note: 'went fine', actualMinutes: 45 });
     expect(res.ok).toBe(true);
     const r = row(id);
     expect(r.status).toBe('done');
     expect(r.completed_at).toBeTruthy();
-    expect(r.completion_mood).toBe('happy');
+    expect(r.completion_score).toBe(5);
     expect(r.completion_note).toBe('went fine');
     expect(r.actual_minutes).toBe(45);
   });
@@ -50,7 +68,7 @@ describe('closeTask', () => {
   it('stamps reaction_at WITHOUT touching an existing completed_at', async () => {
     const earlier = '2026-07-01T10:00:00.000Z';
     const id = insertTask('Finished last week', { status: 'done', completedAt: earlier });
-    await closeTask(OWNER, id, { mood: 'frustrated' });
+    await closeTask(OWNER, id, { score: 2 });
     const r = row(id);
     expect(r.completed_at).toBe(earlier);                       // task end unchanged
     expect(Date.parse(r.reaction_at as string)).toBeGreaterThan(Date.parse(earlier)); // reacted later
@@ -74,11 +92,40 @@ describe('closeTask', () => {
     expect(r.completion_note).toBe('how it went'); // its own column
   });
 
-  it('rejects an unknown mood rather than storing it', async () => {
-    const id = insertTask('Bad mood value');
-    await closeTask(OWNER, id, { mood: 'ecstatic' });
-    expect(row(id).completion_mood).toBeNull();
+  it('rejects an out-of-range score rather than storing it', async () => {
+    const id = insertTask('Bad score value');
+    await closeTask(OWNER, id, { score: 9 });
+    expect(row(id).completion_score).toBeNull();
     expect(row(id).status).toBe('done'); // the completion still happened
+  });
+
+  // The DECLINED contract, which is what keeps a dismissal from masquerading as a rating.
+  it('stores DECLINED without stamping reaction_at', async () => {
+    const id = insertTask('Dismissed');
+    const res = await closeTask(OWNER, id, { score: DECLINED_SCORE });
+    expect(res.ok && res.reactionAt).toBeNull();
+    const r = row(id);
+    expect(r.completion_score).toBe(DECLINED_SCORE);
+    expect(r.reaction_at).toBeNull();
+    expect(r.status).toBe('done');
+  });
+
+  // Regression for the 0161 rationale: were a dismissal stored as 3, it would both
+  // pollute the mean and — via reaction_at — displace a real rating in triality's window.
+  it('a decline is not a 3', async () => {
+    const id = insertTask('Dismissed again');
+    await closeTask(OWNER, id, { score: DECLINED_SCORE });
+    expect(row(id).completion_score).not.toBe(3);
+  });
+
+  // The client guard is gone (0161); the server never had one. Pin that.
+  it('rates a habit occurrence like any other task', async () => {
+    const id = insertHabitOccurrence('Morning pages');
+    const res = await closeTask(OWNER, id, { score: 4, actualMinutes: 12 });
+    expect(res.ok).toBe(true);
+    const r = row(id);
+    expect(r.completion_score).toBe(4);
+    expect(r.reaction_at).toBeTruthy();
   });
 
   it('drops absurd or negative durations instead of clamping them', async () => {
@@ -92,19 +139,30 @@ describe('closeTask', () => {
   });
 
   it('404s a task belonging to nobody', async () => {
-    const res = await closeTask(OWNER, 'nope', { mood: 'happy' });
+    const res = await closeTask(OWNER, 'nope', { score: 5 });
     expect(res).toEqual({ ok: false, error: 'not_found' });
   });
 
   it('POST /api/tasks/:id/close round-trips', async () => {
     const id = insertTask('Via HTTP');
     const { status, body } = await api(srv.url, `/api/tasks/${id}/close`, {
-      method: 'POST', json: { mood: 'stressed', note: 'tight deadline', actual_minutes: 15 },
+      method: 'POST', json: { score: 1, note: 'tight deadline', actual_minutes: 15 },
     });
     expect(status).toBe(200);
-    expect(body.closed.mood).toBe('stressed');
+    expect(body.closed.score).toBe(1);
     expect(body.closed.reaction_at).toBeTruthy();
     expect(body.task.status).toBe('done');
+  });
+
+  // Before 0161 an unknown value returned 200 having written nothing, so a client bug was
+  // indistinguishable from success and the rating vanished silently.
+  it('400s a present-but-invalid score instead of silently dropping it', async () => {
+    const id = insertTask('Bad HTTP score');
+    const { status } = await api(srv.url, `/api/tasks/${id}/close`, {
+      method: 'POST', json: { score: 7 },
+    });
+    expect(status).toBe(400);
+    expect(row(id).completion_score).toBeNull();
   });
 });
 
@@ -129,13 +187,15 @@ describe('taskMetrics', () => {
     const work = seedTag('work', 'direction');
     const home = seedTag('home', 'direction');
     const a = insertTask('open work'); tagTask(a, work);
-    const b = insertTask('done work'); tagTask(b, work); await closeTask(OWNER, b, { mood: 'happy', actualMinutes: 50 });
+    const b = insertTask('done work'); tagTask(b, work); await closeTask(OWNER, b, { score: 5, actualMinutes: 50 });
     const c = insertTask('open home'); tagTask(c, home);
 
     const m = await taskMetrics(OWNER, 30);
     const w = m.directions.find((d) => d.name === 'work')!;
-    expect(w).toMatchObject({ open: 1, completed: 1, actualMinutes: 50, moodSamples: 1 });
-    expect(w.mood.happy).toBe(1);
+    expect(w).toMatchObject({ open: 1, completed: 1, actualMinutes: 50 });
+    expect(w.score.samples).toBe(1);
+    expect(w.score.counts[5]).toBe(1);
+    expect(w.score.mean).toBe(5);
     expect(m.directions.find((d) => d.name === 'home')).toMatchObject({ open: 1, completed: 0 });
   });
 
@@ -174,11 +234,53 @@ describe('taskMetrics', () => {
     expect((await taskMetrics(OWNER, 30)).directions.length).toBe(0);
   });
 
+  // 0161: habit ratings belong on the tab, but in their own bucket. The task numbers must
+  // not move when a habit is rated — that separation is the whole of the owner's request.
+  it('reports habits separately and leaves the task numbers alone', async () => {
+    const t = insertTask('a real task');
+    await closeTask(OWNER, t, { score: 5, actualMinutes: 40 });
+    const h = insertHabitOccurrence('Stretch');
+    await closeTask(OWNER, h, { score: 2, actualMinutes: 10 });
+
+    const m = await taskMetrics(OWNER, 30);
+    expect(m.totals.completed).toBe(1);
+    expect(m.totals.actualMinutes).toBe(40);
+    expect(m.totals.score.mean).toBe(5);
+
+    expect(m.habits.totals.completed).toBe(1);
+    expect(m.habits.totals.actualMinutes).toBe(10);
+    expect(m.habits.totals.score.mean).toBe(2);
+  });
+
+  // The bug this feature would otherwise have shipped with: rate a habit, see nothing.
+  it('a rated habit is no longer invisible', async () => {
+    const h = insertHabitOccurrence('Walk');
+    await closeTask(OWNER, h, { score: 4 });
+    expect((await taskMetrics(OWNER, 30)).habits.totals.score.samples).toBe(1);
+  });
+
+  it('counts declines apart from ratings', async () => {
+    const a = insertTask('rated');    await closeTask(OWNER, a, { score: 3 });
+    const b = insertTask('declined'); await closeTask(OWNER, b, { score: DECLINED_SCORE });
+
+    const t = (await taskMetrics(OWNER, 30)).totals.score;
+    expect(t.samples).toBe(1);
+    expect(t.declined).toBe(1);
+    expect(t.mean).toBe(3); // the decline must not drag it
+  });
+
+  // The habit TEMPLATE is permanently 'recurring', so it used to sit in `open` forever.
+  it('does not count a habit template as an open task', async () => {
+    insertHabitOccurrence('Has a template');
+    expect((await taskMetrics(OWNER, 30)).totals.open).toBe(0);
+  });
+
   it('GET /api/metrics/tasks answers the axis shape', async () => {
     const { status, body } = await api(srv.url, '/api/metrics/tasks?days=30');
     expect(status).toBe(200);
     expect(body).toHaveProperty('directions');
     expect(body).toHaveProperty('categories');
+    expect(body).toHaveProperty('habits');
     expect(body.window.days).toBe(30);
   });
 

@@ -30,14 +30,14 @@ const iso = (minutes: number, base: Date = NOW): string => new Date(base.getTime
 
 // ── fixtures ──────────────────────────────────────────────────────────────────────
 
-function insertTask(o: { status?: string; completedAt?: string | null; mood?: string | null; reactionAt?: string | null } = {}): string {
+function insertTask(o: { status?: string; completedAt?: string | null; score?: number | null; reactionAt?: string | null } = {}): string {
   return (
     sqlite
       .prepare(
-        `INSERT INTO tasks (id, title, owner_id, status, completed_at, completion_mood, reaction_at)
+        `INSERT INTO tasks (id, title, owner_id, status, completed_at, completion_score, reaction_at)
          VALUES (uuid7(), 'fixture', ?, ?, ?, ?, ?) RETURNING id`,
       )
-      .get(OWNER, o.status ?? 'open', o.completedAt ?? null, o.mood ?? null, o.reactionAt ?? null) as { id: string }
+      .get(OWNER, o.status ?? 'open', o.completedAt ?? null, o.score ?? null, o.reactionAt ?? null) as { id: string }
   ).id;
 }
 
@@ -141,12 +141,18 @@ describe('motivation_balance — tasks.motivation column guard', () => {
       expect(v.dims.motivation_balance).toBe(0);
       expect(v.meta.active).not.toContain('motivation_balance');
     } finally {
-      // Put the sibling ticket's columns back exactly as 0141 defines them — including
-      // cid ORDER (motivation before motivation_source). A bare ADD COLUMN appends at
-      // the last cid, and the baseline schema snapshot reads PRAGMA table_info on the
-      // shared sequential DB — so re-appending only `motivation` would leave it after
-      // motivation_source for every later test file and make that snapshot
-      // order-dependent (flaky). Dropping the column BEHIND it restores 0141's order.
+      // Put the sibling ticket's columns back, and keep the pair adjacent in cid order
+      // (motivation before motivation_source) by dropping the one BEHIND it too — a bare
+      // ADD COLUMN can only append.
+      //
+      // This restores the two columns relative to each OTHER; it cannot restore them
+      // relative to the rest of the table, because anything a migration appended after
+      // motivation_source now sits before them. 0161's completion_score is the first
+      // column for which that is true, and while baseline.characterization's schema
+      // snapshot compared cid ORDER it failed for exactly that reason — in a file
+      // unrelated to either ticket. That snapshot now sorts column names, so this dance
+      // is tidiness rather than the thing standing between here and a flaky suite. Do not
+      // reintroduce an order-sensitive schema assertion on the shared sequential DB.
       if (hadColumn && !hasMotivationColumn()) {
         sqlite.exec(`ALTER TABLE tasks DROP COLUMN motivation_source`);
         sqlite.exec(`ALTER TABLE tasks ADD COLUMN motivation TEXT`);
@@ -189,28 +195,42 @@ describe('in_work_hours (§3: inside → +1 · outside → −1 · hours unknown
 
 // ── §3 row 2: day_energy ───────────────────────────────────────────────────────────
 
-describe('day_energy (§3: happy → +1 · flat/no recent reading → 0 · frustrated/stressed → −1)', () => {
-  it('+1 for a happy reflection within 3h', async () => {
-    insertTask({ status: 'done', completedAt: iso(-60), mood: 'happy', reactionAt: iso(-60) });
+describe('day_energy (§3: 4-5 → +1 · 3/no recent reading → 0 · 1-2 → −1)', () => {
+  it('+1 for a 5 within 3h', async () => {
+    insertTask({ status: 'done', completedAt: iso(-60), score: 5, reactionAt: iso(-60) });
     expect((await buildSituationVector(OWNER, NOW)).dims.day_energy).toBe(1);
   });
 
-  it('0 for a flat reflection within 3h — and the dim stays active (honest zero ≠ unsensed)', async () => {
-    insertTask({ status: 'done', completedAt: iso(-60), mood: 'flat', reactionAt: iso(-60) });
+  it('0 for a 3 within 3h — and the dim stays active (honest zero ≠ unsensed)', async () => {
+    insertTask({ status: 'done', completedAt: iso(-60), score: 3, reactionAt: iso(-60) });
     const v = await buildSituationVector(OWNER, NOW);
     expect(v.dims.day_energy).toBe(0);
     expect(v.meta.active).toContain('day_energy');
   });
 
-  it('−1 for a frustrated reflection within 3h', async () => {
-    insertTask({ status: 'done', completedAt: iso(-45), mood: 'frustrated', reactionAt: iso(-45) });
+  it('−1 for a 2 within 3h', async () => {
+    insertTask({ status: 'done', completedAt: iso(-45), score: 2, reactionAt: iso(-45) });
     expect((await buildSituationVector(OWNER, NOW)).dims.day_energy).toBe(-1);
   });
 
-  it('the LATEST reading wins: stressed after happy → −1', async () => {
-    insertTask({ status: 'done', completedAt: iso(-120), mood: 'happy', reactionAt: iso(-120) });
-    insertTask({ status: 'done', completedAt: iso(-20), mood: 'stressed', reactionAt: iso(-20) });
+  it('the LATEST reading wins: a 1 after a 5 → −1', async () => {
+    insertTask({ status: 'done', completedAt: iso(-120), score: 5, reactionAt: iso(-120) });
+    insertTask({ status: 'done', completedAt: iso(-20), score: 1, reactionAt: iso(-20) });
     expect((await buildSituationVector(OWNER, NOW)).dims.day_energy).toBe(-1);
+  });
+
+  // A DECLINED normally stamps no reaction_at — but a note written WITHOUT picking a face
+  // stamps one, putting a score-0 row in this window. It must not win LIMIT 1 and displace
+  // the real rating behind it; that is the whole reason a dismissal is 0 and not a 3.
+  it('a declined-but-noted completion never displaces a real earlier rating', async () => {
+    insertTask({ status: 'done', completedAt: iso(-90), score: 5, reactionAt: iso(-90) });
+    insertTask({ status: 'done', completedAt: iso(-10), score: 0, reactionAt: iso(-10) });
+    expect((await buildSituationVector(OWNER, NOW)).dims.day_energy).toBe(1);
+  });
+
+  it('a declined completion alone reads as no data, not as a bad day', async () => {
+    insertTask({ status: 'done', completedAt: iso(-10), score: 0, reactionAt: iso(-10) });
+    expect((await buildSituationVector(OWNER, NOW)).dims.day_energy).toBe(0);
   });
 
   it('0 with no reflection at all (no data)', async () => {
@@ -218,18 +238,18 @@ describe('day_energy (§3: happy → +1 · flat/no recent reading → 0 · frust
   });
 
   it('0 when the only reading is 4h old (outside the 3h recency window)', async () => {
-    insertTask({ status: 'done', completedAt: iso(-240), mood: 'happy', reactionAt: iso(-240) });
+    insertTask({ status: 'done', completedAt: iso(-240), score: 5, reactionAt: iso(-240) });
     expect((await buildSituationVector(OWNER, NOW)).dims.day_energy).toBe(0);
   });
 
   it('windows on reaction_at, not completed_at: an old completion reflected on 1h ago counts', async () => {
-    insertTask({ status: 'done', completedAt: iso(-10 * DAY_MIN), mood: 'happy', reactionAt: iso(-60) });
+    insertTask({ status: 'done', completedAt: iso(-10 * DAY_MIN), score: 5, reactionAt: iso(-60) });
     expect((await buildSituationVector(OWNER, NOW)).dims.day_energy).toBe(1);
   });
 
   it('windows on reaction_at, not completed_at: a fresh completion with a 4h-old reaction is stale', async () => {
     // If the encoder windowed on completed_at (−10m) this would read +1.
-    insertTask({ status: 'done', completedAt: iso(-10), mood: 'happy', reactionAt: iso(-240) });
+    insertTask({ status: 'done', completedAt: iso(-10), score: 5, reactionAt: iso(-240) });
     expect((await buildSituationVector(OWNER, NOW)).dims.day_energy).toBe(0);
   });
 });
@@ -490,7 +510,7 @@ describe('vector shape and determinism', () => {
 
   it('same DB + same now → deep-equal vectors (no wall clock, no randomness)', async () => {
     // A busy fixture touching every source.
-    insertTask({ status: 'done', completedAt: iso(-60), mood: 'happy', reactionAt: iso(-55) });
+    insertTask({ status: 'done', completedAt: iso(-60), score: 5, reactionAt: iso(-55) });
     insertBlock(iso(20), iso(80), { locked: true });
     insertEntry(insertTask(), iso(-40), null); // running timer
     setPriority('health', 9, 3, 10);

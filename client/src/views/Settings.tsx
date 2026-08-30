@@ -579,7 +579,17 @@ export function Settings() {
       const { url } = await api.oauth.googleStart();
       window.location.href = url;
     } catch (err) {
-      showToast((err as Error).message, 'error');
+      // The server's fail-closed codes are identifiers, not sentences. Translate the
+      // ones a user can actually act on — an untranslated `google_client_id_missing`
+      // toast is barely better than the Google error page it exists to replace.
+      const raw = (err as Error).message;
+      const friendly: Record<string, string> = {
+        google_client_id_missing:
+          'No Google OAuth client is configured yet — paste a Web client ID and secret into Connections above, then try again.',
+        google_mode_not_live: 'Google integration is not in live mode.',
+        oauth_disabled_in_test_mode: 'Google sign-in is disabled while the server runs in test auth mode.',
+      };
+      showToast(friendly[raw] ?? raw, 'error');
     }
   }
 

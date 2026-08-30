@@ -3,7 +3,7 @@ import { Pencil, Repeat, Unlink, Lock, Trash2, X, Save, Star, Sparkles, Play, Pl
 import {
   tasks, taskOf, blocks, tags, patternPrefs, categoryPrefs, patterns, patternTypes, blockTemplates,
   setElementModal, showToast, refetchBlocks, refetchFlightPlan, refetchTasks,
-  askRecurringScope, isRecurringOccurrence,
+  askRecurringScope, isRecurringOccurrence, openCloseRitual,
 } from '../stores/index.js';
 import { activeTask, activeBlock, clearActiveEntity } from '../stores/selection.js';
 import { detailsOpen } from '../stores/ui.js';
@@ -299,7 +299,10 @@ export function PlannerEntityCard(props: {
   async function toggleSub(s: Task) {
     try {
       if (s.status === 'done') await api.tasks.update(s.id, { status: 'open', completed_at: null });
-      else await api.tasks.update(s.id, { completed: true });
+      else {
+        await api.tasks.update(s.id, { completed: true });
+        openCloseRitual(s);
+      }
       refetchTasks();
     } catch (err) { showToast((err as Error).message, 'error'); }
   }

@@ -24,6 +24,7 @@ import { advanceObjectives } from './advance-objectives.js';
 import { calibrateEstimates } from './calibrate-estimates.js';
 import { calibrateTriality } from '../services/triality-learning.js';
 import { calibrateClassification } from '../services/classification-learning.js';
+import { calibrateDismissals } from '../services/dismissal-learning.js';
 import { ollamaScorer } from '../services/classification-score.js';
 import { calibratePlanLoop } from '../services/plan-loop-learning.js';
 import { freezeStars } from './freeze-stars.js';
@@ -61,7 +62,7 @@ async function autoBlockAfterPromote(): Promise<number> {
 
 /** Zeroed ingest counters — the per-account loop below sums into this. */
 function emptyIngestTotals(): IngestResult {
-  return { itemsProcessed: 0, possiblesCreated: 0, possiblesUpdated: 0, blocksCreated: 0, promoted: 0, duplicates: 0, failed: 0 };
+  return { itemsProcessed: 0, possiblesCreated: 0, possiblesUpdated: 0, blocksCreated: 0, promoted: 0, duplicates: 0, failed: 0, deferred: 0 };
 }
 
 function addIngestTotals(a: IngestResult, b: IngestResult): IngestResult {
@@ -73,6 +74,7 @@ function addIngestTotals(a: IngestResult, b: IngestResult): IngestResult {
     promoted: a.promoted + b.promoted,
     duplicates: a.duplicates + b.duplicates,
     failed: a.failed + b.failed,
+    deferred: a.deferred + b.deferred,
   };
 }
 
@@ -116,7 +118,7 @@ async function execute(kind: string): Promise<JobOutcome> {
         itemsUpdated: r.possiblesUpdated,
         // Email is review-gated: nothing is auto-promoted, so the log says "awaiting
         // review" rather than claiming a promotion count that is now always 0.
-        log: `Processed ${r.itemsProcessed} emails → ${r.possiblesCreated} new suggestion(s) awaiting review, ${r.possiblesUpdated} updated (${r.duplicates} duplicate(s))${r.failed ? `, ${r.failed} failed` : ''}${placed ? `; auto-placed ${placed.blocksCreated ?? 0}` : ''}`,
+        log: `Processed ${r.itemsProcessed} emails → ${r.possiblesCreated} new suggestion(s) awaiting review, ${r.possiblesUpdated} updated (${r.duplicates} duplicate(s))${r.failed ? `, ${r.failed} failed` : ''}${r.deferred ? `, ${r.deferred} deferred (Ollama unavailable — retried next run)` : ''}${placed ? `; auto-placed ${placed.blocksCreated ?? 0}` : ''}`,
       };
     }
     case 'ingest_gcal': {
@@ -146,7 +148,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       return {
         itemsCreated: r.possiblesCreated,
         itemsUpdated: r.possiblesUpdated,
-        log: `Processed ${r.itemsProcessed} events → ${r.possiblesCreated} new possibles; auto-promoted ${r.promoted} (${r.duplicates} duplicate(s))${r.failed ? `, ${r.failed} failed` : ''}`,
+        log: `Processed ${r.itemsProcessed} events → ${r.possiblesCreated} new possibles; auto-promoted ${r.promoted} (${r.duplicates} duplicate(s))${r.failed ? `, ${r.failed} failed` : ''}${r.deferred ? `, ${r.deferred} deferred (Ollama unavailable — retried next run)` : ''}`,
       };
     }
     case 'memory_suggest': {
@@ -343,7 +345,31 @@ async function execute(kind: string): Promise<JobOutcome> {
       const { changes } = await store()
         .prepare(`DELETE FROM sync_events WHERE at < datetime('now', '-30 days')`)
         .run();
-      return { itemsCreated: 0, itemsUpdated: changes, log: `Pruned ${changes} sync_event row(s) older than 30 days` };
+
+      // audit_log has NO equivalent retention, deliberately: routes/backup.ts excludes
+      // it from export/restore precisely because it is meant to be a permanent,
+      // host-local record ("a restore must not fabricate historical actor history") —
+      // pruning it by age the way sync_events is pruned would defeat that purpose, so
+      // this does not do that. But a permanently-growing, permanently-unpruned table
+      // with NO visibility anywhere is its own risk. This daily maintenance pass is an
+      // operator's natural place to notice it creeping, long before it becomes a real
+      // problem — the count rides along in the SAME log line sync_events' own pruning
+      // already writes to the Jobs view, at no extra job/cron/schedule of its own.
+      const auditRow = await store().prepare(`SELECT COUNT(*) AS n FROM audit_log`).get<{ n: number }>();
+      const auditCount = auditRow?.n ?? 0;
+      // 1,000,000 is not an incident threshold — it is "large enough that a human
+      // should look, not large enough that anything is actually broken yet." A daily
+      // INFO line is easy to scroll past for months; this WARN is the version an
+      // operator watching logs is more likely to actually notice.
+      if (auditCount > 1_000_000) {
+        logger.warn('audit_log has grown past 1,000,000 rows with no retention policy', { rows: auditCount });
+      }
+
+      return {
+        itemsCreated: 0,
+        itemsUpdated: changes,
+        log: `Pruned ${changes} sync_event row(s) older than 30 days; audit_log now has ${auditCount} row(s) (unpruned by design)`,
+      };
     }
     case 'purge_objectives': {
       // Reap objectives whose 48h "delete permanently" window has expired (0129/0130).
@@ -397,9 +423,22 @@ async function execute(kind: string): Promise<JobOutcome> {
         f.indexed === 0
           ? `${f.field}: ${f.corrections} correction(s), under the ${r.floor} floor — stock prompt stands`
           : `${f.field}: ${f.indexed} exemplar(s) from ${f.corrections} correction(s)` +
+            (f.reused ? `, ${f.reused} reused` : '') +
             (f.accuracy == null ? ', accuracy not measured' : `, ${Math.round(f.accuracy * 100)}% on ${f.heldOut} held out`),
       );
       return { itemsCreated: 0, itemsUpdated: indexed, log: `Classification calibration — ${parts.join('; ')}` };
+    }
+    case 'calibrate_dismissals': {
+      // Close-loop wave, ticket 3 — bounded batch learning over dismissal evidence.
+      // Owner-scoped (see OWNER_SCOPED_KINDS): every read filters on the owner, and
+      // evidence is never pooled across owners. A cron/agent write, so it
+      // deliberately does NOT stamp owner attribution (WHO rule, owner ruling
+      // 2026-07-16).
+      const r = await calibrateDismissals(currentOwnerId(), new Date());
+      const log = r.indexed === 0
+        ? `${r.settled} settled dismissal(s), under the ${r.floor} floor — no exemplars written`
+        : `${r.indexed} exemplar(s) from ${r.settled} settled dismissal(s)`;
+      return { itemsCreated: 0, itemsUpdated: r.indexed, log: `Dismissal calibration — ${log}` };
     }
     case 'calibrate_estimates': {
       const r = await calibrateEstimates();
@@ -450,8 +489,29 @@ async function execute(kind: string): Promise<JobOutcome> {
   }
 }
 
-/** Run a job by kind, recording a job_runs row and broadcasting start/finish over SSE. */
+/**
+ * Run a job by kind, recording a job_runs row and broadcasting start/finish over SSE.
+ *
+ * Refuses to start when this (kind, owner) is already running — see `runInFlight`. The
+ * refusal opens no run row and emits no SSE, exactly like the tick-level skip: a run that
+ * did not happen must not appear in the Jobs view as one that did.
+ */
 export async function runJob(kind: string): Promise<JobRunResult> {
+  const owner = currentOwnerId();
+  const runKey = `${kind}:${owner}`;
+  if (runInFlight.has(runKey)) {
+    logger.warn(`Job ${kind} skipped — a run is already in progress for this owner`, { owner });
+    return skippedRun(kind, 'skipped — a run of this job is already in progress');
+  }
+  runInFlight.add(runKey);
+  try {
+    return await runJobInner(kind);
+  } finally {
+    runInFlight.delete(runKey);
+  }
+}
+
+async function runJobInner(kind: string): Promise<JobRunResult> {
   const startedAt = new Date().toISOString();
   const run = await store()
     .prepare(
@@ -524,6 +584,9 @@ const OWNER_SCOPED_KINDS = new Set([
   'calibrate_classification',
   // Phase M §A0: plan-loop evidence is per-owner by construction, never pooled.
   'calibrate_plan_loop',
+  // Close-loop wave, ticket 3: the dismissal evidence log is per-owner by
+  // construction — never pool one owner's dismissals into another's rollup.
+  'calibrate_dismissals',
   'freeze_stars',
   'reset_routines',
 ]);
@@ -544,7 +607,7 @@ async function allOwnerIds(): Promise<string[]> {
  * owner's context — it does NOT fan out (a user "run now" is for their own account).
  */
 /**
- * Kinds whose previous scheduled run hasn't returned yet.
+ * Kinds whose previous scheduled FAN-OUT hasn't returned yet (the cron-tick lock).
  *
  * A cron tick must never start a job kind that is still running. `ingest_gcal` over a
  * freshly-connected calendar takes far longer than its 30-minute period (it embeds every
@@ -552,12 +615,37 @@ async function allOwnerIds(): Promise<string[]> {
  * fan-out on top of the last — nine concurrent runs, each spawning its own MCP child, all
  * grinding the same rows.
  *
+ * Kind-level, not per-owner, because the unit it protects is the whole per-owner fan-out
+ * in `runScheduledJobInner`: a second tick must be refused outright, not allowed to race
+ * ahead through the owners the first tick has already passed.
+ *
  * In-process rather than a DB flag ON PURPOSE: the thing being guarded is "this server is
  * already doing it", and a row can outlive the process that wrote it. A DB lock would
  * need its own liveness story (see the restart sweep in boot) and could wedge the
  * scheduler permanently after an unclean exit.
  */
-const inFlight = new Set<string>();
+const tickInFlight = new Set<string>();
+
+/**
+ * `kind:owner` pairs with a run in progress — the lock on an INDIVIDUAL run, held by
+ * `runJob` itself and therefore by every path that starts one.
+ *
+ * The tick lock above only ever covered the cron. Both manual triggers went straight to
+ * `runJob` and were unguarded: `POST /api/jobs/run-now` is deliberately not admin-gated
+ * (it runs the caller's own ingest), so any authenticated user could re-fire it at will
+ * and stack exactly the concurrent fan-outs — each with its own MCP child — that the tick
+ * lock exists to prevent. Guarding inside `runJob` closes every entrance at once.
+ *
+ * Keyed per owner rather than per kind because these kinds are owner-scoped work: one
+ * owner's ingest running is no reason to refuse another's, and a kind-level lock here
+ * would let a single busy tenant block every other tenant's manual sync.
+ */
+const runInFlight = new Set<string>();
+
+/** The result a refused run reports: nothing ran, and the caller is told why. */
+function skippedRun(kind: string, log: string): JobRunResult {
+  return { kind, status: 'skipped', itemsCreated: 0, itemsUpdated: 0, log };
+}
 
 /**
  * Mark job_runs left `running` by a previous process as errored.
@@ -580,15 +668,15 @@ export async function failInterruptedJobRuns(): Promise<number> {
 export async function runScheduledJob(kind: string): Promise<void> {
   // Skip rather than queue: these are periodic refreshes, so the next tick is a better
   // answer than a backlog of identical runs racing each other.
-  if (inFlight.has(kind)) {
+  if (tickInFlight.has(kind)) {
     logger.warn(`Scheduled job ${kind} skipped — the previous run is still going`);
     return;
   }
-  inFlight.add(kind);
+  tickInFlight.add(kind);
   try {
     await runScheduledJobInner(kind);
   } finally {
-    inFlight.delete(kind);
+    tickInFlight.delete(kind);
   }
 }
 
@@ -631,14 +719,36 @@ async function runScheduledJobInner(kind: string): Promise<void> {
  */
 export const RUN_NOW_KINDS = ['sync_calendar', 'ingest_gcal', 'ingest_gmail', 'nightly_grooming'] as const;
 
-/** Trigger the current owner's own ingest right now instead of waiting for the cron.
- *  Sequential — `runJob` never throws, so one kind failing doesn't stop the rest. */
+/** Owners with a run-now sequence in progress. */
+const ingestNowInFlight = new Set<string>();
+
+/**
+ * Trigger the current owner's own ingest right now instead of waiting for the cron.
+ * Sequential — `runJob` never throws, so one kind failing doesn't stop the rest.
+ *
+ * Locked for the whole SEQUENCE, not just per kind. `runJob`'s own guard would already
+ * refuse a duplicate of the kind currently executing, but these four run one after
+ * another: a second request arriving while the first is on `ingest_gcal` would find
+ * `sync_calendar` free — the first having finished it — and redo it. The endpoint is
+ * un-gated and a button drives it, so double-fires are the expected case, not the
+ * exotic one.
+ */
 export async function runIngestNow(): Promise<JobRunResult[]> {
-  const results: JobRunResult[] = [];
-  for (const kind of RUN_NOW_KINDS) {
-    results.push(await runJob(kind));
+  const owner = currentOwnerId();
+  if (ingestNowInFlight.has(owner)) {
+    logger.warn('run-now skipped — an ingest sequence is already running for this owner', { owner });
+    return RUN_NOW_KINDS.map((kind) => skippedRun(kind, 'skipped — a sync is already running'));
   }
-  return results;
+  ingestNowInFlight.add(owner);
+  try {
+    const results: JobRunResult[] = [];
+    for (const kind of RUN_NOW_KINDS) {
+      results.push(await runJob(kind));
+    }
+    return results;
+  } finally {
+    ingestNowInFlight.delete(owner);
+  }
 }
 
 export async function startCronJobs() {

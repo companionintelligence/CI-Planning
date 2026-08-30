@@ -166,9 +166,24 @@ describe('behavior baseline — schema shape', () => {
     const tables = (sqlite
       .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name <> 'schema_migrations' ORDER BY name`)
       .all() as { name: string }[]).map((t) => t.name);
+    // Column names SORTED, not in cid order. The assertion this test makes is in its
+    // title — every table and column NAME survives — and physical cid order is not a
+    // contract anyone can depend on: rows come back as objects keyed by name, so nothing
+    // reads a column by position.
+    //
+    // Sorting is what makes the snapshot immune to a legal ALTER dance. `ALTER TABLE ADD
+    // COLUMN` can only append, so any test that temporarily drops a column and restores it
+    // moves that column to the last cid. triality-vector.test.ts does exactly that to reach
+    // the "0141 column absent" branch, and used to compensate by dropping the column BEHIND
+    // it too — a trick that silently stops working the moment a migration appends anything
+    // after the pair it restores (0161 did: completion_score). That produced a snapshot
+    // mismatch here, in a file with no connection to either change, reported as a schema
+    // regression it was not. Sorted names cannot express that difference at all.
     const shape = tables.map((t) => ({
       table: t,
-      columns: (sqlite.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).map((c) => c.name),
+      columns: (sqlite.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[])
+        .map((c) => c.name)
+        .sort(),
     }));
     expect(shape).toMatchSnapshot('schema: tables + column names');
   });

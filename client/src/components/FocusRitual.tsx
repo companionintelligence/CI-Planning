@@ -2,7 +2,7 @@ import { createSignal, createMemo, createEffect, createResource, onCleanup, onMo
 import { X, FileText, ListChecks, Tag, Check, RotateCcw, ArrowRight } from 'lucide-solid';
 import { api, type Block, type ExtendMove } from '../lib/api.js';
 import { colorVar } from '../lib/pattern-meta.js';
-import { tasks, taskOf, refetchTasks, refetchBlocks, showToast, prefs } from '../stores/index.js';
+import { tasks, taskOf, refetchTasks, refetchBlocks, showToast, prefs, openCloseRitual } from '../stores/index.js';
 import { focusState, focusCues, formatRemaining, overrunNote, type Cue } from '../lib/focus.js';
 
 /**
@@ -119,7 +119,13 @@ export function FocusRitual(props: { block: Block; next?: Block | null; onClose:
   async function objectiveComplete() {
     setBusy(true);
     try {
-      if (props.block.task_id) await api.tasks.update(props.block.task_id, { completed: true });
+      if (props.block.task_id) {
+        await api.tasks.update(props.block.task_id, { completed: true });
+        // The single most informative place to ask: the user just finished a focused
+        // block and the work is fresh. `preferBlockId` pins the duration to THIS block's
+        // span rather than the task's earliest placement.
+        openCloseRitual(taskOf(props.block.task_id), props.block.id);
+      }
       void refetchTasks(); void refetchBlocks(); exit();
     } catch (e) { showToast((e as Error).message, 'error'); setBusy(false); }
   }

@@ -2,16 +2,52 @@ import Router from '@koa/router';
 import { PassThrough } from 'node:stream';
 import { currentOwnerId } from '../lib/context.js';
 import { store } from '../db/store.js';
+import { logger } from '../lib/logger.js';
 
 const clients = new Map<PassThrough, string>(); // stream → ownerId
 
 /** Maximum events replayed to a reconnecting client before falling back to a full resync. */
 const REPLAY_LIMIT = 500;
 
+/**
+ * A stream buffering more than this many un-flushed bytes has stopped draining — the
+ * client is gone (dead socket, backgrounded tab the OS paused, a proxy that swallowed
+ * the close) without ever telling us. Node's `Writable` does not enforce any such cap
+ * on its own: `write()` keeps accepting data and the internal buffer keeps growing for
+ * as long as we keep calling it, which for a chatty owner and one stuck client is
+ * unbounded growth with no ceiling.
+ *
+ * 1MB is generous for a live client — SSE frames here are small JSON payloads, so a
+ * healthy reader drains between broadcasts and never gets remotely close — while still
+ * bounding the worst case to a fixed, small cost per stuck stream instead of "forever."
+ */
+const MAX_BUFFERED_BYTES = 1_000_000;
+
+/** Error shape recognized for "this table doesn't exist YET", never for a live failure.
+ *
+ * Only reachable in the pre-migration test harness (boot.ts awaits migrations to
+ * completion BEFORE the server starts listening, so a real request can never observe
+ * `sync_events` missing) — but the check still has to be precise: it must not also
+ * swallow a genuine insert failure, which is the whole defect this exists to close.
+ * SQLite's own wording is "no such table: X"; Postgres reports SQLSTATE 42P01
+ * (undefined_table) on its error object, which survives the store facade's pass-through
+ * untouched (db/pg.ts re-throws driver errors verbatim).
+ */
+export function isMissingTableError(err: unknown): boolean {
+  if ((err as { code?: string } | null)?.code === '42P01') return true;
+  return /no such table/i.test((err as Error)?.message ?? '');
+}
+
 /** Register an SSE client for an owner. Returns an unregister function. */
 export function registerClient(stream: PassThrough, ownerId: string): () => void {
   clients.set(stream, ownerId);
   return () => { clients.delete(stream); };
+}
+
+/** Test-only: is this stream still registered? Lets a backpressure test assert
+ *  disconnection without reaching into the module-private `clients` map directly. */
+export function __isRegistered(stream: PassThrough): boolean {
+  return clients.has(stream);
 }
 
 /**
@@ -39,8 +75,16 @@ export async function logSyncEvent(ownerId: string, event: string, data: unknown
       )
       .get<{ seq: number }>(ownerId, entity, entityId, version, event, JSON.stringify(data), at);
     return Number(row?.seq ?? 0);
-  } catch {
-    // sync_events table may not exist yet (pre-migration test state); continue
+  } catch (err) {
+    if (isMissingTableError(err)) return 0; // pre-migration test state; see the check's own doc
+    // A REAL insert failure, not the documented pre-migration case. Returning 0 here is
+    // still correct — the caller (broadcast) must degrade to a live-only frame rather
+    // than lose the event outright — but doing so SILENTLY is not: `id: 0` tells a
+    // reconnecting client's cursor nothing, so this one event becomes permanently
+    // unreplayable with no trace of why. That has to be loud.
+    logger.error('logSyncEvent insert failed — this event will not be replayable on reconnect', {
+      ownerId, event, err: (err as Error).message,
+    });
     return 0;
   }
 }
@@ -49,7 +93,25 @@ export async function logSyncEvent(ownerId: string, event: string, data: unknown
 export function emitToClients(ownerId: string, seq: number, event: string, data: unknown): void {
   const idLine = seq > 0 ? `id: ${seq}\n` : '';
   const msg = `${idLine}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-  for (const [c, owner] of clients) if (owner === ownerId) c.write(msg);
+  for (const [c, owner] of clients) {
+    if (owner !== ownerId) continue;
+    c.write(msg);
+    // write()'s own return value (false past highWaterMark) fires on every healthy
+    // client too, briefly, under a normal burst — it means "buffering," not "dead."
+    // `writableLength` is the real signal: bytes STILL sitting there, unconsumed, right
+    // now. A live reader drains between broadcasts and never gets near this cap; a dead
+    // one accumulates every single frame forever, which is exactly the growth this cap
+    // exists to bound. Cutting it loose here — rather than merely noticing the problem —
+    // is what actually stops the buffer growing: the client is out of `clients` the
+    // moment this returns, so nothing broadcast after this can ever write to it again.
+    if (c.writableLength > MAX_BUFFERED_BYTES) {
+      logger.warn('SSE client fell too far behind — disconnecting', {
+        ownerId, bufferedBytes: c.writableLength,
+      });
+      clients.delete(c);
+      c.destroy();
+    }
+  }
 }
 
 /** In-flight broadcasts, so {@link flushBroadcasts} can wait for them. */
@@ -150,8 +212,22 @@ export function sseRouter() {
             stream.write(`id: ${row.seq}\nevent: ${row.event}\ndata: ${row.payload}\n\n`);
           }
         }
-      } catch {
-        // sync_events not yet created (pre-migration); skip catch-up gracefully.
+      } catch (err) {
+        if (isMissingTableError(err)) {
+          // sync_events not yet created — pre-migration test state; see the check's own doc.
+        } else {
+          // A REAL failure, not the documented pre-migration case. Falling through to
+          // ':ok' silently would leave the client's cursor exactly where it was, with
+          // NO signal that its catch-up read failed — it would just quietly miss the
+          // gap until whatever reconnects it next. Tell it to resync instead: the same
+          // escape hatch already used when the gap is too large to replay. No id: line
+          // here — the read that would have told us maxSeq is the very thing that just
+          // failed, so the cursor advances on the client's NEXT successful catch-up.
+          logger.error('SSE catch-up read failed — telling the client to resync instead', {
+            ownerId, err: (err as Error).message,
+          });
+          stream.write('event: sync:resync\ndata: {}\n\n');
+        }
       }
     }
 
