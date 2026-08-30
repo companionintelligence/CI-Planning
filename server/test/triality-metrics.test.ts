@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { trialityMetrics, type TrialityCalibration, type ConfidenceBandStats } from '../src/services/triality-metrics.js';
@@ -525,7 +525,18 @@ describe('route', () => {
     logRow({ slot: 'habitual', outcome: 'staged', band: 'firm' });
     logRow({ slot: 'novel', outcome: 'dismissed', band: 'guess' });
 
-    const res = await api(srv.url, '/api/metrics/triality?days=30');
+    // The route reads `new Date()` itself (server/src/routes/metrics.ts), unlike every
+    // other call in this file which passes the frozen NOW straight into the service — so
+    // real wall-clock time has to be pinned here or the rows above age out of the window
+    // as real time moves past NOW.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    let res: Awaited<ReturnType<typeof api>>;
+    try {
+      res = await api(srv.url, '/api/metrics/triality?days=30');
+    } finally {
+      vi.useRealTimers();
+    }
     expect(res.status).toBe(200);
     const cal = res.body.calibration as TrialityCalibration;
     expect(cal).toBeTruthy();

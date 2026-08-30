@@ -42,7 +42,7 @@ beforeAll(async () => { srv = await startTestServer(); });
 afterAll(async () => { await srv.close(); });
 beforeEach(() => {
   resetDb();
-  sqlite.exec('DELETE FROM classification_log; DELETE FROM classification_exemplars;');
+  sqlite.exec('DELETE FROM classification_log; DELETE FROM classification_exemplars; DELETE FROM classification_accuracy;');
 });
 
 describe('the owner’s edit becomes evidence', () => {
