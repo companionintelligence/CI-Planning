@@ -1,6 +1,6 @@
 import { For, Show, createMemo, createResource } from 'solid-js';
 import { api } from '../lib/api.js';
-import { blocks, tags } from '../stores/index.js';
+import { blocks, tags, patternPrefs } from '../stores/index.js';
 import {
   busyFromBlocks, formatClock, formatDuration, openTime, parseHHMM, totalOpen,
   type TimeRange,
@@ -12,15 +12,37 @@ import {
  *
  * Windows come from the day type resolved for this date (`pattern-blocks/:dayType`),
  * so the summary reflects the operator's configured hours instead of assumed ones.
- * Only work and community windows count; home hours are the day's own time.
+ * Which directions count is per-direction owner preference (`show_open_time`, set
+ * next to that direction's windows in `SchedulePatternEditor`) — default on for
+ * every direction, including home.
  */
-/** Single-letter tag for the open-window row — "work"/"community" only feed this
- *  component (see the doc comment above), but an unrecognized direction still gets a
- *  sane initial rather than rendering blank. */
+/** Fixed display order for the three built-in directions; anything else (a custom
+ *  direction) sorts after them, alphabetically. */
+const DIRECTION_ORDER = ['work', 'home', 'community'];
+function directionRank(direction: string): number {
+  const i = DIRECTION_ORDER.indexOf(direction);
+  return i === -1 ? DIRECTION_ORDER.length : i;
+}
+
+/** Single-letter tag for the open-window row; an unrecognized (custom) direction
+ *  still gets a sane initial rather than rendering blank. */
 function directionLetter(direction: string): string {
   if (direction === 'work') return 'W';
+  if (direction === 'home') return 'H';
   if (direction === 'community') return 'C';
   return direction.charAt(0).toUpperCase();
+}
+
+/** "Work, home & community hours" — built from whichever directions are actually
+ *  showing, so the subtitle never claims a direction the card doesn't list. Only the
+ *  leading word is capitalized (mid-sentence uses of this read naturally too). */
+function describeDirections(directions: string[]): string {
+  const body = directions.length === 0
+    ? 'hours'
+    : directions.length === 1
+      ? `${directions[0]} hours`
+      : `${directions.slice(0, -1).join(', ')} & ${directions[directions.length - 1]} hours`;
+  return body.charAt(0).toUpperCase() + body.slice(1);
 }
 
 export function OpenTimeSummary(props: { date: string }) {
@@ -41,6 +63,19 @@ export function OpenTimeSummary(props: { date: string }) {
     return m;
   });
 
+  /** Directions whose `show_open_time` pref is on (default true) — the set the card
+   *  actually reports, in a fixed work/home/community-first display order. */
+  const visibleDirections = createMemo(() => {
+    const prefs = patternPrefs()?.prefs;
+    const names: string[] = [];
+    for (const t of tags() ?? []) {
+      if (t.kind !== 'direction') continue;
+      if ((prefs?.[t.id]?.show_open_time ?? true) === false) continue;
+      names.push(t.name.toLowerCase());
+    }
+    return names.sort((a, b) => directionRank(a) - directionRank(b) || a.localeCompare(b));
+  });
+
   const byDirection = createMemo<Record<string, TimeRange[]>>(() => {
     const out: Record<string, TimeRange[]> = {};
     for (const [tagId, ranges] of Object.entries(windows() ?? {})) {
@@ -59,7 +94,7 @@ export function OpenTimeSummary(props: { date: string }) {
   /** Everything scheduled on this date, as minute intervals. */
   const busy = createMemo<TimeRange[]>(() => busyFromBlocks(blocks() ?? [], props.date));
 
-  const segments = createMemo(() => openTime(byDirection(), busy()));
+  const segments = createMemo(() => openTime(byDirection(), busy(), visibleDirections()));
   const total = () => totalOpen(segments());
   const loading = () => dayType.loading || windows.loading;
 
@@ -67,7 +102,7 @@ export function OpenTimeSummary(props: { date: string }) {
     <div class="flex flex-col gap-1.5">
       <div class="flex items-center gap-2 flex-wrap">
         <span class="section-label !mb-0">Open time</span>
-        <span class="text-[10.5px] text-muted-foreground">Work &amp; community hours</span>
+        <span class="text-[10.5px] text-muted-foreground">{describeDirections(visibleDirections())}</span>
         <div class="flex-1" />
         <Show when={!loading()}>
           <span class="text-[10.5px] text-muted-foreground font-mono">
@@ -84,7 +119,7 @@ export function OpenTimeSummary(props: { date: string }) {
           when={segments().length > 0}
           fallback={
             <p class="text-xs text-muted-foreground">
-              No open time left in work or community hours.
+              No open time left in {describeDirections(visibleDirections())}.
             </p>
           }
         >
@@ -99,7 +134,11 @@ export function OpenTimeSummary(props: { date: string }) {
                       afternoon reads as longer at a glance without a second axis. */}
                   <i style={{ width: `${Math.min(100, ((s.end - s.start) / 240) * 100)}%` }} />
                 </span>
-                <span class="open-window-tag" data-direction={s.direction} title={s.direction}>{directionLetter(s.direction)}</span>
+                <span class="open-window-tags">
+                  <For each={s.directions}>
+                    {(d) => <span class="open-window-tag" data-direction={d} title={d}>{directionLetter(d)}</span>}
+                  </For>
+                </span>
                 <span class="open-window-dur">{formatDuration(s.end - s.start)}</span>
               </div>
             )}

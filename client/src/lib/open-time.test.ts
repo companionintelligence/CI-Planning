@@ -8,7 +8,7 @@ import type { Block } from './api.js';
 const at = (h: number, m = 0) => h * 60 + m;
 /** Just the shape assertions care about, so failures read as times not objects. */
 const shape = (segs: ReturnType<typeof openTime>) =>
-  segs.map((s) => `${s.direction} ${formatClock(s.start)}-${formatClock(s.end)}`);
+  segs.map((s) => `${s.directions.join('+')} ${formatClock(s.start)}-${formatClock(s.end)}`);
 
 describe('parseHHMM', () => {
   it('parses a window bound', () => {
@@ -85,10 +85,41 @@ describe('openTime', () => {
     expect(shape(openTime(windows, []))).toEqual(['work 9:00am-6:00pm']);
   });
 
-  it('never offers home hours as open time', () => {
-    // Home windows exist and are free, but they are not placement capacity.
+  it('never offers home hours as open time by default', () => {
+    // Home windows exist and are free, but the default direction list excludes them
+    // — a caller opts a direction in explicitly (see the "per-direction preference"
+    // test below), it never appears just because it has configured windows.
     const segs = openTime(windows, []);
-    expect(segs.every((s) => s.direction !== 'home')).toBe(true);
+    expect(segs.every((s) => !s.directions.includes('home'))).toBe(true);
+  });
+
+  it('includes home when the caller explicitly asks for it', () => {
+    // The default list is just a default — OpenTimeSummary passes its own list built
+    // from the owner's per-direction show_open_time preference.
+    const segs = openTime(windows, [], ['work', 'home', 'community']);
+    expect(segs.some((s) => s.directions.includes('home'))).toBe(true);
+  });
+
+  it('combines two directions that resolve to the exact same open span into one row', () => {
+    const w = {
+      work: [{ start: at(9), end: at(12) }],
+      community: [{ start: at(9), end: at(12) }],
+    };
+    const segs = openTime(w, [], ['work', 'community']);
+    expect(shape(segs)).toEqual(['work+community 9:00am-12:00pm']);
+  });
+
+  it('does not combine overlapping-but-not-identical windows from different directions', () => {
+    // 8–2 (community) and 10–12 (work) overlap but are not the same span — each
+    // keeps its own row rather than being spliced into new sub-segments.
+    const w = {
+      work: [{ start: at(10), end: at(12) }],
+      community: [{ start: at(8), end: at(14) }],
+    };
+    expect(shape(openTime(w, [], ['work', 'community']))).toEqual([
+      'community 8:00am-2:00pm',
+      'work 10:00am-12:00pm',
+    ]);
   });
 
   it('subtracts the day’s blocks', () => {

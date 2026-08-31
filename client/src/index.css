@@ -917,7 +917,7 @@
   }
 }
 
-/* Open-time summary (Today header) — the day's unscheduled work/community windows. */
+/* Open-time summary (Today header) — the day's unscheduled windows, per owner-visible direction. */
 .open-window {
   display: grid;
   grid-template-columns: 7.5rem 1fr auto auto;
@@ -942,6 +942,12 @@
   min-width: 0;
 }
 .open-window-bar i { display: block; height: 100%; border-radius: 999px; background: var(--primary); }
+.open-window-tags {
+  display: flex;
+  gap: .25rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
 .open-window-tag {
   font-size: 9px;
   font-weight: 600;
@@ -956,6 +962,10 @@
 .open-window-tag[data-direction="community"] {
   color: var(--ring);
   background: color-mix(in srgb, var(--ring) 14%, transparent);
+}
+.open-window-tag[data-direction="home"] {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
 }
 .open-window-dur {
   font-size: 11px;

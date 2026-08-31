@@ -8,6 +8,7 @@ export interface PatternPref {
   icon_shape: string;     // circle | square | triangle — pattern-block display
   color_token: string;    // CI-Hub token key (never hex)
   default_minutes: number; // fallback estimate when a task has no intention tag
+  show_open_time: boolean; // 0170: show this direction's free windows on the Today Open Time card
 }
 
 const DEFAULT_PREF: PatternPref = {
@@ -16,6 +17,7 @@ const DEFAULT_PREF: PatternPref = {
   icon_shape: 'circle',
   color_token: 'primary',
   default_minutes: 60,
+  show_open_time: true,
 };
 
 type RawRow = {
@@ -27,9 +29,10 @@ type RawRow = {
   icon_shape: string;
   color_token: string;
   default_minutes: number;
+  show_open_time: number;
 };
 
-type PrefCols = Pick<RawRow, 'auto_fill' | 'reminder_offsets' | 'icon_shape' | 'color_token' | 'default_minutes'>;
+type PrefCols = Pick<RawRow, 'auto_fill' | 'reminder_offsets' | 'icon_shape' | 'color_token' | 'default_minutes' | 'show_open_time'>;
 
 function rowToPref(r: PrefCols): PatternPref {
   return {
@@ -38,6 +41,7 @@ function rowToPref(r: PrefCols): PatternPref {
     icon_shape: r.icon_shape ?? 'circle',
     color_token: r.color_token ?? 'primary',
     default_minutes: r.default_minutes ?? 60,
+    show_open_time: r.show_open_time !== 0,
   };
 }
 
@@ -50,7 +54,7 @@ function rowToPref(r: PrefCols): PatternPref {
 export async function getPatternPrefs(ownerId: string): Promise<Record<string, PatternPref>> {
   const rows = await store()
     .prepare(
-      `SELECT id, owner_id, tag_id, auto_fill, reminder_offsets, icon_shape, color_token, default_minutes
+      `SELECT id, owner_id, tag_id, auto_fill, reminder_offsets, icon_shape, color_token, default_minutes, show_open_time
          FROM tag_prefs
         WHERE owner_id = ? AND kind = 'direction'`
     )
@@ -72,7 +76,7 @@ export async function setPatternPref(
 ): Promise<PatternPref> {
   const existing = await store()
     .prepare(
-      `SELECT auto_fill, reminder_offsets, icon_shape, color_token, default_minutes
+      `SELECT auto_fill, reminder_offsets, icon_shape, color_token, default_minutes, show_open_time
          FROM tag_prefs WHERE owner_id = ? AND tag_id = ? AND kind = 'direction'`
     )
     .get(ownerId, patternTagId) as PrefCols | undefined;
@@ -87,19 +91,22 @@ export async function setPatternPref(
     color_token: patch.color_token !== undefined ? patch.color_token : current.color_token,
     default_minutes:
       patch.default_minutes !== undefined ? patch.default_minutes : current.default_minutes,
+    show_open_time:
+      patch.show_open_time !== undefined ? patch.show_open_time : current.show_open_time,
   };
 
   await store()
     .prepare(
-      `INSERT INTO tag_prefs (id, owner_id, tag_id, kind, auto_fill, reminder_offsets, icon_shape, color_token, default_minutes)
-       VALUES (?, ?, ?, 'direction', ?, ?, ?, ?, ?)
+      `INSERT INTO tag_prefs (id, owner_id, tag_id, kind, auto_fill, reminder_offsets, icon_shape, color_token, default_minutes, show_open_time)
+       VALUES (?, ?, ?, 'direction', ?, ?, ?, ?, ?, ?)
        ON CONFLICT(owner_id, tag_id)
        DO UPDATE SET kind = 'direction',
                      auto_fill = excluded.auto_fill,
                      reminder_offsets = excluded.reminder_offsets,
                      icon_shape = excluded.icon_shape,
                      color_token = excluded.color_token,
-                     default_minutes = excluded.default_minutes`
+                     default_minutes = excluded.default_minutes,
+                     show_open_time = excluded.show_open_time`
     )
     .run(
       newId(),
@@ -110,6 +117,7 @@ export async function setPatternPref(
       merged.icon_shape,
       merged.color_token,
       merged.default_minutes,
+      merged.show_open_time ? 1 : 0,
     );
 
   return merged;
@@ -117,7 +125,7 @@ export async function setPatternPref(
 
 export type SetPrefResult =
   | { ok: true; pref: PatternPref }
-  | { ok: false; error: 'tag_not_found' | 'not_direction' | 'auto_fill_type' | 'reminder_offsets_invalid' | 'icon_shape_invalid' | 'color_token_invalid' | 'default_minutes_invalid' };
+  | { ok: false; error: 'tag_not_found' | 'not_direction' | 'auto_fill_type' | 'reminder_offsets_invalid' | 'icon_shape_invalid' | 'color_token_invalid' | 'default_minutes_invalid' | 'show_open_time_type' };
 
 /**
  * Validate + upsert a direction-axis pref (Phase W · W6b, Decision 3): the owner-scoped
@@ -128,12 +136,13 @@ export type SetPrefResult =
 export async function setPatternPrefChecked(
   ownerId: string,
   tagId: string,
-  patch: { auto_fill?: unknown; reminder_offsets?: unknown; icon_shape?: unknown; color_token?: unknown; default_minutes?: unknown },
+  patch: { auto_fill?: unknown; reminder_offsets?: unknown; icon_shape?: unknown; color_token?: unknown; default_minutes?: unknown; show_open_time?: unknown },
 ): Promise<SetPrefResult> {
   const tag = await store().prepare(`SELECT kind FROM tags WHERE id = ? AND owner_id = ?`).get(tagId, ownerId) as { kind: string } | undefined;
   if (!tag) return { ok: false, error: 'tag_not_found' };
   if (tag.kind !== 'direction') return { ok: false, error: 'not_direction' };
   if (patch.auto_fill !== undefined && typeof patch.auto_fill !== 'boolean') return { ok: false, error: 'auto_fill_type' };
+  if (patch.show_open_time !== undefined && typeof patch.show_open_time !== 'boolean') return { ok: false, error: 'show_open_time_type' };
   if (
     patch.reminder_offsets !== undefined &&
     (!Array.isArray(patch.reminder_offsets) || !patch.reminder_offsets.every((v) => Number.isInteger(v) && (v as number) >= 0))
@@ -150,6 +159,7 @@ export async function setPatternPrefChecked(
     icon_shape: patch.icon_shape as string | undefined,
     color_token: patch.color_token as string | undefined,
     default_minutes: patch.default_minutes as number | undefined,
+    show_open_time: patch.show_open_time as boolean | undefined,
   });
   writeAudit({ ownerId, actor: 'owner', action: 'update', entity: `pattern-prefs:${tagId}` });
   return { ok: true, pref };

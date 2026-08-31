@@ -12,6 +12,7 @@ const DEFAULT_PREF: PatternPref = {
   icon_shape: 'circle',
   color_token: 'primary',
   default_minutes: 60, // matches the server's canonical default (services/pattern-prefs.ts)
+  show_open_time: true,
 };
 
 interface EditState {
