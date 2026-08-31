@@ -15,9 +15,16 @@ uploaded artifact, no committed `.mp4`. A cut is a build output: make one when y
 delete it. The screenshots under `assets/shots/` are meant to stay in git — they are the *input*
 that lets anyone render without booting the app.
 
-> **All 18 shots (9 × two viewports) are captured and committed** as of 2026-08-08, in one capture
+> **All 18 shots (9 × two viewports) are captured and committed** as of 2026-08-30, in one capture
 > pass against the stage below. `ci-video status` reports `missing none`. Re-shoot with
 > `npm run capture` whenever the UI moves, and commit the new PNGs in the PR that moved it.
+>
+> The stage's own data was replaced in this pass: `stage-data.sh` still exists and works, but the
+> shots on disk were captured against a hand-authored "Ann Smith" persona — a working mother of two
+> staged with a full month of realistic tasks/meetings/objectives instead of the generic B2B fixture
+> content — built ad hoc rather than through a committed script. If you re-run `npm run capture`
+> against the plain `stage-data.sh` stage, the shots will revert to the original persona; that's
+> expected, not a regression.
 
 ## Quick start
 
