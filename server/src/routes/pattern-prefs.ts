@@ -11,7 +11,7 @@ export function patternPrefsRouter() {
     ctx.body = { prefs: await getPatternPrefs(owner) };
   });
 
-  // PUT /api/pattern-prefs/:patternTagId  body: { auto_fill?, reminder_offsets?, icon_shape?, color_token?, default_minutes? }
+  // PUT /api/pattern-prefs/:patternTagId  body: { auto_fill?, reminder_offsets?, icon_shape?, color_token?, default_minutes?, show_open_time? }
   // Validation + upsert live in services/pattern-prefs.ts (shared with GraphQL); this maps
   // the discriminated result back to the original REST status codes + messages.
   router.put('/api/pattern-prefs/:patternTagId', async (ctx) => {
@@ -26,6 +26,7 @@ export function patternPrefsRouter() {
         case 'icon_shape_invalid': ctx.status = 422; ctx.body = { error: 'icon_shape must be circle, square, or triangle' }; return;
         case 'color_token_invalid': ctx.status = 422; ctx.body = { error: 'color_token must be a non-empty string' }; return;
         case 'default_minutes_invalid': ctx.status = 422; ctx.body = { error: 'default_minutes must be a positive integer' }; return;
+        case 'show_open_time_type': ctx.status = 422; ctx.body = { error: 'show_open_time must be a boolean' }; return;
       }
       return;
     }

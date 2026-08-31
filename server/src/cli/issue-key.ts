@@ -7,6 +7,9 @@
  *   pnpm key:issue --ttl-days 90           # expires in 90 days
  *   pnpm key:issue --owner <uuid>          # a specific owner
  */
+// Side-effect import: opening db/index.js runs migrations and installs the store
+// facade (setStore) — without it store() throws before the first statement.
+import '../db/index.js';
 import { issueApiKey } from '../lib/auth/apiKey.js';
 import { SYSTEM_OWNER } from '../lib/context.js';
 import { SCOPE_READ, SCOPE_WRITE } from '../lib/auth/types.js';

@@ -90,11 +90,11 @@ export function setDetailsWidth(px: number): number {
 
 // ── Drawer tabs ───────────────────────────────────────────────────────────
 /**
- * Which drawer tab is showing. `details` is the selected entity; `planner` is the
- * day grid, which moved out of the Today column so it sits beside the flight-plan
- * it schedules from rather than below it.
+ * Which drawer tab is showing. `details` is the selected entity; `flightplan` is
+ * the staging list, which moved out of the Today column so it sits beside the
+ * Planner grid it schedules into rather than above it.
  */
-export type DrawerTab = 'details' | 'planner';
+export type DrawerTab = 'details' | 'flightplan';
 const [drawerTab, setDrawerTabSignal] = createSignal<DrawerTab>('details');
 export { drawerTab };
 

@@ -1646,6 +1646,7 @@ export interface PatternPref {
   icon_shape: string;          // circle | square | triangle — pattern-block display
   color_token: string;         // CI-Hub token key (never hex)
   default_minutes: number;     // fallback estimate when a task has no intention tag
+  show_open_time: boolean;     // 0170: show this direction's free windows on the Today Open Time card
 }
 
 export interface PatternPrefsResponse {

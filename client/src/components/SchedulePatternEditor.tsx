@@ -5,10 +5,12 @@ import { api } from '../lib/api.js';
 
 /**
  * Per-direction availability windows (Pattern-blocks) for ONE day type, plus the
- * per-direction "fill work hours" toggle. Mounts in Settings (T-SCHED-4), Today and
- * Calendar (T-SCHED-1). As of T-SCHED-3/4 it targets any day-type **key** (builtin
- * workday/weekend or a custom one), fetching that key's windows directly rather than
- * reading the two-key store — so a custom day type can own its own windows.
+ * per-direction "fill work hours" and "show free windows" toggles (the latter gates
+ * whether this direction's windows appear on the Today "Open Time" card). Mounts in
+ * Settings (T-SCHED-4), Today and Calendar (T-SCHED-1). As of T-SCHED-3/4 it targets
+ * any day-type **key** (builtin workday/weekend or a custom one), fetching that key's
+ * windows directly rather than reading the two-key store — so a custom day type can
+ * own its own windows.
  *
  * Local edit state is keyed by dirTagId, seeded from the fetch and re-seeded only when
  * `dayType` changes; edits commit to the server on blur (and refresh dependents via
@@ -57,6 +59,19 @@ export function SchedulePatternEditor(props: SchedulePatternEditorProps) {
   async function toggleFill(tagId: string) {
     try {
       await api.patternPrefs.set(tagId, { auto_fill: !fill(tagId) });
+      refetchPatternPrefs();
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    }
+  }
+
+  // Today's "Open Time" card lists whichever directions this is true for — default
+  // on for every direction (including home), so a direction only drops off the card
+  // once its own toggle here is turned off.
+  const showOpenTime = (tagId: string) => patternPrefs()?.prefs?.[tagId]?.show_open_time ?? true;
+  async function toggleShowOpenTime(tagId: string) {
+    try {
+      await api.patternPrefs.set(tagId, { show_open_time: !showOpenTime(tagId) });
       refetchPatternPrefs();
     } catch (err) {
       showToast((err as Error).message, 'error');
@@ -125,6 +140,27 @@ export function SchedulePatternEditor(props: SchedulePatternEditorProps) {
                 <div class="text-sm text-foreground leading-tight capitalize">Fill {dir.name} hours</div>
                 <div class="text-[11px] text-muted-foreground capitalize">
                   Auto Schedule fills open {dir.name} windows with leftover tasks
+                </div>
+              </div>
+            </label>
+            <label class="flex items-start gap-2 cursor-pointer select-none">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={showOpenTime(dir.id)}
+                onClick={() => toggleShowOpenTime(dir.id)}
+                class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+                classList={{ 'bg-primary': showOpenTime(dir.id), 'bg-muted border border-border': !showOpenTime(dir.id) }}
+              >
+                <span
+                  class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform"
+                  classList={{ 'translate-x-4': showOpenTime(dir.id) }}
+                />
+              </button>
+              <div>
+                <div class="text-sm text-foreground leading-tight capitalize">Show {dir.name} free windows</div>
+                <div class="text-[11px] text-muted-foreground capitalize">
+                  Today's Open Time card lists this direction's free windows
                 </div>
               </div>
             </label>

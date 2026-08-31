@@ -2,9 +2,10 @@
  * Open time: the parts of the day's placement windows that nothing is scheduled into.
  *
  * Today's header answers "when could I put something?", so it reports the gaps rather
- * than re-listing the schedule (which the Planner and Calendar already show). Only
- * WORK and COMMUNITY windows count — home hours are the day's own time, and offering
- * them as placement capacity is what makes a planner feel like a second job.
+ * than re-listing the schedule (which the Planner and Calendar already show). Which
+ * directions count is caller-configurable (owner preference, `show_open_time` per
+ * pattern — see `SchedulePatternEditor`); `OPEN_TIME_DIRECTIONS` below is only the
+ * default used when a caller doesn't pass its own list (e.g. these unit tests).
  *
  * Pure and data-only so it can be unit-tested without a DOM: callers pass the day's
  * windows (already resolved to direction names) and the day's busy intervals.
@@ -23,11 +24,16 @@ export interface TimeRange {
 }
 
 export interface OpenSegment extends TimeRange {
-  /** The direction whose window this gap sits in — 'work' or 'community'. */
-  direction: string;
+  /**
+   * Every direction whose window covers exactly this span. More than one entry means
+   * two (or more) directions configured the identical start/end for this day type —
+   * those rows are combined into one rather than listed as duplicate back-to-back
+   * rows for the same time range.
+   */
+  directions: string[];
 }
 
-/** Directions whose windows count as schedulable capacity on the Today header. */
+/** Default directions to check when a caller doesn't pass its own list. */
 export const OPEN_TIME_DIRECTIONS = ['work', 'community'] as const;
 
 /**
@@ -142,7 +148,10 @@ export function subtractBusy(window: TimeRange, busy: TimeRange[]): TimeRange[] 
 }
 
 /**
- * The day's open segments, ordered by start time.
+ * The day's open segments, ordered by start time. Two directions whose windows
+ * resolve to the exact same open span (same start AND end, after subtracting the
+ * day's busy time) are combined into one segment listing both directions, rather
+ * than rendered as duplicate rows — see {@link OpenSegment.directions}.
  *
  * @param windows  Direction name → its configured ranges for the resolved day type.
  * @param busy     Every scheduled interval for the day, in any order.
@@ -155,15 +164,21 @@ export function openTime(
   directions: readonly string[] = OPEN_TIME_DIRECTIONS,
 ): OpenSegment[] {
   const merged = mergeRanges(busy);
-  const out: OpenSegment[] = [];
+  // Keyed by "start-end" so two directions landing on the identical open span collapse
+  // into one segment instead of two adjacent rows for the same time range.
+  const byRange = new Map<string, OpenSegment>();
   for (const direction of directions) {
     for (const window of mergeRanges(windows[direction] ?? [])) {
       for (const gap of subtractBusy(window, merged)) {
-        if (gap.end - gap.start >= MIN_OPEN_MINUTES) out.push({ ...gap, direction });
+        if (gap.end - gap.start < MIN_OPEN_MINUTES) continue;
+        const key = `${gap.start}-${gap.end}`;
+        const existing = byRange.get(key);
+        if (existing) existing.directions.push(direction);
+        else byRange.set(key, { start: gap.start, end: gap.end, directions: [direction] });
       }
     }
   }
-  return out.sort((a, b) => a.start - b.start);
+  return [...byRange.values()].sort((a, b) => a.start - b.start);
 }
 
 /** Total open minutes across the segments. */

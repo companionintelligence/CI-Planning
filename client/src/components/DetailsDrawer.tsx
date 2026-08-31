@@ -1,6 +1,6 @@
 import { Show, For, Switch, Match, createSignal, createEffect, createResource, on, onCleanup } from 'solid-js';
 import { useLocation } from '@solidjs/router';
-import { Planner } from './Planner.js';
+import { FlightPlan } from './FlightPlan.js';
 import { X, PanelRight, Inbox, Pencil, Sparkles, Check, ChevronDown, ChevronRight, Rocket } from 'lucide-solid';
 import {
   detailsOpen, detailsWidth, setDetailsOpen, setDetailsWidth,
@@ -1131,7 +1131,7 @@ function EmptyPanel(props: { where: string }) {
 
 /**
  * The docked details drawer: describes whatever entity is expanded (`activeTask` /
- * `activeBlock`), and hosts the day Planner on its own tab.
+ * `activeBlock`), and hosts the Flight Plan staging list on its own tab.
  *
  * Docked rather than overlaid on purpose — a details panel for a *selected* item has
  * to be readable against the list the selection came from, and an overlay hides
@@ -1141,7 +1141,7 @@ function EmptyPanel(props: { where: string }) {
 export function DetailsDrawer() {
   const location = useLocation();
   /** Today is the only route with a day grid to host, so it is the only one with tabs. */
-  const hasPlannerTab = () => location.pathname === '/';
+  const hasSecondTab = () => location.pathname === '/';
   const task = (): Task | undefined => {
     const id = activeTask();
     if (!id) return undefined;
@@ -1230,12 +1230,12 @@ export function DetailsDrawer() {
   } as Record<string, string>)[location.pathname] ?? 'an item';
 
   // On Today, the drawer's default tab follows the selection: nothing selected →
-  // the Planner (the day grid is the useful resting surface), something selected →
-  // its Details. Keyed on the selection signals only, so a manual tab click is
-  // never fought — the tab moves when the SELECTION changes, not on render.
+  // the Flight Plan (the staging list is the useful resting surface), something
+  // selected → its Details. Keyed on the selection signals only, so a manual tab
+  // click is never fought — the tab moves when the SELECTION changes, not on render.
   createEffect(on([activeTask, activeBlock, activeEntity], () => {
-    if (!hasPlannerTab()) return;
-    setDrawerTab(!activeTask() && !activeBlock() && !activeEntity() ? 'planner' : 'details');
+    if (!hasSecondTab()) return;
+    setDrawerTab(!activeTask() && !activeBlock() && !activeEntity() ? 'flightplan' : 'details');
   }));
 
   // Per-view selection memory (mockup contract): each route remembers what was
@@ -1341,8 +1341,8 @@ export function DetailsDrawer() {
         </div>
 
         {/* Tab strip sits under the header so it survives an entity change — switching
-            tasks must not silently drop you out of the Planner tab. */}
-        <Show when={hasPlannerTab()}>
+            tasks must not silently drop you out of the Flight Plan tab. */}
+        <Show when={hasSecondTab()}>
           <div class="drawer-tabs" role="tablist">
             <button
               type="button" role="tab" class="drawer-tab"
@@ -1351,15 +1351,15 @@ export function DetailsDrawer() {
             >Details</button>
             <button
               type="button" role="tab" class="drawer-tab"
-              aria-selected={drawerTab() === 'planner'}
-              onClick={() => setDrawerTab('planner')}
-            >Planner</button>
+              aria-selected={drawerTab() === 'flightplan'}
+              onClick={() => setDrawerTab('flightplan')}
+            >Flight Plan</button>
           </div>
         </Show>
 
         <Show
-          when={!(hasPlannerTab() && drawerTab() === 'planner')}
-          fallback={<div class="drawer-body drawer-body-flush"><Planner /></div>}
+          when={!(hasSecondTab() && drawerTab() === 'flightplan')}
+          fallback={<div class="drawer-body"><FlightPlan /></div>}
         >
           <Switch fallback={<EmptyPanel where={emptyWhere()} />}>
             {/* Truthiness-only match, passing the stable `task` accessor rather than a

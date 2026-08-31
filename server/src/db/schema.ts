@@ -457,6 +457,9 @@ export const tagPrefs = sqliteTable('tag_prefs', {
   iconShape: text('icon_shape'),                                 // direction-only: circle | square | triangle
   colorToken: text('color_token').notNull().default('primary'),  // CI-Hub token key (never hex)
   defaultMinutes: integer('default_minutes').notNull().default(60),
+  // direction-only (0170): whether this direction's free windows appear on the
+  // Today "Open Time" card. Default true for every direction, including home.
+  showOpenTime: integer('show_open_time', { mode: 'boolean' }).notNull().default(true),
 }, (t) => ({ uq: unique().on(t.ownerId, t.tagId) }));
 
 // --- Patterns (Phase G). Typed, reusable task collections (Routine ▢ / Habit ◯ /
