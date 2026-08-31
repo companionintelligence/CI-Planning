@@ -12,17 +12,15 @@ import { localISODate, addDays, durationLabel } from '../lib/dates.js';
 import { dueItems } from '../lib/task-buckets.js';
 import { Planner } from '../components/Planner.js';
 import { OpenTimeSummary } from '../components/OpenTimeSummary.js';
-import { detailsOpen } from '../stores/ui.js';
-import { FlightPlan } from '../components/FlightPlan.js';
 import { DayStarsRow } from '../components/DayStarsRow.js';
 import { ReplanBanner } from '../components/ReplanBanner.js';
 import { FocusMenu, BriefMenu } from '../components/DayGoals.js';
 
 /**
- * TODAY — the planner cockpit (Phase G, G5). Four regions on the CI-Hub tokens:
- * **Day Overview** (day/date + today's tag set), **Summary** (overdue/blocked/open
- * + the moved `+ New Task`), the **PLANNER**, and the **Flight-plan** — with the
- * never-closing **drawer** floating at the bottom.
+ * TODAY — the planner cockpit (Phase G, G5). **Day Overview** (day/date + today's
+ * tag set), **Summary** (overdue/blocked/open + the moved `+ New Task`), and the
+ * **PLANNER** fill the center column; the **Flight-plan** (staging list) lives in
+ * the details drawer's Flight Plan tab.
  */
 export function Today() {
   const [summary, { refetch: refetchSummary }] = createResource(selectedDay, (date) => api.summary.get(date));
@@ -319,21 +317,12 @@ export function Today() {
       {/* Replan suggestion — a big-disruption reflow asks to re-plan with AI (B4) */}
       <ReplanBanner />
 
-      {/* Stacked workspace: Flight-plan on top, Planner below it (full width) — the
-          staging area now leads (UI-comments 2026-07-20 item 4: stage/select first,
-          then see the day the Schedule run fills in below). Someday Time Blocks render
-          on their goal day in the Planner header lane (the ConceptLane is retired —
-          CON-2d). */}
-      {/* The Planner moved into the details drawer's Planner tab, so it sits beside
-          the flight-plan it schedules from instead of below it — on a laptop the plan
-          used to push the grid past the fold. It stays inline whenever the drawer is
-          closed, so hiding the drawer never costs you the grid. */}
-      <div class="flex flex-col gap-4">
-        <FlightPlan />
-        <Show when={!detailsOpen()}>
-          <Planner />
-        </Show>
-      </div>
+      {/* The Planner is the Today centerpiece; the Flight-plan (staging list) now
+          lives in the details drawer's Flight Plan tab instead of stacking below the
+          grid — the grid is the thing you're looking at most of the time, and the
+          staging list is what you dip into. Someday Time Blocks render on their goal
+          day in the Planner header lane (the ConceptLane is retired — CON-2d). */}
+      <Planner />
 
       {/* Multi-select indicator (Phase F) — appears when items are picked. */}
       <Show when={selection().size > 0 && !routineModal().open}>

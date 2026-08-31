@@ -807,8 +807,6 @@
   flex-direction: column;
   gap: 1rem;
 }
-/* The Planner tab brings its own padding and scroll container. */
-.drawer-body-flush { padding: 0; gap: 0; }
 
 .drawer-group {
   font-size: 10px;
