@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render } from '@solidjs/testing-library';
+import { render, fireEvent } from '@solidjs/testing-library';
+import { activeBlock, setActiveBlock } from '../stores/selection.js';
 
 /**
  * Phase 4 — the Calendar draws containment the way the Planner does.
@@ -35,7 +36,10 @@ vi.mock('../stores/index.js', async () => {
 
 const { CalendarGrid, splitContainment, layoutBlocks } = await import('./CalendarGrid.js');
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  setActiveBlock(null);
+});
 
 const DAY = '2026-07-01';
 const CONFLICT_RING = 'ring-amber-400/70';
@@ -213,6 +217,34 @@ describe('CalendarGrid — containment rendering (day view)', () => {
   it('an orphan member still renders (its container is not on this day)', () => {
     const root = renderGrid([WRITE_SPEC]);
     expect(chip(root, 'Write spec').classList.contains(CONFLICT_RING)).toBe(false);
+  });
+});
+
+describe('CalendarGrid — a standalone container with no members', () => {
+  // Regression: a bare `block_kind: 'timeblock'` row on an otherwise-empty day (the
+  // shape `POST /api/blocks`/instantiate produces before any task is nested under
+  // it) was suspected of never reaching the DOM. It does reach the DOM — it renders
+  // unlabeled by design (overlay.ts's showsBlockLabel, the thick-left-edge
+  // affordance) — but the chip element itself must exist and stay clickable, or the
+  // container really would be an invisible, unreachable dead zone on the grid.
+  const LONE = container('tb-lone', 'Test Container', '10:00', '11:00');
+
+  it('renders a chip element for the container even though it shows no title text', () => {
+    const root = renderGrid([LONE]);
+    const box = chip(root, 'Test Container');
+    // No visible label body — `showsBlockLabel` deliberately excludes bare
+    // containers — but the outline box and its tooltip must still be there.
+    expect(box.textContent).toBe('');
+    expect(box.getAttribute('title')).toContain('Test Container');
+    expect(box.classList.contains('border-2')).toBe(true);
+  });
+
+  it('is clickable — selecting it sets the active block like any other chip', () => {
+    const root = renderGrid([LONE]);
+    const box = chip(root, 'Test Container');
+    expect(activeBlock()).toBe(null);
+    fireEvent.click(box);
+    expect(activeBlock()).toBe('tb-lone');
   });
 });
 
