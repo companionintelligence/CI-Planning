@@ -673,6 +673,17 @@ export async function deleteTask(ownerId: string, id: string, scope: DeleteTaskS
   // A cancelled task's placements settle with it — a manual block is invisible to
   // reflow's agent-only GC and would otherwise stay on the board looking live.
   const cancelledBlockIds = await cancelBlocksForTask(id, ownerId);
+  // ...and so does its flight-plan entry. `listFlightPlan` joins tasks without filtering
+  // status, so a cancelled task left staged keeps showing up as work waiting to be
+  // scheduled — the one place it must NOT reappear, since cancelling is precisely the
+  // owner saying they are not going to do it. Conditional so a task that was never staged
+  // does not write a misleading `remove flight-plan:` audit row.
+  const unstaged = await store()
+    .prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`)
+    .run(ownerId, id);
+  if (unstaged.changes > 0) {
+    writeAudit({ ownerId, actor: 'owner', action: 'remove', entity: `flight-plan:${id}` });
+  }
   await dropSourceObjective(id, ownerId);
   if (task.parentId) await unpromoteIfEmpty(task.parentId, ownerId);
   await recomputeObjectivesForTask(id);

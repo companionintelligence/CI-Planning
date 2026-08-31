@@ -333,6 +333,8 @@ export interface AxisMetrics {
   name: string;
   open: number;
   completed: number;
+  /** Cancelled while holding a schedule slot — neither open nor completed. */
+  cancelled: number;
   actualMinutes: number;
   /** Median actual/estimated; null under 3 samples. >1 means you run long. */
   estimateBias: number | null;
@@ -343,7 +345,7 @@ export interface AxisMetrics {
 export interface MetricsGroup {
   directions: AxisMetrics[];
   categories: AxisMetrics[];
-  totals: { open: number; completed: number; actualMinutes: number; score: ScoreDistribution };
+  totals: { open: number; completed: number; cancelled: number; actualMinutes: number; score: ScoreDistribution };
 }
 
 export interface TaskMetrics extends MetricsGroup {

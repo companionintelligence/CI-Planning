@@ -10,6 +10,7 @@ import { activeTask, activeBlock, activeEntity, clearActiveEntity, setActiveTask
 import {
   blocks, tasks, taskOf, tags, objectives, suggestions, refetchSuggestions,
   isSuggestionBusy, setSuggestionBusy, connections, showToast, refetchTasks, setElementModal, selectedDay,
+  refetchBlocks, refetchFlightPlan, askRecurringScope, isRecurringOccurrence,
 } from '../stores/index.js';
 import { api, type Task, type Block, type Tag, type Person, type PossibleTask, type Objective } from '../lib/api.js';
 import { displayTag } from '../lib/tag-tax.js';
@@ -17,6 +18,7 @@ import { LockToggle } from './LockToggle.js';
 import { DayTypeControl } from './DayTypeControl.js';
 import { activeWindowsAt } from '../lib/day-windows.js';
 import { lockAffordance } from '../lib/lock.js';
+import { SETTLED_BLOCK } from '../lib/block-status.js';
 import { PriorityToggle, DateField } from './TaskCard.js';
 import { flattenObjectives } from '../lib/objectives.js';
 import { describeRule } from '../lib/recurrence.js';
@@ -399,6 +401,36 @@ function PeopleRow(props: { label: string; people: Person[] }) {
 function BlockPanel(props: { block: Block }) {
   const b = () => props.block;
   const linked = () => (b().task_id ? taskOf(b().task_id!) : undefined);
+  const [cancelling, setCancelling] = createSignal(false);
+
+  /**
+   * Cancel the task this block stands for. DELETE is the server's soft cancel
+   * (services/tasks.ts: status → 'cancelled'), which settles the placements, drops the
+   * reminders, unstages it, and lets the objectives upkeep stop counting abandoned work —
+   * all of which is what "not doing this" should mean. Recurring occurrences go through
+   * the shared scope dialog, so cancelling one Tuesday does not silently kill the series.
+   */
+  async function cancelScheduled(task: Task) {
+    let scope: 'instance' | 'following' | undefined;
+    if (isRecurringOccurrence(task)) {
+      const answer = await askRecurringScope({ title: task.title, verb: 'delete' });
+      if (!answer) return; // dismissed — the dialog carries its own confirmation
+      scope = answer;
+    } else if (!confirm(`Cancel "${task.title}"? It gives up the slot and moves to the Archive unfinished.`)) {
+      return;
+    }
+    setCancelling(true);
+    try {
+      await api.tasks.delete(task.id, scope);
+      showToast('Task cancelled — moved to the Archive', 'default');
+      // The block row survives as cancelled evidence, so blocks refetch too; the drawer
+      // would otherwise keep describing this block as live work.
+      await Promise.all([refetchTasks(), refetchBlocks(), refetchFlightPlan()]);
+      setActiveBlock(null);
+    } catch (err) { showToast((err as Error).message, 'error'); }
+    finally { setCancelling(false); }
+  }
+
   const minutes = () => {
     const s = new Date(b().start_at).getTime();
     const e = new Date(b().end_at).getTime();
@@ -444,6 +476,30 @@ function BlockPanel(props: { block: Block }) {
       <Group label={lockAffordance(b()) === 'source' ? 'Source' : 'Mobility'}>
         <LockToggle block={b()} />
       </Group>
+      {/* Give up on a scheduled task without finishing it. Every OTHER way off the
+          calendar (clear the start date, delete the block, reschedule, day-reflow) puts
+          the task back to `open` — fine when you still intend to do it, but there was no
+          way to say "not doing this" from the schedule at all. The task settles into the
+          Archive as incomplete instead, and its slot becomes evidence in the
+          scheduled-and-cancelled metric rather than silently disappearing. */}
+      {/* Settled test first so the accessor below narrows to the Task, not to `boolean`. */}
+      <Show when={!SETTLED_BLOCK.has(b().status) && linked()}>
+        {(task) => (
+          <Group label="Give up">
+            <button
+              type="button"
+              class="drawer-tag text-left cursor-pointer hover:border-destructive hover:text-destructive disabled:opacity-50"
+              disabled={cancelling()}
+              onClick={() => void cancelScheduled(task())}
+            >
+              {cancelling() ? 'Cancelling…' : 'Cancel — not doing this'}
+            </button>
+            <p class="text-[11px] text-muted-foreground mt-1">
+              Frees the slot and files the task in the Archive, unfinished. Nothing brings it back.
+            </p>
+          </Group>
+        )}
+      </Show>
     </div>
   );
 }
