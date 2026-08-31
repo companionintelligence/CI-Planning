@@ -917,6 +917,11 @@
     z-index: 40;
     box-shadow: var(--shadow-lg);
   }
+  /* Nothing selected and no Planner grid to show — don't cover the bottom of the
+     screen (FAB, wizard buttons) with an empty sheet that invites no action. */
+  .details-drawer.details-drawer-empty {
+    display: none;
+  }
 }
 
 /* Open-time summary (Today header) — the day's unscheduled work/community windows. */
