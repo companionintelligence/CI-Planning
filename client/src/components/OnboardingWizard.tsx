@@ -7,6 +7,7 @@ import {
 import { FTUE_RESUME_KEY } from '../lib/onboarding.js';
 import { topCollapseEnd, bottomCollapseStart } from '../lib/day-axis.js';
 import { buildPlannerViewPrefs } from '../lib/view-prefs.js';
+import { TRUST_OPTIONS, type TrustMode } from './TrustModal.js';
 import { ConnectSourceStep } from './onboarding/ConnectSourceStep.js';
 import { RunFirstSyncStep } from './onboarding/RunFirstSyncStep.js';
 
@@ -31,13 +32,10 @@ function clampMinutes(v: number, lo: number, hi: number): number {
   return Math.min(Math.max(Math.round(v), lo), hi);
 }
 
-type TrustMode = 'cautious' | 'balanced' | 'hands_off';
-
-const TRUST_OPTIONS: { value: TrustMode; label: string; hint: string }[] = [
-  { value: 'cautious', label: 'Cautious', hint: 'Review everything yourself' },
-  { value: 'balanced', label: 'Balanced', hint: 'High-confidence items auto-promote' },
-  { value: 'hands_off', label: 'Hands-off', hint: 'Auto-promote and auto-schedule estimate-bearing work' },
-];
+// Step 4's choices come from the same source the top-bar trust control uses, so the
+// wizard and the modal can never describe the dial differently. (They did: this file's
+// copy still promised Balanced "auto-promotes high-confidence items" long after AF-3
+// retired auto-promotion.)
 
 /**
  * FTUE · T11 (#347) + T12 (#348) — the first-run onboarding overlay, 5 steps

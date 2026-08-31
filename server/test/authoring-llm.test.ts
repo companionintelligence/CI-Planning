@@ -167,9 +167,28 @@ describe('authorPlanOrder — LLM path (mocked Ollama)', () => {
     expect(rows[0].task_id).toBe(b); // the one index the LLM did return leads
   });
 
-  it("trust_mode='hands_off' activates the LLM path even when planning_mode='basic'", async () => {
-    // Reset to basic so the activation comes purely from the trust dial.
+  it("trust_mode='hands_off' does NOT force the LLM path — planning_mode is independent (0171)", async () => {
+    // The dial used to imply smart planning (`loadPlanningPrefs` overrode planning_mode
+    // when trust_mode was 'hands_off'), which conflated autonomy with ordering quality
+    // and made the Settings toggle inert for hands-off owners. Now the stored preference
+    // is read as-is: hands-off + basic authors deterministically.
     sqlite.prepare(`UPDATE scheduling_prefs SET planning_mode = 'basic', trust_mode = 'hands_off' WHERE owner_id = ?`).run(OWNER);
+
+    const a = insertTask('A'); const b = insertTask('B'); const c = insertTask('C');
+    stage(a, 0); stage(b, 1); stage(c, 2);
+
+    await authorPlanOrder(OWNER, DATE);
+
+    const rows = dailyPlanRows();
+    expect(rows).toHaveLength(3);
+    expect(rows.every((r) => r.source === 'deterministic')).toBe(true);
+  });
+
+  it("trust_mode='cautious' still uses the LLM path when the owner asked for smart", async () => {
+    // The mirror of the case above: ordering QUALITY follows planning_mode in every tier,
+    // including the most conservative one. Cautious governs what gets placed and which
+    // bands sort the day — not whether the model is allowed to author.
+    sqlite.prepare(`UPDATE scheduling_prefs SET planning_mode = 'smart', trust_mode = 'cautious' WHERE owner_id = ?`).run(OWNER);
 
     const a = insertTask('A'); const b = insertTask('B'); const c = insertTask('C');
     stage(a, 0); stage(b, 1); stage(c, 2);

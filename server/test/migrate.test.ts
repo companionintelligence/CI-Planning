@@ -4,6 +4,7 @@ import type { Database } from 'better-sqlite3';
 import { runMigrations, rebuildTable } from '../src/db/migrate.js';
 import { MIGRATIONS } from '../src/db/migrations/index.js';
 import { up as dropAutoMode } from '../src/db/migrations/0123_drop_auto_mode.js';
+import { up as planningModeIndependent } from '../src/db/migrations/0171_planning_mode_independent_of_trust.js';
 import { up as dismissalEvidenceUp } from '../src/db/migrations/0157_dismissal_evidence.js';
 
 import { SYSTEM_OWNER_ID } from '../src/lib/ids.js';
@@ -191,6 +192,44 @@ describe('0123 drop auto_mode (Z · W4)', () => {
     expect(trust('plain-suggest')).toBe('balanced');
     // Idempotent: a re-run (column already gone) is a no-op.
     dropAutoMode(db);
+    db.close();
+  });
+});
+
+describe('0171 planning_mode independent of trust_mode', () => {
+  it('pins existing hands-off owners to smart, leaving the other tiers untouched', () => {
+    // `loadPlanningPrefs` used to override planning_mode to 'smart' whenever trust_mode
+    // was 'hands_off'. With that override gone the column is read as stored — so a
+    // hands-off owner still on the 'basic' default (they never needed to touch the
+    // toggle) would silently drop out of the LLM loop. The backfill preserves them.
+    const db = fresh();
+    db.exec(`CREATE TABLE scheduling_prefs (owner_id TEXT PRIMARY KEY, planning_mode TEXT DEFAULT 'basic', trust_mode TEXT NOT NULL DEFAULT 'balanced');`);
+    db.prepare(`INSERT INTO scheduling_prefs VALUES ('rode-the-override', 'basic', 'hands_off')`).run();
+    db.prepare(`INSERT INTO scheduling_prefs VALUES ('handsoff-explicit-smart', 'smart', 'hands_off')`).run();
+    db.prepare(`INSERT INTO scheduling_prefs VALUES ('balanced-basic', 'basic', 'balanced')`).run();
+    db.prepare(`INSERT INTO scheduling_prefs VALUES ('cautious-smart', 'smart', 'cautious')`).run();
+
+    planningModeIndependent(db);
+
+    const mode = (id: string) =>
+      (db.prepare(`SELECT planning_mode FROM scheduling_prefs WHERE owner_id = ?`).get(id) as { planning_mode: string }).planning_mode;
+    expect(mode('rode-the-override')).toBe('smart'); // behaviour carried over
+    expect(mode('handsoff-explicit-smart')).toBe('smart');
+    // Non-hands-off tiers were already read as stored, so they must not be rewritten —
+    // in particular a Cautious owner who chose 'smart' keeps it (the dial governs
+    // placement and bands, never whether the model may author).
+    expect(mode('balanced-basic')).toBe('basic');
+    expect(mode('cautious-smart')).toBe('smart');
+
+    planningModeIndependent(db); // idempotent
+    expect(mode('balanced-basic')).toBe('basic');
+    db.close();
+  });
+
+  it('is a no-op on a DB predating either column', () => {
+    const db = fresh();
+    db.exec(`CREATE TABLE scheduling_prefs (owner_id TEXT PRIMARY KEY);`);
+    expect(() => planningModeIndependent(db)).not.toThrow();
     db.close();
   });
 });

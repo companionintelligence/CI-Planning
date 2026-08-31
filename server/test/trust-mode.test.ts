@@ -3,6 +3,7 @@ import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { resolveTrustPolicy, fillFlightPlanCandidates, autoScheduleOnIngest } from '../src/engine/autoplan.js';
 import { promotePossibles } from '../src/agents/groom.js';
+import { orderingBandsFor } from '../src/agents/plan.js';
 import { resetDb } from './helpers.js';
 
 /**
@@ -176,5 +177,36 @@ describe('hands-off auto-block places estimate-bearing work only (TM-5)', () => 
     expect(blocks[0].parent_block_id).toBe(plan);
     // The estimate-less task was never staged, so it stays in the backlog.
     expect((sqlite.prepare(`SELECT status FROM tasks WHERE title = 'Vague errand'`).get() as { status: string }).status).toBe('open');
+  });
+});
+
+/**
+ * 0171 — the dial's second job: which ORDERING bands apply.
+ *
+ * `orderingBandsFor` is the whole of that decision, and every consumer (the deterministic
+ * sort, `checkOrder`'s exemptions, the LLM baseline, and the generator prompt's
+ * theme/memory/balance lines) reads the band sets it gates, so pinning it here pins all
+ * four. The tiers deliberately run OPPOSITE to autonomy: the unattended tier gets the most
+ * inferred context precisely because nobody reviews its output, while the tier that
+ * reviews every item gets the plainest, most auditable order.
+ */
+describe('orderingBandsFor — the trust dial as an ordering policy (0171)', () => {
+  it('cautious admits no inferred band — the plain fill_order sort', () => {
+    expect(orderingBandsFor('cautious')).toEqual({ theme: false, memory: false, balance: false });
+  });
+
+  it('balanced adds the weekly balance nudge only', () => {
+    expect(orderingBandsFor('balanced')).toEqual({ theme: false, memory: false, balance: true });
+  });
+
+  it('hands_off — unreviewed, so it gets the most context', () => {
+    expect(orderingBandsFor('hands_off')).toEqual({ theme: true, memory: true, balance: true });
+  });
+
+  it('an unrecognised value falls back to the column default, not to full autonomy', () => {
+    // Fail safe: a typo or a value from a newer schema must never silently grant a tier
+    // MORE inference than the owner chose.
+    expect(orderingBandsFor('bogus')).toEqual(orderingBandsFor('balanced'));
+    expect(orderingBandsFor('')).toEqual(orderingBandsFor('balanced'));
   });
 });

@@ -15,6 +15,7 @@ import { UpdateBanner } from './components/UpdateBanner.js';
 import { ElementWizard } from './components/ElementWizard.js';
 import { PlanWeekAssistant } from './components/PlanWeekAssistant.js';
 import { OnboardingWizard } from './components/OnboardingWizard.js';
+import { TrustTrigger, TrustModal, type TrustMode } from './components/TrustModal.js';
 import { ErrorBoundaryFallback } from './components/ErrorBoundaryFallback.js';
 import { captureException } from './lib/telemetry.js';
 import { Today }    from './views/Today.js';
@@ -98,16 +99,20 @@ function Shell(props: { children?: any }) {
   useTaskReminders();
   const hasFab = () => FAB_ROUTES.includes(location.pathname);
 
-  // The toggle drives the trust dial (scheduling_prefs.trust_mode, 0070): Schedule ⇔
-  // 'hands_off' (new tasks auto-schedule on ingest, N-day planning horizon), Suggest ⇔
-  // 'balanced'. 'cautious' (API-only today) also displays as Suggest — the same-mode
-  // guard below means merely viewing never rewrites it; only an explicit Schedule →
-  // Suggest round-trip lands on 'balanced'.
-  const mode = () => (prefs()?.trust_mode === 'hands_off' ? 'schedule' : 'suggest');
-  async function setMode(m: 'suggest' | 'schedule') {
-    if (m === mode()) return;
-    try { await api.prefs.update({ trust_mode: m === 'schedule' ? 'hands_off' : 'balanced' }); refetchPrefs(); }
-    catch (err) { showToast((err as Error).message, 'error'); }
+  // The trust dial (scheduling_prefs.trust_mode, 0070) — all three positions, via a
+  // button that shows the one in force. The old Suggest/Schedule toggle here could only
+  // express two of them and silently mislabelled 'cautious' as Suggest; see TrustModal.
+  const [trustOpen, setTrustOpen] = createSignal(false);
+  const [trustBusy, setTrustBusy] = createSignal(false);
+  async function pickTrust(m: TrustMode) {
+    if (m === prefs()?.trust_mode) { setTrustOpen(false); return; }
+    setTrustBusy(true);
+    try {
+      await api.prefs.update({ trust_mode: m });
+      refetchPrefs();
+      setTrustOpen(false);
+    } catch (err) { showToast((err as Error).message, 'error'); }
+    finally { setTrustBusy(false); }
   }
 
   // Sweep-now (the review_day engine, on demand): auto-defer past-due tasks, revive
@@ -166,23 +171,10 @@ function Shell(props: { children?: any }) {
           </div>
           {/* Desktop-only spacer; on mobile the brand block above already takes the slack. */}
           <div class="hidden md:block flex-1" />
-          {/* Suggest / Schedule toggle — global auto-mode; lives in the top bar */}
-          <div
-            class="inline-flex flex-shrink-0 rounded-full border border-surface-700/60 overflow-hidden text-[11px]"
-            role="group"
-            title="Suggest: nothing schedules until you press a button. Schedule: new tasks auto-schedule as they arrive; buttons still work for manual runs."
-          >
-            <button
-              onClick={() => setMode('suggest')}
-              class="px-2.5 py-0.5 transition-colors"
-              classList={{ 'bg-primary text-primary-foreground': mode() === 'suggest', 'text-muted-foreground hover:text-foreground': mode() !== 'suggest' }}
-            >Suggest</button>
-            <button
-              onClick={() => setMode('schedule')}
-              class="px-2.5 py-0.5 transition-colors"
-              classList={{ 'bg-primary text-primary-foreground': mode() === 'schedule', 'text-muted-foreground hover:text-foreground': mode() !== 'schedule' }}
-            >Schedule</button>
-          </div>
+          {/* Trust dial — global automation level; lives in the top bar. One button
+              (narrower than the two-button toggle it replaced, which helps the 360px
+              crowding noted above) showing the active mode, opening the full choice. */}
+          <TrustTrigger mode={prefs()?.trust_mode} onOpen={() => setTrustOpen(true)} />
           {/* Sweep-now — run the review sweep on demand (the nightly review_day engine,
               owner-scoped): past-due tasks auto-defer with backoff, stuck 'missed'
               one-offs reopen, and in Schedule mode everything reopened is placed. */}
@@ -271,6 +263,14 @@ function Shell(props: { children?: any }) {
         )}
       </Show>
       <PlanWeekAssistant />
+      <Show when={trustOpen()}>
+        <TrustModal
+          mode={prefs()?.trust_mode}
+          busy={trustBusy()}
+          onPick={(m) => void pickTrust(m)}
+          onClose={() => setTrustOpen(false)}
+        />
+      </Show>
       <OnboardingWizard />
       {/* Mounted once so any call site can await askRecurringScope() inline. */}
       <RecurringScopeDialog />

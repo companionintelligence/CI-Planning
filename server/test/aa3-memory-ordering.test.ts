@@ -136,12 +136,28 @@ describe('AA3a authorPlanOrder integration (fixture graph)', () => {
   });
 
   it('flag ON + connector available ⇒ the memory-related task is authored earlier', async () => {
-    sqlite.prepare(`UPDATE scheduling_prefs SET memory_pull_enabled = 1 WHERE owner_id = ?`).run(OWNER);
+    // trust_mode: the memory band is gated by the trust dial since 0171 and is live only
+    // on 'hands_off' — the unattended tier gets the most context, because no one reviews
+    // its output. The flag below is the owner's own memory-pull switch; both must be on.
+    sqlite
+      .prepare(`UPDATE scheduling_prefs SET memory_pull_enabled = 1, trust_mode = 'hands_off' WHERE owner_id = ?`)
+      .run(OWNER);
     connectViaEnv(); // creds resolve; MEMORY_MODE default fixture ⇒ offline graph.json
 
     await authorPlanOrder(OWNER, DATE);
 
     expect(plannedOrder()[0]).toBe('t-related'); // memory band beat the earlier deadline
+  });
+
+  it('flag ON + connector available but trust_mode=balanced ⇒ no memory band (0171)', async () => {
+    // The band is a trust-dial capability, not just a connector one: a Balanced owner
+    // reviews the plan themselves, so the day stays in plain deadline order.
+    sqlite.prepare(`UPDATE scheduling_prefs SET memory_pull_enabled = 1, trust_mode = 'balanced' WHERE owner_id = ?`).run(OWNER);
+    connectViaEnv();
+
+    await authorPlanOrder(OWNER, DATE);
+
+    expect(plannedOrder()).toEqual(['t-other', 't-related']); // earlier deadline leads
   });
 
   it('flag OFF ⇒ daily_plan order is byte-identical to the deadline-first order', async () => {
