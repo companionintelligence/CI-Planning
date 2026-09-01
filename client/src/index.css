@@ -25,6 +25,10 @@
   --secondary-foreground: #0a222e;
   --muted: oklch(96.8% 0.007 247.896);
   --muted-foreground: oklch(55.4% 0.046 257.417);
+  /* Chevron for <select>, mirroring --muted-foreground above. Inlined per theme because a
+     background-image cannot read a colour from a CSS variable, and kept directly beside
+     the token it matches so the two are changed together. */
+  --select-chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
   --accent: oklch(96.8% 0.007 247.896);
   --accent-foreground: #0a222e;
   --destructive: oklch(62% 0.22 27);
@@ -97,6 +101,8 @@
   --secondary-foreground: #f5f8fa;
   --muted: #0a222e;
   --muted-foreground: #8f98a3;
+  /* Chevron for <select> — the dark counterpart of --muted-foreground above. */
+  --select-chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238f98a3' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
   --accent: #2c676d;
   --accent-foreground: #f5f8fa;
   --destructive: #ef7070;
@@ -289,6 +295,24 @@
   .textarea::placeholder { color: var(--muted-foreground); }
   .input-lg { @apply py-2.5 text-base; }
   .textarea  { @apply resize-none; }
+
+  /* <select> is the one control the canon classes did not actually reach. `.input` gives
+     it the right border, radius and text colour, but the BROWSER still draws the dropdown
+     arrow itself — its own glyph, its own colour, its own box — so a select sat visibly
+     outside the design beside the inputs it shares a class with. (Most visible on the
+     Planner-display time selects, which sit directly under canonical toggles.)
+     Suppress the native arrow and paint the same chevron the rest of the UI uses.
+     `padding-right` reserves the space so a long option never runs under it. */
+  select.input,
+  select.input-lg {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: var(--select-chevron);
+    background-repeat: no-repeat;
+    background-position: right 0.625rem center;
+    background-size: 0.875rem;
+    padding-right: 1.9rem;
+  }
 
   /* ── Badges ──────────────────────────────────────────────────── */
   .badge,

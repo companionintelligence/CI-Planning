@@ -3,12 +3,16 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 
-// Guards the CI canon token contract that PR "adopt CI enriched palette" installs:
-// the light (`:root`) and dark (`.dark`) themes must resolve `--primary` to the
-// canonical Companion Intelligence teal (#0f717a light / #abd4d8 dark). The full
-// contract is enforced in CI by scripts/lint-canon.mjs (style-canon-lint.yml); this
-// is a fast, local unit-level canary so a stray edit to index.css fails the client
-// suite immediately rather than only at lint time.
+// Guards the CI canon token contract: the light (`:root`) and dark (`.dark`) themes
+// must resolve `--primary` to the canonical Companion Intelligence brand primary —
+// phthalo #0a6358 light / sage #c5e8dc dark, per @companionintelligence/tokens v0.3.0.
+//
+// These were teal-600 #0f717a / teal-200 #abd4d8 before v0.3.0, and this canary kept
+// asserting those after the palette moved on — so it failed against an index.css that
+// was in fact correct, which is the one thing a canary must never do. The values here
+// now match what scripts/lint-canon.mjs actually enforces; that lint
+// (style-canon-lint.yml) remains the full contract and the authority, and this is only
+// the fast local mirror of it, so the two must be updated together.
 const cssPath = join(dirname(fileURLToPath(import.meta.url)), 'index.css');
 const css = readFileSync(cssPath, 'utf8');
 
@@ -33,12 +37,12 @@ function primaryOf(selector: string): string | null {
 }
 
 describe('CI canon theme tokens (index.css)', () => {
-  it('light :root --primary is canon teal #0f717a', () => {
-    expect(primaryOf(':root')?.toLowerCase()).toBe('#0f717a');
+  it('light :root --primary is canon phthalo #0a6358', () => {
+    expect(primaryOf(':root')?.toLowerCase()).toBe('#0a6358');
   });
 
-  it('dark .dark --primary is canon teal #abd4d8', () => {
-    expect(primaryOf('.dark')?.toLowerCase()).toBe('#abd4d8');
+  it('dark .dark --primary is canon sage #c5e8dc', () => {
+    expect(primaryOf('.dark')?.toLowerCase()).toBe('#c5e8dc');
   });
 
   it('defines both a light (:root) and dark (.dark) theme block', () => {
