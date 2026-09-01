@@ -1670,6 +1670,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "kind",
       "owner_id",
       "reminder_offsets",
+      "show_open_time",
       "tag_id",
     ],
     "table": "tag_prefs",
