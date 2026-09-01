@@ -1298,7 +1298,7 @@ export function DetailsDrawer() {
   // the bottom of the screen and ate clicks meant for the FAB and other bottom
   // controls underneath it. Desktop is unaffected: there it's a docked side panel,
   // and an empty side panel doesn't cover anything.
-  const isEmptyState = () => !task() && !block() && !entity() && !(hasPlannerTab() && drawerTab() === 'planner');
+  const isEmptyState = () => !task() && !block() && !entity() && !(hasSecondTab() && drawerTab() === 'flightplan');
 
   return (
     <Show when={detailsOpen()}>

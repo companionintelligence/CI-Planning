@@ -16,7 +16,7 @@ import { createSignal } from 'solid-js';
 
 let pathname = '/tasks';
 vi.mock('@solidjs/router', () => ({ useLocation: () => ({ pathname }) }));
-vi.mock('./Planner.js', () => ({ Planner: () => <div>planner-grid</div> }));
+vi.mock('./FlightPlan.js', () => ({ FlightPlan: () => <div>flight-plan-list</div> }));
 vi.mock('./LockToggle.js', () => ({ LockToggle: () => null }));
 vi.mock('./TaskCard.js', () => ({ PriorityToggle: () => null, DateField: () => null }));
 vi.mock('../lib/lock.js', () => ({ lockAffordance: () => ({}) }));
@@ -34,10 +34,10 @@ vi.mock('../stores/selection.js', () => ({
   setActiveBlock: vi.fn(), setActiveEntity: (kind: string, id: string) => setEntity({ kind, id }),
 }));
 
-const [drawerTab, setDrawerTabSignal] = createSignal<'details' | 'planner'>('details');
+const [drawerTab, setDrawerTabSignal] = createSignal<'details' | 'flightplan'>('details');
 vi.mock('../stores/ui.js', () => ({
   detailsOpen: () => true, detailsWidth: () => 360, setDetailsOpen: vi.fn(), setDetailsWidth: vi.fn(),
-  drawerTab: () => drawerTab(), setDrawerTab: (t: 'details' | 'planner') => setDrawerTabSignal(t),
+  drawerTab: () => drawerTab(), setDrawerTab: (t: 'details' | 'flightplan') => setDrawerTabSignal(t),
   DETAILS_MIN_W: 280, DETAILS_MAX_W: 640, DETAILS_DEFAULT_W: 360,
 }));
 vi.mock('../stores/index.js', () => ({
@@ -74,11 +74,11 @@ describe('DetailsDrawer — mobile empty-state bottom sheet', () => {
     expect(aside().classList.contains('details-drawer-empty')).toBe(false);
   });
 
-  it('does not mark the drawer empty on Today while the Planner tab has content, even with nothing selected', async () => {
+  it('does not mark the drawer empty on Today while the Flight Plan tab has content, even with nothing selected', async () => {
     pathname = '/';
-    setDrawerTabSignal('planner');
+    setDrawerTabSignal('flightplan');
     render(() => <DetailsDrawer />);
-    expect(screen.getByText('planner-grid')).toBeTruthy();
+    expect(screen.getByText('flight-plan-list')).toBeTruthy();
     expect(aside().classList.contains('details-drawer-empty')).toBe(false);
   });
 
