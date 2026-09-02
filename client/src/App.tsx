@@ -148,7 +148,7 @@ function Shell(props: { children?: any }) {
               below md the rail is already hidden and the bottom tab bar navigates. */}
           <button
             type="button"
-            class="btn-icon flex-shrink-0 hidden md:grid"
+            class="btn-icon btn-icon-strong flex-shrink-0 hidden md:grid"
             aria-expanded={!navCollapsed()}
             aria-label={navCollapsed() ? 'Expand navigation' : 'Collapse navigation'}
             title={navCollapsed() ? 'Expand navigation' : 'Collapse navigation'}

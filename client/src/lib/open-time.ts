@@ -37,6 +37,26 @@ export interface OpenSegment extends TimeRange {
 export const OPEN_TIME_DIRECTIONS = ['work', 'community'] as const;
 
 /**
+ * The hours the Today card is willing to call "open", independent of how wide the
+ * day's availability windows actually run.
+ *
+ * A window can legitimately stretch 07:00–23:00 — that is when work is *allowed*, not
+ * when you would choose to schedule. Reporting the whole span buries the hours you would
+ * actually use among ones you would not, which is the opposite of what the card is for.
+ * These bound the DISPLAY only: nothing here changes placement, and a block already
+ * scheduled outside the range still counts as busy inside it.
+ */
+export const DEFAULT_OPEN_START: Minutes = 9 * 60;   // 09:00
+export const DEFAULT_OPEN_END: Minutes = 20 * 60;    // 20:00
+
+/** Overlap of two ranges, or null when they do not meet. */
+export function intersect(a: TimeRange, b: TimeRange): TimeRange | null {
+  const start = Math.max(a.start, b.start);
+  const end = Math.min(a.end, b.end);
+  return end > start ? { start, end } : null;
+}
+
+/**
  * Gaps shorter than this are dropped. A few minutes between two meetings is not
  * schedulable, and listing it as "open" is noise dressed up as information.
  */
@@ -162,13 +182,24 @@ export function openTime(
   // the resource feeding this can resolve before the blocks one does.
   busy: TimeRange[] = [],
   directions: readonly string[] = OPEN_TIME_DIRECTIONS,
+  /**
+   * Clamp every window to these hours before reporting gaps (see DEFAULT_OPEN_START).
+   * Omitted ⇒ no clamping, so the pure unit tests and any caller that wants the raw
+   * windows keep their existing behaviour byte-for-byte.
+   */
+  bounds?: TimeRange,
 ): OpenSegment[] {
   const merged = mergeRanges(busy);
   // Keyed by "start-end" so two directions landing on the identical open span collapse
   // into one segment instead of two adjacent rows for the same time range.
   const byRange = new Map<string, OpenSegment>();
   for (const direction of directions) {
-    for (const window of mergeRanges(windows[direction] ?? [])) {
+    for (const raw of mergeRanges(windows[direction] ?? [])) {
+      // Clamp BEFORE subtracting busy, not after: a meeting that runs past the bound
+      // must still consume the part of the window inside it, and clamping afterwards
+      // would let the tail of that meeting reappear as open time.
+      const window = bounds ? intersect(raw, bounds) : raw;
+      if (!window) continue;
       for (const gap of subtractBusy(window, merged)) {
         if (gap.end - gap.start < MIN_OPEN_MINUTES) continue;
         const key = `${gap.start}-${gap.end}`;

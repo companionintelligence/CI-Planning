@@ -1,6 +1,6 @@
 import { For, Show, createMemo, createResource } from 'solid-js';
 import { api } from '../lib/api.js';
-import { blocks, tags, patternPrefs } from '../stores/index.js';
+import { blocks, tags, patternPrefs, openTimeRange } from '../stores/index.js';
 import {
   busyFromBlocks, formatClock, formatDuration, openTime, parseHHMM, totalOpen,
   type TimeRange,
@@ -94,7 +94,9 @@ export function OpenTimeSummary(props: { date: string }) {
   /** Everything scheduled on this date, as minute intervals. */
   const busy = createMemo<TimeRange[]>(() => busyFromBlocks(blocks() ?? [], props.date));
 
-  const segments = createMemo(() => openTime(byDirection(), busy(), visibleDirections()));
+  // Clamped to the owner's Open Time range (view_prefs.today, default 9am-8pm): a
+  // window may run far wider than the hours anyone would actually schedule into.
+  const segments = createMemo(() => openTime(byDirection(), busy(), visibleDirections(), openTimeRange()));
   const total = () => totalOpen(segments());
   const loading = () => dayType.loading || windows.loading;
 

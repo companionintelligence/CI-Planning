@@ -9,6 +9,7 @@ import { objectiveOfBlock, type ObjectiveAccent } from '../lib/objective-accent.
 import type { AxisDeselected, TagAxis, TagKindLookup } from '../lib/overlay.js';
 import { DEFAULT_AXIS_STATE } from '../lib/day-axis.js';
 import type { AxisState } from '../lib/day-axis.js';
+import { DEFAULT_OPEN_START, DEFAULT_OPEN_END } from '../lib/open-time.js';
 import {
   buildCalendarViewPrefs,
   deserializeEventsOnly,
@@ -433,6 +434,26 @@ export function setTexturesEnabled(v: boolean) {
   const existing = prefs()?.view_prefs ?? {};
   const appearance = { ...(existing.appearance ?? {}), direction_textures: v };
   void api.prefs.update({ view_prefs: { ...existing, appearance } })
+    .then(() => refetchPrefs())
+    .catch((err) => showToast((err as Error).message, 'error'));
+}
+
+// ── Today: the Open Time display range (view_prefs.today) ────────────────────
+// Same read-through shape as the textures toggle above: absent/malformed = the 9am-8pm
+// default, and the setter merges over the existing blob so calendar/planner survive.
+// Bounds only affect what the card REPORTS — see DEFAULT_OPEN_START in lib/open-time.
+export const openTimeRange = (): { start: number; end: number } => {
+  const t = prefs()?.view_prefs?.today;
+  const start = typeof t?.openStartMin === 'number' ? t.openStartMin : DEFAULT_OPEN_START;
+  const end = typeof t?.openEndMin === 'number' ? t.openEndMin : DEFAULT_OPEN_END;
+  // A start at or past the end would report nothing at all and look like a broken card,
+  // so an inverted pair falls back rather than rendering an empty day.
+  return end > start ? { start, end } : { start: DEFAULT_OPEN_START, end: DEFAULT_OPEN_END };
+};
+export function setOpenTimeRange(startMin: number, endMin: number) {
+  const existing = prefs()?.view_prefs ?? {};
+  const today = { ...(existing.today ?? {}), openStartMin: startMin, openEndMin: endMin };
+  void api.prefs.update({ view_prefs: { ...existing, today } })
     .then(() => refetchPrefs())
     .catch((err) => showToast((err as Error).message, 'error'));
 }

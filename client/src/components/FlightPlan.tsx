@@ -158,24 +158,6 @@ export function FlightPlan() {
   }
 
   // Auto Schedule: always places selected staged tasks; never proposes candidates.
-  async function runSchedule() {
-    setRunning(true);
-    try {
-      const { result } = await api.auto.run({ date: selectedDay() });
-      const span = (result.days ?? 1) > 1 ? ` across ${result.days} days` : '';
-      const bits = [`Scheduled ${result.placed ?? 0}${span}`];
-      if (result.unplaced) bits.push(`${result.unplaced} didn't fit`);
-      showToast(bits.join(' · '), 'success');
-      if ((result.blocksCreated ?? 0) > 0) setCanUndo(true);
-      refetchFlightPlan();
-      refetchBlocks();
-    } catch (err) {
-      showToast((err as Error).message, 'error');
-    } finally {
-      setRunning(false);
-    }
-  }
-
   async function undo() {
     try {
       const { result } = await api.auto.undo();
@@ -451,15 +433,9 @@ export function FlightPlan() {
             </button>
           </Show>
 
-          {/* Schedule — places selected staged items + workday fill */}
-          <button
-            onClick={runSchedule}
-            disabled={running()}
-            class="btn-primary !rounded-full !py-0.5 !px-2.5 text-[11px] flex items-center gap-1 flex-shrink-0"
-            title={`Place the ${selectedCount()} included task${selectedCount() === 1 ? '' : 's'} into the day`}
-          >
-            <CalendarCheck size={12} classList={{ 'animate-pulse': running() }} /> Schedule
-          </button>
+          {/* Schedule moved to the Planner container header: the grid is what you watch
+              placement land on, so the trigger belongs beside it rather than in the
+              staging list you dip into. See Planner.tsx's header. */}
 
           {/* Undo — topaz outline; appears after Auto Schedule; tap to confirm or dismiss */}
           <Show when={canUndo()}>

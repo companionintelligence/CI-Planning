@@ -113,3 +113,39 @@ export function computeBands(windows: DayWindows, tags: TagDef[], prefs: Pattern
   }
   return out;
 }
+
+/** One availability window resolved to a direction name and minute-of-day bounds. */
+export interface ActiveWindow {
+  direction: string;
+  start: number;
+  end: number;
+}
+
+/**
+ * The availability windows covering a given minute of the day.
+ *
+ * The details drawer answers "what am I inside right now?" when nothing is selected —
+ * a day type alone ("Workday") does not tell you whether you are currently in work
+ * hours or the evening. Returns every covering window, not just the first: overlapping
+ * directions are legal (Home and Community can both run 19:00-21:00) and reporting one
+ * would silently hide the other.
+ *
+ * Pure and minute-based so it is unit-testable without a DOM or a clock.
+ */
+export function activeWindowsAt(windows: DayWindows, tags: TagDef[], nowMin: number): ActiveWindow[] {
+  const nameById = new Map(tags.map((t) => [t.id, t.name.toLowerCase()]));
+  const out: ActiveWindow[] = [];
+  for (const [tagId, ranges] of Object.entries(windows ?? {})) {
+    const direction = nameById.get(tagId);
+    if (!direction) continue; // a window for a tag we do not know about is not describable
+    for (const r of ranges ?? []) {
+      const start = timeToMinutes(r.start_time);
+      const end = timeToMinutes(r.end_time);
+      if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+      // End-exclusive: at exactly 13:00 you are in the afternoon window, not still in
+      // the morning one that ends there — otherwise a boundary minute reports both.
+      if (nowMin >= start && nowMin < end) out.push({ direction, start, end });
+    }
+  }
+  return out.sort((a, b) => a.start - b.start || a.direction.localeCompare(b.direction));
+}

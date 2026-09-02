@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   busyFromBlocks, formatClock, formatDuration, mergeRanges, openTime,
   parseHHMM, subtractBusy, totalOpen, MIN_OPEN_MINUTES,
+  DEFAULT_OPEN_START,
+  DEFAULT_OPEN_END,
 } from './open-time.js';
 import type { Block } from './api.js';
 
@@ -335,5 +337,50 @@ describe('busyFromBlocks', () => {
 
   it('is empty for an empty day', () => {
     expect(busyFromBlocks([], DAY)).toEqual([]);
+  });
+});
+
+// ─── Display bounds (the Today "open time" range setting) ────────────────────
+
+describe('openTime bounds', () => {
+  const win = (start: number, end: number) => ({ work: [{ start, end }] });
+  const NINE_TO_EIGHT = { start: DEFAULT_OPEN_START, end: DEFAULT_OPEN_END };
+
+  it('defaults are 9am–8pm', () => {
+    expect(DEFAULT_OPEN_START).toBe(540);
+    expect(DEFAULT_OPEN_END).toBe(1200);
+  });
+
+  it('clamps a window that runs wider than the bounds', () => {
+    // 07:00–23:00 availability, reported only for the hours you would actually use.
+    const [seg] = openTime(win(7 * 60, 23 * 60), [], ['work'], NINE_TO_EIGHT);
+    expect(seg).toMatchObject({ start: 540, end: 1200 });
+  });
+
+  it('leaves a window already inside the bounds untouched', () => {
+    const [seg] = openTime(win(10 * 60, 12 * 60), [], ['work'], NINE_TO_EIGHT);
+    expect(seg).toMatchObject({ start: 600, end: 720 });
+  });
+
+  it('drops a window entirely outside the bounds', () => {
+    expect(openTime(win(21 * 60, 23 * 60), [], ['work'], NINE_TO_EIGHT)).toEqual([]);
+  });
+
+  it('is inert when no bounds are given — byte-identical to the unbounded call', () => {
+    const w = win(7 * 60, 23 * 60);
+    expect(openTime(w, [], ['work'])).toEqual(openTime(w, [], ['work'], undefined));
+  });
+
+  it('still subtracts a busy block that straddles the upper bound', () => {
+    // The regression the clamp-before-subtract order exists to prevent: a 19:30–21:00
+    // meeting must not leave 19:30–20:00 looking open just because its tail is outside.
+    const segs = openTime(win(9 * 60, 23 * 60), [{ start: 19 * 60 + 30, end: 21 * 60 }], ['work'], NINE_TO_EIGHT);
+    expect(segs).toEqual([{ start: 540, end: 19 * 60 + 30, directions: ['work'] }]);
+  });
+
+  it('drops a clamped remainder below the minimum useful gap', () => {
+    // 19:50–20:00 survives the clamp at 10 minutes, under MIN_OPEN_MINUTES.
+    const segs = openTime(win(9 * 60, 23 * 60), [{ start: 9 * 60, end: 19 * 60 + 50 }], ['work'], NINE_TO_EIGHT);
+    expect(segs).toEqual([]);
   });
 });

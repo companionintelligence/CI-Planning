@@ -1,5 +1,5 @@
 import { For, Show, createMemo, createSignal, createResource, onCleanup } from 'solid-js';
-import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Repeat, Check, CheckCircle2, ArrowUpRight, Eraser, X, ListChecks, ChevronRight, ChevronDown } from 'lucide-solid';
+import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Repeat, Check, CheckCircle2, ArrowUpRight, Eraser, X, ListChecks, ChevronRight, ChevronDown, CalendarCheck } from 'lucide-solid';
 import { api, type Block, type RecurringScope } from '../lib/api.js';
 import { PX_PER_MIN, MINUTES_PER_DAY, SNAP_MIN, minutesIntoDay } from '../lib/grid.js';
 import {
@@ -1005,6 +1005,33 @@ export function Planner() {
     );
   }
 
+  /**
+   * Schedule — place the selected staged tasks plus the workday fill into this day.
+   *
+   * Lives here rather than in the Flight Plan header (where it used to sit) because the
+   * grid below is what placement actually lands on: pressing it and watching the blocks
+   * appear in the same container is the whole feedback loop. The Flight Plan is the
+   * staging list you dip into, not the surface you watch.
+   */
+  const [scheduling, setScheduling] = createSignal(false);
+  async function runSchedule() {
+    if (scheduling()) return;
+    setScheduling(true);
+    try {
+      const { result } = await api.auto.run({ date: day() });
+      const span = (result.days ?? 1) > 1 ? ` across ${result.days} days` : '';
+      const bits = [`Scheduled ${result.placed ?? 0}${span}`];
+      if (result.unplaced) bits.push(`${result.unplaced} didn't fit`);
+      showToast(bits.join(' · '), 'success');
+      refetchFlightPlan();
+      refetchBlocks();
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setScheduling(false);
+    }
+  }
+
   return (
     <div class="rounded-xl border border-border bg-card overflow-hidden flex flex-col">
       {/* Header — region label + day-type control + actions (no zoom control: the
@@ -1013,7 +1040,7 @@ export function Planner() {
       <div class="flex items-center justify-between px-3 py-2 border-b border-border flex-shrink-0 flex-wrap gap-y-1.5">
         <div class="flex items-center gap-2">
           <span class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary">Planner</span>
-          <DayTypeControl date={day()} hideLabel />
+          <DayTypeControl date={day()} hideLabel hideEditWindows />
         </div>
         <div class="flex items-center gap-3">
           {/* Multi-select → Routine: a one-click entry point for the Shift++ chord,
@@ -1027,6 +1054,15 @@ export function Planner() {
               <Repeat size={12} /> + Routine
             </button>
           </Show>
+          {/* Schedule — moved here from the Flight Plan header. */}
+          <button
+            onClick={runSchedule}
+            disabled={scheduling()}
+            class="btn-primary !rounded-full !py-0.5 !px-2.5 text-[11px] flex items-center gap-1 flex-shrink-0 disabled:opacity-40"
+            title="Place the included flight-plan tasks into this day"
+          >
+            <CalendarCheck size={12} classList={{ 'animate-pulse': scheduling() }} /> Schedule
+          </button>
           {/* T-PLAN-1: clear this day's auto-placed blocks (keeps locked/calendar/habit). */}
           <button
             onClick={clearDay}
