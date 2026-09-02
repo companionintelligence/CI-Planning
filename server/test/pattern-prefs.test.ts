@@ -72,6 +72,9 @@ describe('GET /api/pattern-prefs', () => {
       icon_shape: 'square',
       color_token: 'chart-3',
       default_minutes: 60,
+      // 0170 — defaults ON (migration DEFAULT 1); these assertions are exhaustive, so a
+      // new pref column has to be added here or they fail on a correct service.
+      show_open_time: true,
     });
   });
 });
@@ -203,6 +206,7 @@ describe('pattern-prefs service', () => {
       icon_shape: 'circle',
       color_token: 'primary',
       default_minutes: 60,
+      show_open_time: true, // 0170, defaults ON
     });
   });
 
