@@ -273,6 +273,24 @@
     @apply p-1.5 rounded-md;
     color: var(--muted-foreground);
   }
+  /* The panel/drawer toggles are navigation, not decoration: they are the only way back
+     to a rail or drawer the user just collapsed, so at --muted-foreground on the app bar
+     they read as disabled and get hunted for. Full foreground colour plus a visible
+     border makes them look like the controls they are, without promoting every other
+     .btn-icon (sweep, close) to the same weight. */
+  .btn-icon-strong {
+    color: var(--foreground);
+    border: 1px solid var(--border);
+    background: var(--card);
+  }
+  .btn-icon-strong:hover {
+    color: var(--primary);
+    border-color: var(--primary);
+  }
+  .btn-icon-strong[aria-expanded='true'] {
+    color: var(--primary);
+    border-color: var(--primary);
+  }
 
   /* ── Cards ───────────────────────────────────────────────────── */
   .card {

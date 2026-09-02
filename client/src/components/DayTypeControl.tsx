@@ -12,7 +12,18 @@ import { SchedulePatternEditor } from './SchedulePatternEditor.js';
  * The resolve fetch is keyed on the shared patternBlocks store signal so it refreshes
  * whenever a day-type mutation calls refetchPatternBlocks() (assign/clear/window-edit).
  */
-export function DayTypeControl(props: { date: string; trailing?: JSX.Element; hideLabel?: boolean }) {
+export function DayTypeControl(props: {
+  date: string;
+  trailing?: JSX.Element;
+  hideLabel?: boolean;
+  /** Hide the "Edit windows" disclosure — the Planner header keeps only the day-type
+   *  select, and the editor is reached from the details drawer's empty state instead. */
+  hideEditWindows?: boolean;
+  /** Render ONLY the "Edit windows" disclosure and its editor, no day-type select.
+   *  The drawer's counterpart to `hideEditWindows`; both halves stay in this one
+   *  component so the resolve/refetch wiring is not duplicated across two files. */
+  windowsOnly?: boolean;
+}) {
   const [resolved] = createResource(
     () => [props.date, patternBlocks()] as const,
     ([d]) => api.dayTypes.resolve(d),
@@ -35,10 +46,11 @@ export function DayTypeControl(props: { date: string; trailing?: JSX.Element; hi
   return (
     <div class="flex flex-col gap-2">
       <div class="flex flex-wrap items-center gap-2">
-        <Show when={!props.hideLabel}>
+        <Show when={!props.hideLabel && !props.windowsOnly}>
           <CalendarCog size={13} class="text-muted-foreground" />
           <span class="text-[11px] uppercase tracking-wide text-muted-foreground">Day type</span>
         </Show>
+        <Show when={!props.windowsOnly}>
         <select
           class="input w-auto py-0.5 text-sm"
           value={isOverride() ? currentKey() : ''}
@@ -47,10 +59,13 @@ export function DayTypeControl(props: { date: string; trailing?: JSX.Element; hi
           <option value="">Default{currentKey() && !isOverride() ? ` · ${nameOf(currentKey())}` : ''}</option>
           <For each={types()}>{(t) => <option value={t.key}>{t.name}</option>}</For>
         </select>
-        <Show when={isOverride()}>
+        </Show>
+        <Show when={isOverride() && !props.windowsOnly}>
           <span class="text-[10px] rounded-full border border-primary/40 text-primary px-1.5 py-0.5">override</span>
         </Show>
-        {/* Edit windows sits immediately right of the select (LEFT group, T-SCHED-1). */}
+        {/* Edit windows: in the drawer by default; the Planner header passes
+            hideEditWindows so the grid header carries only the day-type select. */}
+        <Show when={!props.hideEditWindows}>
         <button
           type="button"
           class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
@@ -59,6 +74,7 @@ export function DayTypeControl(props: { date: string; trailing?: JSX.Element; hi
           <Show when={open()} fallback={<ChevronRight size={13} />}><ChevronDown size={13} /></Show>
           Edit windows
         </button>
+        </Show>
         {/* Phase O · O3 — optional right-aligned trailing content (the day-stars tally). */}
         <Show when={props.trailing}>
           <div class="ml-auto">{props.trailing}</div>

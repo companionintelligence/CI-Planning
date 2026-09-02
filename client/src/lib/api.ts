@@ -1301,6 +1301,18 @@ export interface ViewPrefs {
     topEndMin?: number;
     bottomStartMin?: number;
   };
+  /** Today view display settings. */
+  today?: {
+    /**
+     * The hours the Open Time card reports, minute-of-day. Availability windows can
+     * legitimately run 07:00–23:00 — that is when work is allowed, not when you would
+     * choose to schedule — so the card clamps to this range. Display only: placement is
+     * unaffected, and a block outside the range still counts as busy inside it.
+     * Absent = 09:00 / 20:00.
+     */
+    openStartMin?: number;
+    openEndMin?: number;
+  };
   /** Cross-view appearance switches. */
   appearance?: {
     /** Routine/direction background textures on cards & planner chips. Absent = on. */

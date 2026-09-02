@@ -1,7 +1,8 @@
 import { createSignal, createEffect, Show, createResource, For, onMount } from 'solid-js';
 import { ViewHeader } from '../components/ViewHeader.js';
 import { BellRing, Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, Database, AlertTriangle, Users, KeyRound, ScrollText, Eye, FileJson, FileText, Mail } from 'lucide-solid';
-import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast, texturesEnabled, setTexturesEnabled, focusAppearance, setFocusAppearance, plannerAxisState, setPlannerCollapseBounds, integrations, refetchIntegrations, recheckIntegrations, aiAvailable, connections, refetchConnections, openOnboardingAt } from '../stores/index.js';
+import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast, texturesEnabled, setTexturesEnabled, focusAppearance, setFocusAppearance, plannerAxisState, setPlannerCollapseBounds, integrations, refetchIntegrations, recheckIntegrations, aiAvailable, connections, refetchConnections, openOnboardingAt, openTimeRange, setOpenTimeRange,
+} from '../stores/index.js';
 import { api, type PlanningSession } from '../lib/api.js';
 import { sessionToMarkdown, sessionToJson, exportFilename } from '../lib/plan-week-export.js';
 import { FTUE_RESUME_KEY } from '../lib/onboarding.js';
@@ -80,6 +81,16 @@ const DEFAULTS: SettingsForm = {
   capacity_hours_per_week: 56,
   balance_bias_enabled: true,
 };
+
+/** Minute-of-day -> "9 AM" / "12 PM" / "8 PM". 1440 is the end of the day, not 12 AM
+ *  of the next one, so it reads "midnight" rather than wrapping to 12 AM. */
+function fmtHourLabel(min: number): string {
+  if (min >= 1440) return 'midnight';
+  const h = Math.floor(min / 60);
+  if (h === 0) return '12 AM';
+  if (h === 12) return '12 PM';
+  return h < 12 ? `${h} AM` : `${h - 12} PM`;
+}
 
 export function Settings() {
   const [activeTab, setActiveTab] = createSignal<'profile' | 'preferences' | 'connections' | 'logs'>('profile');
@@ -1158,6 +1169,41 @@ export function Settings() {
                   </For>
                 </select>
               </label>
+
+              {/* Today -> Open Time display range. Separate from the collapse bounds above:
+                  those fold the PLANNER's empty night hours away, this decides which hours
+                  the Open Time card is willing to call open. A window can run 07:00-23:00
+                  because that is when work is allowed, not when anyone would schedule. */}
+              <div class="pt-3 mt-1 border-t border-border">
+                <div class="text-sm text-foreground leading-tight">Open Time range</div>
+                <div class="text-[11px] text-muted-foreground mb-2">
+                  The hours Today's Open Time card reports. Narrower than your availability windows —
+                  it changes what is shown, never what can be scheduled.
+                </div>
+                <div class="flex items-center gap-2 flex-wrap">
+                  <select
+                    class="input py-1 text-sm w-24 flex-shrink-0"
+                    aria-label="Open Time range start"
+                    value={openTimeRange().start}
+                    onChange={(e) => setOpenTimeRange(Number(e.currentTarget.value), openTimeRange().end)}
+                  >
+                    <For each={Array.from({ length: 24 }, (_, i) => i * 60)}>
+                      {(m) => <option value={m}>{fmtHourLabel(m)}</option>}
+                    </For>
+                  </select>
+                  <span class="text-xs text-muted-foreground">to</span>
+                  <select
+                    class="input py-1 text-sm w-24 flex-shrink-0"
+                    aria-label="Open Time range end"
+                    value={openTimeRange().end}
+                    onChange={(e) => setOpenTimeRange(openTimeRange().start, Number(e.currentTarget.value))}
+                  >
+                    <For each={Array.from({ length: 24 }, (_, i) => (i + 1) * 60)}>
+                      {(m) => <option value={m}>{fmtHourLabel(m)}</option>}
+                    </For>
+                  </select>
+                </div>
+              </div>
             </div>
           </section>
 

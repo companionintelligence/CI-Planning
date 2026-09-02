@@ -1,12 +1,12 @@
 import { For, Show, createSignal, createMemo, createResource, createEffect } from 'solid-js';
 import {
-  Zap, CalendarCheck, X, ChevronDown, ChevronRight, ChevronLeft, Repeat2, Undo2, Trash2,
+  Zap, CalendarCheck, X, ChevronDown, ChevronRight, ChevronLeft, Repeat2, Trash2,
   Star, Plus, Check as CheckIcon,
 } from 'lucide-solid';
 import { api, type FlightPlanItem, type Task, type BlockTemplate } from '../lib/api.js';
 import {
   flightPlan, refetchFlightPlan, refetchBlocks, prefs, refetchPrefs, showToast, selectedDay,
-  blockTemplates, refetchBlockTemplates, flightPlanTaskIds, patterns, canUndoAuto,
+  blockTemplates, refetchBlockTemplates, flightPlanTaskIds, patterns,
 } from '../stores/index.js';
 import { isSelected, toggleSelection, setActiveTask, activeTask } from '../stores/selection.js';
 import { revealDetails } from '../stores/ui.js';
@@ -48,12 +48,6 @@ import {
 export function FlightPlan() {
   const [running, setRunning] = createSignal(false);
   const [collapsed, setCollapsed] = createSignal(false);
-  // Seeded from the server (canUndoAuto rides the flight-plan read) so a reload keeps the
-  // button; the local signal stays so a run/undo can flip it optimistically before the
-  // refetch lands. Server truth re-syncs on every flight-plan read.
-  const [canUndo, setCanUndo] = createSignal(false);
-  createEffect(() => setCanUndo(canUndoAuto()));
-  const [undoConfirm, setUndoConfirm] = createSignal(false);
   const [tab, setTab] = createSignal<'plan' | 'saved'>('plan');
   const items = () => flightPlan() ?? [];
   const selectedCount = () => items().filter((i) => i.selected).length;
@@ -158,37 +152,6 @@ export function FlightPlan() {
   }
 
   // Auto Schedule: always places selected staged tasks; never proposes candidates.
-  async function runSchedule() {
-    setRunning(true);
-    try {
-      const { result } = await api.auto.run({ date: selectedDay() });
-      const span = (result.days ?? 1) > 1 ? ` across ${result.days} days` : '';
-      const bits = [`Scheduled ${result.placed ?? 0}${span}`];
-      if (result.unplaced) bits.push(`${result.unplaced} didn't fit`);
-      showToast(bits.join(' · '), 'success');
-      if ((result.blocksCreated ?? 0) > 0) setCanUndo(true);
-      refetchFlightPlan();
-      refetchBlocks();
-    } catch (err) {
-      showToast((err as Error).message, 'error');
-    } finally {
-      setRunning(false);
-    }
-  }
-
-  async function undo() {
-    try {
-      const { result } = await api.auto.undo();
-      setCanUndo(false);
-      setUndoConfirm(false);
-      showToast(result.removed ? `Undid ${result.removed} block${result.removed === 1 ? '' : 's'}` : 'Nothing to undo', 'default');
-      refetchFlightPlan();
-      refetchBlocks();
-    } catch (err) {
-      showToast((err as Error).message, 'error');
-    }
-  }
-
   async function toggle(taskId: string, selected: boolean) {
     try { await api.flightPlan.update(taskId, { selected }); refetchFlightPlan(); }
     catch (err) { showToast((err as Error).message, 'error'); }
@@ -200,7 +163,10 @@ export function FlightPlan() {
   async function reset() {
     try {
       const r = await api.flightPlan.reset();
-      setCanUndo(false);
+      // Undo lives in the Planner header now and re-syncs from `can_undo` on the
+      // refetch below. This used to hide it optimistically here, which was wrong
+      // anyway: clearing the STAGING list does not un-place the blocks a Schedule
+      // run created, so the undo is still meaningful afterwards.
       refetchFlightPlan();
       showToast(`Cleared ${r.cleared}`, 'default');
     } catch (err) { showToast((err as Error).message, 'error'); }
@@ -451,45 +417,12 @@ export function FlightPlan() {
             </button>
           </Show>
 
-          {/* Schedule — places selected staged items + workday fill */}
-          <button
-            onClick={runSchedule}
-            disabled={running()}
-            class="btn-primary !rounded-full !py-0.5 !px-2.5 text-[11px] flex items-center gap-1 flex-shrink-0"
-            title={`Place the ${selectedCount()} included task${selectedCount() === 1 ? '' : 's'} into the day`}
-          >
-            <CalendarCheck size={12} classList={{ 'animate-pulse': running() }} /> Schedule
-          </button>
+          {/* Schedule moved to the Planner container header: the grid is what you watch
+              placement land on, so the trigger belongs beside it rather than in the
+              staging list you dip into. See Planner.tsx's header. */}
 
-          {/* Undo — topaz outline; appears after Auto Schedule; tap to confirm or dismiss */}
-          <Show when={canUndo()}>
-            <Show when={undoConfirm()} fallback={
-              <button
-                onClick={() => setUndoConfirm(true)}
-                class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border transition-colors hover:opacity-80 flex-shrink-0"
-                style={{ 'border-color': '#d7a37a', color: '#d7a37a' }}
-                title="Undo the last Schedule run"
-              >
-                <Undo2 size={11} /> Undo
-              </button>
-            }>
-              {/* Confirm prompt */}
-              <div class="inline-flex items-center gap-1 flex-shrink-0">
-                <span class="text-[11px]" style={{ color: '#d7a37a' }}>Undo?</span>
-                <button
-                  onClick={undo}
-                  class="text-[11px] px-1.5 py-0.5 rounded border transition-colors hover:opacity-90"
-                  style={{ 'border-color': '#d7a37a', color: '#d7a37a', background: 'rgba(215,163,122,0.12)' }}
-                  title="Confirm undo"
-                >Yes</button>
-                <button
-                  onClick={() => { setUndoConfirm(false); setCanUndo(false); }}
-                  class="inline-flex items-center text-muted-foreground hover:text-foreground transition-colors"
-                  title="Dismiss"
-                ><X size={11} /></button>
-              </div>
-            </Show>
-          </Show>
+          {/* Undo moved to the Planner header with Schedule — an undo that sits a panel
+              away from the action it reverses is a trap, not an affordance. */}
         </Show>
       </div>
 

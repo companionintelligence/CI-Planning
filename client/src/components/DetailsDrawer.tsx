@@ -1,4 +1,4 @@
-import { Show, For, Switch, Match, createSignal, createEffect, createResource, on, onCleanup } from 'solid-js';
+import { Show, For, Switch, Match, createSignal, createEffect, createMemo, createResource, on, onCleanup } from 'solid-js';
 import { useLocation } from '@solidjs/router';
 import { FlightPlan } from './FlightPlan.js';
 import { X, PanelRight, Inbox, Pencil, Sparkles, Check, ChevronDown, ChevronRight, Rocket } from 'lucide-solid';
@@ -9,11 +9,13 @@ import {
 import { activeTask, activeBlock, activeEntity, clearActiveEntity, setActiveTask, setActiveBlock, setActiveEntity, type ActiveEntity } from '../stores/selection.js';
 import {
   blocks, tasks, taskOf, tags, objectives, suggestions, refetchSuggestions,
-  isSuggestionBusy, setSuggestionBusy, connections, showToast, refetchTasks, setElementModal,
+  isSuggestionBusy, setSuggestionBusy, connections, showToast, refetchTasks, setElementModal, selectedDay,
 } from '../stores/index.js';
 import { api, type Task, type Block, type Tag, type Person, type PossibleTask, type Objective } from '../lib/api.js';
 import { displayTag } from '../lib/tag-tax.js';
 import { LockToggle } from './LockToggle.js';
+import { DayTypeControl } from './DayTypeControl.js';
+import { activeWindowsAt } from '../lib/day-windows.js';
 import { lockAffordance } from '../lib/lock.js';
 import { PriorityToggle, DateField } from './TaskCard.js';
 import { flattenObjectives } from '../lib/objectives.js';
@@ -1120,6 +1122,71 @@ function ObjectivePanel(props: { objective: Objective }) {
   );
 }
 
+/**
+ * What the drawer shows on Today when nothing is selected.
+ *
+ * "Nothing selected" was a dead end — an inbox glyph and a sentence telling you to go
+ * select something. The day's own state is the obvious thing to put there: which
+ * availability window you are in right now, and the control for editing those windows
+ * (moved off the Planner header, which now carries only the day-type select).
+ */
+function DayWindowPanel(props: { date: string }) {
+  const [dayType] = createResource(
+    () => props.date,
+    (date) => api.dayTypes.resolve(date).then((r) => r.key).catch(() => null),
+  );
+  const [windows] = createResource(
+    () => dayType() ?? null,
+    (key) => api.patternBlocks.forDay(key).then((r) => r.windows).catch(() => ({})),
+  );
+
+  // Re-read on a timer so the panel does not sit on a stale "now" all afternoon. A
+  // minute is finer than any window boundary needs and costs nothing.
+  const [now, setNow] = createSignal(new Date());
+  const timer = setInterval(() => setNow(new Date()), 60_000);
+  onCleanup(() => clearInterval(timer));
+  const nowMin = () => now().getHours() * 60 + now().getMinutes();
+
+  const directionTags = () => (tags() ?? []).filter((t) => t.kind === 'direction').map((t) => ({ id: t.id, name: t.name }));
+  const active = createMemo(() => activeWindowsAt(windows() ?? {}, directionTags(), nowMin()));
+
+  const clock = (m: number) => {
+    const h24 = Math.floor(m / 60), mm = String(m % 60).padStart(2, '0');
+    const h = h24 % 12 === 0 ? 12 : h24 % 12;
+    return `${h}:${mm}${h24 < 12 ? 'am' : 'pm'}`;
+  };
+
+  return (
+    <div class="drawer-body">
+      <Group label="Right now">
+        <Show
+          when={active().length > 0}
+          fallback={
+            <p class="text-xs text-muted-foreground">
+              Outside every availability window — nothing is scheduled into this part of the day.
+            </p>
+          }
+        >
+          <div class="flex flex-col gap-1.5">
+            <For each={active()}>
+              {(w) => (
+                <div class="flex items-baseline justify-between gap-2">
+                  <span class="text-sm text-foreground capitalize">{w.direction}</span>
+                  <span class="text-[11px] font-mono text-muted-foreground">{clock(w.start)}–{clock(w.end)}</span>
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
+      </Group>
+      {/* The windows editor, relocated from the Planner header. */}
+      <Group label="Day">
+        <DayTypeControl date={props.date} hideLabel windowsOnly />
+      </Group>
+    </div>
+  );
+}
+
 function EmptyPanel(props: { where: string }) {
   return (
     <div class="drawer-empty">
@@ -1361,7 +1428,7 @@ export function DetailsDrawer() {
           when={!(hasSecondTab() && drawerTab() === 'flightplan')}
           fallback={<div class="drawer-body"><FlightPlan /></div>}
         >
-          <Switch fallback={<EmptyPanel where={emptyWhere()} />}>
+          <Switch fallback={hasSecondTab() ? <DayWindowPanel date={selectedDay()} /> : <EmptyPanel where={emptyWhere()} />}>
             {/* Truthiness-only match, passing the stable `task` accessor rather than a
                 snapshotted value: the callback-children form of Match is KEYED — it
                 remounts its children on every reference change to `task()`, which
@@ -1393,7 +1460,7 @@ export function DetailsToggle() {
   return (
     <button
       type="button"
-      class="btn-icon flex-shrink-0"
+      class="btn-icon btn-icon-strong flex-shrink-0"
       aria-expanded={detailsOpen()}
       aria-label={detailsOpen() ? 'Hide details drawer' : 'Show details drawer'}
       title={detailsOpen() ? 'Hide details drawer' : 'Show details drawer'}

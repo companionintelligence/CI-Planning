@@ -1,5 +1,5 @@
-import { For, Show, createMemo, createSignal, createResource, onCleanup } from 'solid-js';
-import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Repeat, Check, CheckCircle2, ArrowUpRight, Eraser, X, ListChecks, ChevronRight, ChevronDown } from 'lucide-solid';
+import { For, Show, createMemo, createSignal, createEffect, createResource, onCleanup } from 'solid-js';
+import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Repeat, Check, CheckCircle2, ArrowUpRight, Eraser, X, ListChecks, ChevronRight, ChevronDown, CalendarCheck, Undo2 } from 'lucide-solid';
 import { api, type Block, type RecurringScope } from '../lib/api.js';
 import { PX_PER_MIN, MINUTES_PER_DAY, SNAP_MIN, minutesIntoDay } from '../lib/grid.js';
 import {
@@ -19,7 +19,7 @@ import { snapToSlot, minuteToHHMM, isSlotOccupied } from '../lib/create-click.js
 import { useDropZone } from '../lib/draggable.js';
 import { isSelected, toggleSelection, setActiveTask, setActiveBlock, selection, setRoutineModal } from '../stores/selection.js';
 import { layoutBlocks } from './CalendarGrid.js';
-import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay, tags, categoryPrefs, patternPrefs, patternBlocks, tasks, plannerAxisState, togglePlannerTop, togglePlannerBottom, texturesEnabled, objectiveAccentByBlock, askRecurringScope, isRecurringOccurrence, conflictedBlockIds, openCloseRitual } from '../stores/index.js';
+import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay, tags, categoryPrefs, patternPrefs, patternBlocks, tasks, plannerAxisState, togglePlannerTop, togglePlannerBottom, texturesEnabled, objectiveAccentByBlock, askRecurringScope, isRecurringOccurrence, conflictedBlockIds, openCloseRitual, canUndoAuto } from '../stores/index.js';
 import { accentColor } from '../lib/objective-accent.js';
 import { isAllDay } from '../lib/overlay.js';
 import { elementTextureStyle, blockColorVar, doneHatchStyle } from '../lib/textures.js';
@@ -1005,6 +1005,57 @@ export function Planner() {
     );
   }
 
+  /**
+   * Schedule — place the selected staged tasks plus the workday fill into this day.
+   *
+   * Lives here rather than in the Flight Plan header (where it used to sit) because the
+   * grid below is what placement actually lands on: pressing it and watching the blocks
+   * appear in the same container is the whole feedback loop. The Flight Plan is the
+   * staging list you dip into, not the surface you watch.
+   */
+  const [scheduling, setScheduling] = createSignal(false);
+  async function runSchedule() {
+    if (scheduling()) return;
+    setScheduling(true);
+    try {
+      const { result } = await api.auto.run({ date: day() });
+      const span = (result.days ?? 1) > 1 ? ` across ${result.days} days` : '';
+      const bits = [`Scheduled ${result.placed ?? 0}${span}`];
+      if (result.unplaced) bits.push(`${result.unplaced} didn't fit`);
+      showToast(bits.join(' · '), 'success');
+      refetchFlightPlan();
+      refetchBlocks();
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setScheduling(false);
+    }
+  }
+
+  /**
+   * Undo the last Schedule run. Moved here with Schedule: an undo that sits a panel away
+   * from the action it reverses is a trap rather than an affordance.
+   *
+   * Seeded from the server (`canUndoAuto` rides the flight-plan read) so a reload keeps
+   * the button, with a local override so a dismiss or a completed undo can hide it before
+   * the refetch lands. Server truth re-syncs on every flight-plan read.
+   */
+  const [canUndo, setCanUndo] = createSignal(false);
+  createEffect(() => setCanUndo(canUndoAuto()));
+  const [undoConfirm, setUndoConfirm] = createSignal(false);
+  async function undo() {
+    try {
+      const { result } = await api.auto.undo();
+      setCanUndo(false);
+      setUndoConfirm(false);
+      showToast(result.removed ? `Undid ${result.removed} block${result.removed === 1 ? '' : 's'}` : 'Nothing to undo', 'default');
+      refetchFlightPlan();
+      refetchBlocks();
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    }
+  }
+
   return (
     <div class="rounded-xl border border-border bg-card overflow-hidden flex flex-col">
       {/* Header — region label + day-type control + actions (no zoom control: the
@@ -1013,7 +1064,7 @@ export function Planner() {
       <div class="flex items-center justify-between px-3 py-2 border-b border-border flex-shrink-0 flex-wrap gap-y-1.5">
         <div class="flex items-center gap-2">
           <span class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary">Planner</span>
-          <DayTypeControl date={day()} hideLabel />
+          <DayTypeControl date={day()} hideLabel hideEditWindows />
         </div>
         <div class="flex items-center gap-3">
           {/* Multi-select → Routine: a one-click entry point for the Shift++ chord,
@@ -1026,6 +1077,43 @@ export function Planner() {
             >
               <Repeat size={12} /> + Routine
             </button>
+          </Show>
+          {/* Schedule — moved here from the Flight Plan header. */}
+          <button
+            onClick={runSchedule}
+            disabled={scheduling()}
+            class="btn-primary !rounded-full !py-0.5 !px-2.5 text-[11px] flex items-center gap-1 flex-shrink-0 disabled:opacity-40"
+            title="Place the included flight-plan tasks into this day"
+          >
+            <CalendarCheck size={12} classList={{ 'animate-pulse': scheduling() }} /> Schedule
+          </button>
+          {/* Undo — topaz outline; appears after a Schedule run; tap to confirm or dismiss */}
+          <Show when={canUndo()}>
+            <Show when={undoConfirm()} fallback={
+              <button
+                onClick={() => setUndoConfirm(true)}
+                class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border transition-colors hover:opacity-80 flex-shrink-0"
+                style={{ 'border-color': '#d7a37a', color: '#d7a37a' }}
+                title="Undo the last Schedule run"
+              >
+                <Undo2 size={11} /> Undo
+              </button>
+            }>
+              <div class="inline-flex items-center gap-1 flex-shrink-0">
+                <span class="text-[11px]" style={{ color: '#d7a37a' }}>Undo?</span>
+                <button
+                  onClick={undo}
+                  class="text-[11px] px-1.5 py-0.5 rounded border transition-colors hover:opacity-90"
+                  style={{ 'border-color': '#d7a37a', color: '#d7a37a', background: 'rgba(215,163,122,0.12)' }}
+                  title="Confirm undo"
+                >Yes</button>
+                <button
+                  onClick={() => { setUndoConfirm(false); setCanUndo(false); }}
+                  class="inline-flex items-center text-muted-foreground hover:text-foreground transition-colors"
+                  title="Dismiss"
+                ><X size={11} /></button>
+              </div>
+            </Show>
           </Show>
           {/* T-PLAN-1: clear this day's auto-placed blocks (keeps locked/calendar/habit). */}
           <button
