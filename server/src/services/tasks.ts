@@ -484,6 +484,38 @@ export async function updateTask(
     delete update.completedAt;
   }
 
+  // A direct `status: 'done'` stamps completed_at exactly as the `completed: true`
+  // shortcut does.
+  //
+  // `status` is an accepted PATCH field, so a task could be moved to 'done' with
+  // completed_at left null. Nothing rejected it and nothing looked broken — but
+  // `taskMetrics` windows completions on completed_at, so such a task was finished and
+  // simultaneously invisible to every completion count, and `daily_recap`'s evening
+  // rollup reads the same column. The app's own UI always goes through `completed`, so
+  // this only bit direct API/script/sync callers — silently, which is the worst way for
+  // a number to be wrong.
+  //
+  // The guards mirror the `completed` shortcut above rather than inventing new rules:
+  //  - `!wasDone` so re-stating 'done' never clobbers the original completion time;
+  //  - an explicit `completed_at` in the same PATCH wins (import/sync paths set it
+  //    deliberately, and must not be overwritten with "now");
+  //  - `update.completedAt === undefined` so a PATCH carrying BOTH `completed: true`
+  //    and `status: 'done'` is stamped once by the branch above, not twice here.
+  //
+  // Deliberately NOT symmetric: moving a done task back to another status does not clear
+  // completed_at. `completed: false` does that explicitly, but `status` writes drive
+  // legitimate machine transitions (the review sweep revives 'missed' one-offs), and
+  // erasing a real completion time as a side effect of one is a worse failure than a
+  // stale timestamp on a reopened task.
+  if (
+    input.status === 'done'
+    && !wasDone
+    && input.completed_at === undefined
+    && update.completedAt === undefined
+  ) {
+    update.completedAt = new Date().toISOString();
+  }
+
   // Only issue an UPDATE when there are column changes; a tags/depends-only
   // PATCH still resolves the task (drizzle rejects an empty .set()). Both branches
   // are owner-scoped (W3.1a): a cross-owner id matches no row → not_found (404),
