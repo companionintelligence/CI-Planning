@@ -39,6 +39,12 @@ export interface AxisMetrics {
   open: number;
   /** Completed inside the window. */
   completed: number;
+  /**
+   * Abandoned inside the window: cancelled while holding a schedule slot. Counted apart
+   * from `open` and `completed` because it is neither — the work was committed to a time
+   * and then dropped, which is the thing this number exists to make visible.
+   */
+  cancelled: number;
   /** Minutes actually tracked on those completions (0 when nothing was timed). */
   actualMinutes: number;
   /** Median actual/estimated over completions that carry both — null below 3 samples. */
@@ -55,6 +61,7 @@ export interface MetricsGroup {
   totals: {
     open: number;
     completed: number;
+    cancelled: number;
     actualMinutes: number;
     score: ScoreDistribution;
   };
@@ -108,11 +115,39 @@ const ROW_COLS = `
 
 // The rolling-window clause both populations share. Open counts are current-state (an
 // open task has no date to window on); completions are windowed on completed_at.
+//
+// Cancelled tasks used to be excluded outright — they are neither open nor completed, so
+// counting them in either bucket would have been a lie. The third branch admits only the
+// ones that were ON THE SCHEDULE when they were abandoned, which is a different and
+// answerable question: "of the work I committed to a slot, how much did I drop?"
+//
+// "Was scheduled" is read off the retained blocks rather than a new column. `cancelBlocksForTask`
+// deliberately settles a cancelled task's placements to status 'cancelled' instead of deleting
+// them (the review-surface-evidence doctrine in block-task-sync.ts) — those rows ARE the record
+// that the task once held a slot, so the fact is already durable.
+//
+// Windowed on the BLOCK's start_at, not a cancel timestamp: there is no cancelled_at, and the
+// slot date is the more meaningful grain anyway — it puts the abandonment in the same period as
+// the `completed` it should be read against, exactly like summarize.ts's planned-vs-completed
+// pair. A task abandoned today off a slot it held last year belongs to last year's number.
+//
+// Consequence worth knowing: a task whose block was HARD-deleted first (clearTaskPlacement)
+// and only then cancelled leaves no evidence and is not counted. That is the intended reading —
+// by the time it was cancelled it no longer held a slot.
 const WINDOW = `
   t.owner_id = ?
   AND (
     t.status NOT IN ('done', 'cancelled')
     OR (t.status = 'done' AND t.completed_at >= ?)
+    OR (
+      t.status = 'cancelled'
+      AND EXISTS (
+        SELECT 1 FROM time_blocks b
+         WHERE b.task_id = t.id AND b.owner_id = t.owner_id
+           AND b.block_kind = 'task' AND b.status = 'cancelled'
+           AND b.start_at >= ?
+      )
+    )
   )
 `;
 
@@ -182,7 +217,7 @@ function rollup(rows: Row[]): AxisMetrics[] {
     if (!e) {
       e = {
         m: {
-          name: r.axis, open: 0, completed: 0, actualMinutes: 0, estimateBias: null,
+          name: r.axis, open: 0, completed: 0, cancelled: 0, actualMinutes: 0, estimateBias: null,
           score: emptyScore(), medianReactionLagMin: null,
         },
         ratios: [], lags: [], scores: [],
@@ -212,6 +247,10 @@ function rollup(rows: Row[]): AxisMetrics[] {
         const lag = (Date.parse(r.reaction_at) - Date.parse(r.completed_at)) / 60000;
         if (Number.isFinite(lag) && lag >= 0) e.lags.push(lag);
       }
+    } else if (r.status === 'cancelled') {
+      // Only scheduled-and-cancelled rows reach here (see WINDOW) — an abandoned task is
+      // emphatically not "open", so this branch has to sit ahead of that fallback.
+      e.m.cancelled++;
     } else {
       e.m.open++;
     }
@@ -237,15 +276,15 @@ function rollup(rows: Row[]): AxisMetrics[] {
  * unbounded value would turn this into a full-history table scan on every page load.
  */
 async function group(owner: string, since: string, scope: string): Promise<MetricsGroup> {
-  const directions = rollup(await store().prepare(selectByDirection(scope)).all<Row>(owner, since));
-  const categories = rollup(await store().prepare(selectByCategory(scope)).all<Row>(owner, since));
+  const directions = rollup(await store().prepare(selectByDirection(scope)).all<Row>(owner, since, since));
+  const categories = rollup(await store().prepare(selectByCategory(scope)).all<Row>(owner, since, since));
 
   // Totals come from the unjoined task set, NOT from summing the axes: a task can carry
   // up to three categories (so it would be counted thrice) or none (never counted).
-  const all = rollup(await store().prepare(selectAll(scope)).all<Row>(owner, since))[0];
+  const all = rollup(await store().prepare(selectAll(scope)).all<Row>(owner, since, since))[0];
   const totals = all
-    ? { open: all.open, completed: all.completed, actualMinutes: all.actualMinutes, score: all.score }
-    : { open: 0, completed: 0, actualMinutes: 0, score: emptyScore() };
+    ? { open: all.open, completed: all.completed, cancelled: all.cancelled, actualMinutes: all.actualMinutes, score: all.score }
+    : { open: 0, completed: 0, cancelled: 0, actualMinutes: 0, score: emptyScore() };
 
   return { directions, categories, totals };
 }

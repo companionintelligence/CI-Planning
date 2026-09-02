@@ -201,6 +201,80 @@ describe('taskMetrics', () => {
 
   // A task can carry up to three categories, so summing the axes double-counts. Totals
   // must come from the unjoined set.
+  /**
+   * Scheduled-and-cancelled: work that held a slot and was given up on. It is neither
+   * open nor completed, so it gets its own count rather than being folded into either.
+   *
+   * "Held a slot" is read off the retained cancelled BLOCK — `cancelBlocksForTask`
+   * settles placements instead of deleting them, so the evidence is already durable and
+   * the metric needs no cancelled_at column.
+   */
+  describe('scheduled-and-cancelled', () => {
+    /** A settled placement: exactly what cancelling a scheduled task leaves behind. */
+    function cancelledBlock(taskId: string, startAt: string): void {
+      sqlite
+        .prepare(
+          `INSERT INTO time_blocks (id, title, block_kind, task_id, start_at, end_at, status, source_kind, owner_id)
+           VALUES (uuid7(), 'slot', 'task', ?, ?, ?, 'cancelled', 'manual', ?)`,
+        )
+        .run(taskId, startAt, startAt, OWNER);
+    }
+    const recently = () => new Date(Date.now() - 2 * 86_400_000).toISOString();
+
+    it('counts a cancelled task that held a slot, in neither open nor completed', async () => {
+      const work = seedTag('work', 'direction');
+      const t = insertTask('abandoned', { status: 'cancelled' });
+      tagTask(t, work);
+      cancelledBlock(t, recently());
+
+      const m = await taskMetrics(OWNER, 30);
+      expect(m.totals).toMatchObject({ cancelled: 1, open: 0, completed: 0 });
+      expect(m.directions.find((d) => d.name === 'work')).toMatchObject({ cancelled: 1, open: 0, completed: 0 });
+    });
+
+    it('ignores a cancelled task that never held a slot', async () => {
+      // Abandoned straight out of the backlog. Real, but not what this number measures —
+      // dropping something you never committed to a time is not the same failure.
+      const t = insertTask('never scheduled', { status: 'cancelled' });
+      tagTask(t, seedTag('work', 'direction'));
+
+      const m = await taskMetrics(OWNER, 30);
+      expect(m.totals.cancelled).toBe(0);
+      expect(m.totals.open).toBe(0); // and it must not leak into open either
+    });
+
+    it('ignores a slot outside the window', async () => {
+      const t = insertTask('old abandonment', { status: 'cancelled' });
+      cancelledBlock(t, new Date(Date.now() - 90 * 86_400_000).toISOString());
+
+      expect((await taskMetrics(OWNER, 30)).totals.cancelled).toBe(0);
+      expect((await taskMetrics(OWNER, 365)).totals.cancelled).toBe(1); // widen and it appears
+    });
+
+    it('does not count a live placement — only a settled one is evidence of giving up', async () => {
+      const t = insertTask('still going', { status: 'cancelled' });
+      sqlite
+        .prepare(
+          `INSERT INTO time_blocks (id, title, block_kind, task_id, start_at, end_at, status, source_kind, owner_id)
+           VALUES (uuid7(), 'slot', 'task', ?, ?, ?, 'planned', 'manual', ?)`,
+        )
+        .run(t, recently(), recently(), OWNER);
+
+      expect((await taskMetrics(OWNER, 30)).totals.cancelled).toBe(0);
+    });
+
+    it('leaves open and completed counts untouched', async () => {
+      const open = insertTask('open one');
+      const done = insertTask('done one'); await closeTask(OWNER, done, { actualMinutes: 10 });
+      const dropped = insertTask('dropped one', { status: 'cancelled' });
+      cancelledBlock(dropped, recently());
+
+      const m = await taskMetrics(OWNER, 30);
+      expect(m.totals).toMatchObject({ open: 1, completed: 1, cancelled: 1 });
+      expect(open && done).toBeTruthy();
+    });
+  });
+
   it('totals do not double-count a multi-category task', async () => {
     const health = seedTag('health', 'category');
     const career = seedTag('career', 'category');

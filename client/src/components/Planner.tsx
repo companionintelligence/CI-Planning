@@ -15,6 +15,7 @@ import {
 import { HANDLE_PX, type GestureMode, type Neighbour, isImmovable, resolveGesture, commitDrag, clampLiveDelta, isAltFreeDrag, neighboursForDrag } from '../lib/drag.js';
 import { resolveGroup, containerAt, clampGroupDelta } from '../lib/group-move.js';
 import { spanAtY } from '../lib/place.js';
+import { isSettled, isCompleted } from '../lib/block-status.js';
 import { snapToSlot, minuteToHHMM, isSlotOccupied } from '../lib/create-click.js';
 import { useDropZone } from '../lib/draggable.js';
 import { isSelected, toggleSelection, setActiveTask, setActiveBlock, selection, setRoutineModal } from '../stores/selection.js';
@@ -457,12 +458,12 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
   const conflict = () => props.placed.cols > 1;
   // Phase 7 — stranded outside its direction's windows by a day-type change.
   const stranded = () => conflictedBlockIds().has(b().id);
-  // Settled = ANY terminal status, matching BlockCard.done() and the server's
-  // TERMINAL_BLOCK_STATUSES (block-task-sync.ts) — the views must agree on what reads
-  // as settled history vs live work. `completed()` (the done semantics: hatch +
-  // checkbox) stays completed|skipped so cancelled/missed never read as "done".
-  const settled = () => ['completed', 'skipped', 'cancelled', 'missed'].includes(b().status);
-  const completed = () => b().status === 'completed' || b().status === 'skipped';
+  // Settled = ANY terminal status; `completed()` (the done semantics: hatch + checkbox)
+  // stays completed|skipped so cancelled/missed never read as "done". Both come from the
+  // shared mirror of the server's TERMINAL_BLOCK_STATUSES — the views must agree on what
+  // reads as settled history vs live work.
+  const settled = () => isSettled(b().status);
+  const completed = () => isCompleted(b().status);
   const locked = () => isImmovable(b());
   // #386: the leaf objective this chip's task serves — identity only, zero geometry
   // (spike #361 option (c)). Rendered on settled chips too: a cancelled block still

@@ -264,3 +264,74 @@ describe('owner-scoping (W3.1a) — a cross-owner id is rejected with no mutatio
     expect(JSON.parse(tpl.recurrence_exdates ?? '[]')).toContain('2026-07-03');
   });
 });
+
+/**
+ * Cancelling is the app's soft delete, and it has to settle EVERY surface the task was
+ * on. The flight plan was the one it did not: `listFlightPlan` joins tasks without
+ * filtering status, so a cancelled task left staged kept presenting itself as work
+ * waiting to be scheduled — the single place it must not reappear, since cancelling is
+ * the owner saying they are not going to do it.
+ */
+describe('deleteTask — the task leaves every surface, including the flight plan', () => {
+  beforeEach(() => resetDb());
+
+  // source_kind is NOT NULL in the DB without a usable default, so it is spelled out —
+  // omitting it makes the INSERT OR IGNORE silently no-op rather than stage anything.
+  const stage = (taskId: string, owner: string = OWNER) =>
+    sqlite
+      .prepare(
+        `INSERT OR IGNORE INTO flight_plan (owner_id, task_id, source_kind, selected, position)
+         VALUES (?, ?, 'manual', 1, 0)`,
+      )
+      .run(owner, taskId);
+  const staged = (taskId: string) =>
+    !!sqlite.prepare(`SELECT 1 FROM flight_plan WHERE owner_id = ? AND task_id = ?`).get(OWNER, taskId);
+
+  it('unstages a staged task when it is cancelled', async () => {
+    const t = unwrap(await createTask(OWNER, { title: 'give up on this' })).task;
+    stage(t.id);
+    expect(staged(t.id)).toBe(true);
+
+    const res = await deleteTask(OWNER, t.id);
+    expect(res.ok).toBe(true);
+    expect(staged(t.id)).toBe(false);
+    expect(
+      (sqlite.prepare(`SELECT status FROM tasks WHERE id = ?`).get(t.id) as { status: string }).status,
+    ).toBe('cancelled');
+  });
+
+  it('is fine when the task was never staged', async () => {
+    const t = unwrap(await createTask(OWNER, { title: 'never staged' })).task;
+    await expect(deleteTask(OWNER, t.id)).resolves.toMatchObject({ ok: true });
+    expect(staged(t.id)).toBe(false);
+  });
+
+  it('writes the unstage audit row only when something was actually staged', async () => {
+    const wasStaged = unwrap(await createTask(OWNER, { title: 'staged' })).task;
+    stage(wasStaged.id);
+    await deleteTask(OWNER, wasStaged.id);
+    const never = unwrap(await createTask(OWNER, { title: 'not staged' })).task;
+    await deleteTask(OWNER, never.id);
+    await flushAudits();
+
+    const rows = sqlite
+      .prepare(`SELECT entity FROM audit_log WHERE owner_id = ? AND action = 'remove' AND entity LIKE 'flight-plan:%'`)
+      .all(OWNER) as { entity: string }[];
+    expect(rows.map((r) => r.entity)).toEqual([`flight-plan:${wasStaged.id}`]);
+  });
+
+  it("does not touch another owner's identically-keyed flight-plan row", async () => {
+    // The DELETE is owner-scoped like every other write in this path (W3.1a).
+    await createOwner(SECOND_OWNER_ID);
+    const t = unwrap(await createTask(OWNER, { title: 'shared id space' })).task;
+    stage(t.id);
+    stage(t.id, SECOND_OWNER_ID);
+
+    await deleteTask(OWNER, t.id);
+
+    expect(staged(t.id)).toBe(false);
+    expect(
+      !!sqlite.prepare(`SELECT 1 FROM flight_plan WHERE owner_id = ? AND task_id = ?`).get(SECOND_OWNER_ID, t.id),
+    ).toBe(true);
+  });
+});

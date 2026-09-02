@@ -82,6 +82,7 @@ function AxisCard(props: { m: AxisMetrics }) {
         <h4 class="text-sm font-bold text-foreground capitalize truncate">{props.m.name}</h4>
         <span class="text-[10px] text-muted-foreground font-mono flex-shrink-0">
           {props.m.completed} done · {props.m.open} open
+          <Show when={props.m.cancelled > 0}>{' '}· {props.m.cancelled} cancelled</Show>
         </span>
       </div>
 
@@ -131,7 +132,7 @@ function GroupSection(props: { group: MetricsGroup; label: string }) {
         <h3 class="text-sm font-bold text-foreground mb-3">{props.label}</h3>
         {/* Totals — computed server-side from the unjoined task set, NOT by summing
             the axes below (a task can carry 0 or 3 categories). */}
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
           <div class="card p-4">
             <div class="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Completed</div>
             <div class="text-2xl font-mono font-extrabold text-foreground">{g().totals.completed}</div>
@@ -139,6 +140,13 @@ function GroupSection(props: { group: MetricsGroup; label: string }) {
           <div class="card p-4">
             <div class="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Still open</div>
             <div class="text-2xl font-mono font-extrabold text-foreground">{g().totals.open}</div>
+          </div>
+          {/* Scheduled, then given up on. Kept out of both Completed and Still open —
+              it is neither, and folding it into either would overstate that number. */}
+          <div class="card p-4">
+            <div class="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Cancelled</div>
+            <div class="text-2xl font-mono font-extrabold text-foreground">{g().totals.cancelled}</div>
+            <div class="text-[10px] text-muted-foreground mt-1">scheduled, not done</div>
           </div>
           <div class="card p-4">
             <div class="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Time tracked</div>
@@ -201,7 +209,10 @@ export function BalanceMetrics() {
     <div class="flex flex-col gap-6">
       <div class="flex items-center justify-between gap-3">
         <p class="text-xs text-muted-foreground">
-          Completions and tracked time over the last {days()} days. Open counts are current, not windowed.
+          {/* The windowing is genuinely mixed, so say so rather than let one clause imply
+              it covers all four tiles. Cancelled is windowed on the slot the work held,
+              which is what puts it in the same period as the completions beside it. */}
+          Completions, cancellations and tracked time over the last {days()} days. Open counts are current, not windowed.
         </p>
         <div class="inline-flex rounded-lg border border-border overflow-hidden text-[11px] flex-shrink-0">
           <For each={WINDOWS}>
