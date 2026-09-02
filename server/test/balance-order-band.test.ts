@@ -202,6 +202,23 @@ describe('bal-4 authorPlanOrder integration', () => {
     expect(plannedOrder()).toEqual([healthTask, otherTask]);
   });
 
+  it('an OVERDUE task beats the balance lead end-to-end (escape hatch, wired)', async () => {
+    // AC1's exact fixture, except the control task is now two weeks past due. The unit
+    // tests above cover the comparator; this pins the wiring — `authorPlanOrder` has to
+    // actually pass the plan date through as `overdueBefore` for the band to exist.
+    const healthCat = seedCategory('health');
+    setTarget('health', 10);
+    const healthTask = insertTask('Go for a run', 5, '2026-12-31');
+    const overdueTask = insertTask('Pay the invoice', 1, '2026-08-12'); // DATE is 2026-08-26
+    categorize(healthTask, healthCat);
+    stage(healthTask, 0);
+    stage(overdueTask, 1);
+
+    await authorPlanOrder(OWNER, DATE);
+
+    expect(plannedOrder()).toEqual([overdueTask, healthTask]);
+  });
+
   it('AC2: balance_bias_enabled = 0 ⇒ order is byte-identical to the no-bias (due/priority) order', async () => {
     sqlite.prepare(`UPDATE scheduling_prefs SET balance_bias_enabled = 0 WHERE owner_id = ?`).run(OWNER);
     const healthCat = seedCategory('health');
@@ -215,6 +232,25 @@ describe('bal-4 authorPlanOrder integration', () => {
     await authorPlanOrder(OWNER, DATE);
 
     // Without the bias, priority/due decide: otherTask (P1, due today) leads.
+    expect(plannedOrder()).toEqual([otherTask, healthTask]);
+  });
+
+  it("trust_mode='cautious' suppresses the band even with the bias pref ON (0171)", async () => {
+    // Two independent switches reach the same band: the owner's own `balance_bias_enabled`
+    // (AC2 above) and the trust dial. Cautious is the tier that reviews every item, so it
+    // sorts on nothing the owner did not type — the identical fixture to AC1, which leads
+    // with the Health task on 'balanced', must fall back to plain due/priority here.
+    sqlite.prepare(`UPDATE scheduling_prefs SET trust_mode = 'cautious' WHERE owner_id = ?`).run(OWNER);
+    const healthCat = seedCategory('health');
+    setTarget('health', 10);
+    const healthTask = insertTask('Go for a run', 5, '2026-12-31');
+    const otherTask = insertTask('File a form', 1, '2026-08-26');
+    categorize(healthTask, healthCat);
+    stage(healthTask, 0);
+    stage(otherTask, 1);
+
+    await authorPlanOrder(OWNER, DATE);
+
     expect(plannedOrder()).toEqual([otherTask, healthTask]);
   });
 
@@ -299,5 +335,111 @@ describe('bal-4 authorPlanOrder integration', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+// ─── Overdue escape hatch ──────────────────────────────────────────────────
+
+/**
+ * The bands below due/priority exist to reorder work against its deadline, which is
+ * exactly what can bury a genuinely late task: "you are light on Health this week" is
+ * not a reason to keep a two-weeks-overdue invoice off the top of the day. An overdue
+ * task therefore leads ABOVE every inferred band.
+ *
+ * A deadline is also the one input here the owner stated outright rather than the
+ * planner inferring it, so this holds in every trust tier — `orderingBandsFor` gates the
+ * inferred bands only, never this one.
+ */
+describe('overdue escape hatch', () => {
+  const DAY = '2026-08-26';
+  const LATE = '2026-08-12'; // two weeks before DAY
+  const SOON = '2026-09-30';
+
+  it('an overdue task outranks a balance-lead one', () => {
+    const tasks = [pt('lead', 'Exercise', [], 3, SOON), pt('late', 'Pay invoice', [], 3, LATE)];
+    const order = deterministicIndices(tasks, null, 'overdue', undefined, undefined, new Set(['lead']), DAY);
+    expect(tasks[order[0]].task_id).toBe('late');
+  });
+
+  it('outranks theme and memory too — it is the outermost band', () => {
+    const tasks = [
+      pt('themed', 'Deep thing', ['deep'], 1, SOON),
+      pt('related', 'Call Sam', [], 1, SOON),
+      pt('late', 'Pay invoice', [], 5, LATE), // worst priority, still first
+    ];
+    const order = deterministicIndices(
+      tasks, 'deep', 'overdue', new Set(['related']), undefined, undefined, DAY,
+    );
+    expect(tasks[order[0]].task_id).toBe('late');
+  });
+
+  it('holds under fill_order=priority, where deadline is otherwise the secondary key', () => {
+    const tasks = [pt('p1', 'Urgent-ish', [], 1, SOON), pt('late', 'Pay invoice', [], 5, LATE)];
+    const order = deterministicIndices(tasks, null, 'priority', undefined, undefined, undefined, DAY);
+    expect(tasks[order[0]].task_id).toBe('late');
+  });
+
+  it('due TODAY is not overdue — it is not late yet', () => {
+    // Otherwise every task due today would be promoted out of the lower bands on any
+    // busy day, which empties the bands rather than protecting late work.
+    const tasks = [pt('lead', 'Exercise', [], 3, SOON), pt('today', 'Due today', [], 3, `${DAY}T09:00:00.000Z`)];
+    const order = deterministicIndices(tasks, null, 'overdue', undefined, undefined, new Set(['lead']), DAY);
+    expect(tasks[order[0]].task_id).toBe('lead');
+  });
+
+  it('orders WITHIN the overdue group by the usual keys, and leaves the rest alone', () => {
+    const tasks = [
+      pt('late-later', 'Late B', [], 3, '2026-08-20'),
+      pt('late-earlier', 'Late A', [], 3, '2026-08-01'),
+      pt('lead', 'Exercise', [], 3, SOON),
+    ];
+    const order = deterministicIndices(tasks, null, 'overdue', undefined, undefined, new Set(['lead']), DAY);
+    expect(order.map((i) => tasks[i].task_id)).toEqual(['late-earlier', 'late-later', 'lead']);
+  });
+
+  it('is inert without a date — the pure-comparator callers keep a byte-identical order', () => {
+    const tasks = [pt('lead', 'Exercise', [], 3, SOON), pt('late', 'Pay invoice', [], 3, LATE)];
+    const withBand = deterministicIndices(tasks, null, 'overdue', undefined, undefined, new Set(['lead']));
+    const withNull = deterministicIndices(tasks, null, 'overdue', undefined, undefined, new Set(['lead']), null);
+    expect(withBand).toEqual(withNull);
+    expect(tasks[withBand[0]].task_id).toBe('lead'); // balance band still wins when unset
+  });
+});
+
+describe('checkOrder — band exemptions never hide a buried overdue task', () => {
+  const DAY = '2026-08-26';
+  const late = (id: string, tags: string[] = []): PlanTask =>
+    ({ task_id: id, title: `${id} (overdue)`, priority: 3, due_at: '2026-08-12', estimated_minutes: 30, tags });
+  const soon = (id: string, tags: string[] = []): PlanTask =>
+    ({ task_id: id, title: id, priority: 3, due_at: '2026-09-30', estimated_minutes: 30, tags });
+
+  it('flags a themed task placed ahead of an overdue one', () => {
+    // The exemption `continue`s past BOTH defect checks, so before the overdue guard
+    // this pairing was silently allowed — the exact burial the escape hatch prevents.
+    const tasks = [soon('themed', ['deep']), late('overdue')];
+    expect(checkOrder([0, 1], tasks, DAY, 'deep')).toHaveLength(1);
+  });
+
+  it('flags a memory-related task placed ahead of an overdue one', () => {
+    const tasks = [soon('related'), late('overdue')];
+    expect(checkOrder([0, 1], tasks, DAY, null, new Set(['related']))).toHaveLength(1);
+  });
+
+  it('flags a balance-lead task placed ahead of an overdue one', () => {
+    const tasks = [soon('lead'), late('overdue')];
+    expect(checkOrder([0, 1], tasks, DAY, null, undefined, new Set(['lead']))).toHaveLength(1);
+  });
+
+  it('still exempts a band lead when BOTH tasks share the same overdue status', () => {
+    // The guard is a same-band check, not a blanket disable: two overdue tasks (or two
+    // on-time ones) still get the ordinary theme/memory/balance exemptions.
+    const bothLate = [late('lead'), late('other')];
+    expect(checkOrder([0, 1], bothLate, DAY, null, undefined, new Set(['lead']))).toHaveLength(0);
+    const bothSoon = [soon('lead'), soon('other')];
+    expect(checkOrder([0, 1], bothSoon, DAY, null, undefined, new Set(['lead']))).toHaveLength(0);
+  });
+
+  it('does not flag an overdue task leading an on-time one', () => {
+    expect(checkOrder([0, 1], [late('overdue'), soon('other')], DAY)).toHaveLength(0);
   });
 });

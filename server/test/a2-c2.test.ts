@@ -52,9 +52,17 @@ function dailyPlanRows(date: string): { task_id: string; position: number; sourc
     .all(OWNER, date) as { task_id: string; position: number; source: string }[];
 }
 
+/**
+ * Set the day-theme map AND put the owner on the trust tier that honours it.
+ *
+ * Since 0171 the theme band is gated by the trust dial (`orderingBandsFor`): only
+ * 'hands_off' — the unattended tier, which needs the most context because nobody
+ * reviews its output — sorts by theme. These §C2 cases are about the theme band's
+ * mechanics, so they run on the tier where it is live.
+ */
 function setDayTheme(theme: Record<string, string>): void {
   sqlite
-    .prepare(`UPDATE scheduling_prefs SET day_theme = ? WHERE owner_id = ?`)
+    .prepare(`UPDATE scheduling_prefs SET day_theme = ?, trust_mode = 'hands_off' WHERE owner_id = ?`)
     .run(JSON.stringify(theme), OWNER);
 }
 

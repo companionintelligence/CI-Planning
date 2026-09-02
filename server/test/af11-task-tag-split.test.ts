@@ -194,7 +194,12 @@ describe('direction-only passes stay level-1 / kind=direction', () => {
 describe('day-authoring — theme matches L1 ∪ L2; clustering groups by the L1 primary', () => {
   it('a theme naming an L2 intention still leads the deterministic order', async () => {
     // DAY is a Monday; theme 'deep' applies. B carries 'deep' ONLY at level 2.
-    sqlite.prepare(`UPDATE scheduling_prefs SET day_theme = ? WHERE owner_id = ?`).run(JSON.stringify({ mon: 'deep' }), OWNER);
+    // trust_mode: the theme band is trust-gated since 0171 and is live only on
+    // 'hands_off'. This case is about theme MATCHING (L1 ∪ L2), so it runs on the tier
+    // where the band applies.
+    sqlite
+      .prepare(`UPDATE scheduling_prefs SET day_theme = ?, trust_mode = 'hands_off' WHERE owner_id = ?`)
+      .run(JSON.stringify({ mon: 'deep' }), OWNER);
     const a = insertTask('Alpha', { direction: 'home', priority: 1 });
     const b = insertTask('Bravo', { direction: 'work', intentionsL2: ['deep'], priority: 3 });
     stage(a, 0);

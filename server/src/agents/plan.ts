@@ -66,6 +66,14 @@ export interface PlanTask {
 
 interface PlanningPrefs {
   planning_mode: string;
+  /**
+   * The trust dial (0070). Governs AUTONOMY — whether the engine places without being
+   * asked (`resolveTrustPolicy`/`autoBlock` in engine/autoplan.ts) — and, here, which
+   * ordering bands apply (`orderingBandsFor`). It deliberately no longer forces
+   * `planning_mode`: how good the ordering is (deterministic vs the LLM loop) is an
+   * orthogonal axis the owner sets themselves in Settings.
+   */
+  trust_mode: string;
   /** 0156 — replaces workday_start/workday_end as the source for the AI-authoring
    *  "capacity today" hint. Stored weekly (matches sleep_hours_per_week); default 56. */
   capacity_hours_per_week: number;
@@ -91,22 +99,21 @@ async function loadPlanningPrefs(owner: string): Promise<PlanningPrefs> {
       `SELECT planning_mode, trust_mode, capacity_hours_per_week, day_theme, fill_order, balance_bias_enabled FROM scheduling_prefs WHERE owner_id = ?`,
     )
     .get<
-      Omit<PlanningPrefs, 'day_theme' | 'fill_order' | 'balance_bias_enabled'> & {
+      Omit<PlanningPrefs, 'trust_mode' | 'day_theme' | 'fill_order' | 'balance_bias_enabled'> & {
         trust_mode: string | null;
         day_theme: string | null;
         fill_order: string | null;
         balance_bias_enabled: number | null;
       }
     >(owner);
-  if (!row) return { planning_mode: 'basic', capacity_hours_per_week: 56, fill_order: 'overdue', balance_bias_enabled: true };
+  if (!row) return { planning_mode: 'basic', trust_mode: 'balanced', capacity_hours_per_week: 56, fill_order: 'overdue', balance_bias_enabled: true };
   let day_theme: Record<string, string> | null = null;
   if (row.day_theme) {
     try { day_theme = JSON.parse(row.day_theme) as Record<string, string>; } catch { /* ignore malformed */ }
   }
-  // Hands-off trust dial implies smart planning: the user has opted into full AI autonomy.
-  const planning_mode = row.trust_mode === 'hands_off' ? 'smart' : row.planning_mode;
   return {
-    planning_mode,
+    planning_mode: row.planning_mode,
+    trust_mode: row.trust_mode ?? 'balanced',
     capacity_hours_per_week: row.capacity_hours_per_week ?? 56,
     day_theme,
     fill_order: row.fill_order ?? 'overdue',
@@ -331,8 +338,12 @@ export function todayThemeTag(dayTheme: Record<string, string> | null | undefine
 /**
  * Produce a deterministic ordering of tasks as indices.
  *
- * §C2 theme is the **primary** key: on a themed weekday, theme-tagged tasks lead
- * the day outright ("today is deep-work day"), ahead of deadline and priority.
+ * OVERDUE is the outermost band when `overdueBefore` is given: a task past its deadline
+ * leads regardless of theme/memory/new_today/balance, so no inferred band can bury work
+ * that is genuinely late. Everything below is unchanged and orders within that split.
+ *
+ * §C2 theme is the primary key among the rest: on a themed weekday, theme-tagged tasks
+ * lead ("today is deep-work day"), ahead of deadline and priority.
  * After theme, `fillOrder` selects the deadline/priority ordering *within* each
  * theme band (maps the user-facing `fill_order` pref onto authoring):
  *   • 'overdue' (default) → theme → due_at → priority → id
@@ -349,6 +360,47 @@ export function todayThemeTag(dayTheme: Record<string, string> | null | undefine
  * inversion (a themed task may legitimately precede a higher-priority or
  * earlier-due unthemed one).
  */
+/**
+ * Which ordering bands the trust dial admits.
+ *
+ * The dial governs how much the planner infers on the owner's behalf. The bands below
+ * `due/priority` are exactly the inferred ones, so each tier switches on a different
+ * amount of machine judgement:
+ *
+ *   • cautious  — none. The plain `fill_order` sort (due → priority, or the reverse):
+ *                 legible, auditable, nothing reordered by something the owner did not
+ *                 type. This is the tier that reviews every item, so predictability wins.
+ *   • balanced  — balance only. The weekly nudge surfaces categories running behind
+ *                 target; the owner still sees the result before anything is placed.
+ *   • hands_off — balance + theme + memory. Nobody reviews this tier's output, so it
+ *                 gets the MOST context: an unattended planner is the one that has to
+ *                 notice on its own that the week has drifted all-work, or that today
+ *                 was themed.
+ *
+ * `fill_order`'s own `new_today` band is NOT gated here — it is an explicit sort the
+ * owner chose in Settings, not an inference, so it applies in every tier.
+ *
+ * Note this is about ordering only. Whether the plan is then PLACED without asking is
+ * `resolveTrustPolicy().autoBlock` (engine/autoplan.ts), and how good the ordering is
+ * (deterministic vs the LLM loop) is `planning_mode` — three independent axes.
+ */
+export interface OrderingBands {
+  theme: boolean;
+  memory: boolean;
+  balance: boolean;
+}
+export function orderingBandsFor(trustMode: string): OrderingBands {
+  switch (trustMode) {
+    case 'cautious':
+      return { theme: false, memory: false, balance: false };
+    case 'hands_off':
+      return { theme: true, memory: true, balance: true };
+    // 'balanced' and any unrecognised value — the column's own default.
+    default:
+      return { theme: false, memory: false, balance: true };
+  }
+}
+
 export function deterministicIndices(
   tasks: PlanTask[],
   themeTag?: string | null,
@@ -356,8 +408,26 @@ export function deterministicIndices(
   memoryRelated?: Set<string>,
   newToday?: Set<string>,
   balanceLead?: Set<string>,
+  overdueBefore?: string | null,
 ): number[] {
   const priorityFirst = fillOrder === 'priority';
+  // Overdue escape hatch: anything already past its deadline leads the day, ABOVE every
+  // band below. Those bands exist to reorder work against due/priority, which is exactly
+  // what buries a genuinely late task — "you are light on Health this week" is not a
+  // reason to keep a two-weeks-overdue invoice off the top of the list. A deadline is
+  // also the one thing here the owner stated outright, so this holds in every trust tier
+  // (`orderingBandsFor` gates the inferred bands only).
+  //
+  // Strictly PAST due, not due-today: a task due today is not yet late, and promoting it
+  // would empty the lower bands on any busy day. Inert when `overdueBefore` is absent, so
+  // the pure-comparator callers below keep a byte-identical order.
+  const overdueMs = overdueBefore ? Date.parse(`${overdueBefore}T00:00:00Z`) : NaN;
+  const overdueCmp = (a: number, b: number): number => {
+    if (Number.isNaN(overdueMs)) return 0;
+    const lateA = tasks[a].due_at && Date.parse(tasks[a].due_at!) < overdueMs ? 0 : 1;
+    const lateB = tasks[b].due_at && Date.parse(tasks[b].due_at!) < overdueMs ? 0 : 1;
+    return lateA - lateB;
+  };
   const themeCmp = (a: number, b: number): number => {
     if (!themeTag) return 0;
     const themA = tasks[a].tags.includes(themeTag) ? 0 : 1;
@@ -397,6 +467,8 @@ export function deterministicIndices(
   return tasks
     .map((_, i) => i)
     .sort((a, b) => {
+      const late = overdueCmp(a, b);
+      if (late !== 0) return late;
       const theme = themeCmp(a, b);
       if (theme !== 0) return theme;
       const mem = memCmp(a, b);
@@ -522,6 +594,12 @@ export function checkOrder(
   // pair it was never meant to cover: a stale, low-priority, balance-lead task could
   // wrongly skip an inversion check against a fresh, higher-priority, non-lead task.
   const fresh = (t: PlanTask): boolean => (newToday ? newToday.has(t.task_id) : false);
+  // Overdue escape hatch: the outermost band in `deterministicIndices`. Every exemption
+  // below is guarded on it, because each one `continue`s past BOTH defect checks — so
+  // without the guard a themed (or memory-related, or balance-lead) task leading an
+  // OVERDUE one was silently exempted, which is precisely the burial the escape hatch
+  // exists to prevent. Same-band shape as the `aFresh === fresh(b)` guard below it.
+  const overdue = (t: PlanTask): boolean => (t.due_at ? Date.parse(t.due_at) < todayMs : false);
 
   for (let i = 0; i < order.length && defects.length < 5; i++) {
     const a = tasks[order[i]];
@@ -531,26 +609,29 @@ export function checkOrder(
     const aRelated = related(a);
     const aLeading = leading(a);
     const aFresh = fresh(a);
+    const aOverdue = overdue(a);
 
     for (let j = i + 1; j < order.length && defects.length < 5; j++) {
       const b = tasks[order[j]];
       const bPrio = b.priority;
       const bDue = b.due_at ? Date.parse(b.due_at) : Infinity;
 
+      const bOverdue = overdue(b);
+
       // §C2: a themed task (earlier) legitimately leads an unthemed one (later) on a
       // themed day — theme is the primary key, so this is not a priority/deadline inversion.
-      if (aThemed && !themed(b)) continue;
+      if (aOverdue === bOverdue && aThemed && !themed(b)) continue;
 
       // AA3a: within the SAME theme band, a memory-related task legitimately leads an
       // unrelated one — memory is the next band after theme, so this isn't an inversion.
-      if (aThemed === themed(b) && aRelated && !related(b)) continue;
+      if (aOverdue === bOverdue && aThemed === themed(b) && aRelated && !related(b)) continue;
 
       // bal-4: within the SAME theme, memory AND new_today band, a balance-lead task
       // legitimately leads a non-lead one — balance is the band after new_today, so
       // this isn't an inversion. The `aFresh === fresh(b)` guard is the fix: without
       // it, this exemption could fire across the new_today boundary it was never
       // meant to cover.
-      if (aThemed === themed(b) && aRelated === related(b) && aFresh === fresh(b) && aLeading && !leading(b)) continue;
+      if (aOverdue === bOverdue && aThemed === themed(b) && aRelated === related(b) && aFresh === fresh(b) && aLeading && !leading(b)) continue;
 
       // Priority inversion: b (later) has higher priority (lower number) than a (earlier),
       // and a does not have an earlier deadline to justify being placed first.
@@ -768,13 +849,22 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
     return 'deterministic';
   }
 
+  // The trust dial decides which inferred bands apply below. Each disallowed band is left
+  // at its inert value (null tag / empty set), which every consumer already handles — the
+  // deterministic sort, `checkOrder`'s exemptions, the LLM baseline, and the generator
+  // prompt's theme/memory/balance lines all follow from these same variables, so gating
+  // them here is the single point that keeps all four consistent.
+  const bands = orderingBandsFor(prefs.trust_mode);
+
   // §C2: resolve today's theme tag (null = no theming today)
-  const themeTag = todayThemeTag(prefs.day_theme, date);
+  const themeTag = bands.theme ? todayThemeTag(prefs.day_theme, date) : null;
   // fill_order maps onto the deterministic authoring sort (default deadline-first).
   const fillOrder = prefs.fill_order ?? 'overdue';
   // AA3a: the tasks related to today's memory context (empty when the flag is off / the
   // connector is unavailable → every use below is inert, order byte-identical to today).
-  const memoryRelated = await loadMemoryRelated(owner, date, staged);
+  // Skipped outright off-tier: the lookup hits the memory connector, so not asking is
+  // cheaper than asking and discarding.
+  const memoryRelated = bands.memory ? await loadMemoryRelated(owner, date, staged) : new Set<string>();
   // fill_order='new_today' only: the staged tasks that arrived on the owner's real today.
   // Keyed on the owner's today rather than `date` for the same reason placement is —
   // authoring tomorrow must still let today's arrivals lead, and nothing is ever created
@@ -796,7 +886,9 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
   // `balanceLine`, so the service is queried at most once per authorPlanOrder call.
   let balanceShortfalls: DimensionShortfall[] = [];
   let balanceLead = new Set<string>();
-  if (prefs.balance_bias_enabled) {
+  // `bands.balance` is the trust dial's say (off only in 'cautious'); `balance_bias_enabled`
+  // is the owner's own master switch. Both have to be on.
+  if (bands.balance && prefs.balance_bias_enabled) {
     try {
       balanceShortfalls = await dimensionShortfalls(owner, date);
       const leadDims = new Set(biasLeadDimensions(balanceShortfalls));
@@ -817,7 +909,7 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
   // check, OR (via the catch below) an LLM call that fails MID-loop. Centralised here so
   // the "never throws / always lands a valid order" invariant holds for every caller.
   const persistDeterministic = async () => {
-    const detIndices = deterministicIndices(staged, themeTag, fillOrder, memoryRelated, newToday, balanceLead);
+    const detIndices = deterministicIndices(staged, themeTag, fillOrder, memoryRelated, newToday, balanceLead, date);
     const postPassed = tagGroupPostPass(detIndices, staged);
     const defects = checkOrder(postPassed, staged, date, themeTag, memoryRelated, balanceLead, newToday);
     const final = defects.length === 0 ? postPassed : detIndices;
@@ -897,7 +989,7 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
           return safeOrder(raw, staged);
         },
 
-        baseline: () => deterministicIndices(staged, themeTag, fillOrder, memoryRelated, newToday, balanceLead),
+        baseline: () => deterministicIndices(staged, themeTag, fillOrder, memoryRelated, newToday, balanceLead, date),
       },
       {
         record: (ownerId, stage, rev) => recordPlanRevision(runId, ownerId, stage, rev),
