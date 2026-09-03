@@ -335,3 +335,81 @@ describe('deleteTask — the task leaves every surface, including the flight pla
     ).toBe(true);
   });
 });
+
+/**
+ * `status: 'done'` has to stamp completed_at the same way the `completed: true`
+ * shortcut does.
+ *
+ * `status` is an accepted PATCH field, so a task could be moved to 'done' with
+ * completed_at left null — finished, and simultaneously invisible to every completion
+ * count, because `taskMetrics` windows completions on that column. Nothing rejected it
+ * and nothing looked broken, which is the worst way for a number to be wrong.
+ */
+describe('updateTask — a direct status:done stamps completed_at', () => {
+  beforeEach(() => resetDb());
+
+  const mk = async (title: string) => unwrap(await createTask(OWNER, { title })).task;
+  const read = (id: string) =>
+    sqlite.prepare(`SELECT status, completed_at FROM tasks WHERE id = ?`).get(id) as
+      { status: string; completed_at: string | null };
+
+  it('stamps completed_at when status is set to done directly', async () => {
+    const t = await mk('via status');
+    await updateTask(OWNER, t.id, { status: 'done' });
+    const row = read(t.id);
+    expect(row.status).toBe('done');
+    expect(row.completed_at).toBeTruthy();
+  });
+
+  it('matches what the `completed: true` shortcut produces', async () => {
+    // The two spellings of "this is finished" must not disagree about whether the task
+    // is countable — that divergence is the whole bug.
+    const viaStatus = await mk('a'); await updateTask(OWNER, viaStatus.id, { status: 'done' });
+    const viaFlag = await mk('b'); await updateTask(OWNER, viaFlag.id, { completed: true });
+    expect(!!read(viaStatus.id).completed_at).toBe(!!read(viaFlag.id).completed_at);
+  });
+
+  it('does not clobber the original completion time when done is re-stated', async () => {
+    const t = await mk('re-stated');
+    await updateTask(OWNER, t.id, { completed: true });
+    const first = read(t.id).completed_at;
+    await new Promise((r) => setTimeout(r, 5));
+    await updateTask(OWNER, t.id, { status: 'done' });
+    expect(read(t.id).completed_at).toBe(first);
+  });
+
+  it('lets an explicit completed_at in the same PATCH win', async () => {
+    // Import/sync paths set the real completion time deliberately; overwriting it with
+    // "now" would silently relocate historical work into the current window.
+    const t = await mk('imported');
+    await updateTask(OWNER, t.id, { status: 'done', completed_at: '2026-01-02T03:04:05.000Z' });
+    expect(read(t.id).completed_at).toBe('2026-01-02T03:04:05.000Z');
+  });
+
+  it('stamps once when a PATCH carries both completed:true and status:done', async () => {
+    const t = await mk('both');
+    const res = await updateTask(OWNER, t.id, { completed: true, status: 'done' });
+    expect(res.ok).toBe(true);
+    expect(read(t.id).completed_at).toBeTruthy();
+  });
+
+  it('does not stamp for any other status', async () => {
+    for (const status of ['open', 'in_progress', 'cancelled', 'missed']) {
+      const t = await mk(`status ${status}`);
+      await updateTask(OWNER, t.id, { status });
+      expect(read(t.id).completed_at, status).toBeNull();
+    }
+  });
+
+  it('leaves completed_at alone when a done task is moved to another status', async () => {
+    // Deliberately not symmetric: `completed: false` clears it explicitly, but plain
+    // `status` writes drive machine transitions (the review sweep revives stuck
+    // one-offs), and erasing a real completion time as a side effect of one is worse
+    // than a stale timestamp on a reopened task.
+    const t = await mk('reopened');
+    await updateTask(OWNER, t.id, { completed: true });
+    const stamped = read(t.id).completed_at;
+    await updateTask(OWNER, t.id, { status: 'open' });
+    expect(read(t.id)).toMatchObject({ status: 'open', completed_at: stamped });
+  });
+});
