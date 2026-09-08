@@ -1,4 +1,4 @@
-import Koa from 'koa';
+import Koa, { type Context } from 'koa';
 import bodyParser from 'koa-bodyparser';
 import cors from '@koa/cors';
 import serve from 'koa-static';
@@ -52,7 +52,19 @@ export async function buildApp(): Promise<Koa> {
     }
   });
 
-  app.use(cors({ origin: '*' }));
+  // The SPA is same-origin (koa-static in prod, the Vite proxy in dev), so no browser
+  // origin needs cross-origin access by default. A wildcard here would let any page
+  // that gets a browser to attach valid credentials read authenticated /api JSON
+  // cross-origin — only exempt origins an operator explicitly names via
+  // CORS_ALLOWED_ORIGINS (see lib/config.ts).
+  app.use(
+    cors({
+      origin: (ctx: unknown) => {
+        const origin = (ctx as Context).request.header.origin;
+        return origin && config.corsOrigins.includes(origin) ? origin : '';
+      },
+    }),
+  );
   app.use(bodyParser({ jsonLimit: '20mb' }));
 
   // Authenticate the request and bind its owner for the handler chain (Phase I).

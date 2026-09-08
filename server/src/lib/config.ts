@@ -203,6 +203,14 @@ export interface Config {
   // HTTPS) and ctx.ip is the real client IP (⇒ correct per-IP login rate-limiting).
   // Default false — safe when the app is directly reachable (don't trust spoofable XFF).
   trustProxy: boolean;
+  /** Browser origins allowed to make cross-origin requests to /api (CORS). The client is
+   *  normally same-origin (koa-static in prod, the Vite proxy in dev), so this is empty
+   *  by default — no browser origin needs cross-origin access out of the box. Set
+   *  CORS_ALLOWED_ORIGINS (comma-separated) for a deployment that legitimately serves
+   *  the SPA from a different origin than the API. Never '*': the API sits behind
+   *  requireAuth and a wildcard would let any page that gets a browser to attach valid
+   *  credentials read authenticated JSON cross-origin. */
+  corsOrigins: string[];
   dbPath: string;
   /** Postgres connection string (schema port). Absent ⇒ the SQLite store is used —
    *  both backends coexist while the 386 raw-SQL call sites migrate file by file. */
@@ -297,6 +305,14 @@ function resolveSessionSecret(): string | undefined {
 
 // Derived once so the redirect-uri default can reference it.
 const publicBaseUrl = process.env.PUBLIC_BASE_URL ?? 'http://localhost:3848';
+
+// CORS allowlist (see Config.corsOrigins). Empty by default: the SPA is same-origin in
+// every stock deployment path, so no browser origin needs a cross-origin exemption
+// unless an operator explicitly names one.
+const corsOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 // Fail-closed default: unset (or unrecognized) GOOGLE_MODE means NO Google integration.
 // Fixture mode — canned sample emails/events — must be an explicit opt-in, never a
 // default a real deployment can hit by omission. When GOOGLE_MODE is unset, an
@@ -358,6 +374,7 @@ const ollamaModels = ollamaModelsFromEnv();
 export const config: Config = {
   port: Number(process.env.PORT ?? 3848),
   trustProxy: process.env.TRUST_PROXY === 'true',
+  corsOrigins,
   dbPath,
   databaseUrl,
   storeBackend,
