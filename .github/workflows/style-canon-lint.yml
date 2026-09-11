@@ -20,6 +20,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-
-      - name: Lint design canon (--primary must be CI teal)
-        run: node scripts/lint-canon.mjs .
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@companionintelligence'
+      - run: corepack enable
+      # ci-lint-canon (@companionintelligence/config) reads the canon + retired list from the tokens package.
+      - run: pnpm install --frozen-lockfile
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Lint design canon (--primary must be the CI canon)
+        run: pnpm lint:canon

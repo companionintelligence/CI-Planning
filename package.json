@@ -21,9 +21,11 @@
     "seed": "pnpm --filter server seed",
     "db:generate": "pnpm --filter server db:generate",
     "db:migrate": "pnpm --filter server db:migrate",
-    "migrate": "pnpm --filter server migrate"
+    "migrate": "pnpm --filter server migrate",
+    "lint:canon": "ci-lint-canon ."
   },
   "devDependencies": {
-    "concurrently": "^10.0.3"
+    "concurrently": "^10.0.3",
+    "@companionintelligence/config": "^1.0.0"
   }
 }
