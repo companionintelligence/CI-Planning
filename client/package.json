@@ -15,7 +15,8 @@
     "@sentry/browser": "^10.69.0",
     "@solidjs/router": "^0.16.1",
     "lucide-solid": "^1.17.0",
-    "solid-js": "^1.9.13"
+    "solid-js": "^1.9.13",
+    "@companionintelligence/tokens": "^1.0.0"
   },
   "devDependencies": {
     "@solidjs/testing-library": "^0.8.10",
@@ -28,6 +29,7 @@
     "typescript": "^6.0.3",
     "vite": "^8.0.16",
     "vite-plugin-solid": "^2.11.12",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.8",
+    "@companionintelligence/config": "^1.0.0"
   }
 }

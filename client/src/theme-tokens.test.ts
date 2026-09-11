@@ -1,4 +1,8 @@
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+// The canon comes from the tokens package, not a literal in this file — the previous
+// version of this canary pinned the RETIRED teal after the palette had moved on.
+const canon = createRequire(import.meta.url)('@companionintelligence/tokens/tokens.json') as { light: { primary: { hex: string } }; dark: { primary: { hex: string } } };
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { describe, it, expect } from 'vitest';
@@ -37,12 +41,12 @@ function primaryOf(selector: string): string | null {
 }
 
 describe('CI canon theme tokens (index.css)', () => {
-  it('light :root --primary is canon phthalo #0a6358', () => {
-    expect(primaryOf(':root')?.toLowerCase()).toBe('#0a6358');
+  it('light :root --primary is the canon light primary', () => {
+    expect(primaryOf(':root')?.toLowerCase()).toBe(canon.light.primary.hex.toLowerCase());
   });
 
-  it('dark .dark --primary is canon sage #c5e8dc', () => {
-    expect(primaryOf('.dark')?.toLowerCase()).toBe('#c5e8dc');
+  it('dark .dark --primary is the canon dark primary', () => {
+    expect(primaryOf('.dark')?.toLowerCase()).toBe(canon.dark.primary.hex.toLowerCase());
   });
 
   it('defines both a light (:root) and dark (.dark) theme block', () => {

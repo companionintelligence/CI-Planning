@@ -1,10 +1,15 @@
 @import "tailwindcss";
 @config "../tailwind.config.js";
 @reference "tailwindcss";
+/* The canon token layer (@companionintelligence/tokens, CI-Common styles/tokens/src/tokens.json
+   is the one source). It is imported FIRST so the app-specific overrides below win where
+   they are set and every token the app does not set falls back to canon. */
+@import "@companionintelligence/tokens/tokens.css";
 
 /* ──────────────────────────────────────────────────────────────────────────
-   CI-Hub global design tokens (the shared org "deep teal-navy" system).
-   Source of truth: CI-Hub/packages/frontend/src/styles/globals.css.
+   Companion Planning surface overrides on the canon token layer above.
+   These are this app's deliberate divergences (surfaces, backgrounds); --primary is
+   never one of them (ci-lint-canon fails the build if it drifts).
    Light = :root, dark = .dark. Every surface/text color in the app resolves to
    one of these (directly via bg-card / text-foreground / …, or via the legacy
    surface-* / slate-* scales remapped onto them in tailwind.config.js), so the
@@ -217,7 +222,7 @@
     min-height: 100vh;
     background: var(--background);
     color: var(--foreground);
-    font-family: 'Montserrat', system-ui, sans-serif;
+    font-family: 'Manrope', system-ui, sans-serif;
   }
   ::-webkit-scrollbar { width: 4px; height: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
