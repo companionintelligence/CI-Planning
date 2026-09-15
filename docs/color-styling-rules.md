@@ -20,7 +20,7 @@ These are the primary tokens. Use them via Tailwind (`bg-background`, `text-fore
 | `--card-foreground` | `#041620` | `#88a29e` |
 | `--popover` | `oklch(100% 0 0)` | `#0a222e` |
 | `--popover-foreground` | `#041620` | `#88a29e` |
-| `--primary` | `#0f717a` | `#abd4d8` |
+| `--primary` | `#0a6358` | `#c5e8dc` |
 | `--primary-foreground` | `oklch(98.4% 0.003 247.858)` | `#041620` |
 | `--secondary` | `oklch(96.8% 0.007 247.896)` | `#0a222e` |
 | `--secondary-foreground` | `#0a222e` | `#f5f8fa` |
@@ -136,4 +136,4 @@ To keep older utilities themeable, `tailwind.config.js` remaps:
 
 ## Typography note
 
-Font family is Montserrat across the org (`sans` and `heading`), with `Source Code Pro` as the mono fallback.
+Font family is Manrope across the org (`sans` and `heading`), with `Source Code Pro` as the mono fallback.

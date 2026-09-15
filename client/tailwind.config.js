@@ -9,9 +9,10 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        // CI-Hub uses Montserrat across the org. Mono kept as a fallback for any code.
-        sans:    ['Montserrat', 'system-ui', 'sans-serif'],
-        heading: ['Montserrat', 'system-ui', 'sans-serif'],
+        // CI-Common canon font (index.html loads it; index.css's `body` rule also sets
+        // it directly). Mono kept as a fallback for any code.
+        sans:    ['Manrope', 'system-ui', 'sans-serif'],
+        heading: ['Manrope', 'system-ui', 'sans-serif'],
         mono:    ['"Source Code Pro"', 'ui-monospace', 'monospace'],
       },
       // Radius scale keyed off the global --radius token (CI-Hub: 0.625rem).
