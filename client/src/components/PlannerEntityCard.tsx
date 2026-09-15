@@ -407,7 +407,7 @@ export function PlannerEntityCard(props: {
                     >
                       <Show when={s.status === 'done'}>
                         <svg viewBox="0 0 10 10" class="w-full h-full p-0.5" fill="none">
-                          <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                          <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
                         </svg>
                       </Show>
                     </button>

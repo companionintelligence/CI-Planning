@@ -257,10 +257,9 @@
            focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent
            active:scale-95 select-none cursor-pointer;
   }
-  /* Signature CI teal CTA — kept across modes; text stays dark on the teal gradient. */
   .btn-primary {
-    color: #041620;
-    background: linear-gradient(135deg, #abd4d8, #70a6af);
+    color: var(--primary-foreground);
+    background: var(--primary);
   }
   .btn-secondary {
     @apply border;
@@ -439,14 +438,14 @@
     100% { box-shadow: 0 0 0 0 var(--done-glow, rgba(88,235,191,.0)); }
   }
 
-  /* ── FAB (signature teal CTA) ─────────────────────────────────── */
+  /* ── FAB (primary CTA) ────────────────────────────────────────── */
   .fab {
     @apply fixed bottom-6 right-6 z-30 flex items-center gap-2
            px-5 py-3 font-semibold rounded-full
            transition-all duration-150 active:scale-95 select-none cursor-pointer;
-    color: #041620;
-    background: linear-gradient(135deg, #abd4d8, #70a6af);
-    box-shadow: 0 8px 24px rgba(171,212,216,.25);
+    color: var(--primary-foreground);
+    background: var(--primary);
+    box-shadow: 0 8px 24px color-mix(in oklab, var(--primary) 25%, transparent);
     letter-spacing: .03em;
   }
 
@@ -479,21 +478,22 @@
     border-color: var(--border);
   }
   .checkbox-checked {
-    background: linear-gradient(135deg, #abd4d8, #70a6af);
-    border-color: #abd4d8;
+    color: var(--primary-foreground);
+    background: var(--primary);
+    border-color: var(--primary);
   }
 }
 
 /* ── Hover overrides (outside @layer to avoid @apply nesting limit) ── */
-.btn-primary:hover  { background: linear-gradient(135deg, #c7e5e8, #abd4d8); box-shadow: 0 4px 16px rgba(171,212,216,.3); }
-.btn-secondary:hover { background: rgba(112,166,175,.1); border-color: #abd4d8; color: #c7e5e8; }
+.btn-primary:hover  { background: color-mix(in srgb, var(--primary) 90%, transparent); box-shadow: 0 4px 16px color-mix(in oklab, var(--primary) 30%, transparent); }
+.btn-secondary:hover { background: color-mix(in srgb, var(--primary) 10%, transparent); border-color: var(--primary); color: var(--primary); }
 .btn-ghost:hover    { color: var(--foreground); background-color: var(--sidebar-accent); }
 .btn-icon:hover     { color: var(--foreground); background-color: var(--sidebar-accent); }
 .btn-danger:hover   { background-color: rgba(127,29,29,.3); color: #fca5a5; }
 .card-hover:hover   { border-color: var(--ring); box-shadow: 0 4px 20px rgba(88,235,191,.08); transform: translateY(-1px); }
-.fab:hover          { background: linear-gradient(135deg, #c7e5e8, #abd4d8); box-shadow: 0 12px 32px rgba(171,212,216,.4); transform: scale(1.03) translateY(-1px); }
-.checkbox:hover     { border-color: #70a6af; }
-.nav-item-active    { border-left: 2px solid #abd4d8; }
+.fab:hover          { background: color-mix(in srgb, var(--primary) 90%, transparent); box-shadow: 0 12px 32px color-mix(in oklab, var(--primary) 40%, transparent); transform: scale(1.03) translateY(-1px); }
+.checkbox:hover     { border-color: var(--primary); }
+.nav-item-active    { border-left: 2px solid var(--primary); }
 
 /* CI glow effect on focused inputs */
 .input:focus,
