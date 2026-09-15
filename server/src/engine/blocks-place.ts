@@ -16,7 +16,7 @@
 import { store } from '../db/store.js';
 import { broadcast } from '../routes/sse.js';
 import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
-import { applyTaskPlacementStatus, syncTaskFromBlock } from '../services/block-task-sync.js';
+import { mirrorEnginePlacement } from '../services/block-task-sync.js';
 import { inheritContainerDirection } from '../services/tags.js';
 
 const DEFAULT_EST_MIN = 30;
@@ -100,25 +100,33 @@ export function placeTasksInBlock(owner: string, blockId: string, taskIds: strin
       await inheritContainerDirection(t.id, block.tag, owner);
       const sessions = splitIntoSessions((t.estimated_minutes ?? DEFAULT_EST_MIN) * MS_PER_MIN, maxFocusMs);
       let placedSessions = 0;
-      let firstBlockId: string | undefined;
       for (const want of sessions) {
         const pick = pickGap(gaps, want);
         if (!pick) break;
         const startMs = pick.gap.cursor;
         const endMs = startMs + pick.len;
-        const { id: bid } = (await ins.get<{ id: string }>(t.id, owner, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), blockId, block.tag ?? null))!;
-        firstBlockId ??= bid;
+        await ins.get<{ id: string }>(t.id, owner, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), blockId, block.tag ?? null);
         pick.gap.cursor = endMs + breakMs;
         blocksCreated++;
         placedSessions++;
       }
       if (placedSessions > 0) {
         placed++;
-        // A placed task IS scheduled: mirror the placement onto its scheduling-intent
-        // fields (so its calendar label has a date/time even out of the loaded blocks
-        // range) and flip open → scheduled — matching the other placement paths.
-        if (firstBlockId) await syncTaskFromBlock(firstBlockId, owner);
-        await applyTaskPlacementStatus(t.id, owner);
+        // A placed task IS scheduled: mirror the placement onto the task so its calendar
+        // label carries a date even outside the loaded blocks range, and flip
+        // open → scheduled.
+        //
+        // mirrorEnginePlacement, NOT syncTaskFromBlock. The CONTAINER is the user's
+        // choice, but the slot inside it comes from gap math — so writing it to
+        // `tasks.task_time` records an engine-chosen minute as a user-stated PIN. That is
+        // reachable, not theoretical: `deleteBlock` drops a container's children but
+        // leaves the task's scheduling fields, after which Auto's AD1 pin pass reads the
+        // leftover `task_time`, sees `scheduled_for` still on that day, and re-pins the
+        // task at a minute the user never chose — as an `is_auto=0` block that
+        // `clearPriorAuto` (is_auto=1 AND source_kind='agent') cannot sweep, excluded
+        // from every packer pass. Same defect as the routine packer's; `scheduled_for`
+        // is the half that is safe to mirror.
+        await mirrorEnginePlacement(t.id, owner);
       } else unplaced++;
     }
     if (blocksCreated > 0) broadcast(owner, 'block:created', { parentBlockId: blockId, count: blocksCreated });
