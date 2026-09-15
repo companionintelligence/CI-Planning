@@ -50,15 +50,15 @@ const OBJECTIVE_STEPS: { title: string; notes?: string; minutes: number }[] = [
 
 /** One-off tasks, one per direction, left in the backlog so Auto has work to place. */
 const LOOSE_TASKS: { title: string; direction: string; minutes: number }[] = [
-  { title: 'Review notes', direction: 'work', minutes: 30 },
-  { title: 'Get groceries', direction: 'home', minutes: 45 },
+  { title: 'Review notes', direction: 'work', minutes: 10 },
+  { title: 'Get groceries', direction: 'home', minutes: 60 },
   { title: 'Drop off donations', direction: 'community', minutes: 30 },
 ];
 
 /** Daily habits. `time` pins a wall clock; absent means the engine chooses. */
 const HABITS: { title: string; direction: string; minutes: number; time?: string }[] = [
   { title: 'Breakfast', direction: 'home', minutes: 30, time: MEAL_TIMES.Breakfast },
-  { title: 'Lunch', direction: 'home', minutes: 30, time: MEAL_TIMES.Lunch },
+  { title: 'Lunch', direction: 'work', minutes: 30, time: MEAL_TIMES.Lunch },
   { title: 'Dinner', direction: 'home', minutes: 45, time: MEAL_TIMES.Dinner },
   { title: 'Email triage', direction: 'work', minutes: 30 },
   { title: 'Gym', direction: 'community', minutes: 60 },
@@ -134,6 +134,7 @@ async function pinMealsForToday(
   ownerId: string,
   templateId: string,
   title: string,
+  direction: string,
   time: string,
   minutes: number,
   today: string,
@@ -162,9 +163,9 @@ async function pinMealsForToday(
     .prepare(
       `INSERT INTO time_blocks (id, owner_id, title, block_kind, tag, start_at, end_at,
                                 is_locked, is_auto, source_kind, source_ref, status)
-       VALUES (uuid7(), ?, ?, 'timeblock', 'home', ?, ?, 0, 1, 'pattern', ?, 'planned') RETURNING id`,
+       VALUES (uuid7(), ?, ?, 'timeblock', ?, ?, ?, 0, 1, 'pattern', ?, 'planned') RETURNING id`,
     )
-    .get<{ id: string }>(ownerId, title, startAt, endAt, ref);
+    .get<{ id: string }>(ownerId, title, direction, startAt, endAt, ref);
   await store()
     .prepare(
       `INSERT INTO time_blocks (id, task_id, owner_id, title, block_kind, start_at, end_at,
@@ -237,7 +238,16 @@ export async function seedDemoData(ownerId: string, now: Date = new Date()): Pro
     // A pinned habit is placed here for today; an unpinned one is left for the routine
     // packer, so the demo shows both a fixed rhythm and the engine doing its job.
     if (h.time) {
-      result.blocks += await pinMealsForToday(ownerId, res.template.id, h.title, h.time, h.minutes, today, tz);
+      result.blocks += await pinMealsForToday(
+        ownerId,
+        res.template.id,
+        h.title,
+        h.direction,
+        h.time,
+        h.minutes,
+        today,
+        tz,
+      );
     }
   }
 

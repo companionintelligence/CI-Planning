@@ -25,8 +25,12 @@ import { localISODate, addDays } from '../lib/dates.js';
 import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
 import { occurrencesBetween, parseRule } from './recurrence.js';
 import { taskTagNames, routineDerivedTags, syncLeveledEntityTags } from '../services/tags.js';
-import { syncTaskFromBlock, applyTaskPlacementStatus } from '../services/block-task-sync.js';
-import { directionWindowsByName, FALLBACK_FILL_DIRECTION_NAMES } from '../services/pattern-blocks.js';
+import { mirrorEnginePlacement } from '../services/block-task-sync.js';
+import {
+  getPatternBlocks,
+  directionWindowsByName,
+  FALLBACK_FILL_DIRECTION_NAMES,
+} from '../services/pattern-blocks.js';
 import { resolveDayType } from '../services/day-types.js';
 
 const DEFAULT_EST_MIN = 30;
@@ -51,6 +55,8 @@ interface MemberTask {
   task_id: string;
   title: string;
   estimated_minutes: number | null;
+  /** Owner-local wall-clock HH:MM the member is PINNED to, else null (AD1). */
+  task_time: string | null;
 }
 
 async function tagsOf(taskId: string): Promise<string[]> {
@@ -67,7 +73,7 @@ async function resolveMembers(owner: string, patternId: string, date: string): P
   // another owner's task, its title/estimate must never surface on this owner's planner.
   const members = await store()
     .prepare(
-      `SELECT t.id AS task_id, t.title, t.estimated_minutes, t.status,
+      `SELECT t.id AS task_id, t.title, t.estimated_minutes, t.status, t.task_time,
               t.recurrence_rule, t.recurrence_parent_id
          FROM pattern_tasks pt JOIN tasks t ON t.id = pt.task_id
         WHERE pt.pattern_id = ? AND t.owner_id = ?
@@ -78,6 +84,7 @@ async function resolveMembers(owner: string, patternId: string, date: string): P
       title: string;
       estimated_minutes: number | null;
       status: string;
+      task_time: string | null;
       recurrence_rule: string | null;
       recurrence_parent_id: string | null;
     }>(patternId, owner);
@@ -90,15 +97,58 @@ async function resolveMembers(owner: string, patternId: string, date: string): P
     // cancelled) so a completed occurrence isn't re-placed.
     if (m.recurrence_rule && m.recurrence_parent_id == null) {
       const inst = await store()
-        .prepare(`SELECT id, title, estimated_minutes, status FROM tasks WHERE recurrence_parent_id = ? AND occurrence_date = ? AND owner_id = ?`)
-        .get<{ id: string; title: string; estimated_minutes: number | null; status: string }>(m.task_id, date, owner);
+        .prepare(`SELECT id, title, estimated_minutes, status, task_time FROM tasks WHERE recurrence_parent_id = ? AND occurrence_date = ? AND owner_id = ?`)
+        .get<{ id: string; title: string; estimated_minutes: number | null; status: string; task_time: string | null }>(m.task_id, date, owner);
       if (inst) {
         if (['completed', 'done', 'skipped', 'cancelled', 'missed'].includes(inst.status)) continue;
-        out.push({ task_id: inst.id, title: inst.title, estimated_minutes: inst.estimated_minutes });
+        // The instance's own pin wins (a user who drags ONE occurrence sets it via
+        // syncTaskFromBlock); absent that it inherits the template's stated time, which
+        // is what `recurrence-generate` copies down at materialization anyway.
+        out.push({ task_id: inst.id, title: inst.title, estimated_minutes: inst.estimated_minutes, task_time: inst.task_time ?? m.task_time });
         continue;
       }
     }
-    out.push({ task_id: m.task_id, title: m.title, estimated_minutes: m.estimated_minutes });
+    out.push({ task_id: m.task_id, title: m.title, estimated_minutes: m.estimated_minutes, task_time: m.task_time });
+  }
+  return out;
+}
+
+/**
+ * The L01 windows this routine may be autoscheduled into on `date`: the union of the
+ * `pattern_blocks` ranges of its DERIVED directions, earliest first.
+ *
+ * Empty means "L01 has nothing to say here" — the routine carries no direction, or none
+ * of its directions has a window on this day type, or the owner has never configured
+ * windows at all. The caller falls back to the workday in that case rather than refusing
+ * to place, matching `day-conflicts.ts`: a rule nobody has configured cannot be violated.
+ *
+ * Name→id resolution mirrors autoplan's Pass 2a exactly (windows are keyed by direction
+ * tag id, a routine's derived tags are names, and only `kind='direction'` rows count) so
+ * the two schedulers read one dialect of the same rule rather than two.
+ */
+async function directionWindows(
+  owner: string,
+  date: string,
+  tz: string,
+  directionNames: string[],
+): Promise<{ startMs: number; endMs: number }[]> {
+  if (directionNames.length === 0) return [];
+  const byTagId = await getPatternBlocks(owner, await resolveDayType(owner, date));
+  const ids = Object.keys(byTagId);
+  if (ids.length === 0) return [];
+  const dirTags = (await store()
+    .prepare(`SELECT id, name FROM tags WHERE owner_id = ? AND id IN (${ids.map(() => '?').join(',')}) AND kind = 'direction'`)
+    .all(owner, ...ids)) as { id: string; name: string }[];
+  const wanted = new Set(directionNames.map((n) => n.trim().toLowerCase()));
+  const out: { startMs: number; endMs: number }[] = [];
+  for (const t of dirTags) {
+    if (!wanted.has(t.name.trim().toLowerCase())) continue;
+    for (const r of byTagId[t.id] ?? []) {
+      out.push({
+        startMs: Date.parse(zonedWallTimeToUTC(date, r.start_time, tz)),
+        endMs: Date.parse(zonedWallTimeToUTC(date, r.end_time, tz)),
+      });
+    }
   }
   return out;
 }
@@ -138,11 +188,22 @@ export async function placePatternOnDay(
       .get<PrefsRow>(owner);
     const tz = prefs?.timezone || serverTimezone();
 
-    // Window (block's range or the fallback-fill union).
-    let windowStartMs: number;
-    let windowEndMs: number;
+    // Window(s) to place into.
+    //
+    // Scoped to a Plan, the Plan's own span is the window and the day's direction
+    // windows do NOT apply — L02 overrides L01 (day-conflicts.ts), so a `#work` Time
+    // Block at 7pm legitimately holds work past home hours.
+    //
+    // Free placement answers to L01: a directed routine is only autoscheduled inside its
+    // direction's windows. This path used to always take `workday_start..workday_end`,
+    // which on a typical setup IS the work window — so every home/community routine was
+    // packed into work hours (a home dinner at 10:20) with no code path that could place
+    // it right. #583 removed that workday window entirely (see 0156); the fallback below
+    // is now the work+community fill.
+    let windows: { startMs: number; endMs: number }[];
     let blockTag: string | null = null;
     let parentBlockId: string | null = opts.blockId ?? null;
+    let derivedDirs: string[] = [];
     if (parentBlockId != null) {
       const block = await store()
         .prepare(`SELECT start_at, end_at, tag FROM time_blocks WHERE id = ? AND owner_id = ?`)
@@ -150,19 +211,27 @@ export async function placePatternOnDay(
       if (!block) {
         return { patternId, date, blocksCreated: 0, placed: 0, unplaced: 0, skippedAlreadyPlaced: false };
       }
-      windowStartMs = Date.parse(block.start_at);
-      windowEndMs = Date.parse(block.end_at);
+      windows = [{ startMs: Date.parse(block.start_at), endMs: Date.parse(block.end_at) }];
       blockTag = block.tag;
     } else {
-      // 0156: work+community pattern_blocks union, collapsed to one span (see file
-      // header) — empty when neither direction has configured windows, which the
-      // windowEndMs<=windowStartMs check below turns into a clean unplaced no-op.
-      const dayType = await resolveDayType(owner, date);
-      const ranges = await directionWindowsByName(owner, dayType, FALLBACK_FILL_DIRECTION_NAMES);
-      windowStartMs = ranges.length ? Math.min(...ranges.map((r) => Date.parse(zonedWallTimeToUTC(date, r.start_time, tz)))) : 0;
-      windowEndMs = ranges.length ? Math.max(...ranges.map((r) => Date.parse(zonedWallTimeToUTC(date, r.end_time, tz)))) : 0;
+      derivedDirs = (await routineDerivedTags(patternId)).directions;
+      windows = await directionWindows(owner, date, tz, derivedDirs);
+      if (windows.length === 0) {
+        // #583/0156: `workday_start`/`workday_end` are gone — the app stopped reading them,
+        // so the old fallback would silently mean a hardcoded 09:00–18:00. Fall back to the
+        // work+community fill windows instead. Kept DISCRETE rather than collapsed to one
+        // min..max span, so placement cannot land in the gap between them; empty ranges
+        // leave `windows` empty, which the length check below turns into a clean no-op.
+        const dayType = await resolveDayType(owner, date);
+        const ranges = await directionWindowsByName(owner, dayType, FALLBACK_FILL_DIRECTION_NAMES);
+        windows = ranges.map((r) => ({
+          startMs: Date.parse(zonedWallTimeToUTC(date, r.start_time, tz)),
+          endMs: Date.parse(zonedWallTimeToUTC(date, r.end_time, tz)),
+        }));
+      }
     }
-    if (windowEndMs <= windowStartMs) {
+    windows = windows.filter((w) => w.endMs > w.startMs).sort((a, b) => a.startMs - b.startMs);
+    if (windows.length === 0) {
       return { patternId, date, blocksCreated: 0, placed: 0, unplaced: 0, skippedAlreadyPlaced: false };
     }
 
@@ -201,11 +270,17 @@ export async function placePatternOnDay(
     // Shared obstacle set: locked + meetings + every non-completed task block,
     // so a pattern never stacks on existing work (manual or auto). When scoped
     // to a Plan we exclude that Plan from its own obstacle set (it's the target).
-    const fixed = await dayObstacles(owner, windowStartMs, windowEndMs, { excludeBlockId: parentBlockId });
+    // A pin can legitimately sit outside every window (user intent beats L01), so when
+    // one is present the obstacle sweep widens to the whole local day — otherwise the
+    // exact-hit check would read an empty obstacle set and double-book.
+    const hasPins = toPlace.some((t) => t.task_time);
+    const obsStartMs = hasPins ? Math.min(windows[0].startMs, Date.parse(dayStartISO)) : windows[0].startMs;
+    const obsEndMs = hasPins ? Math.max(...windows.map((w) => w.endMs), dayEndMs) : Math.max(...windows.map((w) => w.endMs));
+    const fixed = await dayObstacles(owner, obsStartMs, obsEndMs, { excludeBlockId: parentBlockId });
 
     const breakMs = (prefs?.min_break_minutes ?? 10) * MS_PER_MIN;
     const maxFocusMs = Math.max((prefs?.max_focus_block_minutes ?? 90) * MS_PER_MIN, MIN_SESSION_MS);
-    const gaps = buildGaps(windowStartMs, windowEndMs, fixed, breakMs);
+    const gaps = windows.flatMap((w) => buildGaps(w.startMs, w.endMs, fixed, breakMs));
 
     // `prepare` is synchronous on the facade (only get/all/run are async), so this stays
     // a plain reused statement — the conformance suite pins that reusability.
@@ -213,13 +288,18 @@ export async function placePatternOnDay(
       `INSERT INTO time_blocks (id, task_id, owner_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status, parent_block_id)
        VALUES (uuid7(), ?, ?, ?, 'task', ?, ?, 0, 1, 'pattern', ?, 'planned', ?) RETURNING id`
     );
-    // A placed routine member IS scheduled: mirror the placement onto the task's
-    // scheduling-intent fields (so its calendar icon has a date) and flip open →
-    // scheduled. syncTaskFromBlock self-guards to the earliest placement, so calling
-    // it per-session is correct; applyTaskPlacementStatus is idempotent after the flip.
-    const syncPlacedMember = async (blockId: string, taskId: string) => {
-      await syncTaskFromBlock(blockId, owner);
-      await applyTaskPlacementStatus(taskId, owner);
+    // A placed routine member IS scheduled: mirror the placement onto the task so its
+    // calendar icon has a date, and flip open → scheduled.
+    //
+    // mirrorEnginePlacement, NOT syncTaskFromBlock. This is an ENGINE-CHOSEN slot, and
+    // syncTaskFromBlock writes `task_time` — which ON A TASK means a user-stated PIN.
+    // Mirroring a packed slot into it overwrote the habit's own wall clock, so an 18:30
+    // dinner came back as 10:20 and every later run re-packed from the corrupted value:
+    // the nightly placement destroyed the pin it existed to honour. mirrorEnginePlacement
+    // writes `scheduled_for` only, self-guards to the earliest active placement (so
+    // per-session calls are correct), and applies the status flip itself.
+    const syncPlacedMember = async (_blockId: string, taskId: string) => {
+      await mirrorEnginePlacement(taskId, owner);
     };
     let blocksCreated = 0;
     let placed = 0;
@@ -258,55 +338,91 @@ export async function placePatternOnDay(
       // derived direction lands in the `tag` column (+ entity_tags level 1, matching
       // API-created blocks) and the REST become level-2 secondary tags — same shape
       // applyBlockTagLevels writes. No derived direction → no stamp.
-      const derivedDirs = (await routineDerivedTags(patternId)).directions;
       const containerTag = derivedDirs[0] ?? null;
+
+      // AD1 parity — a member carrying a wall-clock `task_time` is a PIN, not something
+      // to pack. `resolveMembers` did not even select the column before, so a habit
+      // pinned to 07:30 landed wherever the gap walk happened to reach. Honour the
+      // stated instant exactly when it is free, else the nearest open slot inside the
+      // routine's own windows — the same "exact, else nearest" rule autoplan's pin pass
+      // applies. `busy` accumulates the pins as they land so they cannot stack on each
+      // other, and so the unpinned remainder packs AROUND them.
+      const busy = [...fixed];
+      const layout: { task: MemberTask; startMs: number; endMs: number }[] = [];
+      for (const t of toPlace.filter((m) => m.task_time)) {
+        const durMs = Math.max((t.estimated_minutes ?? DEFAULT_EST_MIN) * MS_PER_MIN, MIN_SESSION_MS);
+        const wantMs = Date.parse(zonedWallTimeToUTC(date, t.task_time!, tz));
+        if (Number.isNaN(wantMs)) continue;
+        let startMs: number | null = wantMs;
+        if (busy.some((o) => wantMs < o.end && wantMs + durMs > o.start)) {
+          startMs = null;
+          let bestDist = Number.POSITIVE_INFINITY;
+          for (const g of windows.flatMap((w) => buildGaps(w.startMs, w.endMs, busy, breakMs))) {
+            if (g.end - g.cursor < durMs) continue;
+            const cand = Math.min(Math.max(wantMs, g.cursor), g.end - durMs);
+            const dist = Math.abs(cand - wantMs);
+            if (dist < bestDist) { startMs = cand; bestDist = dist; }
+          }
+        }
+        if (startMs === null) continue; // no room today → unplaced, same as the packer
+        layout.push({ task: t, startMs, endMs: startMs + durMs });
+        busy.push({ start: startMs, end: startMs + durMs });
+      }
+
+      // The unpinned remainder still lays out CONTIGUOUSLY in one gap, so the routine
+      // keeps moving as a single group; gaps are rebuilt around the pins just placed.
       const seq: { task: MemberTask; lenMs: number }[] = [];
-      for (const t of toPlace) {
+      for (const t of toPlace.filter((m) => !m.task_time)) {
         for (const lenMs of splitIntoSessions((t.estimated_minutes ?? DEFAULT_EST_MIN) * MS_PER_MIN, maxFocusMs)) {
           seq.push({ task: t, lenMs });
         }
       }
-      const totalMs = seq.reduce((s, x) => s + x.lenMs, 0) + Math.max(0, seq.length - 1) * breakMs;
-      const pick = pickGap(gaps, totalMs); // a gap that fits the whole routine, else the largest (truncated)
-      if (pick) {
-        const limit = pick.gap.cursor + pick.len;
-        let cursor = pick.gap.cursor;
-        const layout: { task: MemberTask; startMs: number; endMs: number }[] = [];
-        for (const s of seq) {
-          if (cursor + s.lenMs > limit) break; // routine overflows this gap → the rest is unplaced
-          layout.push({ task: s.task, startMs: cursor, endMs: cursor + s.lenMs });
-          cursor = cursor + s.lenMs + breakMs;
-        }
-        if (layout.length > 0) {
-          // Container first (so the FK parent exists before its children).
-          const containerEndMs = layout[layout.length - 1].endMs;
-          // Parens around the whole await: `await f(…).id` would read `.id` off the
-          // PENDING promise and silently yield undefined.
-          const containerId = (await store()
-            .prepare(
-              `INSERT INTO time_blocks (id, owner_id, title, block_kind, block_type, tag, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status)
-               VALUES (uuid7(), ?, ?, 'timeblock', 'scheduled', ?, ?, ?, 0, 1, 'pattern', ?, 'planned') RETURNING id`,
-            )
-            .get<{ id: string }>(owner, meta?.name ?? 'Routine', containerTag, new Date(pick.gap.cursor).toISOString(), new Date(containerEndMs).toISOString(), String(patternId)))!.id;
-          if (derivedDirs.length > 0) {
-            await syncLeveledEntityTags('time_block', containerId, [
-              { level: 1, names: [derivedDirs[0]] },
-              { level: 2, names: derivedDirs.slice(1) },
-            ], owner);
+      if (seq.length > 0) {
+        const totalMs = seq.reduce((sum, x) => sum + x.lenMs, 0) + Math.max(0, seq.length - 1) * breakMs;
+        // a gap that fits the whole routine, else the largest (truncated)
+        const pick = pickGap(windows.flatMap((w) => buildGaps(w.startMs, w.endMs, busy, breakMs)), totalMs);
+        if (pick) {
+          const limit = pick.gap.cursor + pick.len;
+          let cursor = pick.gap.cursor;
+          for (const x of seq) {
+            if (cursor + x.lenMs > limit) break; // routine overflows this gap → rest unplaced
+            layout.push({ task: x.task, startMs: cursor, endMs: cursor + x.lenMs });
+            cursor = cursor + x.lenMs + breakMs;
           }
-          const placedTaskIds = new Set<string>();
-          for (const l of layout) {
-            const { id: bid } = (await ins.get<{ id: string }>(l.task.task_id, owner, l.task.title, new Date(l.startMs).toISOString(), new Date(l.endMs).toISOString(), String(patternId), containerId))!;
-            await syncPlacedMember(bid, l.task.task_id);
-            blocksCreated++;
-            placedTaskIds.add(l.task.task_id);
-          }
-          placed = placedTaskIds.size;
         }
-        unplaced = toPlace.length - placed;
-      } else {
-        unplaced = toPlace.length;
       }
+
+      if (layout.length > 0) {
+        // Pins can land before the packed run, so the container is the extent of what
+        // was actually placed rather than the picked gap's cursor.
+        layout.sort((a, b) => a.startMs - b.startMs);
+        const containerStartMs = layout[0].startMs;
+        const containerEndMs = Math.max(...layout.map((l) => l.endMs));
+        // Container first (so the FK parent exists before its children).
+        // Parens around the whole await: `await f(…).id` would read `.id` off the
+        // PENDING promise and silently yield undefined.
+        const containerId = (await store()
+          .prepare(
+            `INSERT INTO time_blocks (id, owner_id, title, block_kind, block_type, tag, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status)
+             VALUES (uuid7(), ?, ?, 'timeblock', 'scheduled', ?, ?, ?, 0, 1, 'pattern', ?, 'planned') RETURNING id`,
+          )
+          .get<{ id: string }>(owner, meta?.name ?? 'Routine', containerTag, new Date(containerStartMs).toISOString(), new Date(containerEndMs).toISOString(), String(patternId)))!.id;
+        if (derivedDirs.length > 0) {
+          await syncLeveledEntityTags('time_block', containerId, [
+            { level: 1, names: [derivedDirs[0]] },
+            { level: 2, names: derivedDirs.slice(1) },
+          ], owner);
+        }
+        const placedTaskIds = new Set<string>();
+        for (const l of layout) {
+          const { id: bid } = (await ins.get<{ id: string }>(l.task.task_id, owner, l.task.title, new Date(l.startMs).toISOString(), new Date(l.endMs).toISOString(), String(patternId), containerId))!;
+          await syncPlacedMember(bid, l.task.task_id);
+          blocksCreated++;
+          placedTaskIds.add(l.task.task_id);
+        }
+        placed = placedTaskIds.size;
+      }
+      unplaced = toPlace.length - placed;
     }
     broadcast(owner, 'pattern:placed', { patternId, date, blocksCreated, placed, unplaced });
     return { patternId, date, blocksCreated, placed, unplaced, skippedAlreadyPlaced: false };

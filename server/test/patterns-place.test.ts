@@ -202,6 +202,117 @@ describe('placePatternOnDay — gap math + member redirection', () => {
     await placePatternOnDay(OWNER, pid, { date: DAY });
     expect(patternBlocks(pid).length).toBe(2);
   });
+
+  // ── L01 direction windows + AD1 pins ─────────────────────────────────────────
+  // The free path used to place into `workday_start..workday_end` unconditionally,
+  // which IS the seeded `work` window — so home/community routines were packed into
+  // work hours and wall-clock pins were ignored outright.
+  const insertPinned = (title: string, est: number, time: string): string =>
+    (sqlite
+      .prepare(`INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, priority, task_time) VALUES (uuid7(), ?, ?, 'open', ?, 3, ?) RETURNING id`)
+      .get(title, OWNER, est, time) as { id: string }).id;
+  // The fixture ships NO pattern_blocks (a real owner gets them from provisionOwner),
+  // so L01 is unconfigured by default — which is exactly why every test above lands in
+  // the workday. A test that wants the rule must state the windows itself.
+  const setWindow = (dir: string, start: string, end: string, dayType = 'workday') =>
+    sqlite
+      .prepare(`INSERT INTO pattern_blocks (id, owner_id, direction_tag_id, day_type, start_time, end_time) VALUES (uuid7(), ?, ?, ?, ?, ?)`)
+      .run(OWNER, directionTagId(dir), dayType, start, end);
+
+  it('L01: an unpinned home routine lands in a HOME window, never the work window', async () => {
+    // Mirrors the shipped default shape: home mornings + evenings, work 09:00–18:00.
+    setWindow('home', '07:00', '08:00');
+    setWindow('home', '18:00', '23:00');
+    setWindow('work', '09:00', '18:00');
+    const t = insertTask('Tidy kitchen', 30); attachDirection(t, 'home');
+    const pid = insertPattern('Routine', 'Home care', [t]);
+
+    await placePatternOnDay(OWNER, pid, { date: DAY });
+    const b = patternBlocks(pid)[0];
+    expect(b).toBeTruthy();
+    const hhmm = (iso: string) => iso.slice(11, 16);
+    const inHome =
+      (hhmm(b.start_at) >= '07:00' && hhmm(b.end_at) <= '08:00') ||
+      (hhmm(b.start_at) >= '18:00' && hhmm(b.end_at) <= '23:00');
+    expect(inHome).toBe(true);
+    // The bug this fixes: it used to land inside 09:00–18:00, the WORK window.
+    expect(hhmm(b.start_at) >= '09:00' && hhmm(b.start_at) < '18:00').toBe(false);
+  });
+
+  it('L01: a community routine uses the community window, not the workday', async () => {
+    setWindow('community', '08:00', '09:00');
+    setWindow('work', '09:00', '18:00');
+    const t = insertTask('Gym', 60); attachDirection(t, 'community');
+    const pid = insertPattern('Routine', 'Gym', [t]);
+
+    await placePatternOnDay(OWNER, pid, { date: DAY });
+    const b = patternBlocks(pid)[0];
+    expect(b.start_at).toBe(`${DAY}T08:00:00.000Z`);
+    expect(b.end_at).toBe(`${DAY}T09:00:00.000Z`);
+  });
+
+  it('L02 overrides L01: scoped to a Plan, the Plan span wins over the direction windows', async () => {
+    setWindow('home', '07:00', '08:00'); // would otherwise force the morning
+    const t = insertTask('Tidy kitchen', 30); attachDirection(t, 'home');
+    const pid = insertPattern('Routine', 'Home care', [t]);
+    const plan = (await api(srv.url, '/api/blocks', {
+      method: 'POST',
+      json: { title: 'Evening', block_kind: 'timeblock', tag: 'home', start_at: `${DAY}T19:00:00.000Z`, end_at: `${DAY}T21:00:00.000Z` },
+    })).body.block;
+
+    await placePatternOnDay(OWNER, pid, { date: DAY, blockId: plan.id });
+    const b = patternBlocks(pid)[0];
+    expect(b.start_at >= `${DAY}T19:00:00.000Z`).toBe(true);
+    expect(b.end_at <= `${DAY}T21:00:00.000Z`).toBe(true);
+  });
+
+  it('L01: no direction → the workday fallback still applies (rule nobody configured)', async () => {
+    const t = insertTask('Untargeted', 30);
+    const pid = insertPattern('Routine', 'Plain', [t]);
+    await placePatternOnDay(OWNER, pid, { date: DAY });
+    const b = patternBlocks(pid)[0];
+    expect(b.start_at >= `${DAY}T09:00:00.000Z`).toBe(true);
+    expect(b.end_at <= `${DAY}T18:00:00.000Z`).toBe(true);
+  });
+
+  it('AD1: a pinned member lands at EXACTLY its wall clock, not the next free gap', async () => {
+    const t = insertPinned('Dinner', 45, '18:30'); attachDirection(t, 'home');
+    const pid = insertPattern('Habit', 'Dinner', [t]);
+
+    await placePatternOnDay(OWNER, pid, { date: DAY });
+    const b = patternBlocks(pid)[0];
+    expect(b.start_at).toBe(`${DAY}T18:30:00.000Z`);
+    expect(b.end_at).toBe(`${DAY}T19:15:00.000Z`);
+  });
+
+  it('regression: placing a pinned habit does NOT overwrite its task_time', async () => {
+    // The corruption this fixes: syncTaskFromBlock mirrored the PACKED slot back into
+    // task_time, so an 18:30 dinner returned as 10:20 and every later run re-packed
+    // from the corrupted value. The engine mirror writes scheduled_for only.
+    const t = insertPinned('Dinner', 45, '18:30'); attachDirection(t, 'home');
+    const pid = insertPattern('Habit', 'Dinner', [t]);
+
+    await placePatternOnDay(OWNER, pid, { date: DAY });
+    const row = sqlite.prepare(`SELECT task_time, scheduled_for FROM tasks WHERE id = ?`).get(t) as
+      { task_time: string | null; scheduled_for: string | null };
+    expect(row.task_time).toBe('18:30');   // the pin survives its own placement
+    expect(row.scheduled_for).toBe(DAY);   // the day is still mirrored
+  });
+
+  it('a pinned and an unpinned member coexist: the pin holds, the rest packs around it', async () => {
+    const pinnedT = insertPinned('Dinner', 45, '18:30'); attachDirection(pinnedT, 'home');
+    const freeT = insertTask('Tidy kitchen', 30); attachDirection(freeT, 'home');
+    const pid = insertPattern('Routine', 'Evening', [pinnedT, freeT]);
+
+    await placePatternOnDay(OWNER, pid, { date: DAY });
+    const blocks = patternBlocks(pid);
+    expect(blocks.length).toBe(2);
+    const dinner = blocks.find((b) => b.title === 'Dinner')!;
+    const tidy = blocks.find((b) => b.title === 'Tidy kitchen')!;
+    expect(dinner.start_at).toBe(`${DAY}T18:30:00.000Z`);
+    // No overlap with the pin.
+    expect(tidy.end_at <= dinner.start_at || tidy.start_at >= dinner.end_at).toBe(true);
+  });
 });
 
 describe('POST /api/patterns/:id/place-today', () => {
