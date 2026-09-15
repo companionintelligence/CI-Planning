@@ -60,8 +60,8 @@ Prefer a container? See **[Run with Docker](#run-with-docker-ci-hub)**.
 ## Interface
 
 A screen-by-screen tour of the SolidJS PWA, on the
-[Companion Intelligence design system](https://github.com/companionintelligence/CI-Common/tree/main/style)
-— teal primary (`#0f717a` light / `#abd4d8` dark), Montserrat, light + dark. Dark is
+[Companion Intelligence design system](https://github.com/companionintelligence/CI-Common/tree/main/styles)
+— phthalo-mist primary (`#0a6358` light / `#c5e8dc` dark), Manrope, light + dark. Dark is
 the default; the sidebar toggle switches to light. Every pair below is a real headless
 render of the built client served by the Koa server against a seeded SQLite database
 (`pnpm seed`), captured at 1440×900 in both themes — not a mockup.
