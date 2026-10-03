@@ -18,9 +18,56 @@
     "plan": "The long game"
   },
   "media": {
-    "music": null,
-    "musicVolume": 0.14
+    "music": "assets/media/ci-campaign-bed.mp3",
+    "musicLufs": -22
   },
+  "master": [
+    {
+      "ref": "add-anything",
+      "caption": "Type one line. Review the proposed time and tag.",
+      "narration": "Type one line. Companion Planning proposes the time and tag before anything is saved.",
+      "minSeconds": 7
+    },
+    {
+      "ref": "today-cockpit",
+      "caption": "Approve it, then see the day in one place.",
+      "narration": "Approve the suggestion, then see scheduled work and the flexible backlog together.",
+      "minSeconds": 7
+    },
+    {
+      "ref": "focus-now",
+      "caption": "Focus mode keeps the next task visible.",
+      "narration": "Focus mode keeps the next task and its time box in view.",
+      "minSeconds": 6
+    },
+    {
+      "ref": "plan-my-week",
+      "caption": "Plan the week around real capacity.",
+      "narration": "Plan the week around the hours and priorities you actually have.",
+      "minSeconds": 6.5
+    },
+    {
+      "ref": "objectives-tree",
+      "caption": "Goals stay tied to the work beneath them.",
+      "narration": "Objectives keep long-term goals tied to the projects and tasks beneath them.",
+      "minSeconds": 6.5
+    },
+    {
+      "ref": "recap",
+      "caption": "One plan file on the machine you choose.",
+      "narration": "Your plan lives in one SQLite file on the machine you choose.",
+      "minSeconds": 6
+    },
+    {
+      "ref": "close",
+      "caption": "ci.computer",
+      "cta": "Plan on your terms",
+      "tagline": "UnCloud your life.",
+      "url": "ci.computer",
+      "narration": "Plan on your terms with Companion Planning. Visit ci dot computer. UnCloud your life.",
+      "minSeconds": 7
+    }
+  ],
   "scenes": [
     {
       "id": "open",

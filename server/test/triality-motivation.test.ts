@@ -4,6 +4,7 @@ import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { MIGRATIONS } from '../src/db/migrations/index.js';
 import { classifyMotivationKeyword, classifyMotivationLLM, applyMachineMotivation } from '../src/services/motivation.js';
 import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
+import { config } from '../src/lib/config.js';
 
 /**
  * Triality T2b — the motivation axis (0141, design §3b).
@@ -12,13 +13,28 @@ import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
  * 'us' (shared benefit) are different facts and must never blur — plus the
  * LLM-first guardrails: unsure ⇒ null, never guess 'us', machine labels are
  * fill-blanks-only, and a user label wins permanently.
+ *
+ * LLM ISOLATION: every case here wants the deterministic path — the keyword classifier,
+ * or classifyMotivationLLM driven by an injected fake. None wants a real model. On a dev
+ * box running Ollama at the default 127.0.0.1:11434, enrichQuick reaches one instead of
+ * throwing, and the quick-add case below starts asserting against live model output: it
+ * flakes (observed 'me' where the keyword pass gives 'them'). Pin config.ollamaUrl at a
+ * closed port for the file's duration so "no Ollama" is true by construction rather than
+ * an accident of the host. Mutating the config singleton, not process.env.OLLAMA_URL:
+ * config.ts reads env once at import, and ESM hoists that import above anything this file
+ * could set first. Consumers read `${config.ollamaUrl}` at call time (src/mcp/ollama.ts).
  */
+const CLOSED_PORT_URL = 'http://127.0.0.1:1';
+let realOllamaUrl: string;
 
 let srv: TestServer;
 beforeAll(async () => {
+  realOllamaUrl = config.ollamaUrl;
+  config.ollamaUrl = CLOSED_PORT_URL; // see LLM ISOLATION above — pin before the app boots
   srv = await startTestServer();
 });
 afterAll(async () => {
+  config.ollamaUrl = realOllamaUrl;
   await srv.close();
 });
 beforeEach(() => {
@@ -105,8 +121,11 @@ describe('deterministic keyword fallback (never us, unsure ⇒ null)', () => {
   });
 
   it('quick-add without Ollama still lands the keyword label', async () => {
-    // enrichQuick throws in tests (no Ollama) → route keeps the deterministic parse;
-    // the keyword pass inside createTask is what fires here.
+    // enrichQuick throws (the endpoint is pinned to a closed port for this file — see LLM
+    // ISOLATION in the header) → route keeps the deterministic parse; the keyword pass
+    // inside createTask is what fires here. Without the pin a live model answers instead
+    // and this asserts against its output, which is not stable.
+    expect(config.ollamaUrl).toBe(CLOSED_PORT_URL);
     const res = await api(srv.url, '/api/tasks/quick', { method: 'POST', json: { text: 'volunteer at the food bank friday' } });
     expect(res.status).toBe(201);
     expect(res.body.task.motivation).toBe('them');

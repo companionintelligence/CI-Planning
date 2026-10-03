@@ -2,19 +2,35 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { startTestServer, resetDb, createOwner, SECOND_OWNER_ID, api, type TestServer } from './helpers.js';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
+import { config } from '../src/lib/config.js';
 
 /**
  * Phase W · W13 — mutation-only engine ops end-to-end over HTTP. Proves each GraphQL op is
  * a thin caller over the SAME engine functions the REST routes drive (cross-checked via
  * REST GET /api/blocks + /api/flight-plan), through services/engine-ops.ts. Covers:
  * runSchedule reflow, instructPlan error mapping (empty-text → BAD_USER_INPUT; LLM-off →
- * SERVICE_UNAVAILABLE — no Ollama mock here, so isAvailable() is false and parseInstruction
- * throws InstructError('unavailable')), planSuggestion query, reauthorPlan/dismissReauthor
+ * SERVICE_UNAVAILABLE — the endpoint is pinned to a closed port for this file, so
+ * isAvailable() is false and parseInstruction throws InstructError('unavailable')),
+ * planSuggestion query, reauthorPlan/dismissReauthor
  * (suggestion clears), autoFill/autoRun/autoPriority/autoUndo (blocks placed + flightPlan
  * drains + the returned flightPlan uses FlightPlanEntryType), clearPlanner (bad dates →
  * BAD_USER_INPUT, dry-run report, real apply deletes + REST cross-check), and cross-owner
  * isolation (an op run as SECOND_OWNER_ID never touches owner A's plan).
+ *
+ * LLM ISOLATION: this file deliberately uses no Ollama mock — the point is to drive the
+ * real engine path end-to-end — but "no mock" is NOT the same as "no model". On a dev box
+ * running Ollama on the default 127.0.0.1:11434, isAvailable() is true, instructPlan reaches
+ * a real model and returns { ok: true, created: 1 }, and the LLM-unavailable test fails
+ * (and writes a time_blocks row, breaking its "no writes" half too). So pin config.ollamaUrl
+ * at a closed port for the file's duration — the same trick video/README.md uses — which
+ * makes "unreachable" true by construction instead of an accident of the host. Mutating the
+ * config singleton, not process.env.OLLAMA_URL: config.ts reads env once at import, and ESM
+ * hoists that import above anything this file could set first. Every consumer reads
+ * `${config.ollamaUrl}` at call time (src/mcp/ollama.ts), so the pin takes effect live.
  */
+const CLOSED_PORT_URL = 'http://127.0.0.1:1';
+let realOllamaUrl: string;
+
 let srv: TestServer;
 const OWNER = SYSTEM_OWNER;
 const OTHER = SECOND_OWNER_ID;
@@ -69,8 +85,15 @@ const isoDay = (o: number) => {
 };
 const T0 = isoDay(0), T2 = isoDay(2), T4 = isoDay(4);
 
-beforeAll(async () => { srv = await startTestServer(); });
-afterAll(async () => { await srv.close(); });
+beforeAll(async () => {
+  realOllamaUrl = config.ollamaUrl;
+  config.ollamaUrl = CLOSED_PORT_URL; // see LLM ISOLATION above — pin before the app boots
+  srv = await startTestServer();
+});
+afterAll(async () => {
+  config.ollamaUrl = realOllamaUrl;
+  await srv.close();
+});
 beforeEach(() => {
   resetDb(); // UTC, workday 09:00-18:00, horizon 7
   sqlite.exec(`DELETE FROM flight_plan; DELETE FROM replan_suggestions; DELETE FROM audit_log;`);
@@ -96,8 +119,12 @@ describe('W13 — instructPlan error mapping', () => {
   });
 
   it('LLM unavailable → SERVICE_UNAVAILABLE + no writes', async () => {
-    // No Ollama mock in this file → isAvailable() is false → parseInstruction throws
-    // InstructError('unavailable') → the resolver maps it to SERVICE_UNAVAILABLE.
+    // config.ollamaUrl is pinned to a closed port for this file (see LLM ISOLATION in the
+    // header) → isAvailable() is false → parseInstruction throws InstructError('unavailable')
+    // → the resolver maps it to SERVICE_UNAVAILABLE. Do NOT rely on the host simply not
+    // running Ollama: with one up on the default port this reaches a real model and returns
+    // { ok: true, created: 1 }, failing both halves of the assertion.
+    expect(config.ollamaUrl).toBe(CLOSED_PORT_URL);
     const before = (sqlite.prepare(`SELECT COUNT(*) AS n FROM time_blocks`).get() as { n: number }).n;
     const r = await gql(`mutation { instructPlan(input: { text: "dentist 2-3pm", date: "${DATE}" }) { ok created } }`);
     expect(r.body.data?.instructPlan ?? null).toBeNull();
@@ -167,9 +194,12 @@ describe('W13 — auto ops', () => {
   });
 
   /**
-   * T9 — REST/GraphQL parity for the `smart` flag. No Ollama mock in this file (see the
-   * file header), so `smart: true` still lands on the deterministic path here — the point
-   * of this test is that the GraphQL resolver actually forwards `input.smart` through to
+   * T9 — REST/GraphQL parity for the `smart` flag. `smart: true` still lands on the
+   * deterministic path here for TWO independent reasons: the endpoint is pinned to a closed
+   * port (see LLM ISOLATION in the header), and the gate is
+   * `!opts.deterministic && planning_mode === 'smart'` (agents/plan.ts) while these owners
+   * default to 'basic' — so the isAvailable() half is short-circuited anyway. The point of
+   * this test is that the GraphQL resolver actually forwards `input.smart` through to
    * `autoRun` (a typo in `input.smart ?? undefined` wouldn't be caught by the REST test
    * alone) and that both transports surface the same `llm` field, truthfully false when
    * Ollama is unreachable.
