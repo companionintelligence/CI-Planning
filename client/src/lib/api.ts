@@ -24,6 +24,9 @@ export interface Task {
   defer_until?: string;
   task_time?: string;
   estimated_minutes?: number;
+  actual_minutes?: number;
+  /** Deterministic median of the tag-cohort actuals (≥5 samples), or null. */
+  suggested_estimate?: number | null;
   priority: number;
   status: string;
   parent_id?: number;
@@ -34,6 +37,18 @@ export interface Task {
   tags: string[];
   depends_on?: number[];
   blocked?: boolean;
+}
+
+/** A running or finished time entry (snake_case, as served). */
+export interface TimeEntry {
+  id: number;
+  task_id: number;
+  owner_id: number;
+  block_id: number | null;
+  started_at: string;
+  ended_at: string | null;
+  source: string | null;
+  created_at: string | null;
 }
 
 export interface TaskInput {
@@ -72,10 +87,19 @@ export const api = {
     },
     create: (body: TaskInput) => request<{ task: Task }>('POST', '/tasks', body),
     quick: (text: string) => request<{ task: Task; parsed: ParsedQuick; llm: boolean }>('POST', '/tasks/quick', { text }),
-    update: (id: number, body: Partial<TaskInput & { status: string; completed: boolean; completed_at?: string }>) =>
+    update: (id: number, body: Partial<TaskInput & { status: string; completed: boolean; completed_at: string | null }>) =>
       request<{ task: Task }>('PATCH', `/tasks/${id}`, body),
     delete: (id: number) => request<{ task: Task }>('DELETE', `/tasks/${id}`),
     subtasks: (id: number) => request<{ subtasks: Task[] }>('GET', `/tasks/${id}/subtasks`),
+    get: (id: number) => request<{ task: Task }>('GET', `/tasks/${id}`),
+    timerStart: (id: number, blockId?: number) =>
+      request<{ entry: TimeEntry }>('POST', `/tasks/${id}/timer/start`, blockId ? { block_id: blockId } : {}),
+    timerStop: (id: number) =>
+      request<{ entry: TimeEntry; actual_minutes: number }>('POST', `/tasks/${id}/timer/stop`, {}),
+  },
+
+  timer: {
+    current: () => request<{ entry: TimeEntry | null }>('GET', '/timer'),
   },
 
   blocks: {

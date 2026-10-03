@@ -1,7 +1,13 @@
 import { createSignal, Show, For, createResource } from 'solid-js';
-import { ChevronRight, ChevronDown, Plus, Pencil, Trash2 } from 'lucide-solid';
+import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Play, Square } from 'lucide-solid';
 import { type Task, api } from '../lib/api.js';
-import { refetchTasks, showToast, setTaskModal } from '../stores/index.js';
+import {
+  refetchTasks,
+  showToast,
+  setTaskModal,
+  runningEntry,
+  liveElapsedClock,
+} from '../stores/index.js';
 
 const priorityDot = ['', 'p1', 'p2', 'p3', 'p4', 'p5'] as const;
 const statusClass: Record<string, string> = {
@@ -64,9 +70,58 @@ export function TaskCard(props: Props) {
     );
   };
 
-  const est = () => props.task.estimated_minutes
-    ? <span class="text-xs font-mono text-slate-600">{props.task.estimated_minutes}m</span>
-    : null;
+  // ── Timer ──────────────────────────────────────────────────────────────────
+  const isRunning = () => runningEntry()?.task_id === props.task.id;
+  const liveClock = () => liveElapsedClock(props.task.id);
+
+  async function toggleTimer() {
+    try {
+      if (isRunning()) {
+        await api.tasks.timerStop(props.task.id);
+      } else {
+        await api.tasks.timerStart(props.task.id);
+      }
+      // The store reacts to SSE; refetch keeps the badge's actual_minutes current.
+      refetchTasks();
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
+  async function acceptSuggestion(mins: number) {
+    try {
+      await api.tasks.update(props.task.id, { estimated_minutes: mins });
+      refetchTasks();
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
+  // Estimate-vs-actual badge: `{actual}m / {est}m`, green when actual ≤ est,
+  // amber when over. Shows a bare estimate when no actual yet, and nothing when
+  // neither is set.
+  const badge = () => {
+    const est = props.task.estimated_minutes;
+    const actual = props.task.actual_minutes ?? 0;
+    if (actual > 0 && est != null) {
+      const over = actual > est;
+      return (
+        <span class={`text-xs font-mono ${over ? 'text-amber-400' : 'text-green-400'}`} title="actual / estimate">
+          {actual}m / {est}m
+        </span>
+      );
+    }
+    if (actual > 0) {
+      return <span class="text-xs font-mono text-slate-400" title="actual">{actual}m</span>;
+    }
+    if (est != null) {
+      return <span class="text-xs font-mono text-slate-600" title="estimate">{est}m</span>;
+    }
+    return null;
+  };
+
+  // One-tap suggestion chip: only when no estimate is set and the server returned
+  // a deterministic suggestion (≥5 tag-cohort samples).
+  const suggestion = () =>
+    props.task.estimated_minutes == null && props.task.suggested_estimate != null
+      ? props.task.suggested_estimate
+      : null;
 
   return (
     <div class={depth() > 0 ? 'pl-6 relative' : ''}>
@@ -97,8 +152,32 @@ export function TaskCard(props: Props) {
               {props.task.title}
             </span>
             {dueLabel()}
-            {est()}
+            {badge()}
+            <Show when={isRunning()}>
+              <span class="text-xs font-mono text-green-400 tabular-nums" title="running">
+                {liveClock()}
+              </span>
+            </Show>
+            <button
+              onClick={toggleTimer}
+              class={`btn-icon flex-shrink-0 ${isRunning() ? 'text-green-400' : 'text-slate-500 hover:text-slate-300'}`}
+              title={isRunning() ? 'Stop timer' : 'Start timer'}
+            >
+              <Show when={isRunning()} fallback={<Play size={13} />}>
+                <Square size={13} />
+              </Show>
+            </button>
           </div>
+
+          <Show when={suggestion() != null}>
+            <button
+              onClick={() => acceptSuggestion(suggestion()!)}
+              class="badge-neutral text-[11px] mt-1 ml-4 hover:text-accent-300 hover:border-accent-400/40 transition-colors"
+              title="Set this estimate from your history"
+            >
+              ≈{suggestion()}m?
+            </button>
+          </Show>
 
           <Show when={props.task.notes || props.task.description}>
             <p class="text-xs text-slate-500 mt-1 ml-4 line-clamp-2">

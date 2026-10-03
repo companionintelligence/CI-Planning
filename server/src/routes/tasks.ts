@@ -9,6 +9,7 @@ import { setDependencies, getDependencies, blockedTaskIds, DependencyCycleError 
 import { parseQuick } from '../engine/quickadd.js';
 import { enrichQuick } from '../agents/quickadd.js';
 import { startTimer, stopTimer, getRunning } from '../services/timer.js';
+import { suggestEstimate } from '../services/estimate.js';
 
 export function tasksRouter() {
   const router = new Router();
@@ -42,6 +43,9 @@ export function tasksRouter() {
         tags: tagRows.map((r) => r.name),
         depends_on: getDependencies(t.id),
         blocked: blocked.has(t.id),
+        // Suggest only when the user hasn't set an estimate yet — the chip is a
+        // one-tap prompt, not a correction. Deterministic, ≥5 tag-cohort samples.
+        suggested_estimate: t.estimatedMinutes == null ? suggestEstimate(t.id) : null,
       };
     });
 
@@ -159,6 +163,27 @@ export function tasksRouter() {
       return { ...toApi(t), tags: tagRows.map((r) => r.name) };
     });
     ctx.body = { subtasks: withTags };
+  });
+
+  // GET /api/tasks/:id — single task with tags, deps, and a deterministic
+  // estimate suggestion (median of the task's tag-cohort actuals, ≥5 samples;
+  // null otherwise). Suggestion is surfaced, never auto-written.
+  router.get('/api/tasks/:id', async (ctx) => {
+    const id = Number(ctx.params.id);
+    const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
+    if (!task) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    const tagRows = sqlite
+      .prepare('SELECT tags.name FROM tags JOIN task_tags ON tags.id = task_tags.tag_id WHERE task_tags.task_id = @task_id')
+      .all({ task_id: id }) as { name: string }[];
+    ctx.body = {
+      task: {
+        ...toApi(task),
+        tags: tagRows.map((r) => r.name),
+        depends_on: getDependencies(id),
+        blocked: blockedTaskIds().has(id),
+        suggested_estimate: suggestEstimate(id),
+      },
+    };
   });
 
   // PATCH /api/tasks/:id
