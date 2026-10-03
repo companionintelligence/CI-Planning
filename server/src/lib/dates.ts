@@ -9,3 +9,13 @@ export function localISODate(d: Date = new Date()): string {
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
 }
+
+/**
+ * Add `n` calendar days to a YYYY-MM-DD string, returning YYYY-MM-DD. Pure
+ * calendar arithmetic (UTC math on the date parts) — no wall-clock / DST concern,
+ * since this only counts days, never instants. `n` may be negative.
+ */
+export function addLocalDays(date: string, n: number): string {
+  const [y, m, d] = date.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}

@@ -85,6 +85,25 @@ describe('jobs', () => {
     expect(run?.status).toBe('done');
   });
 
+  it('generate_recurrences materializes instances from a template and logs a run', async () => {
+    sqlite
+      .prepare(
+        `INSERT INTO tasks (title, status, owner_id, task_time, priority, recurrence_rule, recurrence_dtstart)
+         VALUES ('Daily standup', 'recurring', 1, '09:00', 3, 'FREQ=DAILY', ?)`
+      )
+      .run(new Date().toISOString());
+
+    await runJob('generate_recurrences');
+
+    const run = lastRun('generate_recurrences');
+    expect(run?.status).toBe('done');
+    expect(run?.items_created).toBeGreaterThan(0);
+    const instances = sqlite
+      .prepare("SELECT COUNT(*) AS n FROM tasks WHERE recurrence_parent_id IS NOT NULL AND source_kind='recurrence'")
+      .get() as { n: number };
+    expect(instances.n).toBeGreaterThan(0);
+  });
+
   it('an unknown job kind does not create a run row', async () => {
     await runJob('does_not_exist');
     const run = lastRun('does_not_exist');

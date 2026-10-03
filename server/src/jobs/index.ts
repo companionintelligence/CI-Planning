@@ -3,6 +3,7 @@ import { sqlite } from '../db/index.js';
 import { runScheduler } from '../engine/scheduler.js';
 import { ingestEmails, ingestEvents } from '../agents/ingest.js';
 import { promotePossibles, dedupePossibles, surfaceOverdue } from '../agents/groom.js';
+import { generateRecurrences } from '../engine/recurrence.js';
 import { broadcast } from '../routes/sse.js';
 import { logger } from '../lib/logger.js';
 import { localISODate } from '../lib/dates.js';
@@ -54,6 +55,14 @@ async function execute(kind: string): Promise<JobOutcome> {
         itemsCreated: r.blocksCreated,
         itemsUpdated: r.blocksRemoved,
         log: `Scheduled ${r.blocksCreated} blocks, removed ${r.blocksRemoved}, ${r.unscheduled} unscheduled`,
+      };
+    }
+    case 'generate_recurrences': {
+      const r = generateRecurrences();
+      return {
+        itemsCreated: r.created,
+        itemsUpdated: r.skippedMissed,
+        log: `Materialized ${r.created} instances; flagged ${r.skippedMissed} missed habits`,
       };
     }
     default:

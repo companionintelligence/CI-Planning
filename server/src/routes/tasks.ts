@@ -8,6 +8,9 @@ import { currentOwnerId } from '../lib/context.js';
 import { setDependencies, getDependencies, blockedTaskIds, DependencyCycleError } from '../engine/deps.js';
 import { parseQuick } from '../engine/quickadd.js';
 import { enrichQuick } from '../agents/quickadd.js';
+import { parseRule, generateRecurrences, habitStreak, instanceStartUTC } from '../engine/recurrence.js';
+import { serverTimezone } from '../lib/tz.js';
+import { localISODate } from '../lib/dates.js';
 
 export function tasksRouter() {
   const router = new Router();
@@ -68,12 +71,26 @@ export function tasksRouter() {
       parent_id?: number;
       tags?: string[];
       depends_on?: number[];
+      recurrence_rule?: string | null;
+      is_habit?: boolean;
     };
 
     if (!body.title?.trim()) {
       ctx.status = 400;
       ctx.body = { error: 'title is required' };
       return;
+    }
+
+    // A recurrence_rule turns this into a *template*: non-schedulable status so
+    // the scheduler's open-only filter skips it; instances are generated below.
+    let recurrence: { rule: string; dtstart: string } | null = null;
+    if (body.recurrence_rule) {
+      const parsed = parseRule(body.recurrence_rule);
+      if (!parsed.ok) { ctx.status = 422; ctx.body = { error: parsed.error }; return; }
+      const tz = ownerTimezone();
+      // Anchor the series at the chosen due-date (or today), at task_time / midnight.
+      const anchorDay = body.due_at ? body.due_at.slice(0, 10) : (body.scheduled_for ?? localISODate());
+      recurrence = { rule: parsed.rule, dtstart: instanceStartUTC(anchorDay, body.task_time ?? null, tz) };
     }
 
     const [task] = await db
@@ -90,11 +107,18 @@ export function tasksRouter() {
         priority: body.priority ?? 3,
         parentId: body.parent_id,
         ownerId: body.owner_id ?? currentOwnerId(),
+        status: recurrence ? 'recurring' : 'open',
+        recurrenceRule: recurrence?.rule ?? null,
+        recurrenceDtstart: recurrence?.dtstart ?? null,
+        isHabit: body.is_habit ?? false,
       })
       .returning();
 
     if (body.tags?.length) await attachTags(task.id, body.tags);
     if (Array.isArray(body.depends_on) && !applyDependencies(ctx, task.id, body.depends_on)) return;
+
+    // Materialize the first window immediately so a new series appears at once.
+    if (recurrence) generateRecurrences();
 
     const out = {
       ...toApi(task),
@@ -160,9 +184,15 @@ export function tasksRouter() {
     ctx.body = { subtasks: withTags };
   });
 
-  // PATCH /api/tasks/:id
+  // PATCH /api/tasks/:id?scope=instance|series  (default: instance)
+  //
+  // scope=instance — edits only this row (one day of a series, or a one-off).
+  // scope=series   — edits the TEMPLATE: applies the change, and on a rule/timing
+  //                  change deletes future un-actioned instances + regenerates the
+  //                  window. Past/completed/skipped/missed instances are preserved.
   router.patch('/api/tasks/:id', async (ctx) => {
-    const id = Number(ctx.params.id);
+    const rowId = Number(ctx.params.id);
+    const scope = (ctx.query.scope as string) === 'series' ? 'series' : 'instance';
     // Accept both snake_case (client/API convention) and camelCase (drizzle) field names.
     const body = (ctx.request.body ?? {}) as {
       title?: string;
@@ -182,7 +212,15 @@ export function tasksRouter() {
       parent_id?: number | null;
       tags?: string[];
       depends_on?: number[];
+      recurrence_rule?: string | null;
+      is_habit?: boolean;
     };
+
+    // Resolve the edit target. series → the template (this row if it is one, else
+    // its parent template); instance → this row.
+    const targetId = scope === 'series' ? resolveTemplateId(rowId) : rowId;
+    if (targetId == null) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    const id = targetId;
 
     const update: Partial<typeof tasks.$inferInsert> = {};
     if (body.title !== undefined)             update.title = body.title;
@@ -196,10 +234,33 @@ export function tasksRouter() {
     if (body.estimated_minutes !== undefined) update.estimatedMinutes = body.estimated_minutes;
     if (body.estimatedMinutes !== undefined)  update.estimatedMinutes = body.estimatedMinutes;
     if (body.priority !== undefined)          update.priority = body.priority;
-    if (body.status !== undefined)            update.status = body.status;
     if (body.completed_at !== undefined)      update.completedAt = body.completed_at;
     if (body.parent_id !== undefined)         update.parentId = body.parent_id;
     if (body.completed)                       { update.status = 'done'; update.completedAt = new Date().toISOString(); }
+    if (body.is_habit !== undefined)          update.isHabit = body.is_habit;
+
+    // A status change is honored, except: a template must stay non-schedulable —
+    // never let an edit flip it to 'open' and leak it into the today-set.
+    let regenerate = false;
+    if (scope === 'series') {
+      // Validate + apply a rule change on the template.
+      if (body.recurrence_rule !== undefined) {
+        if (body.recurrence_rule === null || body.recurrence_rule === '') {
+          ctx.status = 422; ctx.body = { error: 'series edit cannot clear the recurrence rule' }; return;
+        }
+        const parsed = parseRule(body.recurrence_rule);
+        if (!parsed.ok) { ctx.status = 422; ctx.body = { error: parsed.error }; return; }
+        update.recurrenceRule = parsed.rule;
+        regenerate = true;
+      }
+      // A timing change (task_time / due anchor) also requires regeneration.
+      if (body.task_time !== undefined || body.due_at !== undefined || body.dueAt !== undefined) {
+        regenerate = true;
+      }
+      update.status = 'recurring'; // template stays out of the today-set
+    } else if (body.status !== undefined) {
+      update.status = body.status;
+    }
 
     // Only issue an UPDATE when there are column changes; a tags/depends-only
     // PATCH still resolves the task (drizzle rejects an empty .set()).
@@ -207,6 +268,27 @@ export function tasksRouter() {
       ? await db.update(tasks).set(update).where(eq(tasks.id, id)).returning()
       : await db.select().from(tasks).where(eq(tasks.id, id));
     if (!task) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+
+    // Series rule/timing change: drop future un-actioned instances, then re-
+    // materialize under the new rule. Past/completed/skipped/missed are kept; an
+    // edited-but-open future instance is preserved by the unique index on re-run.
+    if (scope === 'series' && regenerate) {
+      // Refresh dtstart anchor when timing moved so the pattern re-anchors cleanly.
+      if (body.task_time !== undefined || body.due_at !== undefined || body.dueAt !== undefined) {
+        const tz = ownerTimezone();
+        const anchorDay = (task.dueAt ?? task.scheduledFor ?? localISODate()).slice(0, 10);
+        await db.update(tasks)
+          .set({ recurrenceDtstart: instanceStartUTC(anchorDay, task.taskTime ?? null, tz) })
+          .where(eq(tasks.id, id));
+      }
+      sqlite
+        .prepare(
+          `DELETE FROM tasks
+             WHERE recurrence_parent_id = ? AND status = 'open' AND occurrence_date >= ?`
+        )
+        .run(id, localISODate());
+      generateRecurrences();
+    }
 
     if (Array.isArray(body.tags)) {
       sqlite.prepare('DELETE FROM task_tags WHERE task_id = ?').run(id);
@@ -228,6 +310,40 @@ export function tasksRouter() {
     ctx.body = { task: out };
   });
 
+  // POST /api/tasks/:id/skip — skip a single recurring instance.
+  // Sets the instance status='skipped' AND appends its occurrence_date to the
+  // TEMPLATE's recurrence_exdates so a regenerate won't resurrect it (durable).
+  router.post('/api/tasks/:id/skip', async (ctx) => {
+    const id = Number(ctx.params.id);
+    const [inst] = await db.select().from(tasks).where(eq(tasks.id, id));
+    if (!inst) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    if (!inst.recurrenceParentId || !inst.occurrenceDate) {
+      ctx.status = 400; ctx.body = { error: 'not a recurring instance' }; return;
+    }
+
+    const [updated] = await db.update(tasks).set({ status: 'skipped' }).where(eq(tasks.id, id)).returning();
+
+    // Append the occurrence date to the template's EXDATE set (de-duped).
+    const [tmpl] = await db.select().from(tasks).where(eq(tasks.id, inst.recurrenceParentId));
+    if (tmpl) {
+      const ex = new Set([...(tmpl.recurrenceExdates ?? []), inst.occurrenceDate]);
+      await db.update(tasks).set({ recurrenceExdates: [...ex].sort() }).where(eq(tasks.id, tmpl.id));
+    }
+
+    const out = { ...toApi(updated), tags: [] as string[], depends_on: getDependencies(id), blocked: false };
+    broadcast(currentOwnerId(), 'task:updated', out);
+    ctx.body = { task: out };
+  });
+
+  // GET /api/tasks/:id/streak — consecutive done habit instances back from today,
+  // plus the last-7 occurrence states for the streak strip. Accepts a template id
+  // or an instance id (resolves to the template).
+  router.get('/api/tasks/:id/streak', async (ctx) => {
+    const templateId = resolveTemplateId(Number(ctx.params.id));
+    if (templateId == null) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    ctx.body = habitStreak(templateId);
+  });
+
   // DELETE /api/tasks/:id  (soft delete)
   router.delete('/api/tasks/:id', async (ctx) => {
     const id = Number(ctx.params.id);
@@ -243,6 +359,27 @@ export function tasksRouter() {
   });
 
   return router;
+}
+
+/**
+ * The template id for a series edit: the row itself if it's a template
+ * (recurrence_parent_id null), its parent template if it's an instance, or null
+ * if the row doesn't exist. A plain one-off resolves to itself (series == itself).
+ */
+function resolveTemplateId(rowId: number): number | null {
+  const row = sqlite
+    .prepare('SELECT id, recurrence_parent_id FROM tasks WHERE id = ?')
+    .get(rowId) as { id: number; recurrence_parent_id: number | null } | undefined;
+  if (!row) return null;
+  return row.recurrence_parent_id ?? row.id;
+}
+
+/** The current owner's scheduling timezone, falling back to the server zone. */
+function ownerTimezone(): string {
+  const row = sqlite
+    .prepare('SELECT timezone FROM scheduling_prefs WHERE owner_id = ?')
+    .get(currentOwnerId()) as { timezone: string | null } | undefined;
+  return row?.timezone || serverTimezone();
 }
 
 /** Replace a task's blockers; on a cycle, respond 409 and return false. */
