@@ -4,21 +4,61 @@
     {
       "name": "All (server + client)",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["dev"],
+      "runtimeArgs": [
+        "dev"
+      ],
       "port": 5173,
       "autoPort": false
     },
     {
       "name": "Koa API server",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "server", "dev"],
+      "runtimeArgs": [
+        "--filter",
+        "server",
+        "dev"
+      ],
+      "port": 3848
+    },
+    {
+      "name": "Preview API (scratch DB)",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "DB_PATH=/private/tmp/claude-501/-Users-liam-devel-ci-CI-Planning--claude-worktrees-recursing-wozniak-2d0f65/6d40d258-227b-40c3-8ba3-5e732d04284e/scratchpad/companion-preview-main.db",
+        "pnpm",
+        "--filter",
+        "server",
+        "dev"
+      ],
       "port": 3848
     },
     {
       "name": "Vite client dev",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "client", "dev"],
+      "runtimeArgs": [
+        "--filter",
+        "client",
+        "dev"
+      ],
       "port": 5173
+    },
+    {
+      "name": "CI-Server API (parity 3031)",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd /Users/liam/devel/ci/CI-Server/.claude/worktrees/planning-parity && PORT=3031 exec yarn workspace @ci/be-api dev"
+      ],
+      "port": 3031
+    },
+    {
+      "name": "CI-Server web (parity 5175)",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd /Users/liam/devel/ci/CI-Server/.claude/worktrees/planning-parity && API_PROXY_TARGET=http://localhost:3031 exec yarn workspace @ci/fe-web dev --port 5175 --strictPort"
+      ],
+      "port": 5175
     }
   ]
 }
