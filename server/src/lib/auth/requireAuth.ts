@@ -50,8 +50,16 @@ const PUBLIC_PREFIXES = [
   // enumeration-neutral + rate-limited.
   '/api/auth/reset-request',
   '/api/auth/reset',
+  // B2 — local self-serve sign-up: the requirements probe and the sign-up itself both
+  // run pre-session by definition (the prefix rule also covers /signup/requirements).
+  // The route 404s unless AUTH_SIGNUP allows it and is per-IP rate-limited.
+  '/api/auth/signup',
   '/api/auth/ciportal/start',
   '/api/auth/ciportal/callback',
+  // B3 — the first-time portal sign-in confirmation page + its decision POST: the
+  // browser arrives with only the signed intent cookie the callback set; the flow is
+  // resolved SOLELY from that cookie (verified identity + CSRF token).
+  '/api/auth/ciportal/confirm-account',
   '/api/oauth/google/callback',
   // AA0b — the memory connector's CI-Portal callback arrives with no app credential
   // (the portal's redirect); the flow is resolved from the matched oauth_states row.

@@ -4,10 +4,11 @@
  * `<issuer>/.well-known/openid-configuration`. We fetch it, cache it briefly, and read
  * the authorize/token/JWKS endpoints AND the canonical `issuer` claim from the document.
  *
- * The `issuer` claim matters (better-auth quirk): CI-Portal serves discovery at
- * `https://hub.companionintelligence.com/api/auth` but the id_token `iss` claim is the
- * BARE ORIGIN `https://hub.companionintelligence.com`. The callback must validate `iss`
- * against `doc.issuer` (returned here), never against the configured discovery URL.
+ * The `issuer` claim matters (better-auth quirk): Companion Portal serves discovery at
+ * `https://hub.ci.computer/api/auth` but the id_token `iss` claim is the BARE ORIGIN
+ * `https://hub.ci.computer` (same shape on the staging/dev origins). The callback must
+ * validate `iss` against `doc.issuer` (returned here), never against the configured
+ * discovery URL.
  *
  * No new dependency — plain `fetch` + a Map cache (mirrors the Google connector's
  * hand-rolled JWKS style rather than pulling in `jose`).

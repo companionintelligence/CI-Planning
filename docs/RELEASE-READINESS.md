@@ -1,5 +1,7 @@
 # Release readiness — master plan (Phases T-Y)
 
+> **Superseded 2026-10-21** — the launch-readiness map is now [PRODUCTION-READINESS-2026-10-21.md](PRODUCTION-READINESS-2026-10-21.md); this July plan is kept for the phase history.
+
 **Status:** Planning only — no code, schema, or config touched to produce this or any linked doc. Companion to [ROADMAP.md](ROADMAP.md). Continues the lettered-phase convention (`B0`...`S` exist; this starts at `T`).
 
 > **Reviewed 2026-07-01** — see [RELEASE-READINESS-REVIEW.md](RELEASE-READINESS-REVIEW.md) for an audit of this plan against the live codebase, the fixes applied to S/T/U/V/W/Y and ROADMAP, and one code change (`schema.ts` reconciled to the migrations — Drizzle is the approved source of truth). **Headline:** the app is *not* release-ready after Phase S; S is table cleanup, and the real gate is T+U+V, which are unbuilt and partly blocked on external inputs. Note also that Q has not landed (live migration head is `0091`), which the whole T–Y chain assumes.

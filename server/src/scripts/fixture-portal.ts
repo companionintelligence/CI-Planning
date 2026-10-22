@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { generateKeyPairSync, createSign, createHash, randomBytes } from 'node:crypto';
+import { generateKeyPairSync, sign as cryptoSign, createHash, randomBytes } from 'node:crypto';
 
 /**
  * U1 — a fixture CI-Portal: a minimal, standards-shaped OIDC provider used to
@@ -12,8 +12,15 @@ import { generateKeyPairSync, createSign, createHash, randomBytes } from 'node:c
  *   GET  /authorize   → renders a consent page; "Continue" mints a one-time code
  *   GET  /approve     → binds code→{nonce, code_challenge, redirect_uri}, 302 back
  *   POST /token       → validates the code + PKCE S256 verifier, mints a REAL
- *                       RS256-signed id_token (in-memory keypair)
+ *                       signed id_token (in-memory keypair)
  *   GET  /jwks        → the signing key's public JWK
+ *
+ * Signing algorithm: EdDSA / Ed25519 by default — what the real CI-Portal issues
+ * (better-auth's `jwt()` plugin with its default key config; the live JWKS at
+ * https://hub.ci.computer/api/auth/jwks holds exactly one OKP/Ed25519 key). Set
+ * FIXTURE_PORTAL_ALG=RS256 to mint RSA-signed tokens instead (the Google shape).
+ * The fixture used to be RS256-only, which is how a verifier that could not check
+ * EdDSA passed every end-to-end run while failing against production.
  *
  * Run:  pnpm --filter server exec tsx src/scripts/fixture-portal.ts
  * Then point the app at it:
@@ -33,9 +40,14 @@ const USER = {
   email: process.env.FIXTURE_EMAIL ?? 'avery@fixture.local',
 };
 
-const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+const ALG = (process.env.FIXTURE_PORTAL_ALG ?? 'EdDSA') as 'EdDSA' | 'RS256';
+if (ALG !== 'EdDSA' && ALG !== 'RS256') {
+  throw new Error(`FIXTURE_PORTAL_ALG='${ALG}' — set EdDSA (default, CI-Portal) or RS256 (Google)`);
+}
+const { publicKey, privateKey } =
+  ALG === 'EdDSA' ? generateKeyPairSync('ed25519') : generateKeyPairSync('rsa', { modulusLength: 2048 });
 const KID = 'fixture-key-1';
-const jwk = { ...(publicKey.export({ format: 'jwk' }) as Record<string, unknown>), kid: KID, alg: 'RS256', use: 'sig' };
+const jwk = { ...(publicKey.export({ format: 'jwk' }) as Record<string, unknown>), kid: KID, alg: ALG, use: 'sig' };
 
 const b64url = (b: Buffer | string) => Buffer.from(b).toString('base64url');
 const s256 = (v: string) => createHash('sha256').update(v).digest('base64url');
@@ -44,7 +56,7 @@ const s256 = (v: string) => createHash('sha256').update(v).digest('base64url');
 const codes = new Map<string, { nonce: string; challenge: string; redirectUri: string; clientId: string }>();
 
 function signIdToken(clientId: string, nonce: string): string {
-  const header = b64url(JSON.stringify({ alg: 'RS256', kid: KID, typ: 'JWT' }));
+  const header = b64url(JSON.stringify({ alg: ALG, kid: KID, typ: 'JWT' }));
   const payload = b64url(
     JSON.stringify({
       iss: ISSUER,
@@ -57,13 +69,14 @@ function signIdToken(clientId: string, nonce: string): string {
       exp: Math.floor(Date.now() / 1000) + 300,
     }),
   );
-  const signer = createSign('RSA-SHA256');
-  signer.update(`${header}.${payload}`);
-  return `${header}.${payload}.${signer.sign(privateKey).toString('base64url')}`;
+  // Ed25519 is "pure" EdDSA: node takes a null digest and refuses any other. RS256 is
+  // RSASSA-PKCS1-v1_5 over SHA-256, the same one-shot API with the digest named.
+  const signature = cryptoSign(ALG === 'EdDSA' ? null : 'RSA-SHA256', Buffer.from(`${header}.${payload}`), privateKey);
+  return `${header}.${payload}.${signature.toString('base64url')}`;
 }
 
 const CONSENT_PAGE = (approveUrl: string, clientId: string) => `<!doctype html>
-<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>CI-Portal (fixture)</title>
+<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Companion Portal (fixture)</title>
 <style>
   body { margin:0; font-family: ui-sans-serif, system-ui, sans-serif; background:#0b1220; color:#e6edf6;
          display:grid; place-items:center; min-height:100vh; }
@@ -81,7 +94,7 @@ const CONSENT_PAGE = (approveUrl: string, clientId: string) => `<!doctype html>
   .client { color:#c9d6ea; font-weight:600; }
 </style></head><body>
   <div class="card">
-    <div class="badge">CI-Portal · developer fixture</div>
+    <div class="badge">Companion Portal · developer fixture</div>
     <h1>Sign in to <span class="client">${clientId}</span></h1>
     <p>This application is requesting your identity (<code>openid profile email</code>).</p>
     <div class="user"><div class="avatar">${USER.name[0] ?? 'U'}</div>
@@ -105,7 +118,9 @@ const server = createServer((req, res) => {
       jwks_uri: `${ISSUER}/jwks`,
       response_types_supported: ['code'],
       code_challenge_methods_supported: ['S256'],
-      id_token_signing_alg_values_supported: ['RS256'],
+      // The real portal advertises both and issues EdDSA; mirror that so a verifier
+      // can't lean on the discovery list to decide what it will receive.
+      id_token_signing_alg_values_supported: ['RS256', 'EdDSA'],
     }, null, 2));
   }
 
@@ -173,5 +188,6 @@ server.listen(PORT, () => {
   // eslint-disable-next-line no-console
   console.log(`Fixture CI-Portal on ${ISSUER}
   discovery: ${ISSUER}/.well-known/openid-configuration
+  id_token alg: ${ALG}${ALG === 'EdDSA' ? ' (Ed25519 — what the real CI-Portal issues)' : ' (FIXTURE_PORTAL_ALG override)'}
   signing as: ${USER.name} <${USER.email}> (sub=${USER.sub})`);
 });

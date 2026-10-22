@@ -103,20 +103,22 @@ tsk() {
 # rather than teaching the app to guess.
 say "balance categories"
 setcat() { curl -fsS -XPATCH "$API/tasks/$(tsk "$1")" -H "$JSON" -d "{\"categories\":$2}" >/dev/null; }
-setcat "Schedule the annual physical and fill out the intake form" '["health"]'
-setcat "Fix the leaking kitchen faucet or call a plumber"          '["health"]'
-setcat "Ship the auto-scheduler reactive reflow behind a flag"     '["career"]'
-setcat "Write integration tests for the block engine"              '["career"]'
-setcat "Triage the GitHub issue backlog and label everything"      '["career"]'
-setcat "Draft the API rate-limit policy for partners"              '["career"]'
-setcat "Call Dad for his birthday and order the cake"              '["relationships"]'
-setcat "Book the family dinner reservation"                        '["relationships","leisure"]'
-setcat "Confirm the conference talk title and abstract"              '["growth","career"]'
-setcat "Spike sqlite-vec for the dedupe pipeline"                  '["growth"]'
-setcat "Renew passport before it expires in August"                '["leisure"]'
-setcat "Reconcile the May capital account statements"              '["finance"]'
-setcat "Categorize May credit-card transactions"                   '["finance"]'
-setcat "Update the cap table with the new SAFE"                    '["finance"]'
+# Titles are the SYNTHETIC fixture's (server/test/fixtures/tasks.md, #563) — exact
+# strings, because tsk() matches on equality. A rename there has to land here too.
+setcat "Bring the insurance card to the dentist"                       '["health"]'
+setcat "Two hour volunteer slot at the repair cafe"                    '["health","leisure"]'
+setcat "Ship the auto-scheduler reactive reflow behind a flag"         '["career"]'
+setcat "Write integration tests for the block engine"                  '["career"]'
+setcat "Triage the issue backlog and label everything"                 '["career"]'
+setcat "Draft the API rate-limit policy for partners"                  '["career"]'
+setcat "Pick up a card and a cake"                                     '["relationships"]'
+setcat "Book the table for the family birthday dinner"                 '["relationships","leisure"]'
+setcat "Drop the donation bags off on Saturday"                        '["relationships"]'
+setcat "Upload the conference slides and confirm A/V requirements"     '["growth","career"]'
+setcat "Spike a vector index for the dedupe pipeline"                  '["growth"]'
+setcat "Categorize May transactions and gather the missing receipts"   '["finance"]'
+setcat "Sign and return the insurance renewal documents"               '["finance"]'
+setcat "Decide on the hosting plan before it renews"                   '["finance"]'
 
 # ── Objective <-> task links ─────────────────────────────────────────────────
 # An objective with no linked task has progress_cache = NULL, which the panel
@@ -131,12 +133,12 @@ close() { curl -fsS -XPATCH "$API/tasks/$(tsk "$1")"   -H "$JSON" -d '{"status":
 
 link "$O1" "Ship the auto-scheduler reactive reflow behind a flag"
 link "$O1" "Write integration tests for the block engine"
-link "$O1" "Triage the GitHub issue backlog and label everything"
+link "$O1" "Triage the issue backlog and label everything"
 close "Write integration tests for the block engine"
 
-link "$O2" "Send the vendor partner the SVG logo and 50-word blurb"
-link "$O2" "Upload the accelerator pitch deck and founder video"
-close "Send the vendor partner the SVG logo and 50-word blurb"
+link "$O2" "Send Bluepeak the data schema and open a shared channel"
+link "$O2" "Write the pilot success criteria down somewhere they can see it"
+close "Send Bluepeak the data schema and open a shared channel"
 
 # The outdoors goal has no backlog behind it — tasks.md is a work brain-dump —
 # so its leaf gets two tasks of its own. Two extra rows, not a rewritten fixture.
@@ -164,7 +166,9 @@ tid() {
   echo "$id"
 }
 file_tag() { curl -fsS -XPATCH "$API/tags/$(tid "$1")" -H "$JSON" -d "{\"directions\":[\"$2\"]}" >/dev/null; }
-file_tag product work; file_tag bizdev work; file_tag investment work; file_tag partnerships work
+# The synthetic fixture yields six intention tags: product, clients, partnerships, admin,
+# personal, submissions (bizdev / investment are gone since #563).
+file_tag product work; file_tag clients work; file_tag partnerships work; file_tag admin work
 file_tag personal home
 file_tag submissions community
 
@@ -172,8 +176,8 @@ file_tag submissions community
 # em dash, so without this every tag reads "#product —" and the frame is a column
 # of placeholders.
 file_cat() { curl -fsS -XPATCH "$API/tags/$(tid "$1")" -H "$JSON" -d "{\"categories\":[\"$2\"]}" >/dev/null; }
-file_cat product career;      file_cat bizdev career
-file_cat partnerships career; file_cat investment finance
+file_cat product career;      file_cat clients career
+file_cat partnerships career; file_cat admin finance
 file_cat personal relationships
 file_cat submissions growth
 
@@ -183,7 +187,7 @@ file_cat submissions growth
 # two thirds of the calendar-month frame. These are time BLOCKS rather than
 # fixture events on purpose: the seeder mines every fixture event into a
 # "Prep for …" task, so widening calendar.json would push the backlog past
-# --target=47 and move every other shot. All fall outside the frozen day and
+# --target=40 and move every other shot. All fall outside the frozen day and
 # outside the visible week, so nothing else moves.
 say "rest-of-month commitments"
 mtg() { # mtg <YYYY-MM-DD> <HH:MM> <minutes> <title>

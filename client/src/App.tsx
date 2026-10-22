@@ -6,6 +6,7 @@ import { navCollapsed, toggleNav, detailsOpen } from './stores/ui.js';
 import { Nav }      from './components/Nav.js';
 import { CloseRitual } from './components/CloseRitual.js';
 import { Login }    from './views/Login.js';
+import { Signup }   from './views/Signup.js';
 import { ResetPassword } from './views/ResetPassword.js';
 import { authGateActive } from './lib/api.js';
 import { BottomNav } from './components/BottomNav.js';
@@ -339,7 +340,9 @@ function SessionGate(props: { children?: any }) {
 }
 
 export function App() {
-  const [cfg] = createResource(() => api.auth.config().catch(() => ({ mode: 'test' as const, disableOidc: false })));
+  const [cfg] = createResource(() =>
+    api.auth.config().catch(() => ({ mode: 'test' as const, disableOidc: false, portal: false, local: false, signup: 'off' as const })),
+  );
 
   return (
     <Show
@@ -355,6 +358,8 @@ export function App() {
       <Show when={authGateActive(cfg()!)} fallback={<UngatedRouter />}>
         <Router>
           <Route path="/login" component={Login} />
+          {/* B2 — local self-serve sign-up (invite code or open, per AUTH_SIGNUP). Bare, like /login. */}
+          <Route path="/signup" component={Signup} />
           {/* V7 — unauthenticated reset page reached from the emailed link. Bare, like /login. */}
           <Route path="/reset-password" component={ResetPassword} />
           <Route path="/" component={SessionGate}>

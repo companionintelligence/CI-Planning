@@ -47,6 +47,19 @@ export interface ProvisionOwnerFields {
    * must never mint an admin unless the caller (boot bootstrap, accounts API)
    * explicitly says so. */
   role?: OwnerRole;
+  /**
+   * A3 (Companion Memory parity): "the first account on an empty appliance becomes the
+   * operator." When true and `role` is unset, the owner is minted as `operator` iff the
+   * instance has NO operator yet (the sentinel never counts), otherwise as `member`.
+   * The decision is made INSIDE the insert statement — `role = CASE WHEN (SELECT COUNT…)
+   * = 0 THEN 'operator' ELSE 'member' END` — so two first logins racing each other can
+   * never both read "zero operators" between a check and a write: on SQLite the single
+   * statement is atomic on the one connection, and `transaction()` here is only
+   * BEGIN…COMMIT around an async callback, so a separate pre-read would NOT have been
+   * safe. (Postgres at cutover: wrap in `pg_advisory_xact_lock` — READ COMMITTED lets two
+   * statements each see zero.) Ignored when `role` is given explicitly.
+   */
+  claimOperatorIfNone?: boolean;
 }
 
 const BASE_PATTERN_TAGS = ['home', 'work', 'community'] as const;
@@ -89,11 +102,20 @@ export async function provisionOwner(fields: ProvisionOwnerFields): Promise<stri
     (c) => c.name,
   );
 
+  // The role expression: an explicit role wins; otherwise the A3 claim (see the field
+  // doc) or the Phase AG default of 'member'. The claim is a subquery in the VALUES
+  // list so the "is there an operator yet?" read and the write are ONE statement.
+  const claim = fields.role === undefined && fields.claimOperatorIfNone === true;
+  const roleSql = claim
+    ? `CASE WHEN (SELECT COUNT(*) FROM owners WHERE role = 'operator' AND id <> ?) = 0 THEN 'operator' ELSE 'member' END`
+    : '?';
+  const roleParam = claim ? SYSTEM_OWNER_ID : (fields.role ?? 'member');
+
   await store().transaction(async () => {
     await store()
       .prepare(
         `INSERT INTO owners (id, name, email, username, password_hash, external_subject, role)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ${roleSql})`,
       )
       .run(
         id,
@@ -102,7 +124,7 @@ export async function provisionOwner(fields: ProvisionOwnerFields): Promise<stri
         fields.username ?? null,
         fields.passwordHash ?? null,
         fields.externalSubject ?? null,
-        fields.role ?? 'member',
+        roleParam,
       );
 
     // scheduling_prefs: clone the sentinel's baseline row (fresh PK, new owner_id).

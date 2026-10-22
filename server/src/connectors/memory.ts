@@ -335,20 +335,20 @@ async function refreshOidcBlob(owner: string, blob: OidcBlob): Promise<string> {
       signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
   } catch (err) {
-    throw new MemoryUnavailable(`CI-Portal token refresh unreachable: ${(err as Error).message}`);
+    throw new MemoryUnavailable(`Companion Portal token refresh unreachable: ${(err as Error).message}`);
   }
   if (!res.ok) {
     // A 400/401 here means the refresh token is dead (revoked / expired / rotated away):
     // reconnect via CI-Portal is required. Surface as unavailable so callers degrade.
-    throw new MemoryUnavailable(`CI-Portal token refresh failed: HTTP ${res.status} — reconnect Companion Memory`);
+    throw new MemoryUnavailable(`Companion Portal token refresh failed: HTTP ${res.status} — reconnect Companion Memory`);
   }
   let tok: RefreshResponse;
   try {
     tok = (await res.json()) as RefreshResponse;
   } catch (err) {
-    throw new MemoryUnavailable(`CI-Portal token refresh returned unparseable JSON: ${(err as Error).message}`);
+    throw new MemoryUnavailable(`Companion Portal token refresh returned unparseable JSON: ${(err as Error).message}`);
   }
-  if (!tok.access_token) throw new MemoryUnavailable('CI-Portal token refresh returned no access_token');
+  if (!tok.access_token) throw new MemoryUnavailable('Companion Portal token refresh returned no access_token');
 
   const next: OidcBlob = {
     ...blob,

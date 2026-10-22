@@ -271,10 +271,28 @@ describe('V — POST /api/auth/reset', () => {
 
 // ── mode gating ──────────────────────────────────────────────────────────────────
 
-describe('V — reset routes are gated to local mode', () => {
-  it('404s reset-request and reset when not in local mode', async () => {
+describe('V — reset routes are gated to AUTH_MODE=sso (both sub-modes)', () => {
+  // A3 (2026-10-21): local username/password login — and therefore password reset — is
+  // served under Companion Portal login too, for the break-glass operator seeded from
+  // AUTH_DEFAULT_* and for operator-invited local accounts (an invite IS a reset token
+  // consumed by /api/auth/reset, so gating reset to DISABLE_OIDC=true had made invites
+  // under OIDC dead on arrival). Before A3 this case asserted 404.
+  it('serves reset-request and reset under sso + OIDC (break-glass / invited local accounts)', async () => {
+    await seedUser();
     const saved = { ...config.auth };
-    config.auth.disableOidc = false; // sso + OIDC — local reset is off
+    config.auth.disableOidc = false; // sso + Companion Portal
+    try {
+      expect((await post('/api/auth/reset-request', { identifier: USER })).status).not.toBe(404);
+      // A bogus token is refused on its own merits (400), not hidden behind a 404.
+      expect((await post('/api/auth/reset', { token: 'x', newPassword: NEW_PW })).status).toBe(400);
+    } finally {
+      Object.assign(config.auth, saved);
+    }
+  });
+
+  it('404s reset-request and reset outside sso mode (standalone has no local accounts to reset)', async () => {
+    const saved = { ...config.auth };
+    config.auth.mode = 'standalone';
     try {
       expect((await post('/api/auth/reset-request', { identifier: USER })).status).toBe(404);
       expect((await post('/api/auth/reset', { token: 'x', newPassword: NEW_PW })).status).toBe(404);

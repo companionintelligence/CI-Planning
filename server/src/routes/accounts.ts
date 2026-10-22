@@ -11,6 +11,7 @@ import { provisionOwner, deleteOwner, listOwners, operatorCount, LastOperatorErr
 import { SYSTEM_OWNER_ID } from '../lib/ids.js';
 import { writeAudit } from '../lib/audit.js';
 import { sendMail } from '../lib/mail/index.js';
+import { issueSignupCode, listSignupCodes, revokeSignupCode, getSignupCode } from '../lib/auth/signupCodes.js';
 
 /**
  * Phase AG — operator account management (docs/AG-multitenant-rbac.md). Like
@@ -106,6 +107,53 @@ export function accountsRouter() {
     ctx.body = { accounts: await listOwners() };
   });
 
+  // ── B2: invite codes for local self-serve sign-up (AUTH_SIGNUP=invite) ─────────
+  // Registered BEFORE the /:id routes so `signup-codes` is never read as an account id.
+  // Codes are the invite-LINK model's sibling for people the operator has no email
+  // for (or who should pick their own username): the code admits them to /signup;
+  // the account and password are theirs. Hashed at rest; the raw code is shown once.
+
+  // GET /api/accounts/signup-codes — every code, newest first, with a derived status.
+  router.get('/api/accounts/signup-codes', async (ctx) => {
+    if (!requireAdmin(ctx)) return;
+    ctx.body = { codes: await listSignupCodes() };
+  });
+
+  // POST /api/accounts/signup-codes — mint one. Body { note? }. Refused unless the
+  // policy is `invite`: under `open` nobody needs a code and under `off` nobody can use
+  // one, and a code that can never be redeemed is a support ticket, not a feature.
+  router.post('/api/accounts/signup-codes', async (ctx) => {
+    if (!requireAdmin(ctx)) return;
+    if (config.auth.mode !== 'sso' || config.auth.signup !== 'invite') {
+      ctx.status = 409;
+      ctx.body = {
+        error: config.auth.signup === 'open'
+          ? 'sign-up is open (AUTH_SIGNUP=open) — nobody needs an invite code'
+          : 'self-serve sign-up is off (AUTH_SIGNUP=off) — set AUTH_SIGNUP=invite to use invite codes',
+      };
+      return;
+    }
+    const body = (ctx.request.body ?? {}) as { note?: unknown };
+    if (body.note !== undefined && body.note !== null && typeof body.note !== 'string') {
+      ctx.status = 400; ctx.body = { error: 'note must be a string' }; return;
+    }
+    const note = typeof body.note === 'string' ? body.note.trim().slice(0, 120) : null;
+    const { code, record } = await issueSignupCode({ createdBy: currentOwnerId(), note });
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `signup_code:${record.id}` });
+    ctx.status = 201;
+    // `code` is the only time the raw value leaves the server.
+    ctx.body = { code, signupCode: record };
+  });
+
+  // DELETE /api/accounts/signup-codes/:id — revoke. Idempotent on an already-revoked
+  // or used code (the row keeps its history); 404 for an unknown id.
+  router.delete('/api/accounts/signup-codes/:id', async (ctx) => {
+    if (!requireAdmin(ctx)) return;
+    if (!(await revokeSignupCode(ctx.params.id))) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'revoke', entity: `signup_code:${ctx.params.id}` });
+    ctx.body = { ok: true, signupCode: await getSignupCode(ctx.params.id) };
+  });
+
   // POST /api/accounts — create a local account and send its invite. Body:
   // { username, email, name?, role? }. No password crosses this API: the account
   // is minted password-less and the user sets their own via the invite link.
@@ -159,7 +207,7 @@ export function accountsRouter() {
     if (!target.username) {
       // An OIDC-only account has no local login — a password would be inert; they
       // authenticate (and reset) in CI-Portal.
-      ctx.status = 409; ctx.body = { error: 'this account signs in via CI-Portal — no local password to set' }; return;
+      ctx.status = 409; ctx.body = { error: 'this account signs in via Companion Portal — no local password to set' }; return;
     }
     if (!target.email) {
       ctx.status = 409; ctx.body = { error: 'this account has no email on file — set one first' }; return;
