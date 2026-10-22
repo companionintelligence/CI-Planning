@@ -45,6 +45,7 @@ beforeAll(async () => {
   config.auth.disableOidc = true;
   config.auth.sessionSecret = 'test-session-secret';
   config.auth.rateLimit = { ...config.auth.rateLimit, issueMax: 1000 }; // don't trip during functional tests
+  config.auth.signup = 'invite'; // the AUTH_SIGNUP default, pinned so the config assertions are deterministic
   config.trustProxy = true; // behind-a-TLS-terminator posture, so X-Forwarded-Proto is honored
   srv = await startTestServer();
 });
@@ -66,11 +67,57 @@ async function seedUser(username = USER, password = PW): Promise<string> {
   return provisionOwner({ name: username, username, passwordHash: hash });
 }
 
-describe('U2 — GET /api/auth/config (public)', () => {
-  it('reports the active mode without any credential', async () => {
+describe('U2/A4 — GET /api/auth/config (public)', () => {
+  const getConfig = async () => {
     const res = await fetch(`${srv.url}/api/auth/config`);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ mode: 'sso', disableOidc: true });
+    return res.json();
+  };
+
+  it('reports the active mode and capability flags without any credential (local-only sub-mode)', async () => {
+    // `disableOidc` stays for one release; `portal`/`local`/`signup` are what the
+    // login screen reads now (A4).
+    expect(await getConfig()).toEqual({ mode: 'sso', disableOidc: true, portal: false, local: true, signup: 'invite' });
+  });
+
+  it('`signup` follows AUTH_SIGNUP while the portal is off', async () => {
+    const saved = config.auth.signup;
+    try {
+      config.auth.signup = 'open';
+      expect(await getConfig()).toMatchObject({ portal: false, local: true, signup: 'open' });
+      config.auth.signup = 'off';
+      expect(await getConfig()).toMatchObject({ portal: false, local: true, signup: 'off' });
+    } finally {
+      config.auth.signup = saved;
+    }
+  });
+
+  it('under Companion Portal login both methods are on and the sign-up affordance is the portal (B1)', async () => {
+    config.auth.disableOidc = false;
+    try {
+      // A3 made local login live in both sub-modes (break-glass operator), so `local`
+      // is true here too — the one screen offers both (A4). `signup` reports 'portal'
+      // regardless of AUTH_SIGNUP: the portal owns sign-up when it is on.
+      expect(await getConfig()).toEqual({ mode: 'sso', disableOidc: false, portal: true, local: true, signup: 'portal' });
+      config.auth.signup = 'off';
+      expect(await getConfig()).toMatchObject({ portal: true, signup: 'portal' });
+    } finally {
+      config.auth.disableOidc = true;
+      config.auth.signup = 'invite';
+    }
+  });
+
+  it('test/standalone modes report nothing on (ungated — unchanged behaviour)', async () => {
+    const saved = { ...config.auth };
+    try {
+      config.auth.mode = 'test';
+      expect(await getConfig()).toEqual({ mode: 'test', disableOidc: true, portal: false, local: false, signup: 'off' });
+      config.auth.mode = 'standalone';
+      config.auth.disableOidc = false;
+      expect(await getConfig()).toEqual({ mode: 'standalone', disableOidc: false, portal: false, local: false, signup: 'off' });
+    } finally {
+      Object.assign(config.auth, saved);
+    }
   });
 });
 
@@ -297,5 +344,66 @@ describe('U2 — boot bootstrap (ensureLocalAuthBootstrap)', () => {
     } finally {
       config.auth.defaultPassword = saved;
     }
+  });
+});
+
+// ── A3: the break-glass local operator under OIDC (DISABLE_OIDC=false) ───────────────
+// The Hub's marketplace install always supplies AUTH_DEFAULT_*; with Companion Portal
+// login switched on (A2) that pair must still seed a local OPERATOR so an operator can
+// sign in and manage accounts when the portal is unreachable. Without the pair, OIDC
+// mode boots anyway — the first portal login claims the operator role instead.
+describe('A3 — break-glass local operator under OIDC', () => {
+  async function underOidc<T>(fn: () => Promise<T>): Promise<T> {
+    const saved = { d: config.auth.disableOidc, u: config.auth.defaultUsername, p: config.auth.defaultPassword };
+    config.auth.disableOidc = false;
+    try {
+      return await fn();
+    } finally {
+      config.auth.disableOidc = saved.d;
+      config.auth.defaultUsername = saved.u;
+      config.auth.defaultPassword = saved.p;
+    }
+  }
+
+  it('seeds a local OPERATOR from AUTH_DEFAULT_* when OIDC is on and no local owner exists', async () => {
+    await underOidc(async () => {
+      config.auth.defaultUsername = 'break-glass';
+      config.auth.defaultPassword = 'break-glass-pw-123';
+      expect(await localOwnerCount()).toBe(0);
+      await ensureLocalAuthBootstrap();
+      expect(await localOwnerCount()).toBe(1);
+      const row = sqlite.prepare(`SELECT role, external_subject FROM owners WHERE username = 'break-glass'`).get() as { role: string; external_subject: string | null };
+      expect(row).toEqual({ role: 'operator', external_subject: null });
+      await ensureLocalAuthBootstrap(); // idempotent
+      expect(await localOwnerCount()).toBe(1);
+    });
+  });
+
+  it('boots WITHOUT seeding and WITHOUT throwing under OIDC when no AUTH_DEFAULT_PASSWORD is set', async () => {
+    await underOidc(async () => {
+      config.auth.defaultPassword = undefined;
+      await expect(ensureLocalAuthBootstrap()).resolves.toBeUndefined();
+      expect(await localOwnerCount()).toBe(0);
+      // …whereas local mode with the same inputs still fails closed (unchanged U2 guard).
+      config.auth.disableOidc = true;
+      await expect(ensureLocalAuthBootstrap()).rejects.toThrow(/no way to log in|AUTH_DEFAULT_PASSWORD/i);
+    });
+  });
+
+  it('the break-glass operator can sign in with username/password while OIDC is on, with admin scope', async () => {
+    await underOidc(async () => {
+      config.auth.defaultUsername = 'break-glass';
+      config.auth.defaultPassword = 'break-glass-pw-123';
+      await ensureLocalAuthBootstrap();
+      const bad = await login('break-glass', 'wrong');
+      expect(bad.status).toBe(401);
+      const ok = await login('break-glass', 'break-glass-pw-123');
+      expect(ok.status).toBe(200);
+      expect(ok.setCookies.join('')).toContain('cp_session=');
+      const me = await fetch(`${srv.url}/api/auth/me`, { headers: { Cookie: ok.cookie } });
+      expect(me.status).toBe(200);
+      expect(await me.json()).toMatchObject({ username: 'break-glass', role: 'operator', isOperator: true });
+      expect((await fetch(`${srv.url}/api/jobs`, { headers: { Cookie: ok.cookie } })).status).toBe(200);
+    });
   });
 });

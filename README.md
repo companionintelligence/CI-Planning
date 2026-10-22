@@ -3,8 +3,9 @@
 A **private, local-first** personal todo and planning app. Tasks, time blocks,
 tags, and an automation pipeline live in a single SQLite file on your machine; an
 optional local LLM (Ollama) adds AI briefings, task extraction, grooming, and
-auto-scheduling. No cloud and no account — your planning data lives on your
-hardware and stays there.
+auto-scheduling. No cloud dependency — your planning data lives on your hardware
+and stays there. Sign in with your Companion Portal account on a CI Hub, or with a
+local username and password on a self-hosted install; neither sends your data anywhere.
 
 **On crash reporting, plainly:** released container images are built with a Sentry
 DSN and report **crashes** by default — errors only, no tracing, no session replay,
@@ -64,7 +65,9 @@ A screen-by-screen tour of the SolidJS PWA, on the
 — phthalo-mist primary (`#0a6358` light / `#c5e8dc` dark), Manrope, light + dark. Dark is
 the default; the sidebar toggle switches to light. Every pair below is a real headless
 render of the built client served by the Koa server against a seeded SQLite database
-(`pnpm seed`), captured at 1440×900 in both themes — not a mockup.
+(`pnpm seed --no-llm`, plus the **Try with sample data** set from the first-run wizard),
+captured at 1440×900 in both themes — not a mockup. Every name, company and task in them is
+synthetic fixture content.
 
 The one sidebar toggle flips the whole app between the two canonical CI themes:
 
@@ -92,7 +95,8 @@ Schedule Day controls and the overlays filter.
 ### Tasks
 
 The full backlog — priority chips (P1–P3 · Later), tags, direction filter, and the
-Tasks / Habits / Routines / Time Blocks tabs. Rendered against ~74 seeded tasks.
+Tasks / Habits / Routines / Time Blocks tabs. Rendered against ~40 seeded tasks plus the
+sample-data set.
 Every task created today — manual, quick-add, or auto-promoted suggestion — sits
 in a **New Today** section at the top and flows into the normal sections at the
 owner-local midnight rollover (the standalone Inbox view was retired in Phase AF:
@@ -112,20 +116,25 @@ a decision*.
 Hierarchical life goals — Goal → Project → Objective — with task linkage and
 progress roll-up. Since Phase AF the tree lives as the **Objectives tab of the
 Tasks view** (`/tasks?tab=objectives`); the standalone `/objectives` view is
-retired. Shown at its empty state (the seed creates no objectives); the
-**New Objective** / **Create your first objective** affordances open the editor.
+retired. Shown with the sample-data objective (three linked steps, one done, so the
+roll-up reads 33 %); **New Objective** opens the editor.
 
 | Light | Dark |
 |-------|------|
 | ![Companion Planning — Objectives tab, light theme](docs/ui/planning-objectives-light.png) | ![Companion Planning — Objectives tab, dark theme](docs/ui/planning-objectives-dark.png) |
 
 > **Regenerating these:** build the client (`pnpm --filter client build`), seed a
-> throwaway DB (`NODE_ENV=test DB_PATH=/tmp/shots.db pnpm --filter server seed -- --no-llm --target=70`),
-> start the server against it (`DB_PATH=/tmp/shots.db PORT=8842 pnpm --filter server start`),
-> then screenshot each route (`/`, `/calendar`, `/tasks`, `/tasks?tab=objectives`)
-> in both themes into `docs/ui/planning-<screen>-<theme>.png`. The **Routines**,
-> **Tags**, **Jobs**, and **Settings** screens live in the annotated
-> [Screenshots](#screenshots) tour below.
+> throwaway DB (`DB_PATH=/tmp/shots.db pnpm --filter server seed -- --no-llm --reset --target=40`
+> — `--target=40` is the fixture corpus with no filler rows), start the server against it
+> (`DB_PATH=/tmp/shots.db PORT=8842 GOOGLE_MODE=off OLLAMA_URL=http://127.0.0.1:1 pnpm --filter server start`),
+> then stage it the way a first-run user would: `POST /api/demo/sample-data`, mark
+> `onboarded_at` in `PATCH /api/prefs`, `POST /api/auto/fill` + `/api/auto/run` for today,
+> `POST /api/days/<today>/reflow/apply`, file the intention tags into directions
+> (`PATCH /api/tags/:id`), and complete one objective step. Then screenshot each route
+> (`/`, `/calendar`, `/tasks`, `/tasks?tab=objectives`) at 1440×900, device scale 2, in
+> both themes (`localStorage['vite-ui-theme']`) into `docs/ui/planning-<screen>-<theme>.png`,
+> and the [Screenshots](#screenshots) tour below at 1280×800 dark. The **Routines**,
+> **Tags**, **Jobs**, and **Settings** screens live in that tour.
 
 ## Architecture
 
@@ -783,7 +792,7 @@ of writing (2026-08-15) `main` is at `0150_calibrate_classification_job`.
 | `push_subscriptions` | Web Push endpoints per owner (VAPID), for backgrounded delivery (Phase H, 0044) |
 | `audit_log` | Append-only mutation log (owner, actor, action, entity) written by every mutating route (Phase R, 0046) |
 | `api_keys` | Hashed `x-api-key` credentials for `AUTH_MODE=standalone` (0049) |
-| `auth_states` | Single-use pre-login CI-Portal OIDC PKCE/state rows, consumed at the callback (Phase U, 0102) |
+| `auth_states` | Single-use pre-login Companion Portal OIDC PKCE/state rows, consumed at the callback (Phase U, 0102) |
 | `password_reset_tokens` | Single-use local-login password-reset tokens (Phase V, 0104) |
 | `connection_tokens` | Encrypted OAuth tokens per `(owner, provider, account)` — AES-256-GCM sealed with `CP_KEK_B64`; `status` ∈ `active`/`revoked`/`error` (Phase J 0050; `status` 0058) |
 | `external_events` | Sync identity map linking provider events ↔ local `time_blocks` by `(provider, account, external_id)` + etag/direction (Phase J 0051) |
@@ -834,19 +843,19 @@ planner place it on your calendar — no cloud round-trip, all on-device.
 | Today (with FOCUS + day stars) | Calendar (with the star heatmap + Weekly Review) |
 |---|---|
 | [![Today view](docs/screenshots/today.png)](docs/screenshots/today.png) | [![Calendar view](docs/screenshots/calendar.png)](docs/screenshots/calendar.png) |
-| FOCUS card (today/weekly focus + Today's Brief pop-up) · day note · single-select count buckets · day-stars tally · PLANNER · Flight-plan | Day / week / month grid · five-star heatmap + note dots · Weekly Review panel (capacity · calibration · objectives) |
+| Day header with the five-star tally · OPEN TIME windows per direction · PLANNER grid with the day's placed blocks · the Flight Plan staging list in the details drawer | Day / week / month grid · Review panel (capacity · calibration · objectives) · Plan my week · Schedule Day |
 
 | Tasks |
 |---|
 | [![Tasks view](docs/screenshots/tasks.png)](docs/screenshots/tasks.png) |
-| The full backlog with priorities, tags, and notes — filter by status, tag, or text; today's arrivals (including auto-promoted suggestions) sit in the **New Today** section on top (Phase AF) |
+| The full backlog with priorities, tags, and notes — filter by status, tag, or text; email suggestions fold into a **Suggested from email** section and today's arrivals (including auto-promoted suggestions) sit in **New Today** on top (Phase AF); the details drawer shows the selected task |
 
 | Routines | Objectives (Tasks tab) |
 |---|---|
-| *(screenshot pending)* | *(screenshot pending)* |
-| Habit ◯ and Routine ▢ collections with per-pattern fill + reminder config | Hierarchical life goals — Goal → Project → Objective — with task linkage and progress; lives at `/tasks?tab=objectives` since Phase AF |
+| *(screenshot pending)* | [![Objectives tab](docs/ui/planning-objectives-dark.png)](docs/ui/planning-objectives-dark.png) |
+| Habit ◯ and Routine ▢ collections with per-pattern fill + reminder config | Hierarchical life goals — Goal → Project → Objective — with task linkage and progress roll-up; lives at `/tasks?tab=objectives` since Phase AF |
 
-> 📸 Routines and Objectives screenshots coming soon.
+> 📸 Routines screenshot coming soon.
 
 | Tags | Jobs |
 |---|---|
@@ -964,7 +973,7 @@ planner place it on your calendar — no cloud round-trip, all on-device.
   than silently no-opping
 - **Reminders, scoped to today** — the Focus view's reminder picker only offers tasks
   actually on today's plate (scheduled for today, or already placed in a time block today)
-- **Accounts + auth** — CI-Portal OIDC (OAuth 2.1 + PKCE) or local username/password, with
+- **Accounts + auth** — Companion Portal OIDC (OAuth 2.1 + PKCE) and/or local username/password, with
   role-based scopes: **operator** (read/write/admin) · **member** (read/write) · **viewer**
   (read-only). An unrecognized role degrades to read-only rather than escalating
 - **Deterministic auto-scheduler** — packs open tasks into time blocks around your work
@@ -1676,8 +1685,42 @@ The published image is public and multi-arch (amd64 + arm64). The image bakes
 `NODE_ENV=production`, and production **refuses the credential-free `test` auth mode at
 boot** — so you must pick a real auth mode or the container exits immediately.
 
-**Recommended: local username/password login.** One env-seeded account, sign in from any
-browser:
+There are three ways to sign in. A CI Hub install uses the first two together; a
+self-hoster without a Companion Portal uses the third.
+
+**1. Companion Portal — the CI Hub install.** On a CI Hub appliance, install
+**Companion Planning** from the marketplace and open it. The Hub has already done the
+wiring: it mounts `${APP_DATA_DIR}/data` at `/data`, points `OLLAMA_URL` at its own
+Ollama, sets `TRUST_PROXY=true` and `PUBLIC_BASE_URL`, and injects its paired portal's
+issuer into `CIPORTAL_ISSUER`. Sign in with your Companion Portal account:
+
+- **The first person to sign in becomes the operator.** Everyone who signs in after that
+  is a **member** (the marketplace manifest sets `AUTH_AUTO_PROVISION=true`); the
+  operator promotes or invites people from **Settings → Accounts**.
+- **No Companion Portal account yet?** Create one at the portal
+  ([hub.ci.computer](https://hub.ci.computer)). The portal only redirects back to a Hub's
+  tunnel or tailnet address for members of the organization that owns that Hub, so **ask
+  the Hub's owner to invite you into their organization before your first sign-in** —
+  until then the portal refuses the redirect.
+
+**2. The install-time admin password — break-glass local login.** The username/password
+the marketplace asks for at install (`AUTH_DEFAULT_USERNAME` / `AUTH_DEFAULT_PASSWORD`)
+seeds **one local operator** on first boot. It is the login that still works when the
+portal is unreachable (tunnel down, portal outage, Hub not yet paired): use the
+username/password form on the login screen, or `POST /api/auth/login`. Leave the password
+unset and nothing is seeded — the first portal sign-in claims the operator role instead.
+
+**3. Password-only, no portal.** For a self-hosted install with no Companion Portal, add
+`DISABLE_OIDC=true`: the login screen offers only username/password, the admin password
+is **required** (the container refuses to boot without a login path), and the operator
+creates further accounts from **Settings → Accounts** (each gets a set-password link —
+emailed when `SMTP_*` is configured, otherwise shown to the operator).
+
+Outside a Hub, option 1 works too, with one portal rule to know: the portal only redirects
+back to **on-device addresses** — `localhost`, `*.localhost`, `*.local`, a LAN (RFC 1918)
+IP — unless the host is a Hub's provisioned tunnel/tailnet name. So a plain `docker run`
+reachable at `http://<lan-ip>:3848` can use the portal; a public hostname cannot without
+a Hub.
 
 ```bash
 docker run -d --name ci-planning \
@@ -1685,12 +1728,14 @@ docker run -d --name ci-planning \
   -v ci-planning-data:/data \
   -e TZ=America/Los_Angeles \
   -e AUTH_MODE=sso \
-  -e DISABLE_OIDC=true \
+  -e PUBLIC_BASE_URL=http://192.168.1.20:3848 \
+  -e AUTH_AUTO_PROVISION=true \
   -e SESSION_SECRET="$(openssl rand -hex 32)" \
   -e AUTH_DEFAULT_USERNAME=you \
   -e AUTH_DEFAULT_PASSWORD='pick-a-strong-password' \
   ghcr.io/companionintelligence/ci-planning:latest
-# open http://localhost:3848 → sign in with the username/password you set above
+# open http://192.168.1.20:3848 → Continue with Companion Portal (first sign-in = operator),
+# or sign in with the username/password above. Add -e DISABLE_OIDC=true for password-only.
 ```
 
 First-run notes:
@@ -1701,7 +1746,11 @@ First-run notes:
   is just your login (changing the env later doesn't rewrite the account — use the
   in-app password reset, which needs `SMTP_*` configured to actually email links).
 - `SESSION_SECRET` signs the login cookie — keep it stable across container recreations
-  or every device gets signed out.
+  or every device gets signed out. (Leave it unset and the server generates one once and
+  keeps it in `/data/.session-secret`; set it explicitly when you run more than one
+  replica.)
+- `PUBLIC_BASE_URL` is what the portal redirects back to (`…/api/auth/ciportal/callback`),
+  so it must be the address you open in the browser, scheme and port included.
 - **Google Calendar (optional):** add `-e CP_KEK_B64="$(openssl rand -base64 32)"` to the
   run command (it encrypts stored OAuth tokens — keep it stable like `SESSION_SECRET`),
   then paste your Google OAuth client into **Settings → Connections → Google OAuth
@@ -1714,8 +1763,12 @@ First-run notes:
   key is sealed at rest; without it the key is stored unsealed (a low-stakes secret that only
   authorizes pushing to this app's own subscribers). Setting both `VAPID_PUBLIC_KEY` and
   `VAPID_PRIVATE_KEY` pins an explicit keypair instead.
+- **Crash reporting is opt-out.** Released images carry a Sentry DSN and report crashes
+  (errors only, scrubbed, never your data) until you set `CI_TELEMETRY=off` — the Hub's
+  *Share crash reports* toggle — or `CI_LOCAL_ONLY=true`. Details in
+  [docs/operations/error-reporting.md](docs/operations/error-reporting.md).
 - **Quick trial without auth** (single machine, no real data): add
-  `-e NODE_ENV=development` instead of the five auth vars. This runs the dev
+  `-e NODE_ENV=development` instead of the auth vars. This runs the dev
   `AUTH_MODE=test` identity — do not expose it beyond localhost.
 - **API-only alternative** (`-e AUTH_MODE=standalone`): authenticates by hashed
   `x-api-key` header. Mint the first key with
@@ -1723,15 +1776,14 @@ First-run notes:
   `pnpm key:issue` from `server/` in a source checkout) — note the **browser UI does not
   attach API keys**, so this mode is for REST/GraphQL clients and agents, not the PWA.
 
-On a CI Hub appliance, install **Companion Planning** from the marketplace — the Hub
-mounts `${APP_DATA_DIR}/data` at `/data` and wires `OLLAMA_URL` automatically.
-
 ### Run with Docker Compose (standalone + bundled Ollama)
 
 For a self-host stack that bundles Ollama so the AI features work out of the box, use the
 [`docker-compose.yml`](docker-compose.yml) at the repo root. It runs the app + an `ollama`
 service wired together over the compose network (`OLLAMA_URL=http://ollama:11434`), with
-model data persisted in a named volume.
+model data persisted in a named volume. The compose file pins the **password-only**
+install (`AUTH_MODE=sso` + `DISABLE_OIDC=true`): the `.env` username/password is the only
+login, and the operator adds people from **Settings → Accounts**.
 
 ```bash
 cp .env.example .env                                   # set SESSION_SECRET + login
@@ -1744,7 +1796,8 @@ The model pull sits behind the `pull` profile so a plain `docker compose up` nev
 multi-GB downloads — run it once (or skip it and set `OLLAMA_FAST` / `OLLAMA_QUALITY` /
 `OLLAMA_EMBED` to models you already have). Until a reachable Ollama has the models, the app
 runs fine and simply hides the AI features. This file is for the self-host path only; the
-**CI-Hub marketplace install ignores it** (the Hub provides its own Ollama).
+**CI-Hub marketplace install ignores it** (the Hub provides its own Ollama and the
+Companion Portal sign-in described above).
 
 ### Environment variables
 
@@ -1760,20 +1813,21 @@ runs fine and simply hides the AI features. This file is for the self-host path 
 | `OLLAMA_QUALITY` | `gemma3n:e4b` | Quality model for briefings. Must be pulled (`ollama pull`) or set to an installed model. Legacy alias: `OLLAMA_MEDIUM` (still accepted; `OLLAMA_QUALITY` wins when both are set). |
 | `OLLAMA_EMBED` | `nomic-embed-text` | Embedding model for dedupe |
 | `TZ` | UTC | Container timezone — set it so "today" and cron schedules match your day. Safety net: if the stored scheduling timezone is still the un-chosen UTC default, the web app adopts the browser's timezone on first load (once per browser). |
-| `AUTH_MODE` | `test` | Auth mode: `test` (dev/CI — system owner injected, **forbidden in production**), `standalone` (hashed `x-api-key` stored in the `api_keys` table), `sso` (CI-Portal OIDC login or local username/password — mints a signed session cookie). |
-| `AUTH_AUTO_PROVISION` | `false` | When `true`, an unknown SSO `sub` automatically provisions a new owner row instead of returning 403. |
+| `AUTH_MODE` | `test` | Auth mode: `test` (dev/CI — system owner injected, **forbidden in production**), `standalone` (hashed `x-api-key` stored in the `api_keys` table; API clients only), `sso` (the browser login — **Companion Portal** sign-in and/or local username/password; both end in a signed httpOnly session cookie). The Docker image and the CI-Hub install run `sso`. |
+| `AUTH_AUTO_PROVISION` | `false` | When `true`, an unknown Companion Portal `sub` provisions a new owner row instead of returning 403. The **first** such owner on an instance with no operator becomes the operator; later ones are members. The CI-Hub marketplace install sets it to `true` (the portal already limits sign-in to members of the Hub's organization). |
 | `AUTH_RATE_WINDOW_MS` | `60000` | Rate-limit sliding window in milliseconds. |
 | `AUTH_RATE_MAX` | `60` | Max requests per window per IP across all endpoints. |
 | `AUTH_RATE_ISSUE_MAX` | `5` | Max token-issue operations (login / key exchange) per window per IP. |
 | `SESSION_SECRET` | (unset) | Signs the httpOnly session cookie both `AUTH_MODE=sso` login paths issue. **Required whenever `AUTH_MODE=sso`** — fail-closed if unset. Generate with `openssl rand -hex 32`. Never commit it. |
-| `DISABLE_OIDC` | `false` | When `true` (meaningful only with `AUTH_MODE=sso`), disables OIDC and serves local username/password login instead. `test`/`standalone` modes ignore it. |
-| `AUTH_DEFAULT_USERNAME` | `admin` | Username of the first local owner seeded on boot when `DISABLE_OIDC=true` and no local owners exist yet. |
-| `AUTH_DEFAULT_PASSWORD` | (unset) | Password for that seeded owner. **Required** to seed it (`DISABLE_OIDC=true` + zero local owners) — fail-closed if unset. Never commit it. |
+| `DISABLE_OIDC` | `false` | Meaningful only with `AUTH_MODE=sso`. `true` turns the Companion Portal login **off**, leaving username/password as the only login — the password-only self-host install. With it unset the login screen offers the portal *and* the local form (local login is served in both sub-modes). `test`/`standalone` modes ignore it. |
+| `AUTH_DEFAULT_USERNAME` | `admin` | Username of the first local owner (the operator) seeded on boot when no local owners exist yet — in both `sso` sub-modes. On a CI Hub this is the admin login you set at install time. |
+| `AUTH_DEFAULT_PASSWORD` | (unset) | Password for that seeded owner. **Required** under `DISABLE_OIDC=true` with zero local owners — fail-closed if unset. Optional under Companion Portal login, where it seeds the **break-glass** local operator that can still sign in when the portal is unreachable; leave it unset and the first portal sign-in claims the operator role instead. Never commit it. |
 | `AUTH_RESET_TOKEN_TTL_MS` | `3600000` | Password-reset link lifetime for local login (default 60 min, single-use). |
-| `CIPORTAL_ISSUER` | `https://hub.companionintelligence.com/api/auth` | CI-Portal SSO discovery base (OAuth 2.1 + PKCE). Endpoints and the token `iss` are read from `<issuer>/.well-known/openid-configuration`. Meaningful when `AUTH_MODE=sso` and `DISABLE_OIDC` is not `true`. |
-| `CIPORTAL_CLIENT_ID` | `ci-planning` | Our client registered with CI-Portal as a first-party public (PKCE) client. A fixed first-party identity, so it defaults rather than needing to be looked up; override only for a fixture portal or a differently-registered fork. |
+| `AUTH_SIGNUP` | `invite` | Local self-serve sign-up at `/signup` (meaningful only with `AUTH_MODE=sso`): `invite` requires a single-use code an operator mints in Settings → Accounts (7-day TTL; the person picks their own username and password — the operator never sees it), `open` needs no code, `off` removes the page (404). An unknown value refuses to boot. Independent of Companion Portal — with the portal on, the login screen's sign-up link is the portal itself and `/signup` is reached by direct link. The first account on an instance with no operator becomes the operator. |
+| `CIPORTAL_ISSUER` | `https://hub.ci.computer/api/auth` | Companion Portal (CI-Portal) SSO discovery base (OAuth 2.1 + PKCE) — the **production** portal. Staging is `https://hub.companionintel.com/api/auth`, dev `https://hub.companionintelligence.com/api/auth`. Endpoints and the token `iss` are read from `<issuer>/.well-known/openid-configuration`. Meaningful when `AUTH_MODE=sso` and `DISABLE_OIDC` is not `true`; on a CI-Hub appliance the Hub injects the paired portal's value. |
+| `CIPORTAL_CLIENT_ID` | `ci-planning` | Our client registered with Companion Portal as a first-party public (PKCE) client. A fixed first-party identity, so it defaults rather than needing to be looked up; override only for a fixture portal or a differently-registered fork. |
 | `CIPORTAL_CLIENT_SECRET` | (unset) | Only if registered as a confidential client; leave unset for public/PKCE. Never commit it. |
-| `CIPORTAL_REDIRECT_URI` | `${PUBLIC_BASE_URL}/api/auth/ciportal/callback` | Must match the URI registered with CI-Portal. |
+| `CIPORTAL_REDIRECT_URI` | `${PUBLIC_BASE_URL}/api/auth/ciportal/callback` | Must match the URI registered with Companion Portal — so `PUBLIC_BASE_URL` must be the address you open in the browser (on a CI Hub the Hub sets it from `APP_BASE_URL`). |
 | `CIPORTAL_SCOPES` | `openid profile email` | Scopes requested at authorize. |
 | `CIPORTAL_AUTHORIZE_URI` / `CIPORTAL_TOKEN_URI` / `CIPORTAL_JWKS_URI` | (unset) | Advanced: set **all three** to bypass discovery (air-gapped / no discovery doc). When overriding, `CIPORTAL_ISSUER` must equal the token's actual `iss`. |
 | `GOOGLE_MODE` | (unset ⇒ off / in-app) | `live` (real Google OAuth + Calendar sync; each user connects their own account in Settings → Connections) or `fixture` (committed sample data, fully offline — dev/demo opt-in, refused in production unless `CP_ALLOW_FIXTURE=true`). Unset ⇒ off, **unless an admin saves a Google OAuth client in Settings → Connections (in-app setup, needs `CP_KEK_B64`) — that flips live mode on at runtime with no env vars and no restart.** An explicit env value pins the mode and makes the in-app setup read-only. Env `live` is hard-required to also supply `CP_GOOGLE_CLIENT_ID` and a redirect URI, or the server refuses to boot. |
@@ -1804,7 +1858,7 @@ runs fine and simply hides the AI features. This file is for the self-host path 
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | auto-generated | Web Push keys. **Auto-generated on first boot and persisted** to `app_config` (sealed with `CP_KEK_B64` when set, else stored unsealed), so push works out of the box. Set **both** to pin an explicit keypair; a lone half keeps push dormant. Never commit them. |
 | `VAPID_SUBJECT` | `mailto:admin@companion.local` | VAPID contact (`mailto:` or URL) sent with each push |
-| `SMTP_HOST` | (unset) | Outbound SMTP host for local-login password-reset email (meaningful only with `AUTH_MODE=sso` + `DISABLE_OIDC=true` — SSO owners reset in CI-Portal). **Unset ⇒ a console transport logs the message instead of sending**, so dev/CI/offline need no SMTP; a production local-login deploy without it boots with a warning (links only logged). |
+| `SMTP_HOST` | (unset) | Outbound SMTP host for local-login password-reset email (meaningful whenever `AUTH_MODE=sso` — every local username/password account, including the break-glass operator, resets this way; portal users reset their password in Companion Portal). **Unset ⇒ a console transport logs the message instead of sending**, so dev/CI/offline need no SMTP; a production local-login deploy without it boots with a warning (links only logged). |
 | `SMTP_PORT` | `587` | `587` (STARTTLS) or `465` (implicit TLS). |
 | `SMTP_SECURE` | `false` | `true` for port 465 (implicit TLS); `false` for 587/25 (STARTTLS). |
 | `SMTP_USER` | (unset) | SMTP auth username (omit for an unauthenticated relay). |
@@ -1817,7 +1871,7 @@ runs fine and simply hides the AI features. This file is for the self-host path 
 | `CIPORTAL_MEMORY_REDIRECT_URI` | `${PUBLIC_BASE_URL}/api/memory/ciportal/callback` | The memory connector's own OAuth callback (AA0b) — distinct from the login callback. |
 | `SENTRY_DSN` | (unset) | **Opt-out error reporting.** Set ⇒ reporting is **on by default** (turn it off with `CI_TELEMETRY` / `CI_LOCAL_ONLY` below). Unset ⇒ no Sentry code initialises and the process makes no outbound connection — unconfigured, not opted out. Errors only: no tracing, no session replay, no PII (`sendDefaultPii: false`), and every payload is scrubbed of credentials and home paths first. See [docs/operations/error-reporting.md](docs/operations/error-reporting.md). |
 | `CI_TELEMETRY` | (unset) | `off` / `false` / `0` / `no` / `disabled` turns reporting off **even with a DSN configured** — so an operator can disable a DSN baked into an image without rebuilding it. Reaches the browser too: the bundle asks `GET /api/config/telemetry` before it initialises. |
-| `CI_LOCAL_ONLY` | (unset) | `true` / `1` / `yes` / `on` ⇒ zero phone-home. Beats both `CI_TELEMETRY` and the DSN, on both halves. |
+| `CI_LOCAL_ONLY` | (unset) | `true` / `1` / `yes` / `on` ⇒ local-only mode: no outbound crash reporting at all. Beats both `CI_TELEMETRY` and the DSN, on both halves. |
 | `SENTRY_ENV` / `CI_PLANNING_ENVIRONMENT` | (unset) | Sentry `environment`. Resolution order: `SENTRY_ENV` → `CI_PLANNING_ENVIRONMENT` → `NODE_ENV` → `development`. |
 | `SENTRY_RELEASE` / `CI_PLANNING_VERSION` | (unset) | Sentry `release`. Explicit `SENTRY_RELEASE` wins; otherwise it is derived as `ci-planning-server@${CI_PLANNING_VERSION}`. |
 | `VITE_SENTRY_DSN` / `VITE_SENTRY_RELEASE` / `VITE_CI_PLANNING_ENVIRONMENT` | (unset) | The browser half of the above. **Build-time only** — Vite inlines them into the bundle, so in Docker they are `--build-arg`s, not runtime variables. A build-time DSN is not sufficient on its own: the bundle must also be told at runtime that reporting is permitted. |
@@ -2048,13 +2102,17 @@ All from the repo root:
 | POST | `/api/planner/clear` | Preview (`dry_run`) or apply a Clear Date Range — bounded suppresses just that window, open-ended permanently caps the rule; snapshots + audits on apply (Phase P) |
 | GET | `/api/memory/status` | Companion Memory connection + sync state |
 | POST | `/api/memory/connect` \| `/api/memory/disconnect` | Connect / disconnect the Companion Memory link |
-| GET | `/api/memory/ciportal/start` \| `/api/memory/ciportal/callback` | The memory connector's own CI-Portal OAuth loop — distinct from the login callback |
+| GET | `/api/memory/ciportal/start` \| `/api/memory/ciportal/callback` | The memory connector's own Companion Portal OAuth loop — distinct from the login callback |
 | POST | `/api/memory/suggest` \| `/api/memory/sync` | Manually trigger the pull (`memory_suggest`) or push (`push_memory`) side on demand |
 | GET | `/api/llm/status` · `/api/integrations` | Ollama & integration health. Both read a probe cached for 30s; `/api/llm/status?fresh=1` forces a live `/api/tags` probe (the Settings **Re-check** path). Gate AI surfaces on `ready`, not `available`. |
 | GET | `/api/auth/config` \| `/api/auth/me` | Which login modes are available; the signed-in owner (or 401) |
-| POST | `/api/auth/login` \| `/api/auth/logout` | Local username/password login (`AUTH_MODE=sso` + `DISABLE_OIDC=true`) and session logout |
+| POST | `/api/auth/login` \| `/api/auth/logout` | Local username/password login (any `AUTH_MODE=sso` install — the break-glass operator under Companion Portal login, every account under `DISABLE_OIDC=true`) and session logout |
 | POST | `/api/auth/reset-request` \| `/api/auth/reset` | Request / complete a local-login password reset |
-| GET | `/api/auth/ciportal/start` \| `/api/auth/ciportal/callback` | CI-Portal OIDC login (Authorization Code + PKCE) |
+| GET | `/api/auth/signup/requirements` | Public: `{ enabled, codeRequired }` — whether `/signup` is on (`AUTH_SIGNUP`) and whether it needs an invite code |
+| POST | `/api/auth/signup` | Public, rate-limited: create your own local account (`{ name, username, email, password, code? }`); 404 when off, 400 for a bad/spent code, 409 when the username is taken; sets the session cookie |
+| GET · POST | `/api/auth/ciportal/confirm-account` | First-time Companion Portal sign-in: the no-JS "Create a Companion Planning account?" page and its decision (CSRF-bound, 10-minute signed intent cookie) |
+| GET · POST · DELETE | `/api/accounts/signup-codes` · `/api/accounts/signup-codes/:id` | Operator-only: list / mint / revoke single-use invite codes for `/signup` (raw code returned once, hashed at rest, 7-day TTL) |
+| GET | `/api/auth/ciportal/start` \| `/api/auth/ciportal/callback` | Companion Portal OIDC login (Authorization Code + PKCE); the first sign-in on an instance with no operator becomes the operator |
 | GET | `/api/oauth/google/start` | Begin the standalone Google OAuth flow (Auth Code + PKCE); returns `{ url }` for the SPA to navigate to. Gated; refused under `AUTH_MODE=test`. |
 | GET | `/api/oauth/google/callback` | Public OAuth redirect target; verifies the `id_token`, exchanges the code, seals tokens into `connection_tokens`. |
 | GET | `/api/connections` | List every connection the owner holds, any provider — one `ConnectionRecord` shape: `{ provider, account, status, createdAt, expiresAt, lastSyncAt, lastError }`, plus `mappedEventCount` on Google rows only (absent, not `0`, elsewhere). `status` is the mapped `connected \| expired \| inactive`; the raw `connection_tokens.status` never leaves the server, and `connected` means the stored token actually decrypted. No secrets. |

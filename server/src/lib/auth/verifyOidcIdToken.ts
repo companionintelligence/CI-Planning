@@ -3,14 +3,25 @@ import { createPublicKey, verify as cryptoVerify } from 'node:crypto';
 /**
  * Shared OIDC id_token verification (U1). Extracted verbatim from the proven Google
  * implementation (routes/oauth.ts, WP2/I1) and parameterized over issuer/audience/
- * JWKS so the CI-Portal login (U1) and the Google connector verify id_tokens through
- * ONE piece of security-sensitive code instead of two copies. No new dependency —
- * hand-rolled RS256 over node:crypto, exactly as before.
+ * JWKS so the CI-Portal login (U1), the memory connector (AA0b) and the Google
+ * connector verify id_tokens through ONE piece of security-sensitive code instead of
+ * three copies. No new dependency — hand-rolled over node:crypto.
+ *
+ * Two signature algorithms, and only two:
+ *   - RS256  — RSA JWK (`kty: RSA`); what Google issues.
+ *   - EdDSA  — Ed25519 JWK (`kty: OKP`, `crv: Ed25519`); what CI-Portal issues.
+ *     CI-Portal runs better-auth's `jwt()` plugin with its default key config, which
+ *     is Ed25519, and its live JWKS carries ONLY such a key. Until this verifier
+ *     learned EdDSA every real CI-Portal login failed with `invalid_id_token` — the
+ *     fixture portal issued RS256, which is why the end-to-end tests never saw it.
+ * `alg:none`, HS*, ES*, PS*, Ed448 … are all rejected. The header `alg` decides which
+ * key SHAPE may verify it, so a key of one kind can never be driven through the other
+ * algorithm (the classic alg-confusion attacks need exactly that).
  *
  * Returns the claims ONLY if:
- *  - the token is a well-formed 3-segment JWT whose header says RS256 (alg:none,
- *    HS*, ES*, EdDSA … are all rejected — asymmetric RS256 is the one contract),
- *  - its signature checks against a JWKS key (matched by `kid` when present),
+ *  - the token is a well-formed 3-segment JWT whose header says RS256 or EdDSA,
+ *  - its signature checks against a JWKS key of the matching shape (matched by `kid`
+ *    when present),
  *  - `iss` is in the caller's allow-list,
  *  - `aud` CONTAINS the caller's audience (the client_id), with `azp` naming us as the
  *    authorized party whenever the token is addressed to more than one audience,
@@ -95,8 +106,38 @@ interface Jwk {
   kty?: string;
   alg?: string;
   use?: string;
+  /** RSA (RS256) */
   n?: string;
   e?: string;
+  /** OKP (EdDSA) */
+  crv?: string;
+  x?: string;
+}
+
+/**
+ * The two accepted JOSE algorithms, each pinned to the one JWK shape it may verify with
+ * and the node:crypto digest that drives it (`null` ⇒ Ed25519's built-in, pure-EdDSA
+ * mode; node refuses any other digest for an Ed25519 key, which is the point).
+ *
+ * A key is a candidate for a token only if its SHAPE matches the token's `alg` — and
+ * if the JWK itself names an `alg` or `use`, those must agree too. A JWKS that says a
+ * key is for RS256 never verifies an EdDSA token, and vice versa, even when the raw
+ * bytes would let node try.
+ */
+const ALGS = {
+  RS256: {
+    digest: 'RSA-SHA256' as const,
+    keyFits: (k: Jwk) => k.kty === 'RSA' && !!k.n && !!k.e,
+  },
+  EdDSA: {
+    digest: null,
+    keyFits: (k: Jwk) => k.kty === 'OKP' && k.crv === 'Ed25519' && !!k.x,
+  },
+} as const;
+type SupportedAlg = keyof typeof ALGS;
+
+function isSupportedAlg(alg: unknown): alg is SupportedAlg {
+  return typeof alg === 'string' && Object.prototype.hasOwnProperty.call(ALGS, alg);
 }
 
 /**
@@ -130,7 +171,7 @@ export async function verifyOidcIdToken(
   if (parts.length !== 3) return null;
   const [headerB64, payloadB64, signatureB64] = parts;
 
-  let header: { alg?: string; kid?: string };
+  let header: { alg?: unknown; kid?: unknown };
   let claims: OidcClaims;
   try {
     header = JSON.parse(Buffer.from(headerB64, 'base64url').toString('utf8'));
@@ -139,12 +180,16 @@ export async function verifyOidcIdToken(
     return null;
   }
 
-  // Reject anything that isn't an asymmetric RS256 signature (notably alg=none).
-  if (header.alg !== 'RS256') return null;
+  // Reject anything that isn't one of the two asymmetric signatures (notably alg=none).
+  if (!isSupportedAlg(header.alg)) return null;
+  const alg = ALGS[header.alg];
   if (!signatureB64) return null;
 
   const jwks = await fetchJwks(params.jwksUri);
-  const candidates = header.kid ? jwks.filter((k) => k.kid === header.kid) : jwks;
+  const kid = typeof header.kid === 'string' ? header.kid : undefined;
+  const candidates = (kid ? jwks.filter((k) => k.kid === kid) : jwks).filter(
+    (k) => alg.keyFits(k) && (k.alg === undefined || k.alg === header.alg) && (k.use === undefined || k.use === 'sig'),
+  );
   if (candidates.length === 0) return null;
 
   const signingInput = Buffer.from(`${headerB64}.${payloadB64}`);
@@ -152,10 +197,9 @@ export async function verifyOidcIdToken(
 
   let signatureValid = false;
   for (const jwk of candidates) {
-    if (jwk.kty !== 'RSA' || !jwk.n || !jwk.e) continue;
     try {
       const key = createPublicKey({ key: jwk as object, format: 'jwk' });
-      if (cryptoVerify('RSA-SHA256', signingInput, key, signature)) {
+      if (cryptoVerify(alg.digest, signingInput, key, signature)) {
         signatureValid = true;
         break;
       }

@@ -964,6 +964,13 @@ export const api = {
       request<{ ok: boolean; delivery: 'email' | 'log'; message: string }>('POST', '/auth/reset-request', { identifier }),
     reset: (token: string, newPassword: string) =>
       request<{ ok: boolean }>('POST', '/auth/reset', { token, newPassword }),
+    // B2 — local self-serve sign-up. `signupRequirements` is public and config-derived
+    // (is the page on at all; is an invite code needed). `signup` creates the account
+    // and sets the session cookie: 404 when off, 400 for a bad/spent code or invalid
+    // input, 409 when the username is taken, 429 when rate-limited.
+    signupRequirements: () => request<SignupRequirements>('GET', '/auth/signup/requirements'),
+    signup: (body: SignupBody) =>
+      request<{ ok: boolean; ownerId: string; role: OwnerRole }>('POST', '/auth/signup', body),
   },
 
   // V — the authenticated owner's own account settings (backup reset-email + profile).
@@ -1031,6 +1038,15 @@ export const api = {
     update: (id: string, body: { role?: OwnerRole; name?: string; email?: string | null }) =>
       request<{ account: OwnerAccount }>('PATCH', `/accounts/${id}`, body),
     delete: (id: string) => request<{ ok: boolean }>('DELETE', `/accounts/${id}`),
+    // B2 — invite codes for /signup (AUTH_SIGNUP=invite). `create` returns the raw
+    // code exactly once; the list only ever carries status + note (hashed at rest).
+    // `create` 409s when the policy isn't `invite` (open needs no code; off can't use one).
+    signupCodes: {
+      list: () => request<{ codes: SignupCode[] }>('GET', '/accounts/signup-codes'),
+      create: (note?: string) =>
+        request<{ code: string; signupCode: SignupCode }>('POST', '/accounts/signup-codes', { note: note ?? null }),
+      revoke: (id: string) => request<{ ok: boolean; signupCode: SignupCode }>('DELETE', `/accounts/signup-codes/${id}`),
+    },
   },
 
   // People on work (0151) — the person directory behind both the Responsible and the
@@ -1069,9 +1085,45 @@ export interface GoogleConfigState {
 }
 
 export type AuthMode = 'test' | 'standalone' | 'sso';
+/**
+ * A4 — which sign-up affordance the login screen offers. `portal` whenever Companion
+ * Portal is on (B1: the portal owns sign-up); otherwise the local policy (B2:
+ * `invite` = /signup with a code, `open` = /signup without) or `off`.
+ */
+export type AuthSignupAffordance = 'portal' | 'invite' | 'open' | 'off';
 export interface AuthConfigResponse {
   mode: AuthMode;
+  /** @deprecated kept one release — read `portal` / `local` instead. */
   disableOidc: boolean;
+  /** "Continue with Companion Portal" is available (mode sso, OIDC not disabled). */
+  portal: boolean;
+  /** Username/password login is available (mode sso — both sub-modes since A3). */
+  local: boolean;
+  signup: AuthSignupAffordance;
+}
+/** B2 — what /signup needs before it renders (public, config-derived only). */
+export interface SignupRequirements {
+  enabled: boolean;
+  codeRequired: boolean;
+}
+export interface SignupBody {
+  name: string;
+  username: string;
+  email: string;
+  password: string;
+  /** Required when `SignupRequirements.codeRequired`; ignored under AUTH_SIGNUP=open. */
+  code?: string;
+}
+/** B2 — one invite code as the operator sees it. Never the raw code (shown once at mint). */
+export interface SignupCode {
+  id: string;
+  note: string | null;
+  createdAt: string;
+  expiresAt: string;
+  usedAt: string | null;
+  usedByName: string | null;
+  revokedAt: string | null;
+  status: 'active' | 'used' | 'revoked' | 'expired';
 }
 export interface AuthMe {
   ownerId: string;
@@ -1098,7 +1150,7 @@ export interface OwnerAccount {
 export function authGateActive(cfg: AuthConfigResponse): boolean {
   return cfg.mode === 'sso';
 }
-/** Where the "Sign in with CI-Portal" button sends the browser (a top-level nav, not fetch). */
+/** Where the "Continue with Companion Portal" button sends the browser (a top-level nav, not fetch). */
 export const CIPORTAL_START = `${BASE}/auth/ciportal/start`;
 
 // ── Types ────────────────────────────────────────────────────────────────────

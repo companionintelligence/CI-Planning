@@ -1,6 +1,6 @@
 import { createSignal, createEffect, Show, createResource, For, onMount } from 'solid-js';
 import { ViewHeader } from '../components/ViewHeader.js';
-import { BellRing, Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, Database, AlertTriangle, Users, KeyRound, ScrollText, Eye, FileJson, FileText, Mail } from 'lucide-solid';
+import { BellRing, Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, Database, AlertTriangle, Users, KeyRound, ScrollText, Eye, FileJson, FileText, Mail, Ticket } from 'lucide-solid';
 import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast, texturesEnabled, setTexturesEnabled, focusAppearance, setFocusAppearance, plannerAxisState, setPlannerCollapseBounds, integrations, refetchIntegrations, recheckIntegrations, aiAvailable, connections, refetchConnections, openOnboardingAt, openTimeRange, setOpenTimeRange,
 } from '../stores/index.js';
 import { api, type PlanningSession } from '../lib/api.js';
@@ -390,6 +390,14 @@ export function Settings() {
   const [accounts, { refetch: refetchAccounts }] = createResource(() =>
     api.accounts.list().then((r) => r.accounts).catch(() => null),
   );
+  // B2 — invite codes for /signup. The public requirements probe says whether the
+  // deployment takes codes at all (AUTH_SIGNUP=invite); the list is fetched only for
+  // an operator (the server 403s everyone else, and a member has no use for it).
+  const [signupReq] = createResource(() => api.auth.signupRequirements().catch(() => null));
+  const [signupCodes, { refetch: refetchSignupCodes }] = createResource(
+    () => me()?.isOperator === true,
+    (isOperator) => (isOperator ? api.accounts.signupCodes.list().then((r) => r.codes).catch(() => null) : Promise.resolve(null)),
+  );
 
   // T6 — Logs tab: the owner's plan-week (T1) sessions. `list()` is already
   // newest-first (server: `ORDER BY started_at DESC`); no client sort needed.
@@ -555,6 +563,34 @@ export function Settings() {
       showToast((err as Error).message, 'error');
     }
   }
+  // B2 — invite codes. The raw code comes back ONCE from create (hashed at rest), so it
+  // is shown in a dismissable box exactly like the SMTP-free invite link above.
+  const [codeNote, setCodeNote] = createSignal('');
+  const [codeBusy, setCodeBusy] = createSignal(false);
+  const [freshCode, setFreshCode] = createSignal<{ code: string; note: string | null } | null>(null);
+  async function mintSignupCode() {
+    setCodeBusy(true);
+    try {
+      const r = await api.accounts.signupCodes.create(codeNote().trim() || undefined);
+      setFreshCode({ code: r.code, note: r.signupCode.note });
+      setCodeNote('');
+      await refetchSignupCodes();
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setCodeBusy(false);
+    }
+  }
+  async function revokeSignupCode(c: import('../lib/api.js').SignupCode) {
+    try {
+      await api.accounts.signupCodes.revoke(c.id);
+      await refetchSignupCodes();
+      showToast('Invite code revoked', 'success');
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    }
+  }
+  const fmtDay = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 
   const [memStatus, { refetch: refetchMem }] = createResource(() => api.memory.status());
   const [importBusy, setImportBusy] = createSignal(false);
@@ -580,8 +616,8 @@ export function Settings() {
     }
     // AA0b — the memory CI-Portal connector callback bounces back here too.
     const m = q.get('memory');
-    if (m === 'connected') { showToast('Connected to Companion Memory via CI-Portal', 'success'); refetchPrefs(); refetchMem(); }
-    else if (m === 'error') { showToast(`CI-Portal connect failed${q.get('reason') ? `: ${q.get('reason')}` : ''}`, 'error'); }
+    if (m === 'connected') { showToast('Connected to Companion Memory via Companion Portal', 'success'); refetchPrefs(); refetchMem(); }
+    else if (m === 'error') { showToast(`Companion Portal connect failed${q.get('reason') ? `: ${q.get('reason')}` : ''}`, 'error'); }
     if ((g && !wizardInitiated) || m) {
       q.delete('google'); q.delete('memory'); q.delete('reason');
       const qs = q.toString();
@@ -681,7 +717,7 @@ export function Settings() {
       const { url } = await api.memory.ciportalStart();
       window.location.href = url;
     } catch (err) {
-      showToast((err as Error).message || 'Could not start CI-Portal connect', 'error');
+      showToast((err as Error).message || 'Could not start Companion Portal connect', 'error');
       setMemBusy(false);
     }
   }
@@ -872,13 +908,15 @@ export function Settings() {
             <section class="card">
               <div class="flex items-center justify-between mb-3">
                 <div class="section-label flex items-center gap-1.5" title="Operators manage accounts, system jobs, and the Google connection. Members plan their own days. Viewers are read-only. Role changes sign the user out everywhere."><Users size={12} /> Team</div>
-                <Show when={localAuth() && !acctFormOpen()}>
+                {/* A4: local accounts can be invited whenever local login is served — both
+                    sso sub-modes since A3 — not only under DISABLE_OIDC. */}
+                <Show when={authCfg()?.local && !acctFormOpen()}>
                   <button type="button" onClick={() => setAcctFormOpen(true)} class="btn-secondary text-xs px-3 py-1.5">
                     <Plus size={12} /> New account
                   </button>
                 </Show>
               </div>
-              {/* Create form (local login only — SSO users are provisioned on first portal sign-in) */}
+              {/* Create form (local accounts — Companion Portal users are provisioned on their first portal sign-in, after confirming) */}
               <Show when={acctFormOpen()}>
                 <div class="flex flex-col gap-2 p-3 mb-3 rounded-md bg-muted/40 border border-border">
                   <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -939,7 +977,7 @@ export function Settings() {
                           <span class="text-xs text-foreground font-medium truncate">{a.name}</span>
                           <span class="text-[11px] text-muted-foreground ml-2">
                             {a.username ?? a.email ?? '—'}{a.id === me()!.ownerId ? ' · you' : ''}
-                            {!a.username ? ' · signs in via CI-Portal' : ''}
+                            {!a.username ? ' · signs in via Companion Portal' : ''}
                           </span>
                           <Show when={a.username && !a.hasPassword}>
                             <span class="text-[10px] px-1.5 py-0.5 ml-2 rounded-full bg-amber-500/15 text-amber-400">invite pending</span>
@@ -979,6 +1017,82 @@ export function Settings() {
                   )}
                 </For>
               </div>
+
+              {/* B2 — invite codes (AUTH_SIGNUP=invite only; under `open` nobody needs one and
+                  under `off` nobody can use one). Someone with a code creates their OWN
+                  account at /signup — you never see their password. */}
+              <Show when={signupReq()?.enabled && signupReq()?.codeRequired}>
+                <div class="mt-4 pt-3 border-t border-border flex flex-col gap-2">
+                  <div class="flex items-center justify-between gap-2 flex-wrap">
+                    <div class="section-label flex items-center gap-1.5" title="Single-use codes that let someone create their own account at /signup. They pick their own username and password; you never handle it. Codes expire after 7 days.">
+                      <Ticket size={12} /> Invite codes
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                      <input class="input py-1 text-xs w-36" type="text" placeholder="Note (optional)" maxlength="120"
+                        value={codeNote()} onInput={(e) => setCodeNote(e.currentTarget.value)} />
+                      <button type="button" onClick={mintSignupCode} disabled={codeBusy()}
+                        class="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
+                        <Plus size={12} /> {codeBusy() ? 'Minting…' : 'New invite code'}
+                      </button>
+                    </div>
+                  </div>
+                  <p class="text-[11px] text-muted-foreground">
+                    Hand a code to someone and send them to <code class="font-mono">/signup</code>. Single use · expires in 7 days.
+                  </p>
+
+                  {/* Shown once — the server keeps only a hash. */}
+                  <Show when={freshCode()}>
+                    <div class="flex flex-col gap-1.5 p-3 rounded-md border border-amber-500/40 bg-amber-500/10">
+                      <div class="flex items-center justify-between gap-2">
+                        <span class="text-xs text-foreground font-medium">
+                          Invite code{freshCode()!.note ? ` for “${freshCode()!.note}”` : ''} — copy it now, it isn't shown again.
+                        </span>
+                        <button type="button" onClick={() => setFreshCode(null)} class="btn-ghost text-xs px-2 py-1"><X size={12} /></button>
+                      </div>
+                      <code class="text-base font-mono tracking-widest select-all" data-testid="fresh-signup-code">{freshCode()!.code}</code>
+                    </div>
+                  </Show>
+
+                  <Show when={(signupCodes() ?? []).length > 0} fallback={<span class="text-[11px] text-muted-foreground">No invite codes yet.</span>}>
+                    <div class="flex flex-col gap-1">
+                      <For each={signupCodes() ?? []}>
+                        {(c) => (
+                          <div class="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-1.5 text-xs">
+                            <div class="min-w-0 flex items-center gap-2 flex-wrap">
+                              <span class="text-foreground truncate">{c.note ?? 'Untitled code'}</span>
+                              <span
+                                class="text-[10px] px-1.5 py-0.5 rounded-full"
+                                classList={{
+                                  'bg-emerald-500/15 text-emerald-400': c.status === 'active',
+                                  'bg-muted text-muted-foreground': c.status === 'used',
+                                  'bg-amber-500/15 text-amber-400': c.status === 'expired',
+                                  'bg-destructive/15 text-destructive': c.status === 'revoked',
+                                }}
+                              >
+                                {c.status}
+                              </span>
+                              <span class="text-[11px] text-muted-foreground">
+                                {c.status === 'used' && c.usedByName
+                                  ? `used by ${c.usedByName}`
+                                  : c.status === 'active'
+                                    ? `expires ${fmtDay(c.expiresAt)}`
+                                    : `created ${fmtDay(c.createdAt)}`}
+                              </span>
+                            </div>
+                            <Show when={c.status === 'active'}>
+                              <button type="button" class="btn-ghost text-xs px-2 py-1 text-destructive shrink-0"
+                                title="Revoke this code — it can no longer be used to sign up"
+                                onClick={() => revokeSignupCode(c)}>
+                                <X size={12} /> Revoke
+                              </button>
+                            </Show>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+                </div>
+              </Show>
             </section>
           </Show>
 
@@ -1646,7 +1760,7 @@ export function Settings() {
                           connector self-refreshes; no key to paste. */}
                       <Show when={ssoAvailable()}>
                         <button type="button" onClick={connectMemoryViaPortal} disabled={memBusy()} class="btn-secondary text-xs px-3 py-1.5">
-                          <Link2 size={12} /> {memBusy() ? 'Connecting…' : 'Sign in with CI-Portal'}
+                          <Link2 size={12} /> {memBusy() ? 'Connecting…' : 'Sign in with Companion Portal'}
                         </button>
                       </Show>
                       <button type="button" onClick={() => setMemConnectOpen(!memConnectOpen())} class="btn-ghost text-xs px-3 py-1.5">
@@ -1676,7 +1790,7 @@ export function Settings() {
                       Connected to {memStatus()!.pull.host}
                     </Show>
                     <Show when={memStatus()!.pull.authKind === 'oidc'}>
-                      <span class="text-muted-foreground">(via CI-Portal)</span>
+                      <span class="text-muted-foreground">(via Companion Portal)</span>
                     </Show>
                     <Show when={memStatus()!.pull.source === 'env'}>
                       <span class="text-muted-foreground">(from server environment)</span>

@@ -757,6 +757,23 @@ export const passwordResetTokens = sqliteTable('password_reset_tokens', {
   createdAt: text('created_at').notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
 });
 
+// B2 (0172): single-use, expiring invite codes for local self-serve sign-up
+// (AUTH_SIGNUP=invite). `code_hash` = sha256 of the raw code, which is shown to the
+// operator once at mint time and never stored. `used_at`/`used_by` stamp consumption,
+// `revoked_at` an operator withdrawal. Owner FKs SET NULL so neither the minting
+// operator's nor the signed-up account's deletion is blocked. See lib/auth/signupCodes.ts.
+export const signupCodes = sqliteTable('signup_codes', {
+  id: text('id').primaryKey().$defaultFn(newId),
+  codeHash: text('code_hash').notNull().unique(),
+  note: text('note'),
+  createdBy: text('created_by').references(() => owners.id, { onDelete: 'set null' }),
+  createdAt: text('created_at').notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+  expiresAt: text('expires_at').notNull(),
+  usedAt: text('used_at'),
+  usedBy: text('used_by').references(() => owners.id, { onDelete: 'set null' }),
+  revokedAt: text('revoked_at'),
+});
+
 // --- Wave 0 (0060): Per-(owner, provider, account, resource) sync cursor store. ---
 // `resource` distinguishes 'calendar_synctoken' vs 'gmail_history'; `cursor` is opaque.
 export const syncState = sqliteTable('sync_state', {

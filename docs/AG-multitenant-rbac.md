@@ -48,7 +48,7 @@ New migration `0125_owner_roles.ts` (additive + idempotent, following `0101_owne
 ### 3. Provisioning defaults — this is what actually closes the hazard
 - `provisionOwner` (`owners.ts:75`) gains an optional `role` field (default `'member'`).
 - `ensureLocalAuthBootstrap` (`localBootstrap.ts:34`): seed the first local owner as `role='operator'` — the founding admin.
-- OIDC auto-provision (`routes/auth.ts:503`): new portal users default to `role='member'`, **not** operator. This is the change that stops "every auto-provisioned portal user is an operator."
+- OIDC auto-provision (`routes/auth.ts`): new portal users default to `role='member'`, **not** operator. This is the change that stops "every auto-provisioned portal user is an operator." **A3 (2026-10-21)** adds the one exception, matching Companion Memory: on an instance with **no operator at all** the first portal login claims the role (decided inside the insert, `provisionOwner({ claimOperatorIfNone })`), so a portal-only install is never left without anyone who can open Settings → Accounts.
 
 ### 4. Admin accounts API — new `routes/accounts.ts`, operator-gated
 Copy the `requireAdmin(ctx)` helper; register in `routes/index.ts` (one import + one array entry, after `googleConfigRouter()`). Every route below is `requireAdmin`-gated:

@@ -47,9 +47,10 @@
 # browser clock leaves add-element-parsed filming a date from your wall clock,
 # contradicting the film's own frozen day.
 #
-# --no-llm AND --target=47 ARE BOTH LOAD-BEARING. Without --no-llm the seeder
+# --no-llm AND --target=40 ARE BOTH LOAD-BEARING (40 since the synthetic fixture
+# corpus of #563: 25 notes bullets + 15 calendar prep tasks; it was 47 before). Without --no-llm the seeder
 # mines the fixtures with Ollama and two runs produce different task titles.
-# Without --target=47 the default of 100 tops up with 53 filler rows that land in
+# Without --target=40 the default of 100 tops up with 60 filler rows that land in
 # the backlog and the auto-fill candidate pool — i.e. straight into frame.
 #
 # THIS RUNS pnpm install AND A DESTRUCTIVE SEED IN THE CHECKOUT IT LIVES IN.
@@ -123,7 +124,7 @@ stage_up() {
   ( cd "$root" && corepack enable >/dev/null 2>&1 || true )
   ( cd "$root" && _pnpm install --frozen-lockfile ) >>"$STAGE_LOG" 2>&1
   ( cd "$root" && _pnpm migrate )                   >>"$STAGE_LOG" 2>&1
-  ( cd "$root" && _pnpm --filter server seed -- --no-llm --reset --target=47 ) >>"$STAGE_LOG" 2>&1
+  ( cd "$root" && _pnpm --filter server seed -- --no-llm --reset --target=40 ) >>"$STAGE_LOG" 2>&1
 
   # Detached with all three descriptors redirected. Leaving stdout inherited
   # looks harmless and is not: the children hold the write end of whatever pipe

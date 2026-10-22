@@ -1623,6 +1623,20 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   },
   {
     "columns": [
+      "code_hash",
+      "created_at",
+      "created_by",
+      "expires_at",
+      "id",
+      "note",
+      "revoked_at",
+      "used_at",
+      "used_by",
+    ],
+    "table": "signup_codes",
+  },
+  {
+    "columns": [
       "at",
       "entity",
       "entity_id",

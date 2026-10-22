@@ -15,7 +15,7 @@ function positiveIntOr(value: string | undefined, fallback: number): number {
  * the existing suite + local dev run unchanged — it is hard-rejected at boot under
  * NODE_ENV=production (fail closed). `standalone` requires a hashed `x-api-key`
  * (public Docker image). `sso` verifies a JWKS-signed Bearer JWT from CI-Portal
- * (the OAuth server at hub.companionintelligence.com; U1). When `DISABLE_OIDC=true`,
+ * (the OAuth server at hub.ci.computer; U1). When `DISABLE_OIDC=true`,
  * `sso` mode instead serves a **local username/password** login (U2): a signed,
  * httpOnly session cookie replaces the Bearer JWT. `test`/`standalone` ignore
  * `DISABLE_OIDC` entirely, so dev/CI and the headless Docker image are unaffected.
@@ -90,6 +90,16 @@ export interface PinConfig {
 // gone the same way for the same reason: it was parsed here and read nowhere, because
 // lib/crypto (loadKek/rotateKek) reads process.env.CP_KEK_B64 directly — it must resolve
 // a key before this module exists. CP_KEK_B64 itself is unchanged.
+/**
+ * B2 — self-serve local sign-up policy (`AUTH_SIGNUP`). `invite` (the default, and the
+ * CI-Hub manifest's value) opens `POST /api/auth/signup` only to someone holding a
+ * single-use invite code an operator minted in Settings → Accounts; `open` needs no
+ * code; `off` removes the endpoint (404) and the /signup page. Meaningful only under
+ * `AUTH_MODE=sso`. Companion Portal sign-up (B1) is independent of this: whenever the
+ * portal is on, the login screen's sign-up affordance is the portal itself.
+ */
+export type AuthSignupPolicy = 'open' | 'invite' | 'off';
+
 export interface AuthConfig {
   mode: AuthMode;
   autoProvision: boolean;  // first unknown SSO `sub` → provision owner row vs 403
@@ -100,6 +110,7 @@ export interface AuthConfig {
   defaultPassword?: string; // required to seed that owner; boot fails closed without a login path
   sessionSecret?: string;   // Koa app.keys secret signing the local-login session cookie
   resetTokenTtlMs: number;  // V: password-reset token lifetime (default 60 min)
+  signup: AuthSignupPolicy; // B2: local self-serve sign-up — open | invite (default) | off
 }
 
 /**
@@ -145,12 +156,20 @@ export interface GoogleConfig extends ModeConfig {
 }
 
 /**
- * CI-Portal OIDC consumer config (U1). Companion Planning is an OAuth 2.1 + PKCE
- * Relying Party of CI-Portal (hub.companionintelligence.com, reachable over
- * Tailscale) — the same consumer role CI-Import Tools and CI-Hub play. Endpoint
- * values come from CI-Portal's discovery document
- * (`/.well-known/openid-configuration`) or the CI-Portal team; there are NO
- * invented defaults — a deployment must set them explicitly. This set REPLACED the
+ * Companion Portal (CI-Portal) OIDC consumer config (U1). Companion Planning is an
+ * OAuth 2.1 + PKCE Relying Party of the portal — the same consumer role Companion
+ * Memory, CI-Import Tools and CI-Hub play. The portal is a public Cloudflare Worker;
+ * the code exchange runs over plain HTTPS (Tailscale only matters for the browser's
+ * redirect host). Endpoint values come from the portal's discovery document
+ * (`/.well-known/openid-configuration`); only the issuer and client id are configured.
+ * Portal ORIGINS (discovery base is `<origin>/api/auth`):
+ *   production  https://hub.ci.computer                ← the default below
+ *   staging     https://hub.companionintel.com
+ *   dev         https://hub.companionintelligence.com
+ *   local       https://hub.ci.localhost
+ * On a CI-Hub appliance the Hub injects the paired portal's issuer into
+ * CIPORTAL_ISSUER (marketplace manifest `hub_integration.oidc`), so the default only
+ * matters for self-host installs. This set REPLACED the
  * older generic AUTH_JWKS_URL/AUTH_ISSUER/AUTH_AUDIENCE/AUTH_CONTRACT_VERSION vars,
  * which have now been retired (see the note above AuthConfig).
  */
@@ -418,12 +437,18 @@ export const config: Config = {
     defaultPassword: process.env.AUTH_DEFAULT_PASSWORD,
     sessionSecret: resolveSessionSecret(),
     resetTokenTtlMs: Number(process.env.AUTH_RESET_TOKEN_TTL_MS ?? 3_600_000), // 60 min
+    // Validated below (unknown values fail boot, like AUTH_MODE). Unset ⇒ invite-only:
+    // the safe default for a reachable deployment — nobody can mint themselves an
+    // account without an operator's code.
+    signup: (process.env.AUTH_SIGNUP as AuthSignupPolicy | undefined) ?? 'invite',
   },
   ciportal: {
-    // Real CI-Portal discovery issuer (confirmed against CI-Import-Tools). Overridable
-    // for the fixture portal / other providers. The token `iss` claim is validated
-    // against the DISCOVERED doc's issuer, not this URL (see the interface note).
-    issuer: process.env.CIPORTAL_ISSUER ?? 'https://hub.companionintelligence.com/api/auth',
+    // The PRODUCTION portal's discovery base. Until 2026-10-21 this defaulted to
+    // hub.companionintelligence.com, which is the portal's DEV zone — a self-host install
+    // that trusted the default pointed at the wrong identity provider. Overridable for
+    // staging/dev, the fixture portal, or another provider. The token `iss` claim is
+    // validated against the DISCOVERED doc's issuer, not this URL (see the interface note).
+    issuer: process.env.CIPORTAL_ISSUER ?? 'https://hub.ci.computer/api/auth',
     // Registered with CI-Portal as a first-party PUBLIC (PKCE, no secret) client —
     // CI-Portal PR #444, `PUBLIC_CLIENTS` in apps/hono-app/.../createAuth.ts. This is a
     // fixed first-party identity, not per-deployment config, so it defaults like
@@ -538,6 +563,15 @@ if (!VALID_AUTH_MODES.includes(config.auth.mode)) {
 }
 
 // Fail closed: the credential-free `test` owner path must never run in production.
+// Same shape of guard for AUTH_SIGNUP (B2): a typo like `invit` must not silently
+// become "no sign-up" (or, worse, be read as permissive by a later consumer).
+const VALID_SIGNUP_POLICIES: AuthSignupPolicy[] = ['open', 'invite', 'off'];
+if (!VALID_SIGNUP_POLICIES.includes(config.auth.signup)) {
+  throw new Error(
+    `AUTH_SIGNUP='${config.auth.signup}' is not a valid sign-up policy — set AUTH_SIGNUP to one of: open, invite, off`,
+  );
+}
+
 // A misconfigured prod image is a silent auth bypass, so refuse to boot instead.
 if (config.auth.mode === 'test' && process.env.NODE_ENV === 'production') {
   throw new Error(
@@ -569,8 +603,8 @@ if (
   (!config.ciportal.clientId || !config.ciportal.issuer)
 ) {
   throw new Error(
-    'AUTH_MODE=sso (OIDC enabled) requires CIPORTAL_CLIENT_ID (registered with CI-Portal) and CIPORTAL_ISSUER ' +
-      '(defaults to https://hub.companionintelligence.com/api/auth; endpoints are discovered from it) ' +
+    'AUTH_MODE=sso (OIDC enabled) requires CIPORTAL_CLIENT_ID (registered with Companion Portal) and CIPORTAL_ISSUER ' +
+      '(defaults to https://hub.ci.computer/api/auth; endpoints are discovered from it) ' +
       '— or set DISABLE_OIDC=true for local username/password login',
   );
 }

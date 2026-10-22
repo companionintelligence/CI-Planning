@@ -15,16 +15,15 @@ uploaded artifact, no committed `.mp4`. A cut is a build output: make one when y
 delete it. The screenshots under `assets/shots/` are meant to stay in git — they are the *input*
 that lets anyone render without booting the app.
 
-> **All 18 shots (9 × two viewports) are captured and committed** as of 2026-08-30, in one capture
-> pass against the stage below. `ci-video status` reports `missing none`. Re-shoot with
-> `npm run capture` whenever the UI moves, and commit the new PNGs in the PR that moved it.
+> **All 18 shots (9 × two viewports) are captured and committed** as of 2026-10-21, in one capture
+> pass against the stage below — the committed `stage.sh` + `scripts/stage-data.sh` stage on the
+> synthetic fixture corpus, so every name, company and task in them is fixture content and the
+> shots are reproducible from the repo alone. `ci-video status` reports `missing none`. Re-shoot
+> with `npm run capture` whenever the UI moves, and commit the new PNGs in the PR that moved it.
 >
-> The stage's own data was replaced in this pass: `stage-data.sh` still exists and works, but the
-> shots on disk were captured against a hand-authored "Ann Smith" persona — a working mother of two
-> staged with a full month of realistic tasks/meetings/objectives instead of the generic B2B fixture
-> content — built ad hoc rather than through a committed script. If you re-run `npm run capture`
-> against the plain `stage-data.sh` stage, the shots will revert to the original persona; that's
-> expected, not a regression.
+> (The 2026-08-30 shots had been captured against a hand-authored "Ann Smith" persona built ad hoc
+> rather than through a committed script; that persona is gone from the shots and was never in
+> the repo.)
 
 ## Quick start
 
@@ -67,12 +66,27 @@ npm install --no-package-lock
 mv package.json.real package.json && rm -f package-lock.json
 ```
 
-Then run the kit straight off disk, skipping the `npm run …` wrappers entirely:
+Or skip the install altogether when a CI-Common checkout is on disk: its video-kit already
+carries the pinned Playwright, and a symlink satisfies `ci-video doctor`'s version check
+(`video/node_modules/` is gitignored):
 
 ```bash
-APP_URL=http://localhost:5183 node ../../CI-Common/packages/video-kit/bin/ci-video.mjs capture
-node ../../CI-Common/packages/video-kit/bin/ci-video.mjs status    # expect "missing none"
+KIT=../../CI-Common/node_modules/.pnpm/playwright@1.62.1/node_modules   # pnpm's store path
+mkdir -p node_modules && ln -sfn "$KIT/playwright" node_modules/playwright \
+  && ln -sfn "$KIT/playwright-core" node_modules/playwright-core
 ```
+
+Then run the kit straight off disk, skipping the `npm run …` wrappers entirely (the entry
+point is `dist/ci-video.js`; older notes said `bin/ci-video.mjs`):
+
+```bash
+APP_URL=http://localhost:5183 node ../../CI-Common/packages/video-kit/dist/ci-video.js capture
+node ../../CI-Common/packages/video-kit/dist/ci-video.js status    # expect "missing none"
+```
+
+`APP_URL` can equally point at the Koa server serving the built client (`pnpm build`, then
+`pnpm --filter server start` with the stage's env) — the 2026-10-21 shots were taken that way,
+without a Vite dev server.
 
 Chromium comes from `~/Library/Caches/ms-playwright`, so no browser download is needed if any
 other product's capture has run on this machine. `video/node_modules/` is gitignored; never commit
@@ -95,7 +109,7 @@ export OLLAMA_URL=http://127.0.0.1:1       # closed port -> every LLM path takes
 export CP_FIXED_NOW=2026-06-03T11:20:00Z   # same instant capture.config.mjs freezes the browser to
 corepack enable && pnpm install
 pnpm --filter server migrate
-pnpm --filter server seed -- --no-llm --reset --target=47
+pnpm --filter server seed -- --no-llm --reset --target=40
 pnpm dev                                   # client vite :5173, server tsx :3848
 ```
 
@@ -103,12 +117,14 @@ Both flags on that seed line are load-bearing:
 
 - `--no-llm` — without it the seeder mines the fixtures with Ollama and two runs produce
   different task titles, which shows up later as a phantom "UI drift" PR.
-- `--target=47` — the fixtures promote exactly 47 real tasks: 32 notes bullets and 15 calendar
-  prep tasks. The default target of 100 makes the seeder top up the difference with 53 filler rows
+- `--target=40` — the fixtures promote exactly 40 real tasks: 25 notes bullets and 15 calendar
+  prep tasks (it was 47 until the synthetic fixture corpus of #563 replaced `tasks.md`; ask for
+  47 now and you get seven `#seed-filler` rows). The default target of 100 makes the seeder top
+  up the difference with 60 filler rows
   (`seed-test-data.ts` step 5). Those land in the Tasks backlog and the auto-fill candidate pool —
   i.e. straight into the frame. They used to be titled `Follow-up task 1 … 50`, which read as an
   unfinished app; they now carry ordinary admin titles, but they are still filler and still not
-  what the cut is about. Ask for 47 and the filler branch never runs.
+  what the cut is about. Ask for 40 and the filler branch never runs.
 
   **47, not 50** — as of 2026-08-08 the calendar half of the seed yields 15 tasks, not 18. The
   LLM-off fallback used to title every event `Prep for ${event.title}`, which put
@@ -206,20 +222,21 @@ tsk() { echo "$TASKS" | jq -r --arg t "$1" '.tasks[] | select(.title==$t) | .id'
 # screen's own argument (connect your backlog to what matters) with the connection empty.
 # Assign them here rather than teaching the app to guess.
 setcat() { curl -fsS -XPATCH "$API/tasks/$(tsk "$1")" -H "$JSON" -d "{\"categories\":$2}" >/dev/null; }
-setcat "Schedule the annual physical and fill out the intake form" '["health"]'
-setcat "Fix the leaking kitchen faucet or call a plumber"          '["health"]'
-setcat "Ship the auto-scheduler reactive reflow behind a flag"     '["career"]'
-setcat "Write integration tests for the block engine"              '["career"]'
-setcat "Triage the GitHub issue backlog and label everything"      '["career"]'
-setcat "Draft the API rate-limit policy for partners"              '["career"]'
-setcat "Call Dad for his birthday and order the cake"              '["relationships"]'
-setcat "Book the family dinner reservation"                        '["relationships","leisure"]'
-setcat "Confirm the conference talk title and abstract"              '["growth","career"]'
-setcat "Spike sqlite-vec for the dedupe pipeline"                  '["growth"]'
-setcat "Renew passport before it expires in August"                '["leisure"]'
-setcat "Reconcile the May capital account statements"              '["finance"]'
-setcat "Categorize May credit-card transactions"                   '["finance"]'
-setcat "Update the cap table with the new SAFE"                    '["finance"]'
+# Titles are the SYNTHETIC fixture's (server/test/fixtures/tasks.md, #563), matched exactly.
+setcat "Bring the insurance card to the dentist"                       '["health"]'
+setcat "Two hour volunteer slot at the repair cafe"                    '["health","leisure"]'
+setcat "Ship the auto-scheduler reactive reflow behind a flag"         '["career"]'
+setcat "Write integration tests for the block engine"                  '["career"]'
+setcat "Triage the issue backlog and label everything"                 '["career"]'
+setcat "Draft the API rate-limit policy for partners"                  '["career"]'
+setcat "Pick up a card and a cake"                                     '["relationships"]'
+setcat "Book the table for the family birthday dinner"                 '["relationships","leisure"]'
+setcat "Drop the donation bags off on Saturday"                        '["relationships"]'
+setcat "Upload the conference slides and confirm A/V requirements"     '["growth","career"]'
+setcat "Spike a vector index for the dedupe pipeline"                  '["growth"]'
+setcat "Categorize May transactions and gather the missing receipts"   '["finance"]'
+setcat "Sign and return the insurance renewal documents"               '["finance"]'
+setcat "Decide on the hosting plan before it renews"                   '["finance"]'
 
 # Objective ↔ task links. An objective with no linked task has progress_cache = NULL
 # (services/objectives.ts recomputeProgress), which the panel renders as "No plan yet"
@@ -232,12 +249,12 @@ close() { curl -fsS -XPATCH "$API/tasks/$(tsk "$1")" -H "$JSON" -d '{"status":"d
 
 link "$O1" "Ship the auto-scheduler reactive reflow behind a flag"
 link "$O1" "Write integration tests for the block engine"
-link "$O1" "Triage the GitHub issue backlog and label everything"
+link "$O1" "Triage the issue backlog and label everything"
 close "Write integration tests for the block engine"
 
-link "$O2" "Send the vendor partner the SVG logo and 50-word blurb"
-link "$O2" "Upload the accelerator pitch deck and founder video"
-close "Send the vendor partner the SVG logo and 50-word blurb"
+link "$O2" "Send Bluepeak the data schema and open a shared channel"
+link "$O2" "Write the pilot success criteria down somewhere they can see it"
+close "Send Bluepeak the data schema and open a shared channel"
 
 # The outdoors goal has no backlog behind it — tasks.md is a work brain-dump — so its leaf
 # gets two tasks of its own. Two extra rows, not a rewritten fixture.
@@ -257,7 +274,7 @@ curl -fsS -XPATCH "$API/tasks/$T2" -H "$JSON" -d '{"status":"done"}' >/dev/null
 TAGS=$(curl -fsS "$API/tags")
 tid() { echo "$TAGS" | jq -r --arg n "$1" '.tags[] | select(.name==$n and .kind=="intention") | .id'; }
 file_tag() { curl -fsS -XPATCH "$API/tags/$(tid "$1")" -H "$JSON" -d "{\"directions\":[\"$2\"]}" >/dev/null; }
-file_tag product work; file_tag bizdev work; file_tag investment work; file_tag partnerships work
+file_tag product work; file_tag clients work; file_tag partnerships work; file_tag admin work
 file_tag personal home
 file_tag submissions community
 
@@ -265,8 +282,8 @@ file_tag submissions community
 # so without this every tag on the Tags screen reads "#product —" and the frame is a column
 # of placeholders.
 file_cat() { curl -fsS -XPATCH "$API/tags/$(tid "$1")" -H "$JSON" -d "{\"categories\":[\"$2\"]}" >/dev/null; }
-file_cat product career;      file_cat bizdev career
-file_cat partnerships career; file_cat investment finance
+file_cat product career;      file_cat clients career
+file_cat partnerships career; file_cat admin finance
 file_cat personal relationships
 file_cat submissions growth
 
@@ -307,7 +324,7 @@ on :3891, seeded exactly as above). After the block runs, `GET /api/objectives` 
 **all seven** nodes — 29% / 29% / 44% / 14% / 57% / 57% / 57%, no `null` and no "No plan yet" —
 every intention tag carries a direction and a category, and June 9–30 has 17 blocks spread over 17
 weekdays. The percentages moved from the 2026-08-06 run because the calendar half of the seed now
-yields 15 tasks rather than 18 (see `--target=47` above); the shape — every node scored, nothing
+yields 15 tasks rather than 18 (see `--target=40` above); the shape — every node scored, nothing
 empty — is what the block is for.
 
 The day it stages is deliberately **over-committed**: 24 tasks against a nine-hour workday, which

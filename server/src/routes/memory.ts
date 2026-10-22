@@ -143,12 +143,12 @@ export function memoryRouter() {
   // GET /api/memory/ciportal/start — begin the connector login. Credentialed (the
   // SPA fetches with its session, then top-level-navigates to the returned url).
   router.get('/api/memory/ciportal/start', async (ctx) => {
-    if (!ssoLoginEnabled()) throw httpError(404, 'CI-Portal sign-in is not enabled');
+    if (!ssoLoginEnabled()) throw httpError(404, 'Companion Portal sign-in is not enabled');
     if (!ciportalConfigured()) {
-      throw httpError(503, 'CI-Portal is not configured — set CIPORTAL_ISSUER + CIPORTAL_CLIENT_ID (see .env.example)');
+      throw httpError(503, 'Companion Portal is not configured — set CIPORTAL_ISSUER + CIPORTAL_CLIENT_ID (see .env.example)');
     }
     if (!config.memory.serverUrl) {
-      throw httpError(503, 'Set CI_SERVER_URL to the CI-Server memory API base before connecting via CI-Portal');
+      throw httpError(503, 'Set CI_SERVER_URL to the Companion Memory API base before connecting via Companion Portal');
     }
 
     // Resolve endpoints FIRST — if the portal is unreachable we 503 without minting a row.
@@ -157,7 +157,7 @@ export function memoryRouter() {
       doc = await ciportalEndpoints();
     } catch (err) {
       logger.warn('CI-Portal discovery failed (memory start)', { err: (err as Error).message });
-      throw httpError(503, 'CI-Portal discovery failed — check CIPORTAL_ISSUER / tailnet connectivity');
+      throw httpError(503, 'Companion Portal discovery failed — check CIPORTAL_ISSUER and connectivity to the portal');
     }
 
     const owner = currentOwnerId();
@@ -211,7 +211,7 @@ export function memoryRouter() {
   // credential). Owner is resolved SOLELY from the matched oauth_states row.
   router.get('/api/memory/ciportal/callback', async (ctx) => {
     if (!ssoLoginEnabled() || !ciportalConfigured()) {
-      throw httpError(404, 'CI-Portal sign-in is not enabled');
+      throw httpError(404, 'Companion Portal sign-in is not enabled');
     }
     const error = typeof ctx.query.error === 'string' ? ctx.query.error : undefined;
     const code = typeof ctx.query.code === 'string' ? ctx.query.code : undefined;

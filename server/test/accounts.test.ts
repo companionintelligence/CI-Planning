@@ -66,6 +66,7 @@ beforeAll(async () => {
   config.auth.disableOidc = true;
   config.auth.sessionSecret = 'test-session-secret';
   config.auth.rateLimit = { ...config.auth.rateLimit, issueMax: 1000 };
+  config.auth.signup = 'invite';
   srv = await startTestServer();
 });
 
@@ -76,7 +77,9 @@ afterAll(async () => {
 
 beforeEach(() => {
   resetDb(); // prunes non-sentinel owners
+  sqlite.exec('DELETE FROM signup_codes;');
   __resetAuthRateLimit();
+  config.auth.signup = 'invite';
 });
 
 describe('roleToScopes — the single role→scope map', () => {
@@ -348,5 +351,98 @@ describe('AG — /api/accounts CRUD (operator-gated)', () => {
   it('the sentinel is unreachable through the accounts API', async () => {
     expect((await req(`/api/accounts/${SYSTEM_OWNER_ID}`, opCookie, { method: 'PATCH', json: { role: 'viewer' } })).status).toBe(404);
     expect((await req(`/api/accounts/${SYSTEM_OWNER_ID}`, opCookie, { method: 'DELETE' })).status).toBe(404);
+  });
+});
+
+// ── B2: invite codes for local self-serve sign-up (operator-gated) ─────────────
+// The operator-facing half of docs/PRODUCTION-READINESS-2026-10-21.md Track B2; the
+// sign-up side (consumption, expiry, roles) lives in signup.test.ts.
+describe('B2 — /api/accounts/signup-codes (operator-gated)', () => {
+  let opCookie: string;
+  beforeEach(async () => {
+    await seedUser('op', 'operator');
+    opCookie = await login('op');
+  });
+
+  const CODE_SHAPE = /^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/;
+
+  it('mint → list → revoke; the raw code is returned ONCE and never listed', async () => {
+    const minted = await req('/api/accounts/signup-codes', opCookie, { method: 'POST', json: { note: 'for Sam' } });
+    expect(minted.status).toBe(201);
+    expect(minted.body.code).toMatch(CODE_SHAPE);
+    expect(minted.body.signupCode).toMatchObject({ note: 'for Sam', status: 'active', usedAt: null, usedByName: null, revokedAt: null });
+    // 7-day TTL.
+    const ttl = new Date(minted.body.signupCode.expiresAt).getTime() - Date.now();
+    expect(ttl).toBeGreaterThan(6.9 * 24 * 3600 * 1000);
+    expect(ttl).toBeLessThanOrEqual(7 * 24 * 3600 * 1000);
+
+    const listed = await req('/api/accounts/signup-codes', opCookie);
+    expect(listed.status).toBe(200);
+    expect(listed.body.codes).toHaveLength(1);
+    expect(listed.body.codes[0].id).toBe(minted.body.signupCode.id);
+    expect(JSON.stringify(listed.body)).not.toContain(minted.body.code); // hashed at rest, shown once
+    expect(listed.body.codes[0]).not.toHaveProperty('codeHash');
+
+    const revoked = await req(`/api/accounts/signup-codes/${minted.body.signupCode.id}`, opCookie, { method: 'DELETE' });
+    expect(revoked.status).toBe(200);
+    expect(revoked.body.signupCode.status).toBe('revoked');
+    expect((await req('/api/accounts/signup-codes', opCookie)).body.codes[0].status).toBe('revoked');
+    expect((await req(`/api/accounts/signup-codes/00000000-0000-7000-8000-00000000dead`, opCookie, { method: 'DELETE' })).status).toBe(404);
+  });
+
+  it('a minted code admits a sign-up end-to-end, and the list then shows who used it', async () => {
+    const minted = await req('/api/accounts/signup-codes', opCookie, { method: 'POST', json: {} });
+    const r = await req('/api/auth/signup', '', {
+      method: 'POST',
+      json: { name: 'Sam Signup', username: 'sam', email: 'sam@test.local', password: PW, code: minted.body.code },
+    });
+    expect(r.status).toBe(201);
+    expect(r.body.role).toBe('member'); // an operator already exists
+    const listed = await req('/api/accounts/signup-codes', opCookie);
+    expect(listed.body.codes[0]).toMatchObject({ status: 'used', usedByName: 'Sam Signup' });
+    expect((await req('/api/accounts', opCookie)).body.accounts.find((a: any) => a.username === 'sam')).toMatchObject({ role: 'member', hasPassword: true });
+  });
+
+  it('members and viewers are refused (403) on every signup-code route', async () => {
+    await seedUser('mem', 'member');
+    const mem = await login('mem');
+    expect((await req('/api/accounts/signup-codes', mem)).status).toBe(403);
+    expect((await req('/api/accounts/signup-codes', mem, { method: 'POST', json: {} })).status).toBe(403);
+    expect((await req('/api/accounts/signup-codes/x', mem, { method: 'DELETE' })).status).toBe(403);
+    expect((await req('/api/accounts/signup-codes', '')).status).toBe(401);
+  });
+
+  it('minting is refused (409) unless AUTH_SIGNUP=invite; listing still works', async () => {
+    config.auth.signup = 'open';
+    const open = await req('/api/accounts/signup-codes', opCookie, { method: 'POST', json: {} });
+    expect(open.status).toBe(409);
+    expect(open.body.error).toMatch(/AUTH_SIGNUP=open/);
+    config.auth.signup = 'off';
+    const off = await req('/api/accounts/signup-codes', opCookie, { method: 'POST', json: {} });
+    expect(off.status).toBe(409);
+    expect(off.body.error).toMatch(/AUTH_SIGNUP=off/);
+    expect((await req('/api/accounts/signup-codes', opCookie)).status).toBe(200);
+  });
+
+  it('validates the note (string or absent) and trims/caps it', async () => {
+    expect((await req('/api/accounts/signup-codes', opCookie, { method: 'POST', json: { note: 42 } })).status).toBe(400);
+    const long = await req('/api/accounts/signup-codes', opCookie, { method: 'POST', json: { note: `  ${'n'.repeat(200)}  ` } });
+    expect(long.status).toBe(201);
+    expect(long.body.signupCode.note).toHaveLength(120);
+    const blank = await req('/api/accounts/signup-codes', opCookie, { method: 'POST', json: { note: '   ' } });
+    expect(blank.body.signupCode.note).toBeNull();
+  });
+
+  it('a code survives the deletion of the operator who minted it and of the account that used it', async () => {
+    const minted = await req('/api/accounts/signup-codes', opCookie, { method: 'POST', json: {} });
+    const signedUp = await req('/api/auth/signup', '', {
+      method: 'POST',
+      json: { name: 'Gone Soon', username: 'gone', email: 'gone@test.local', password: PW, code: minted.body.code },
+    });
+    expect(signedUp.status).toBe(201);
+    const goneId = signedUp.body.ownerId;
+    expect((await req(`/api/accounts/${goneId}`, opCookie, { method: 'DELETE' })).status).toBe(200);
+    const listed = await req('/api/accounts/signup-codes', opCookie);
+    expect(listed.body.codes[0]).toMatchObject({ status: 'used', usedByName: null }); // SET NULL, row kept
   });
 });
