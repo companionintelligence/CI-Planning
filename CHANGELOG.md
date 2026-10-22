@@ -7,6 +7,16 @@ version at `GET /api/health` (`release`).
 ## [Unreleased] — 4.2.0
 
 ### Added
+- **Companion Portal sign-in that works against the real Portal (#619).** The id_token
+  verifier accepts the Portal's EdDSA/Ed25519 tokens (RS256 stays for Google); the default
+  issuer is the production portal `https://hub.ci.computer/api/auth` (it was the dev zone);
+  the first Portal login on an instance with no operator becomes the operator; an optional
+  `AUTH_DEFAULT_*` pair seeds a break-glass local operator; a local-open (loopback) login
+  returns to the loopback host. User-facing copy says "Companion Portal".
+- **A new-user path (#619).** The login screen offers both methods; "Create one with
+  Companion Portal"; invite-code local sign-up (`AUTH_SIGNUP=open|invite|off`, `/signup`,
+  migration 0172); a first-time Portal sign-in confirms on a no-JS page before an account
+  is created. README, screenshots and video stills refreshed from synthetic data.
 - **Release pipeline (Track C).** GitHub Actions stay manual-dispatch by owner decision
   (#618; "test local"): the merge gate is `pnpm typecheck && pnpm build && pnpm test` on a
   dev box, and `tests/container/run-local.sh` runs the container smoke gate — the
@@ -48,12 +58,6 @@ version at `GET /api/health` (`release`).
 - `<select>` gets the canon chevron instead of the browser's (#602).
 - Two flaky server tests pinned to a fixed wall clock; test DB resets clear the
   classification tables (#593).
-
-### In progress (separate pull request)
-- Companion Portal sign-in that works against the real Portal (EdDSA tokens, production
-  issuer, first-login operator claim, local-open redirect), a self-serve new-user path
-  (Portal sign-up link, invite-code `/signup`, first-time confirmation), and refreshed docs
-  and media — `docs/PRODUCTION-READINESS-2026-10-21.md`, PR #619.
 
 ## [4.1.0] — earlier
 Tag `v4.1.0`. History before this file: `git log v4.1.0`.
