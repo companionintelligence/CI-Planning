@@ -2,6 +2,9 @@ name: Style canon lint
 
 # Manual by owner decision (#618; kept manual in the 2026-10-21 readiness pass —
 # "test local, no GitHub Actions"). Locally: `pnpm lint:canon`.
+# >>> ci-local:gated original triggers below, restore with `ci-local restore`
+# on: [pull_request, push]
+# <<< ci-local:gated
 on:
   workflow_dispatch:
 

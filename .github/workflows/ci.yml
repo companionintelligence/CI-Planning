@@ -7,6 +7,13 @@ name: CI
 #   pnpm typecheck && pnpm build && LOG_LEVEL=error GOOGLE_MODE=fixture pnpm test
 # Dispatch this workflow by hand (gh workflow run ci.yml --ref <branch>) only
 # when a second opinion from a clean runner is wanted.
+# >>> ci-local:gated original triggers below, restore with `ci-local restore`
+# on:
+#   push:
+#     branches: [main, 'companion/**']
+#   pull_request:
+#     branches: [main]
+# <<< ci-local:gated
 on:
   workflow_dispatch:
 

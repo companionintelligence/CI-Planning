@@ -10,6 +10,15 @@ name: Publish container
 # :latest + :sha-<short> + :<tag> with CI_PLANNING_VERSION=<tag>; any other ref
 # publishes :latest + :sha-<short> as 0.0.0+sha-<short>. The three container smoke
 # phases below also run locally without Docker: tests/container/run-local.sh.
+# >>> ci-local:gated original triggers below, restore with `ci-local restore`
+# on:
+#   push:
+#     branches: [main]
+#     tags: ["*"]
+#   pull_request:
+#     branches: [main]
+#   workflow_dispatch:
+# <<< ci-local:gated
 on:
   workflow_dispatch:
 
