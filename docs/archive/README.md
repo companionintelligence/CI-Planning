@@ -37,6 +37,8 @@ at pre-archive locations — that's expected.
 - **D-time-tracking.md** — timers + actuals. (No manual-entry UI; cross-task rollups unscheduled.)
 - **F-calendar-grid.md** — 2-D grid (F′ shipped under G).
 - **H-notifications-webpush.md** — SW + Web Push. **Needs VAPID keys to go live.**
+  - **H-notifications-webpush.branch-2026-06-21.md** — the H spec as revised for the post-consolidation base (UUIDv7 ids, CON-2 vocabulary, CON-4 gating, migration `0036`). Never committed; rescued from the orphaned `CP-h-doc` worktree.
+  - **H-fanout-briefs.md** — Lane A/B/C parallel-build briefs for H with the frozen inter-lane contracts. Same rescue.
 - **I-identity-auth.md** — auth/connectors. ⚠️ **PARTIAL** — API-key path only; JWKS/SSO "PR2" never built → **Phase U**.
 - **J-calendar-sync.md** — inbound sync + Google connectors.
 - **L-multi-device-sync.md** — op-log / field-merge. 3 P3 gaps + offline-create deferred.
