@@ -1,14 +1,12 @@
 name: CI
 
-# Restored 2026-09-10 (was gated to workflow_dispatch-only in the August 2026
-# org-wide cost pass). Found during an org-level CI/CD health audit.
-# >>> ci-local:gated original triggers below, restore with `ci-local restore`
-# on:
-#   push:
-#     branches: [main, 'companion/**']
-#   pull_request:
-#     branches: [main]
-# <<< ci-local:gated
+# Manual by owner decision: gated to workflow_dispatch-only in the August 2026
+# cost pass, restored 2026-09-10, gated again 2026-10-08 (#618) and kept manual
+# in the 2026-10-21 readiness pass ("test local, no GitHub Actions"). The same
+# gate runs on a dev box before a merge:
+#   pnpm typecheck && pnpm build && LOG_LEVEL=error GOOGLE_MODE=fixture pnpm test
+# Dispatch this workflow by hand (gh workflow run ci.yml --ref <branch>) only
+# when a second opinion from a clean runner is wanted.
 on:
   workflow_dispatch:
 

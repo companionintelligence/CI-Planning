@@ -1,18 +1,15 @@
 name: Publish container
 
-# Builds the container, runs it, screenshots its web UI as a gate, then pushes
-# to GHCR. The marketplace manifest pins :latest, so every push to main republishes
-# :latest (plus an immutable :sha-<short> tag).
-
-# >>> ci-local:gated original triggers below, restore with `ci-local restore`
-# on:
-#   push:
-#     branches: [main]
-#     tags: ["*"]
-#   pull_request:
-#     branches: [main]
-#   workflow_dispatch:
-# <<< ci-local:gated
+# Builds the container, runs it, screenshots its web UI and drives both login
+# paths as gates, then pushes to GHCR. The marketplace manifest pins :latest.
+#
+# Manual by owner decision: gated to workflow_dispatch-only 2026-10-08 (#618) and
+# kept manual in the 2026-10-21 readiness pass ("test local, no GitHub Actions").
+# A release is published by dispatching this workflow on the release tag's ref
+# (gh workflow run docker-publish.yml --ref v4.2.0): a tag ref publishes
+# :latest + :sha-<short> + :<tag> with CI_PLANNING_VERSION=<tag>; any other ref
+# publishes :latest + :sha-<short> as 0.0.0+sha-<short>. The three container smoke
+# phases below also run locally without Docker: tests/container/run-local.sh.
 on:
   workflow_dispatch:
 
@@ -26,7 +23,7 @@ env:
 
 jobs:
   publish:
-    name: Build, screenshot-test, publish
+    name: Build, smoke-test, publish
     runs-on: ubuntu-22.04
     permissions:
       contents: read
@@ -42,7 +39,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Compute tags
+      # Track C2: the version an operator sees at GET /api/health (`release`) and in
+      # Sentry. A tag `v4.2.0` publishes 4.2.0; any other ref publishes 0.0.0+sha-<short>
+      # so a dispatched build is recognisably not a release.
+      - name: Compute tags + version
         id: meta
         shell: bash
         run: |
@@ -50,10 +50,13 @@ jobs:
           short="$(git rev-parse --short HEAD)"
           echo "sha_tag=${IMAGE_NAME}:sha-${short}" >> "$GITHUB_OUTPUT"
           tags="${IMAGE_NAME}:latest,${IMAGE_NAME}:sha-${short}"
+          version="0.0.0+sha-${short}"
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             tags="${tags},${IMAGE_NAME}:${GITHUB_REF_NAME}"
+            version="${GITHUB_REF_NAME#v}"
           fi
           echo "tags=${tags}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       # Advisory only — a missing secret must never fail the publish. Without it
       # the build args below expand to empty, the Dockerfile ARG defaults win,
@@ -69,11 +72,9 @@ jobs:
             echo "SENTRY_DSN is set — baking it into the published image (server env + client bundle)."
           fi
 
-      # Built WITH the DSN so the screenshot gate exercises the bundle that
-      # actually ships: a configured build keeps @sentry/browser in the client
-      # bundle and takes the Sentry.init path, neither of which a DSN-less build
-      # has (the DSN check in client/src/lib/telemetry.ts makes the rest of the
-      # module statically unreachable, so the SDK is dropped entirely).
+      # Built WITH the DSN so the smoke phases exercise the bundle that actually
+      # ships: a configured build keeps @sentry/browser in the client bundle and
+      # takes the Sentry.init path, neither of which a DSN-less build has.
       - name: Build image (load for testing)
         uses: docker/build-push-action@v6
         with:
@@ -81,6 +82,7 @@ jobs:
           load: true
           tags: ${{ steps.meta.outputs.sha_tag }}
           build-args: |
+            CI_PLANNING_VERSION=${{ steps.meta.outputs.version }}
             SENTRY_DSN=${{ secrets.SENTRY_DSN }}
             SENTRY_RELEASE=ci-planning-server@${{ github.sha }}
             VITE_SENTRY_DSN=${{ secrets.SENTRY_DSN }}
@@ -88,21 +90,18 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Start container
-        # The image runs NODE_ENV=production, where AUTH_MODE=test is refused at boot
-        # (Phase I fail-closed guard). Run the smoke test in `standalone` — a valid
-        # production mode: `/` and `/sw.js` are static (ungated) so the SPA shell still
-        # renders for the screenshot; background /api calls 401 without a key, which the
-        # app-agnostic screenshot gate does not depend on.
-        #
-        # CI_TELEMETRY=off because the image now has a real DSN baked in and this is a
-        # throwaway CI container: without it every screenshot run would file its errors
-        # into the production Sentry project. The switch stops both halves — the server
-        # skips Sentry.init, and the client's /api/config/telemetry probe returns
-        # {"enabled":false,"disabledReason":"opt-out"} so it does not init either.
+      # ── Phase 1: standalone mode — the app-agnostic screenshot + service-worker +
+      # security-headers gates. The image runs NODE_ENV=production, where
+      # AUTH_MODE=test is refused at boot, so the smoke test runs in `standalone`:
+      # `/` and `/sw.js` are static (ungated) so the SPA shell still renders.
+      #
+      # CI_TELEMETRY=off on every container here: the image has a real DSN baked in
+      # and these are throwaway CI containers — without it every run would file its
+      # errors into the production Sentry project.
+      - name: Start container (standalone)
         run: docker run -d --name app -e AUTH_MODE=standalone -e CI_TELEMETRY=off -p 8080:${INTERNAL_PORT} ${{ steps.meta.outputs.sha_tag }}
 
-      - name: Wait for HTTP
+      - name: Wait for HTTP (standalone)
         run: |
           for i in $(seq 1 60); do
             code="$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/ || true)"
@@ -116,11 +115,15 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Container screenshot test
+      - name: Install Playwright
         run: |
           cd tests/container
           npm install
           npx playwright install --with-deps chromium
+
+      - name: Container screenshot + headers test
+        run: |
+          cd tests/container
           APP_URL=http://localhost:8080 SCREENSHOT_PATH="$GITHUB_WORKSPACE/screenshot.png" npx playwright test
 
       - name: Upload screenshot
@@ -132,20 +135,66 @@ jobs:
           path: screenshot.png
           if-no-files-found: warn
 
+      # ── Phase 2 (Track C3): the two login paths, each in its own container.
+      # Local: username/password seeded from AUTH_DEFAULT_*. Portal: the real
+      # /api/auth/ciportal/* flow against the repo's fixture portal, run from the
+      # SAME image (it ships src/scripts/fixture-portal.ts + tsx). The browser reaches
+      # the fixture on the published host port; the app reaches it over a user
+      # network, so the token exchange and JWKS fetch cross container boundaries
+      # exactly as a real deployment's do.
+      - name: Start login containers (local + portal + fixture portal)
+        run: |
+          set -euo pipefail
+          docker network create cip-smoke
+          docker run -d --name fixture --network cip-smoke -p 9899:9899 \
+            -e FIXTURE_PORTAL_PORT=9899 -e FIXTURE_PORTAL_ISSUER=http://localhost:9899 \
+            --entrypoint node_modules/.bin/tsx ${{ steps.meta.outputs.sha_tag }} src/scripts/fixture-portal.ts
+          docker run -d --name app-local -p 8081:${INTERNAL_PORT} \
+            -e AUTH_MODE=sso -e DISABLE_OIDC=true -e SESSION_SECRET=smoke-session-secret \
+            -e AUTH_DEFAULT_USERNAME=smoke-admin -e AUTH_DEFAULT_PASSWORD=smoke-password-123 \
+            -e CI_TELEMETRY=off ${{ steps.meta.outputs.sha_tag }}
+          docker run -d --name app-portal --network cip-smoke -p 8082:${INTERNAL_PORT} \
+            -e AUTH_MODE=sso -e SESSION_SECRET=smoke-session-secret -e AUTH_AUTO_PROVISION=true \
+            -e PUBLIC_BASE_URL=http://localhost:8082 -e CIPORTAL_CLIENT_ID=companion-planning-dev \
+            -e CIPORTAL_ISSUER=http://localhost:9899 \
+            -e CIPORTAL_AUTHORIZE_URI=http://localhost:9899/authorize \
+            -e CIPORTAL_TOKEN_URI=http://fixture:9899/token \
+            -e CIPORTAL_JWKS_URI=http://fixture:9899/jwks \
+            -e CI_TELEMETRY=off ${{ steps.meta.outputs.sha_tag }}
+          for port in 9899 8081 8082; do
+            for i in $(seq 1 60); do
+              code="$(curl -s -o /dev/null -w '%{http_code}' http://localhost:${port}/ || true)"
+              if [ "$code" != "000" ] && [ "$code" -lt 500 ]; then echo "port ${port} up ($code)"; break; fi
+              if [ "$i" = 60 ]; then echo "port ${port} never responded"; docker logs fixture; docker logs app-local; docker logs app-portal; exit 1; fi
+              sleep 2
+            done
+          done
+
+      - name: Login test (local username/password)
+        run: |
+          cd tests/container
+          LOGIN_SPEC=local LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL=http://localhost:8081 npx playwright test login.spec.ts
+
+      - name: Login test (Companion Portal flow against the fixture)
+        run: |
+          cd tests/container
+          LOGIN_SPEC=portal APP_URL=http://localhost:8082 npx playwright test login.spec.ts
+
       - name: Container logs (on failure)
         if: failure()
-        run: docker logs app || true
+        run: |
+          for c in app app-local app-portal fixture; do echo "=== $c ==="; docker logs "$c" 2>&1 | tail -80 || true; done
 
-      - name: Tear down container
+      - name: Tear down containers
         if: always()
-        run: docker rm -f app || true
+        run: |
+          docker rm -f app app-local app-portal fixture 2>/dev/null || true
+          docker network rm cip-smoke 2>/dev/null || true
 
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.repository_owner }}" --password-stdin
 
       - name: Build and push
-        if: github.event_name != 'pull_request'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -157,6 +206,7 @@ jobs:
           # inlines import.meta.env.* into the bundle, so the browser half has no
           # runtime knob and must be baked here or it can never report.
           build-args: |
+            CI_PLANNING_VERSION=${{ steps.meta.outputs.version }}
             SENTRY_DSN=${{ secrets.SENTRY_DSN }}
             SENTRY_RELEASE=ci-planning-server@${{ github.sha }}
             VITE_SENTRY_DSN=${{ secrets.SENTRY_DSN }}

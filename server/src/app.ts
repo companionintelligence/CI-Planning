@@ -10,7 +10,7 @@ import { mountRoutes } from './routes/index.js';
 import { mountGraphql } from './graphql/index.js';
 import { hydrateGoogleConfig } from './services/google-config.js';
 import { hydrateVapidConfig } from './services/vapid-config.js';
-import { captureException } from './lib/telemetry/index.js';
+import { captureException, telemetrySettings } from './lib/telemetry/index.js';
 
 /** Build the Koa app (routes + middleware) without listening or starting cron.
  * Async because the GraphQL (Apollo) server must `start()` before it can be mounted. */
@@ -51,6 +51,9 @@ export async function buildApp(): Promise<Koa> {
       if (ctx.status >= 500) captureException(err, { method: ctx.method, path: ctx.path });
     }
   });
+
+  // Track D2 — security headers on every response (the SPA shell, its assets, /api).
+  app.use(securityHeaders());
 
   // The SPA is same-origin (koa-static in prod, the Vite proxy in dev), so no browser
   // origin needs cross-origin access by default. A wildcard here would let any page
@@ -102,4 +105,82 @@ export async function buildApp(): Promise<Koa> {
   }
 
   return app;
+}
+
+/**
+ * Track D2 — security headers.
+ *
+ * The Content-Security-Policy is written for what the built client actually loads:
+ * its own scripts (the theme-bootstrap script moved out of index.html into
+ * /theme-init.js so no inline-script allowance is needed), its own styles plus inline
+ * `style=` attributes (SolidJS sets them; hence 'unsafe-inline' for STYLES only), the
+ * Manrope stylesheet from Google Fonts, same-origin fetch/SSE, the service worker, and
+ * — only when crash reporting is on — the Sentry ingest origin. Anything else an
+ * operator needs goes in CSP_EXTRA_CONNECT_SRC.
+ *
+ * The self-hosted GraphiQL sandbox (/api/graphql/sandbox, dev-on / prod-opt-in) is a
+ * vendored IDE with inline bootstrap, eval-based workers and blob: URLs; it gets its
+ * own looser policy rather than loosening the app's.
+ *
+ * HSTS is sent only when the request itself is HTTPS (ctx.protocol honours
+ * X-Forwarded-Proto behind TRUST_PROXY), so an http:// local open never pins a
+ * browser to TLS it cannot get.
+ */
+function securityHeaders(): Koa.Middleware {
+  const sentryOrigin = (() => {
+    const t = telemetrySettings();
+    if (!t?.enabled || !t.dsn) return null;
+    try {
+      return new URL(t.dsn).origin;
+    } catch {
+      return null;
+    }
+  })();
+
+  const connectSrc = () =>
+    ["'self'", ...(sentryOrigin ? [sentryOrigin] : []), ...config.security.extraConnectSrc].join(' ');
+
+  const appPolicy = () =>
+    [
+      "default-src 'self'",
+      "base-uri 'self'",
+      "object-src 'none'",
+      "frame-ancestors 'none'",
+      "frame-src 'none'",
+      "form-action 'self'",
+      "script-src 'self'",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      "font-src 'self' data: https://fonts.gstatic.com",
+      "img-src 'self' data: blob:",
+      `connect-src ${connectSrc()}`,
+      "worker-src 'self'",
+      "manifest-src 'self'",
+    ].join('; ');
+
+  const sandboxPolicy = () =>
+    [
+      "default-src 'self'",
+      "base-uri 'self'",
+      "object-src 'none'",
+      "frame-ancestors 'none'",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
+      "style-src 'self' 'unsafe-inline'",
+      "worker-src 'self' blob:",
+      "img-src 'self' data: blob:",
+      "font-src 'self' data:",
+      `connect-src ${connectSrc()}`,
+    ].join('; ');
+
+  return async (ctx, next) => {
+    ctx.set('X-Content-Type-Options', 'nosniff');
+    ctx.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+    ctx.set('X-Frame-Options', 'DENY');
+    ctx.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    ctx.set(
+      'Content-Security-Policy',
+      ctx.path.startsWith('/api/graphql/sandbox') ? sandboxPolicy() : appPolicy(),
+    );
+    if (ctx.protocol === 'https') ctx.set('Strict-Transport-Security', 'max-age=15552000');
+    await next();
+  };
 }

@@ -6,26 +6,11 @@
     <meta name="description" content="Companion Planning — private, local-first todo & planning with optional local-LLM triage." />
     <meta name="theme-color" content="#041620" />
     <title>Companion Planning</title>
-    <!-- Set the theme class before first paint to avoid a flash. Preference is
-         'light' | 'dark' | 'system' under key 'vite-ui-theme'; 'system' follows
-         the OS scheme, and any missing/invalid value defaults dark (dark-first). -->
-    <script>
-      (function () {
-        function prefersDark() {
-          return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
-        }
-        var dark = true; // dark-first default when nothing valid is stored
-        try {
-          var t = localStorage.getItem('vite-ui-theme');
-          if (t === 'light') dark = false;
-          else if (t === 'dark') dark = true;
-          else if (t === 'system') dark = prefersDark();
-        } catch (e) { /* localStorage unavailable */ }
-        var el = document.documentElement;
-        el.classList.toggle('dark', dark);
-        el.classList.toggle('light', !dark);
-      })();
-    </script>
+    <!-- Set the theme class before first paint to avoid a flash. The script lives in
+         public/theme-init.js (not inline) so the server's Content-Security-Policy can
+         say `script-src 'self'` without an inline allowance or a per-build hash. It is a
+         classic blocking script, so it still runs before the first paint. -->
+    <script src="/theme-init.js"></script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />

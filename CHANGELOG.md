@@ -1,0 +1,59 @@
+# Changelog
+
+All notable changes to Companion Planning. Releases are git tags (`v4.1.0` was the last
+cut before this file existed); the container image publishes on each tag and reports the
+version at `GET /api/health` (`release`).
+
+## [Unreleased] — 4.2.0
+
+### Added
+- **Release pipeline (Track C).** GitHub Actions stay manual-dispatch by owner decision
+  (#618; "test local"): the merge gate is `pnpm typecheck && pnpm build && pnpm test` on a
+  dev box, and `tests/container/run-local.sh` runs the container smoke gate — the
+  screenshot, service-worker and security-header checks plus both login paths
+  (username/password, and the Companion Portal flow against the repo's fixture portal) —
+  without Docker. A dispatched publish on a release tag bakes `CI_PLANNING_VERSION` into the
+  image and runs the same login phases in real containers before pushing.
+- **Security headers (Track D2).** Every response carries a Content-Security-Policy,
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `X-Frame-Options`, a conservative
+  `Permissions-Policy`, and HSTS over HTTPS. The theme-bootstrap script moved out of
+  `index.html` so the policy needs no inline-script allowance.
+- **Open-time range** setting, high-contrast panel toggles, and a Today layout with the
+  Planner in the centre and the Flight Plan in the drawer (#604, #601).
+- A scheduled task can be given up on, and that is counted (#606); the trust dial is an
+  ordering policy independent of `planning_mode` (#605).
+- Placement learning: the scheduler records what it chose and what it passed over, rolls
+  up an owner's preferred hour band, biases gap choice toward it, and exposes a survival
+  trend + reset endpoint (migrations 0166/0167).
+- Focus Ritual restyle, a style preference, and the Focus Lab.
+- Ecosystem attribution: NOTICE, THIRD_PARTY, CREDITS (#617).
+
+### Changed
+- **Self-host compose no longer requires Postgres (Track D3).** `docker compose up` boots
+  on SQLite with only a session secret and the admin login set; the Postgres service sits
+  behind `--profile postgres` for the still-in-progress schema port.
+- Brand canon 1.0: CI-Common tokens layer, Manrope, `ci-lint-canon`; primary CTA treatment
+  moved off the retired teal-200/teal-600 (#610–#614).
+- Undo moved to the Planner header alongside Schedule.
+- Pattern placement routes through `mirrorEnginePlacement` so nightly placement honours a
+  user-pinned `task_time` instead of overwriting it (AD1, #615 — see
+  `docs/AD-calendar-reliability.md`).
+
+### Fixed
+- **Security:** wildcard CORS replaced with an explicit origin allowlist (#608). The image
+  published on 2026-09-06 predates this fix; the next tag carries it.
+- `completed_at` is stamped when a task's status is set to done directly (#607).
+- `issue-key` initialises the store before minting an API key.
+- Mobile: an empty details-drawer bottom sheet no longer blocks taps (#600).
+- `<select>` gets the canon chevron instead of the browser's (#602).
+- Two flaky server tests pinned to a fixed wall clock; test DB resets clear the
+  classification tables (#593).
+
+### In progress (separate pull request)
+- Companion Portal sign-in that works against the real Portal (EdDSA tokens, production
+  issuer, first-login operator claim, local-open redirect), a self-serve new-user path
+  (Portal sign-up link, invite-code `/signup`, first-time confirmation), and refreshed docs
+  and media — `docs/PRODUCTION-READINESS-2026-10-21.md`, PR #619.
+
+## [4.1.0] — earlier
+Tag `v4.1.0`. History before this file: `git log v4.1.0`.
