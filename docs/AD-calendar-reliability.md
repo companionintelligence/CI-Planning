@@ -25,6 +25,26 @@ still wins when both are set.)
 ## Slices
 
 ### AD1 — task_time authoritative (SERVER)
+
+> **Shipped — pattern-placement pinning (#615, merged 2026-09-15 as `wip(scheduling)`; settled
+> here 2026-10-21, Track D4).** The last AD1 gap was *routine* placement: nightly pattern
+> placement wrote through `syncTaskFromBlock`, which sets `task_time` on the task — and on a
+> task `task_time` means a user-stated **pin**, so the job that existed to honour pins was
+> erasing them every night. What landed in `engine/patterns-place.ts` (+ `blocks-place.ts`):
+>
+> - Placement now routes through `mirrorEnginePlacement` (`services/block-task-sync.ts`), which
+>   mirrors the engine's block onto the task **without** touching `task_time`.
+> - A routine's candidate windows are the discrete `windows[]` derived from its own direction
+>   tags (a home routine is never packed into work hours); when a routine derives no windows at
+>   all, the fallback is the day's **work + community** fill — the hard-coded 09:00–18:00
+>   fallback that read the abandoned `workday_start/_end` columns is gone (#583 removed it;
+>   the rebase kept that).
+> - For a recurring routine the **occurrence instance's own `task_time` wins** over the
+>   master's (dragging ONE occurrence pins that occurrence only).
+>
+> The commit message noted a `triality-metrics` failure "pre-existing on clean main"; the full
+> server suite is green as of 2026-10-21 (3,599 passed), so nothing from #615 is quarantined.
+> Behaviour is covered by the `patterns-place`, `blocks-place` and `blocks-service` suites.
 - `engine/quickadd.ts parseQuick`: when a time is present, ALSO set `scheduledFor` to the
   parsed instant's LOCAL date (so "2pm" has scheduled_for=today + task_time=14:00). Keep
   dueAt as-is. Bare-date behavior unchanged.

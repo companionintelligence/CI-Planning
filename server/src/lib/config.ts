@@ -230,6 +230,10 @@ export interface Config {
    *  requireAuth and a wildcard would let any page that gets a browser to attach valid
    *  credentials read authenticated JSON cross-origin. */
   corsOrigins: string[];
+  /** Track D2 — security headers. `extraConnectSrc`: additional origins the browser
+   *  may call (CSP `connect-src`) beyond the app itself and the Sentry DSN origin,
+   *  from CSP_EXTRA_CONNECT_SRC (space/comma-separated). Empty by default. */
+  security: { extraConnectSrc: string[] };
   dbPath: string;
   /** Postgres connection string (schema port). Absent ⇒ the SQLite store is used —
    *  both backends coexist while the 386 raw-SQL call sites migrate file by file. */
@@ -394,6 +398,12 @@ export const config: Config = {
   port: Number(process.env.PORT ?? 3848),
   trustProxy: process.env.TRUST_PROXY === 'true',
   corsOrigins,
+  security: {
+    extraConnectSrc: (process.env.CSP_EXTRA_CONNECT_SRC ?? '')
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean),
+  },
   dbPath,
   databaseUrl,
   storeBackend,

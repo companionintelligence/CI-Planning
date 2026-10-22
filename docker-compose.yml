@@ -33,9 +33,15 @@ services:
       AUTH_DEFAULT_PASSWORD: ${AUTH_DEFAULT_PASSWORD:?set AUTH_DEFAULT_PASSWORD in .env}
       # In-network service name — the app reaches the ollama service over the compose network.
       OLLAMA_URL: http://ollama:11434
-      # Postgres (schema port). Unset ⇒ the app still uses the SQLite store at /data —
-      # the two backends coexist while the 386 call sites are migrated file by file.
-      DATABASE_URL: postgres://${POSTGRES_USER:-planning}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-planning}
+      # Postgres (schema port, NOT a supported deployment option yet): the app runs on the
+      # SQLite store at /data. The bundled `postgres` service below sits behind
+      # `--profile postgres` for people working on the cutover; to use it, start with
+      # `docker compose --profile postgres up -d` and set DATABASE_URL in .env, e.g.
+      #   DATABASE_URL=postgres://planning:<POSTGRES_PASSWORD>@postgres:5432/planning
+      # Empty (the default) ⇒ unset ⇒ SQLite. Track D3 (2026-10-21): this used to be
+      # hard-wired, which made a plain `docker compose up` demand a Postgres password and
+      # run a database the app never read from.
+      DATABASE_URL: ${DATABASE_URL:-}
       # Error reporting (Sentry) — opt-OUT: ON wherever a DSN is set. Each of these is
       # empty unless set in .env, and an empty value is treated as unset: with no
       # SENTRY_DSN the server initialises no Sentry and opens no outbound connection at
@@ -56,8 +62,8 @@ services:
     depends_on:
       ollama:
         condition: service_healthy
-      postgres:
-        condition: service_healthy
+      # `postgres` is deliberately NOT listed: it is profile-gated (below), and a
+      # depends_on on a profiled service would pull it into every `up`.
     # Liveness comes from the Dockerfile HEALTHCHECK (hits /api/health).
 
   # Postgres for the schema port (db/postgres/migrations). pgvector is the sqlite-vec
@@ -70,6 +76,9 @@ services:
   # `planning` is a schema, so it coexists with CI-Server's `ci` in one database.
   postgres:
     image: pgvector/pgvector:pg17
+    # Opt-in: `docker compose --profile postgres up -d`. See the DATABASE_URL note on the
+    # app service — the app does not use this database until the schema port lands.
+    profiles: ["postgres"]
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-planning}

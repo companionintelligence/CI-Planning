@@ -9,6 +9,10 @@ export default defineConfig({
   reporter: "list",
   use: {
     ...devices["Desktop Chrome"],
+    // The full Chromium build, not the "headless shell": the shell binary crashes at
+    // launch on some Linux boxes (seen on the dev box with v1248), and the full build
+    // runs these DOM tests identically. `playwright install chromium` provides both.
+    channel: "chromium",
     baseURL: process.env.APP_URL || "http://localhost:8080",
     ignoreHTTPSErrors: true,
     viewport: { width: 1280, height: 800 },

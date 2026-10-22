@@ -41,3 +41,6 @@ docs/G-circles-stress-test.md
 docs/G-rituals-circles-design.md
 docs/G-updated-plan.md
 docs/styleguide-color-gap-analysis.md
+
+# The container smoke harness installs its own deps (docker-publish.yml runs npm install there).
+tests/container/node_modules/

@@ -59,10 +59,16 @@ RUN pnpm --filter client build
 # or CI_LOCAL_ONLY=true, either of which beats a baked-in DSN for BOTH halves.
 ARG SENTRY_DSN=""
 ARG SENTRY_RELEASE=""
+# Track C2: the deployment version. docker-publish.yml passes the release tag
+# (`v4.2.0` → `4.2.0`) or `0.0.0+sha-<short>` for a non-release build; the server
+# derives Sentry's `release` from it when SENTRY_RELEASE is unset and reports it at
+# GET /api/health. Empty (a local `docker build`) means "unversioned", as before.
+ARG CI_PLANNING_VERSION=""
 
 ENV NODE_ENV=production \
     PORT=3848 \
     DB_PATH=/data/companion.db \
+    CI_PLANNING_VERSION=${CI_PLANNING_VERSION} \
     SENTRY_DSN=${SENTRY_DSN} \
     SENTRY_RELEASE=${SENTRY_RELEASE}
 RUN mkdir -p /data
