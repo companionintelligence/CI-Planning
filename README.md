@@ -1,11 +1,24 @@
-# Companion Planning
+<h1 align="center">Companion Planning</h1>
 
-A **private, local-first** personal todo and planning app. Tasks, time blocks,
+<p align="center"><strong>A private, local-first personal todo and planning app.</strong></p>
+
+Tasks, time blocks,
 tags, and an automation pipeline live in a single SQLite file on your machine; an
 optional local LLM (Ollama) adds AI briefings, task extraction, grooming, and
 auto-scheduling. No cloud dependency — your planning data lives on your hardware
 and stays there. Sign in with your Companion Portal account on a CI Hub, or with a
 local username and password on a self-hosted install; neither sends your data anywhere.
+
+[![tag](https://img.shields.io/github/v/tag/companionintelligence/CI-Planning?style=flat-square&color=0a6358&label=tag)](https://github.com/companionintelligence/CI-Planning/tags)
+[![platform](https://img.shields.io/badge/platform-Web%20%C2%B7%20Node.js%20%C2%B7%20Deno-0a6358?style=flat-square)](https://github.com/companionintelligence/CI-Planning)
+[![License](https://img.shields.io/badge/license-Commercial%20Standard-8a5a00?style=flat-square)](LICENSE.md)
+[![Discord](https://img.shields.io/badge/chat-Discord-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.com/invite/yQp9hwpzAa)
+
+<p align="center"><a href="#quick-start">Get started</a> · <a href="#license">License</a> · <a href="README.md#architecture">Documentation</a> · <a href="https://docs.ci.computer/docs/reference/open-source-systems">Systems map</a></p>
+
+<p align="center">
+  <a href="#quick-start"><img src="https://img.shields.io/badge/Quick%20start-Quick%20start-0a6358?style=for-the-badge&logo=github&logoColor=white" alt="Quick start" height="30"></a>
+</p>
 
 **On crash reporting, plainly:** released container images are built with a Sentry
 DSN and report **crashes** by default — errors only, no tracing, no session replay,
@@ -36,8 +49,33 @@ client.
 - **One process, one port** — the server serves both the API and the UI on **3848**
 
 **Source of truth for docs:** this README describes the running app;
-[docs/ROADMAP.md](docs/ROADMAP.md) is the authoritative plan for future phases.
 SQLite is the single source of truth for data.
+
+## Features
+
+| Feature | What it provides |
+|---|---|
+| **Tasks and objectives** | Track owner-scoped tasks, recurrences, objectives and audit history. |
+| **Calendar and time blocks** | Plan work locally and optionally sync to Google Calendar. |
+| **Local AI assistance** | Use Ollama for briefings, task extraction, grooming and auto-scheduling. |
+| **Integration boundaries** | Add Companion OIDC, calendar sync, MCP and push without moving the local SQLite records. |
+
+## How it fits together
+
+The browser client uses the local planning API and SQLite as its source of truth. Optional identity, calendar and inference integrations attach at the server boundary.
+
+```mermaid
+flowchart LR
+  PWA[SolidJS planning PWA] --> API[Koa API]
+  API --> DB[(Local SQLite)]
+  API --> Jobs[Croner scheduling and review jobs]
+  Jobs --> DB
+  API -. optional .-> OIDC[Companion OIDC]
+  API -. optional .-> Calendar[Google Calendar sync]
+  API -. optional .-> Ollama[Local Ollama]
+  API --> Push[Web Push]
+  Push --> SW[Browser service worker]
+```
 
 ## Quick start
 
@@ -2169,6 +2207,20 @@ pnpm --filter client test      # client vitest — two projects: `unit` (pure lo
                                 # `dom` (SolidJS component rendering, jsdom + vite-plugin-solid)
 cd tests/container && npm i && APP_URL=http://localhost:3848 npx playwright test   # container smoke
 ```
+
+<!-- companion-hub-readme-deep-review -->
+
+## Common task lifecycle
+
+```mermaid
+flowchart LR
+  Capture[Capture task or objective] --> Schedule[Schedule against calendar and constraints]
+  Schedule --> Today[Review in Today view]
+  Today --> Update[Update status or details]
+  Update --> Complete[Complete, defer, or reschedule]
+```
+
+The detailed architecture, domain model, and scheduling sections below explain the underlying data and two-clock behavior. Use this lifecycle as the user-facing entry point when deciding where a task belongs; the Today, Calendar, Tasks, and Objectives sections describe the corresponding views.
 
 ## Contributing
 
