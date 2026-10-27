@@ -1,6 +1,10 @@
-# Companion Planning
+<h1 align="center">Companion Planning</h1>
 
-A **private, local-first** personal todo and planning app. Tasks, time blocks,
+<p align="center"><strong>A private, local-first personal todo and planning app.</strong></p>
+
+<p align="center"><a href="#quick-start">Get started</a> · <a href="#license">License</a></p>
+
+Tasks, time blocks,
 tags, and an automation pipeline live in a single SQLite file on your machine; an
 optional local LLM (Ollama) adds AI briefings, task extraction, grooming, and
 auto-scheduling. No cloud dependency — your planning data lives on your hardware
@@ -36,7 +40,6 @@ client.
 - **One process, one port** — the server serves both the API and the UI on **3848**
 
 **Source of truth for docs:** this README describes the running app;
-[docs/ROADMAP.md](docs/ROADMAP.md) is the authoritative plan for future phases.
 SQLite is the single source of truth for data.
 
 ## Quick start
