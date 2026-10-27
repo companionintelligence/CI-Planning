@@ -2173,6 +2173,20 @@ pnpm --filter client test      # client vitest — two projects: `unit` (pure lo
 cd tests/container && npm i && APP_URL=http://localhost:3848 npx playwright test   # container smoke
 ```
 
+<!-- companion-hub-readme-deep-review -->
+
+## Common task lifecycle
+
+```mermaid
+flowchart LR
+  Capture[Capture task or objective] --> Schedule[Schedule against calendar and constraints]
+  Schedule --> Today[Review in Today view]
+  Today --> Update[Update status or details]
+  Update --> Complete[Complete, defer, or reschedule]
+```
+
+The detailed architecture, domain model, and scheduling sections below explain the underlying data and two-clock behavior. Use this lifecycle as the user-facing entry point when deciding where a task belongs; the Today, Calendar, Tasks, and Objectives sections describe the corresponding views.
+
 ## Contributing
 
 **Green CI is required before merging into `main`** — the *Typecheck + Unit +
