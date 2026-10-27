@@ -2,7 +2,7 @@
 
 <p align="center"><strong>A private, local-first personal todo and planning app.</strong></p>
 
-<p align="center"><a href="#quick-start">Get started</a> · <a href="#license">License</a></p>
+<p align="center"><a href="#quick-start">Get started</a> · <a href="#license">License</a> · <a href="https://docs.ci.computer/docs/reference/open-source-systems">Systems map</a></p>
 
 Tasks, time blocks,
 tags, and an automation pipeline live in a single SQLite file on your machine; an
