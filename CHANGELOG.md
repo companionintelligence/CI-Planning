@@ -4,7 +4,7 @@ All notable changes to Companion Planning. Releases are git tags (`v4.1.0` was t
 cut before this file existed); the container image publishes on each tag and reports the
 version at `GET /api/health` (`release`).
 
-## [Unreleased] — 4.2.0
+## [4.2.0] — 2026-10-29
 
 ### Changed
 - **License changed from CI-Commercial-1.0 to the PolyForm Noncommercial License 1.0.0.** Companion Planning is now free for noncommercial use and the source is public. the license file is now `LICENSE`; package manifests declare `PolyForm-Noncommercial-1.0.0`. See [docs/License-FAQ.md](docs/License-FAQ.md).
