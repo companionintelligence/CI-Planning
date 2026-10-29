@@ -2,7 +2,7 @@
   "name": "server",
   "version": "4.2.0",
   "private": true,
-  "license": "SEE LICENSE IN LICENSE.md",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "type": "module",
   "scripts": {
     "dev": "tsx watch --env-file-if-exists=.env src/index.ts",
