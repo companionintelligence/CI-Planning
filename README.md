@@ -11,7 +11,7 @@ local username and password on a self-hosted install; neither sends your data an
 
 [![tag](https://img.shields.io/github/v/tag/companionintelligence/CI-Planning?style=flat-square&color=0a6358&label=tag)](https://github.com/companionintelligence/CI-Planning/tags)
 [![platform](https://img.shields.io/badge/platform-Web%20%C2%B7%20Node.js%20%C2%B7%20Deno-0a6358?style=flat-square)](https://github.com/companionintelligence/CI-Planning)
-[![License](https://img.shields.io/badge/license-Commercial%20Standard-8a5a00?style=flat-square)](LICENSE.md)
+[![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue?style=flat-square)](LICENSE)
 [![Discord](https://img.shields.io/badge/chat-Discord-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.com/invite/yQp9hwpzAa)
 
 <p align="center"><a href="#quick-start">Get started</a> · <a href="#license">License</a> · <a href="README.md#architecture">Documentation</a> · <a href="https://docs.ci.computer/docs/reference/open-source-systems">Systems map</a></p>
@@ -2231,9 +2231,10 @@ commit (including any bot autofix/suggestion commits, which re-run the checks). 
 
 ## License
 
-Commercial — **CI-Commercial-1.0** (the same Commercial Standard License as CI-Server and CI-Hub).
-See [LICENSE.md](LICENSE.md). Copyright © 2019-2026 LifeScope INC, DBA Companion Intelligence.
-All rights reserved; use requires a purchased or subscribed license.
+Free for noncommercial use under the [PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0).
+See [LICENSE](LICENSE) and the [License FAQ](docs/License-FAQ.md). Copyright © 2019-2026 LifeScope INC, DBA Companion Intelligence.
+
+Required Notice: Copyright LifeScope INC, DBA Companion Intelligence (https://ci.computer)
 
 ## Author
 

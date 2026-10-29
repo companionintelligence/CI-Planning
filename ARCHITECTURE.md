@@ -27,7 +27,7 @@ feature in §1.2; migration head 0135):** Tasks + scheduler · Rich semantics + 
 **Phases AF–AG + ship-readiness** (2026-07, migs 0118–0126) — note 0119 is an intentional gap (see `migrations/index.ts`); the line continues past AG in §1.1:
 - **AF — Task management** (migs 0120/0121): Objectives surface as a **tab inside `/tasks`** (URL-synced `?focus`), tree API returns tasks-per-leaf, quick-add subtask, assign-to-objective on the task card. **The Inbox surface is retired** — ingested `possible_tasks` are deduplicated inline and **auto-promoted** into Tasks (no manual triage), surfacing in a date-derived **New Today** section until owner-local midnight; `/inbox`, `/objectives`, `/patterns`, `/routines` are now redirects/tabs, not standalone views. Includes **AF-11 tag unification** (routine-tag cleanup 0120, task-intention level move 0121).
 - **AG — Multi-tenant RBAC** (mig 0125): `owners.role` drives scopes at one choke point (`lib/auth/scopes.ts` `roleToScopes`, unknown role → read-only), replacing the hardcoded `[READ, WRITE, ADMIN]` triple. Three roles — `operator` (R+W+A) · `member` (R+W) · `viewer` (R); existing owners backfill to `operator`, OIDC auto-provision defaults to `member` (closes the auto-admin hole). Operator-gated `routes/accounts.ts` (`GET/POST/PATCH/DELETE /api/accounts` + `/:id/invite`) creates/manages accounts via password-less invite + reset-token link.
-- **Ship-readiness + hardening** (migs 0122–0124, 0126): seeded developer identity scrubbed (0122); dead `auto_mode` column dropped, top-bar Suggest/Schedule toggle repointed to `trust_mode` (0123); in-app Google connection setup + auto-provisioned Web Push VAPID keys via the `app_config` table (0124); base **category** tags (Personal / Professional / Social) seeded (0126) — **superseded by the six Balance-dimension categories, migration 0134, §1.2**. License corrected to **CI-Commercial-1.0** (not MIT).
+- **Ship-readiness + hardening** (migs 0122–0124, 0126): seeded developer identity scrubbed (0122); dead `auto_mode` column dropped, top-bar Suggest/Schedule toggle repointed to `trust_mode` (0123); in-app Google connection setup + auto-provisioned Web Push VAPID keys via the `app_config` table (0124); base **category** tags (Personal / Professional / Social) seeded (0126) — **superseded by the six Balance-dimension categories, migration 0134, §1.2**. License: **PolyForm Noncommercial 1.0.0** (was CI-Commercial-1.0 until 2026-10).
 
 ## 1.1 Post-AG work (2026-07-14 → 07-16, migs 0127–0130)
 
@@ -1204,9 +1204,9 @@ Companion Planning occupies the gap between open-source tools (no auto-schedulin
 | Two-way calendar sync | ✅ | ❌ or limited | ✅ |
 | Life-planning layer | ✅ objectives + reflections | ❌ | partial |
 | Data ownership | ✅ fully local | ✅ | ❌ |
-| Licensing | Commercial (CI-Commercial-1.0), source-available | ✅ open source | ❌ closed SaaS |
+| Licensing | PolyForm Noncommercial 1.0.0, free, source-available | ✅ open source | ❌ closed SaaS |
 
-The differentiator: **local-first + AI-assisted day planning + life-planning layer**, all on your own hardware — commercially licensed (CI-Commercial-1.0) with the source available to licensees.
+The differentiator: **local-first + AI-assisted day planning + life-planning layer**, all on your own hardware — free under PolyForm Noncommercial 1.0.0 with the source public.
 
 ---
 

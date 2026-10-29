@@ -6,6 +6,9 @@ version at `GET /api/health` (`release`).
 
 ## [Unreleased] — 4.2.0
 
+### Changed
+- **License changed from CI-Commercial-1.0 to the PolyForm Noncommercial License 1.0.0.** Companion Planning is now free for noncommercial use and the source is public. the license file is now `LICENSE`; package manifests declare `PolyForm-Noncommercial-1.0.0`. See [docs/License-FAQ.md](docs/License-FAQ.md).
+
 ### Added
 - **Companion Portal sign-in that works against the real Portal (#619).** The id_token
   verifier accepts the Portal's EdDSA/Ed25519 tokens (RS256 stays for Google); the default
