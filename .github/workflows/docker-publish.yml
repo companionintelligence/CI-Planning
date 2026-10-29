@@ -96,6 +96,10 @@ jobs:
             SENTRY_RELEASE=ci-planning-server@${{ github.sha }}
             VITE_SENTRY_DSN=${{ secrets.SENTRY_DSN }}
             VITE_SENTRY_RELEASE=ci-planning-client@${{ github.sha }}
+          # Read-only token for the @companionintelligence scope on GitHub Packages
+          # (see Dockerfile). A BuildKit secret: never lands in a layer or the gha cache.
+          secrets: |
+            NODE_AUTH_TOKEN=${{ secrets.GITHUB_TOKEN }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -220,5 +224,9 @@ jobs:
             SENTRY_RELEASE=ci-planning-server@${{ github.sha }}
             VITE_SENTRY_DSN=${{ secrets.SENTRY_DSN }}
             VITE_SENTRY_RELEASE=ci-planning-client@${{ github.sha }}
+          # Read-only token for the @companionintelligence scope on GitHub Packages
+          # (see Dockerfile). A BuildKit secret: never lands in a layer or the gha cache.
+          secrets: |
+            NODE_AUTH_TOKEN=${{ secrets.GITHUB_TOKEN }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
