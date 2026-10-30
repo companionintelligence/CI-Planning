@@ -9,3 +9,7 @@ dist
 *.log
 .DS_Store
 docs/screenshots
+# The Capacitor mobile shells (mobile/) are built by .github/workflows/mobile-build.yml, not
+# into the image. Keeping them out of the context means a change there cannot invalidate
+# the `COPY . .` layer and trigger a client rebuild.
+mobile

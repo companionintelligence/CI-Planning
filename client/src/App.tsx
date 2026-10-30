@@ -6,6 +6,8 @@ import { navCollapsed, toggleNav, detailsOpen } from './stores/ui.js';
 import { Nav }      from './components/Nav.js';
 import { CloseRitual } from './components/CloseRitual.js';
 import { Login }    from './views/Login.js';
+import { ConnectServer } from './views/ConnectServer.js';
+import { needsServerSetup } from './lib/server-config.js';
 import { Signup }   from './views/Signup.js';
 import { ResetPassword } from './views/ResetPassword.js';
 import { authGateActive } from './lib/api.js';
@@ -340,6 +342,11 @@ function SessionGate(props: { children?: any }) {
 }
 
 export function App() {
+  // Capacitor mobile shell, first run: the bundle is served from the app itself, so there
+  // is no same-origin server to ask. Get the server's address before anything else loads.
+  // Never true in a browser (lib/server-config.ts), so the web app is unchanged.
+  if (needsServerSetup()) return <ConnectServer />;
+
   const [cfg] = createResource(() =>
     api.auth.config().catch(() => ({ mode: 'test' as const, disableOidc: false, portal: false, local: false, signup: 'off' as const })),
   );

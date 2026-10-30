@@ -7,6 +7,8 @@
  *   "remote" changes from another device).
  */
 
+import { apiUrl, needsServerSetup } from './server-config.js';
+
 type Handler = (data: unknown) => void;
 const handlers = new Map<string, Set<Handler>>();
 const attached = new Set<string>(); // events that have a live EventSource listener
@@ -110,6 +112,9 @@ function attach(event: string): void {
 
 function connect(): void {
   if (es || reconnectTimer !== undefined) return; // already live, or a reconnect is already pending
+  // Mobile shell before a server is chosen: there is nothing to stream from. Handlers stay
+  // registered; choosing a server reloads the app, which connects for real.
+  if (needsServerSetup()) return;
 
   // Flush pending ops before opening (or reopening) the stream so our own edits
   // are server-acked and won't arrive as surprising "remote" catch-up frames.
@@ -117,9 +122,11 @@ function connect(): void {
 
   // Pass the stored cursor as a query param on initial page load; the browser
   // sends `Last-Event-ID` automatically on mid-session reconnects.
-  const url = lastEventId
-    ? `/api/events?lastEventId=${encodeURIComponent(lastEventId)}`
-    : '/api/events';
+  const url = apiUrl(
+    lastEventId
+      ? `/api/events?lastEventId=${encodeURIComponent(lastEventId)}`
+      : '/api/events',
+  );
   es = new EventSource(url);
 
   es.addEventListener('open', () => {

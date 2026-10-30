@@ -213,3 +213,26 @@ describe('Login — already signed in', () => {
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith('/', { replace: true }));
   });
 });
+
+describe('Login — Capacitor mobile shell', () => {
+  // The shell reaches this screen right after choosing a server. If that server is the wrong
+  // one there must be a way back to the connect screen from here, because Settings (where the
+  // server card also lives) sits behind this very login.
+  it('offers "Change server…" with the connected address — in the shell only', async () => {
+    vi.stubGlobal('Capacitor', { isNativePlatform: () => true });
+    localStorage.setItem('ci-planning.server-url', 'http://192.168.1.20:3848');
+    try {
+      const { getByTestId, getByRole } = await renderLogin(cfg({ portal: false, local: true, signup: 'off' }));
+      expect(getByTestId('server-url')).toHaveTextContent('http://192.168.1.20:3848');
+      expect(getByRole('button', { name: /change server/i })).toBeInTheDocument();
+    } finally {
+      localStorage.removeItem('ci-planning.server-url');
+    }
+  });
+
+  it('shows no server card in a browser', async () => {
+    const { queryByTestId, queryByRole } = await renderLogin(cfg({ portal: false, local: true, signup: 'off' }));
+    expect(queryByTestId('server-url')).toBeNull();
+    expect(queryByRole('button', { name: /change server/i })).toBeNull();
+  });
+});

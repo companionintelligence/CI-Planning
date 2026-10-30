@@ -24,6 +24,7 @@ import type { TagAxis } from '../lib/overlay.js';
 import { isCommitment } from '../lib/overlay.js';
 import { tagColorVar } from '../lib/textures.js';
 import { api } from '../lib/api.js';
+import { apiUrl } from '../lib/server-config.js';
 import { showToast } from '../stores/index.js';
 import { localISODate, rangeUTC, addDays, weekDaysOf, monthGridOf } from '../lib/dates.js';
 import { minutesIntoDay } from '../lib/grid.js';
@@ -205,7 +206,7 @@ export function Calendar() {
   const exportHref = createMemo(() => {
     const d = visibleDays();
     const r = rangeUTC(d[0], d[d.length - 1]);
-    return `/api/blocks/export.ics?from=${encodeURIComponent(r.from)}&to=${encodeURIComponent(r.to)}`;
+    return apiUrl(`/api/blocks/export.ics?from=${encodeURIComponent(r.from)}&to=${encodeURIComponent(r.to)}`);
   });
 
   const views: ViewMode[] = ['day', 'week', 'month'];

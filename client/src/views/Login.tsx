@@ -4,6 +4,8 @@ import { Cpu, LogIn, Loader2, UserRound } from 'lucide-solid';
 import { api, CIPORTAL_START } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
 import { ForgotPassword } from '../components/ForgotPassword.js';
+import { ServerConnection } from '../components/ServerConnection.js';
+import { isNativeShell } from '../lib/server-config.js';
 
 /**
  * U3/A4 — the login screen. Rendered OUTSIDE the app shell (no nav/top bar), reached
@@ -230,6 +232,15 @@ export function Login() {
             </a>
             <Show when={signup() === 'invite'}> with an invite code</Show>
           </p>
+        </Show>
+
+        {/* Mobile shell only: sign-in comes after choosing a server, so a wrong or retired address
+            would otherwise be a dead end — Settings (where this card also lives) is behind this
+            very screen. */}
+        <Show when={isNativeShell()}>
+          <div class="mt-4">
+            <ServerConnection />
+          </div>
         </Show>
 
         <p class="text-center text-[11px] text-muted-foreground mt-4">Companion Planning</p>

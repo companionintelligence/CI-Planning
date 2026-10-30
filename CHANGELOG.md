@@ -4,6 +4,19 @@ All notable changes to Companion Planning. Releases are git tags (`v4.1.0` was t
 cut before this file existed); the container image publishes on each tag and reports the
 version at `GET /api/health` (`release`).
 
+## [Unreleased]
+
+### Added
+- **iOS and Android app shells (Capacitor).** `mobile/ios` and `mobile/android` wrap the
+  `client/` bundle in a native app that connects to a server you run. First run asks for the
+  server's address (checked against `/api/health` and `/api/auth/config`, kept on the device,
+  never built into the bundle); it can be changed under Settings → Profile → Server. All of it
+  is guarded behind the `window.Capacitor` global, so the web app and the container image are
+  unchanged. `pnpm --filter client build:mobile` builds the bundle into `client/dist`, and the
+  manual `mobile-build.yml` workflow builds a debug APK and an unsigned Simulator `.app`. Not
+  store-ready: see "Mobile app" in the README. Companion Portal sign-in is not available in the
+  app yet.
+
 ## [4.2.0] — 2026-10-29
 
 ### Changed

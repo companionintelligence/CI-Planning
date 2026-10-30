@@ -1,4 +1,8 @@
-const BASE = '/api';
+import { apiBase, needsServerSetup } from './server-config.js';
+
+// '/api' on the web (same-origin, unchanged); '<server>/api' inside the Capacitor shell.
+// See lib/server-config.ts.
+const BASE = apiBase();
 
 /**
  * A non-OK HTTP response, carrying the status alongside the server's message.
@@ -19,6 +23,10 @@ export class ApiError extends Error {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  // Mobile shell, first run, before the user has chosen a server: BASE is a bare '/api',
+  // which would hit the app's own bundle and come back as HTML. Fail as "never reached
+  // a server" instead (status 0), which is what the callers already treat as offline.
+  if (needsServerSetup()) throw new ApiError('No server selected', 0);
   let res: Response;
   try {
     res = await fetch(`${BASE}${path}`, {
