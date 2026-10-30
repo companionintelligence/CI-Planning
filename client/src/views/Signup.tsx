@@ -119,7 +119,7 @@ export function Signup() {
                     </p>
                   </div>
                   <Show when={portal()}>
-                    <a class="btn-primary w-full justify-center" href={CIPORTAL_START}>
+                    <a class="btn-primary w-full justify-center" href={CIPORTAL_START} rel="external">
                       <LogIn size={16} /> Sign up with Companion Portal
                     </a>
                   </Show>
@@ -226,7 +226,7 @@ export function Signup() {
                     or
                     <span class="flex-1 border-t border-border" />
                   </div>
-                  <a class="btn-secondary w-full justify-center" href={CIPORTAL_START}>
+                  <a class="btn-secondary w-full justify-center" href={CIPORTAL_START} rel="external">
                     <LogIn size={14} /> Sign up with Companion Portal
                   </a>
                 </Show>
