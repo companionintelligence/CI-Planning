@@ -144,7 +144,7 @@ export function Login() {
 
               {/* Companion Portal SSO — top-level navigation (NOT fetch) so the browser follows the redirect to the portal. */}
               <Show when={portal()}>
-                <a class="btn-primary w-full justify-center" href={CIPORTAL_START}>
+                <a class="btn-primary w-full justify-center" href={CIPORTAL_START} rel="external">
                   <LogIn size={16} />
                   Continue with Companion Portal
                 </a>
@@ -213,7 +213,7 @@ export function Login() {
         <Show when={signup() === 'portal'}>
           <p class="text-center text-xs text-muted-foreground mt-4">
             Don't have an account?{' '}
-            <a class="text-foreground underline underline-offset-2 hover:text-primary transition-colors" href={CIPORTAL_START}>
+            <a class="text-foreground underline underline-offset-2 hover:text-primary transition-colors" href={CIPORTAL_START} rel="external">
               Create one with Companion Portal
             </a>
           </p>
