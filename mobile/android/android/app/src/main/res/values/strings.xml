@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Companion Planning</string>
+    <string name="title_activity_main">Companion Planning</string>
+    <string name="package_name">com.companionintelligence.planning</string>
+    <string name="custom_url_scheme">com.companionintelligence.planning</string>
+</resources>

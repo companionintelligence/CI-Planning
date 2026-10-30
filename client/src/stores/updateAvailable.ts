@@ -1,5 +1,6 @@
 import { createSignal } from 'solid-js';
 import { onReconnect } from '../lib/sse.js';
+import { apiUrl } from '../lib/server-config.js';
 
 /**
  * Piggybacks on the SSE reconnect signal (lib/sse.ts) — a container restart under
@@ -23,7 +24,7 @@ async function checkForUpdate(): Promise<void> {
   if (!clientRelease) return; // not built with a release (local dev) — nothing to compare
 
   try {
-    const res = await fetch('/api/health', { credentials: 'omit' }); // public + policy-only, no session needed
+    const res = await fetch(apiUrl('/api/health'), { credentials: 'omit' }); // public + policy-only, no session needed
     if (!res.ok) return;
     const { release } = (await res.json()) as { release?: string | null };
     if (release && release !== clientRelease) setUpdateAvailable(true);

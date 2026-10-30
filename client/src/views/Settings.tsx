@@ -13,6 +13,8 @@ import { PatternBlockSettings } from '../components/PatternBlockSettings.js';
 import { CategorySettings } from '../components/CategorySettings.js';
 import { PeopleSettings } from '../components/PeopleSettings.js';
 import { enablePush, disablePush, pushState } from '../lib/push.js';
+import { apiUrl, isNativeShell } from '../lib/server-config.js';
+import { ServerConnection } from '../components/ServerConnection.js';
 import { on } from '../lib/sse.js';
 import { GOOGLE_CONNECT_ENABLED } from '../lib/flags.js';
 import { ollamaHealth, ollamaHealthDescription } from '../lib/ollama-health.js';
@@ -808,6 +810,11 @@ export function Settings() {
         {/* ── PROFILE TAB ─────────────────────────────────────────────────────── */}
         <Show when={activeTab() === 'profile'}>
 
+          {/* Mobile shell only: which server this app is pointed at, and how to change it. */}
+          <Show when={isNativeShell()}>
+            <ServerConnection />
+          </Show>
+
           {/* Your Profile — the owner's own identity. Merges what used to be two cards
               ("Profile" + "Account"): the split put the display name and the login
               handle on separate cards for no reason a user could see. */}
@@ -1103,7 +1110,7 @@ export function Settings() {
             <div class="flex flex-col gap-4">
               <div class="flex items-center gap-3 flex-wrap">
                 <a
-                  href="/api/export"
+                  href={apiUrl('/api/export')}
                   download="companion-export.json"
                   class="btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5"
                 >

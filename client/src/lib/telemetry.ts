@@ -24,6 +24,7 @@
 
 import * as Sentry from '@sentry/browser';
 import { scrubBreadcrumbData, scrubHeaders, scrubString, scrubUrl, scrubValue } from './telemetry-scrub.js';
+import { apiUrl } from './server-config.js';
 
 let initialized = false;
 
@@ -105,7 +106,7 @@ export function scrubBrowserEvent(event: Sentry.ErrorEvent): Sentry.ErrorEvent |
  */
 async function reportingPermitted(): Promise<boolean> {
   try {
-    const res = await fetch('/api/config/telemetry', {
+    const res = await fetch(apiUrl('/api/config/telemetry'), {
       // Policy, not user data — no credentials needed, and the endpoint is public.
       credentials: 'omit',
       cache: 'no-store',

@@ -46,6 +46,7 @@ client.
 
 - **Server** — Koa + TypeScript (`server/`), SQLite via better-sqlite3 + Drizzle, cron jobs via croner
 - **Client** — SolidJS + Tailwind PWA (`client/`), built by Vite into `server/public/`
+- **Mobile** — iOS and Android shells (`mobile/`) that wrap the same client and connect to a server you run — see [Mobile app](#mobile-app-ios-and-android)
 - **One process, one port** — the server serves both the API and the UI on **3848**
 
 **Source of truth for docs:** this README describes the running app;
@@ -1846,6 +1847,7 @@ Companion Portal sign-in described above).
 | `DATABASE_URL` / `STORE_BACKEND` | (unset) / `sqlite` | **Internal, in-progress Postgres cutover — not a supported deployment option yet.** Both backends coexist behind `db/store.ts` while ~386 raw-SQL call sites migrate file by file; flipping `STORE_BACKEND=postgres` is the cutover itself and is only correct once every call site uses the facade, so boot fails closed without a `DATABASE_URL` rather than silently serving from a store the data isn't in. SQLite remains the single source of truth described elsewhere in this README until that migration finishes. |
 | `NODE_ENV` | (unset) | `production` enables fail-closed boot guards (e.g. forbids `AUTH_MODE=test`). |
 | `TRUST_PROXY` | `false` | Set when behind a trusted TLS-terminating reverse proxy (e.g. CI-Hub's tunnel): honors `X-Forwarded-Proto` (⇒ Secure session cookies over HTTPS) and `X-Forwarded-For` (⇒ real client IP for login rate-limiting). |
+| `CORS_ALLOWED_ORIGINS` | (unset) | Comma-separated browser origins allowed to call `/api` cross-origin, echoed back exactly (never `*`). Empty by default: the web app is same-origin. Only the [mobile app](#mobile-app-ios-and-android)'s live-update stream needs it: `capacitor://localhost,https://localhost`. |
 | `CSP_EXTRA_CONNECT_SRC` | (unset) | Extra origins the browser may call, added to the Content-Security-Policy `connect-src` (space/comma-separated). The app's own origin and the Sentry DSN origin are always allowed. Every response carries security headers (CSP, `nosniff`, `Referrer-Policy`, `X-Frame-Options`, `Permissions-Policy`; HSTS over HTTPS). |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama endpoint. Unreachable ⇒ AI features degrade gracefully (template briefings, dedupe off). |
 | `OLLAMA_FAST` | `qwen2.5:0.5b` | Fast model for extraction/triage. Must be pulled (`ollama pull`) or set to an installed model. Legacy alias: `OLLAMA_SMALL` (still accepted; `OLLAMA_FAST` wins when both are set). |
@@ -1917,6 +1919,129 @@ Companion Portal sign-in described above).
 
 **Persistence**: everything lives in the single SQLite file at `DB_PATH`. Mount a
 volume at `/data` (as above) and your tasks survive container recreation.
+
+## Mobile app (iOS and Android)
+
+`mobile/` holds two [Capacitor](https://capacitorjs.com) shells, `mobile/ios` and `mobile/android`
+(app id `com.companionintelligence.planning`, name *Companion Planning*). Each wraps the same
+`client/` bundle in a native app and talks to **a CI-Planning server that you run**. There is no
+hosted backend and no separate mobile codebase: the app is a window onto your own instance, so it is
+only useful with one the phone can reach.
+
+| | iOS | Android |
+|---|---|---|
+| Path | `mobile/ios` | `mobile/android` |
+| Toolchain | macOS, Xcode 26+ (Swift Package Manager; no CocoaPods) | JDK 21, Android SDK 36 (the Gradle wrapper pins Gradle 8.14 / AGP 8.13) |
+| Minimum OS | iOS 15 | Android 7 (API 24), target API 36 |
+
+### How it connects
+
+- **First run asks for your server.** The app opens on *Connect to your server*: type the address you
+  would open in a browser (`http://192.168.1.20:3848`, `https://planning.example.com`, a Tailscale
+  address). It checks the public `GET /api/health` and `GET /api/auth/config` and saves the address
+  only if they look like a Companion Planning server. Change it later under **Settings → Profile →
+  Server**, or from the sign-in screen. Switching servers discards edits made offline that had not
+  synced yet, because the queued edits are addressed to the old server.
+- **The address is configuration, not a secret, and is never built into the bundle.** It lives in the
+  app's local storage on the device. Credentials are not stored by the app at all: you sign in through
+  the server's own login screen, and the session cookie sits in the operating system's cookie jar.
+- **The web app does not change.** `client/src/lib/server-config.ts` is the one place that knows the
+  difference. In a browser (no `window.Capacitor`) the API base is `/api` as ever; in the shell it is
+  `<your server>/api`. Everything else Capacitor-specific is guarded the same way, so the Docker image
+  and `pnpm dev` behave exactly as before.
+- **Requests use the native HTTP stack** (`CapacitorHttp`). The app is served from
+  `capacitor://localhost` (iOS) or `https://localhost` (Android), so a call to your server is
+  cross-origin; going through native HTTP means the server needs no CORS configuration for them.
+
+### What your server needs
+
+- **Reachability.** The phone must reach the server: same Wi-Fi, Tailscale, or a public `https://`
+  address. Android allows plain `http://` to any host. iOS allows it only for IP addresses, `.local`
+  names and single-label host names (App Transport Security's local-networking exemption); anything
+  else, such as a MagicDNS name, must be `https://`. In the iOS Simulator your machine is
+  `localhost`; in the Android emulator it is `10.0.2.2`.
+- **Sign-in.** The app is built for username and password sign-in (`AUTH_MODE=sso` with
+  `DISABLE_OIDC=true`, the Docker Compose default) and for the open dev mode (`AUTH_MODE=test`).
+  **Companion Portal sign-in is not available in the app yet** — it is a browser redirect that cannot
+  return to the app — so a server that only offers Portal sign-in cannot be used from the app until
+  that is built.
+- **Live updates are limited.** The server-sent event stream (`/api/events`) is opened by the web
+  view, not the native HTTP stack: it only receives anything if the server's CORS allow-list names the
+  app, and it cannot carry the session cookie. Against a server that requires sign-in the app
+  therefore gets no push updates; it still works, and shows changes after its own actions and on
+  reload. Against an open dev server, add
+  `CORS_ALLOWED_ORIGINS=capacitor://localhost,https://localhost` to switch them on.
+
+Also not available in the app yet: browser reminders and Web Push (there is no service worker in the
+shell), and the *Export JSON* / calendar `.ics` links, which open in the system browser outside the
+app's session. Native push and a share-sheet export are separate pieces of work.
+
+### Build and run
+
+The shells are **not** members of the pnpm workspace (`pnpm-workspace.yaml` lists only `server` and
+`client`). Capacitor's CLI, SwiftPM and Gradle need a conventional `node_modules`, and the root install
+must not change because a native project exists. Each shell is its own pnpm project, with its own
+lockfile, and a `pnpm-workspace.yaml` that stops pnpm walking up into the root workspace. The shells
+consume the client only as a build artifact (`webDir: ../../client/dist`).
+
+```bash
+# once, at the repo root (the client's dependencies come from GitHub Packages, as for any install)
+pnpm install
+
+# build the client for the shells → client/dist. Not `pnpm build`, which writes server/public for the container.
+pnpm --filter client build:mobile
+
+# Android
+cd mobile/android
+pnpm install                                  # the shell's own dependencies
+pnpm exec cap sync android                    # copies client/dist into the project
+cd android && ./gradlew assembleDebug         # → app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+
+# iOS (macOS, Xcode 26+)
+cd mobile/ios
+pnpm install
+pnpm exec cap sync ios
+pnpm exec cap open ios                        # run from Xcode, or build for the Simulator unsigned:
+xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug \
+  -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+  -derivedDataPath ios/DerivedData CODE_SIGNING_ALLOWED=NO build
+```
+
+Inside either shell directory, `pnpm build` is `build:web` (the client build above) followed by
+`cap sync`. The generated `ios/` and `android/` projects are committed; the copies of the web bundle
+and `capacitor.config.json` that `cap sync` writes into them are git-ignored.
+
+The manual workflow [`.github/workflows/mobile-build.yml`](.github/workflows/mobile-build.yml) builds
+both on clean runners and uploads a debug APK and a zipped Simulator `.app` as artifacts. Like every
+workflow here it is `workflow_dispatch` only (`gh workflow run mobile-build.yml --ref <branch>`), and
+it is independent of the Docker publish workflow and release tags.
+
+### What a store submission would still need
+
+The artifacts above are for development and QA: the APK is signed with Gradle's throwaway debug key
+and the Simulator `.app` is unsigned. Nothing here is store-ready.
+
+- **Accounts and signing.** An Apple Developer Program membership (register the bundle id; a
+  distribution certificate and provisioning profile; set the team in the Xcode project) and a Google
+  Play Console developer account. Android needs an upload keystore and a signed AAB
+  (`bundleRelease`); the Gradle project has no release signing configured, and `versionCode` /
+  `versionName` and the iOS `MARKETING_VERSION` / build number are still the placeholders `1` / `1.0`.
+  Release lanes in CI need the signing secrets and version stamping.
+- **Artwork and listings.** The app icon and launch screen are Capacitor's placeholders; both stores
+  need the real icon set (iOS 1024 px without alpha; Android adaptive icon), screenshots, descriptions,
+  a support URL, a **privacy policy URL**, content ratings, and the privacy disclosures (Apple's App
+  Privacy answers and Google's Data safety form). Set `ITSAppUsesNonExemptEncryption` once the export
+  answer is settled.
+- **App Review.** Apple will not accept a client that cannot be exercised, so submission needs a
+  reachable **demo server with review credentials**, and a position on guideline 4.2 (a web-technology
+  app must feel like an app). The app lets a person create an account on the server (`/signup`), which
+  may bring Apple's in-app account-deletion rule (5.1.1(v)) into play. Play will ask why
+  `usesCleartextTraffic` is on (people's own LAN servers).
+- **Product gaps listed above.** Companion Portal sign-in (system browser with a custom-scheme or
+  universal-link return, PKCE), live updates for session-authenticated servers, native push or local
+  notifications for reminders, and downloads through the share sheet.
+- **Real devices.** Everything here was exercised in the iOS Simulator and an Android emulator only.
 
 ## Local development
 
