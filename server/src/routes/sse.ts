@@ -50,6 +50,12 @@ export function __isRegistered(stream: PassThrough): boolean {
   return clients.has(stream);
 }
 
+/** Test-only: how many streams are registered. For a test that opens a real connection and
+ *  has no handle on the server-side stream, to wait for the route to see it come and go. */
+export function __clientCount(): number {
+  return clients.size;
+}
+
 /**
  * Write one row to the append-only `sync_events` table for catch-up replay.
  * Returns the assigned `seq` (0 on write failure, e.g. pre-migration test state).

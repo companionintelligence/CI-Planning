@@ -6,6 +6,14 @@ version at `GET /api/health` (`release`).
 
 ## [Unreleased]
 
+### Fixed
+- **No stack trace in the server log each time a live-update stream closes.** Koa reports a
+  response stream that closes before it ends (`ERR_STREAM_PREMATURE_CLOSE`) as an error, and
+  with no listener prints the stack to stderr. For `/api/events` that is the normal ending (a
+  reload, a closed tab, a locked phone), so every disconnect logged a failure that was not one.
+  The app now owns the `error` listener: it drops that one code and logs the rest through the
+  server's logger.
+
 ### Added
 - **iOS and Android app shells (Capacitor).** `mobile/ios` and `mobile/android` wrap the
   `client/` bundle in a native app that connects to a server you run. First run asks for the
