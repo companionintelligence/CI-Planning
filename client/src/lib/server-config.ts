@@ -45,6 +45,21 @@ export function isNativeShell(): boolean {
 }
 
 /**
+ * Can a flow that sends the page to another site, and expects that site to send the
+ * person back with something in the cookie jar, work here?
+ *
+ * In a browser, yes. In the shell, no: Capacitor cancels a top-level navigation to any
+ * host that is not the app's own and opens it in the system browser instead (read in
+ * 8.6.0: `WebViewDelegationHandler` on iOS, `Bridge.launchIntent` on Android). The flow
+ * then runs in Safari or Chrome, the session cookie is set there, and nothing ever comes
+ * back to the app. That is every flow built as "redirect out, redirect back": signing in
+ * with Companion Portal, "Connect Google", and the Companion Memory Portal connect.
+ */
+export function supportsRedirectFlows(): boolean {
+  return !isNativeShell();
+}
+
+/**
  * Shell only: stop iOS zooming the page in whenever a text field takes focus. WKWebView
  * does that for any field whose text is under 16px, and most of this app's inputs are
  * 14px (`text-sm`); inside a native app it just looks like the layout broke. A viewport

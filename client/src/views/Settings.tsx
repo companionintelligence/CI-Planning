@@ -13,7 +13,7 @@ import { PatternBlockSettings } from '../components/PatternBlockSettings.js';
 import { CategorySettings } from '../components/CategorySettings.js';
 import { PeopleSettings } from '../components/PeopleSettings.js';
 import { enablePush, disablePush, pushState } from '../lib/push.js';
-import { apiUrl, isNativeShell } from '../lib/server-config.js';
+import { apiUrl, isNativeShell, supportsRedirectFlows } from '../lib/server-config.js';
 import { ServerConnection } from '../components/ServerConnection.js';
 import { on } from '../lib/sse.js';
 import { GOOGLE_CONNECT_ENABLED } from '../lib/flags.js';
@@ -108,6 +108,9 @@ export function Settings() {
   // AA0b — the CI-Portal "sign in" button only makes sense in SSO mode (mode='sso'
   // with OIDC enabled); local-login / standalone deployments use the URL+key form.
   const ssoAvailable = () => authCfg()?.mode === 'sso' && authCfg()?.disableOidc === false;
+  // Connecting Companion Memory through the Portal is a redirect out and back, which the app
+  // shell cannot complete (see supportsRedirectFlows); there the URL + key form is the way.
+  const memoryPortalConnect = () => ssoAvailable() && supportsRedirectFlows();
   const [backupEmail, setBackupEmail] = createSignal('');
   const [backupSaving, setBackupSaving] = createSignal(false);
   createEffect(() => { if (me()) setBackupEmail(me()!.backupEmail ?? ''); });
@@ -1765,13 +1768,13 @@ export function Settings() {
                     <div class="flex items-center gap-1.5">
                       {/* AA0b — SSO path (multi-tenant): a refresh token is stored so the
                           connector self-refreshes; no key to paste. */}
-                      <Show when={ssoAvailable()}>
+                      <Show when={memoryPortalConnect()}>
                         <button type="button" onClick={connectMemoryViaPortal} disabled={memBusy()} class="btn-secondary text-xs px-3 py-1.5">
                           <Link2 size={12} /> {memBusy() ? 'Connecting…' : 'Sign in with Companion Portal'}
                         </button>
                       </Show>
                       <button type="button" onClick={() => setMemConnectOpen(!memConnectOpen())} class="btn-ghost text-xs px-3 py-1.5">
-                        <Show when={ssoAvailable()} fallback={<><Link2 size={12} /> Connect</>}>URL + key</Show>
+                        <Show when={memoryPortalConnect()} fallback={<><Link2 size={12} /> Connect</>}>URL + key</Show>
                       </button>
                     </div>
                   </div>
@@ -2075,9 +2078,19 @@ export function Settings() {
               {/* Connect is Google-only (the sole provider with a connect flow) and shows
                   only when Google is live and no Google account is connected yet. */}
               <Show when={integrations()?.google.liveEnabled && !(connections() ?? []).some((c) => c.provider === 'google')}>
-                <button type="button" onClick={connectGoogle} class="btn-secondary text-xs px-3 py-1.5">
-                  <Link2 size={12} /> Connect Google
-                </button>
+                <Show
+                  when={supportsRedirectFlows()}
+                  fallback={
+                    // The consent screen is a redirect the app shell cannot return from (see
+                    // supportsRedirectFlows), but the connection is the server's, not the
+                    // phone's: made once from a browser, it appears here.
+                    <span class="text-[11px] text-muted-foreground">Connect Google from a browser</span>
+                  }
+                >
+                  <button type="button" onClick={connectGoogle} class="btn-secondary text-xs px-3 py-1.5">
+                    <Link2 size={12} /> Connect Google
+                  </button>
+                </Show>
               </Show>
             </div>
 

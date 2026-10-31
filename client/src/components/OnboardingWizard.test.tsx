@@ -380,6 +380,43 @@ describe('OnboardingWizard', () => {
       window.history.replaceState({}, '', originalHref); // navigation is stubbed in jsdom; restore
     });
 
+    it('Step 3 (Connect), in the app shell: no Connect Google, says where to connect it, and the rest of the step works', async () => {
+      // The consent screen is a redirect the shell cannot return from (supportsRedirectFlows).
+      vi.stubGlobal('Capacitor', { isNativePlatform: () => true });
+      try {
+        setPrefs({ onboarded_at: null });
+        setIntegrationsValue({ ...OFF_INTEGRATIONS, google: { ...OFF_INTEGRATIONS.google, liveEnabled: true } });
+        mount();
+        await advanceToConnectStep();
+
+        expect(screen.queryByText('Connect Google')).toBeNull();
+        expect(screen.getByText(/Google is connected from a browser, not from this app/)).toBeInTheDocument();
+        expect(screen.getByText(/You can also explore with sample data/)).toBeInTheDocument();
+        await screen.findByText('Try with sample data');
+        expect((screen.getByText('Next') as HTMLButtonElement).disabled).toBe(false);
+        expect(googleStartMock).not.toHaveBeenCalled();
+        expect(localStorage.getItem('cp-ftue-resume')).toBeNull();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('Step 3 (Connect), in the app shell, reopened from the empty-state CTA: no sample-data sentence, as there is no sample-data button', async () => {
+      vi.stubGlobal('Capacitor', { isNativePlatform: () => true });
+      try {
+        setPrefs({ onboarded_at: null });
+        setOnboardingSampleDataAllowedValue(false); // what openQuickConnect() does
+        mount();
+        await advanceToConnectStep();
+
+        expect(screen.getByText(/Google is connected from a browser, not from this app/)).toBeInTheDocument();
+        expect(screen.queryByText(/explore with sample data/)).toBeNull();
+        expect(screen.queryByText('Try with sample data')).toBeNull();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
     it('Step 3: Try with sample data installs the curated set and advances', async () => {
       setPrefs({ onboarded_at: null });
       mount();

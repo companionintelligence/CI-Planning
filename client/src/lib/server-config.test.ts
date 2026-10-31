@@ -11,6 +11,7 @@ import {
   needsServerSetup,
   normalizeServerUrl,
   probeServer,
+  supportsRedirectFlows,
 } from './server-config.js';
 import * as oplog from './oplog.js';
 
@@ -330,5 +331,20 @@ describe('lockViewportZoom', () => {
     asShell();
     vi.stubGlobal('document', { querySelector: () => null });
     expect(() => lockViewportZoom()).not.toThrow();
+  });
+});
+
+describe('supportsRedirectFlows', () => {
+  // Capacitor cancels a top-level navigation to any host that is not the app's own and opens it
+  // in the system browser, so a flow that goes out and expects to come back with a cookie (Portal
+  // sign-in, Connect Google) finishes in Safari or Chrome and never in the app.
+  it('is true in a browser, where a redirect out can come back', () => {
+    asBrowser();
+    expect(supportsRedirectFlows()).toBe(true);
+  });
+
+  it('is false in the shell', () => {
+    asShell();
+    expect(supportsRedirectFlows()).toBe(false);
   });
 });
