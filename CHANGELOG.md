@@ -15,6 +15,12 @@ version at `GET /api/health` (`release`).
   server's logger.
 
 ### Added
+- **`GET /api/sync/changes?since=<seq>`.** The `sync_events` log the SSE stream replays from,
+  answered as JSON for a client that cannot hold an `EventSource`: the same rows, the same
+  500-event window and the same overflow rule (`resync: true` means refetch everything, and is
+  also the answer to a cursor ahead of anything the owner has, as after a restored backup). No
+  `since` returns the latest cursor and no events. The mobile app shell polls it, since an
+  `EventSource` there cannot carry the session cookie. SSE is unchanged for browsers.
 - **iOS and Android app shells (Capacitor).** `mobile/ios` and `mobile/android` wrap the
   `client/` bundle in a native app that connects to a server you run. First run asks for the
   server's address (checked against `/api/health` and `/api/auth/config`, kept on the device,

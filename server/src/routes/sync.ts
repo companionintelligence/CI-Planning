@@ -4,10 +4,22 @@ import { currentOwnerId } from '../lib/context.js';
 import { applyOp, type Op, type ApplyResult } from '../sync/apply.js';
 import { mirrorTaskStatusToBlocks } from '../services/block-task-sync.js';
 import { applySyncedObjectiveUpkeep } from '../services/objectives.js';
-import { logSyncEvent, emitToClients } from './sse.js';
+import { logSyncEvent, emitToClients, maxSyncSeq, readSyncGap } from './sse.js';
 
 /** Maximum ops in a single batch — prevents runaway requests. */
 const BATCH_LIMIT = 200;
+
+/** Digits only, short enough that `Number()` is exact: `since` is a cursor, never arithmetic. */
+const CURSOR_RE = /^\d{1,15}$/;
+
+/** A stored payload is JSON the server wrote itself; if one ever is not, hand back the raw text, as the SSE frame would. */
+function parsePayload(payload: string): unknown {
+  try {
+    return JSON.parse(payload);
+  } catch {
+    return payload;
+  }
+}
 
 /**
  * POST /api/sync
@@ -104,6 +116,76 @@ export function syncRouter() {
     }
 
     ctx.body = { results };
+  });
+
+  /**
+   * GET /api/sync/changes?since=<seq>
+   *
+   * The polling twin of the SSE stream (`/api/events`): the same `sync_events` rows, the
+   * same replay window and the same overflow rule, answered as one JSON document. It is for
+   * a client that cannot hold an `EventSource`: the Capacitor app shell is served from its
+   * own origin, so an `EventSource` there carries no session cookie and the server allows
+   * no foreign origin. Such a client sends its requests through the native HTTP stack,
+   * cookie and all, and calls this with the `cursor` from its last answer.
+   *
+   *   no `since`   start from now: no events, `cursor` is the owner's latest seq. Not the
+   *                same as `since=0`, which means "everything after 0". An owner with no
+   *                events has cursor 0, and its first event must not be skipped.
+   *   `since=N`    the events after N, in order (at most 500), `cursor` is the last one's
+   *                seq (N itself when there are none).
+   *   gap over 500 no events, `resync: true`, `cursor` is the latest seq: refetch
+   *                everything, then carry on from the cursor. The same call the stream
+   *                makes with a `sync:resync` frame.
+   *   ahead of the log  the same answer. A cursor higher than anything the owner has means
+   *                the log it came from is gone (the database was restored from an older
+   *                copy, or the server was set up afresh at the same address). The stream
+   *                shrugs that off, because it pushes whatever happens next whatever the
+   *                cursor says; a poller would hear nothing until the log caught up to its
+   *                number, so it is told to start over from the real one.
+   *
+   * Each event is `{ seq, event, data }`, the parts of an SSE frame with `data` already
+   * parsed. Behind the router-wide `requireAuth` like every other `/api` route: the session
+   * cookie in `sso` mode, `x-api-key` in `standalone`, and the `planning:read` scope.
+   */
+  router.get('/api/sync/changes', async (ctx) => {
+    const raw = ctx.query.since;
+    let since: number | null = null;
+    if (raw !== undefined) {
+      if (typeof raw !== 'string' || !CURSOR_RE.test(raw)) {
+        ctx.status = 400;
+        ctx.body = { error: 'since must be a non-negative integer' };
+        return;
+      }
+      since = Number(raw);
+    }
+
+    // A poll answer is stale the moment it is sent; keep any proxy from replaying one.
+    ctx.set('Cache-Control', 'no-store');
+    const ownerId = currentOwnerId();
+
+    if (since === null) {
+      ctx.body = { events: [], cursor: await maxSyncSeq(ownerId), resync: false };
+      return;
+    }
+
+    const gap = await readSyncGap(ownerId, since);
+    if (gap.resync) {
+      ctx.body = { events: [], cursor: gap.maxSeq, resync: true };
+      return;
+    }
+    if (gap.rows.length === 0) {
+      const head = await maxSyncSeq(ownerId);
+      if (since > head) {
+        ctx.body = { events: [], cursor: head, resync: true };
+        return;
+      }
+    }
+    const events = gap.rows.map((row) => ({
+      seq: Number(row.seq),
+      event: row.event,
+      data: parsePayload(row.payload),
+    }));
+    ctx.body = { events, cursor: events.length > 0 ? events[events.length - 1]!.seq : since, resync: false };
   });
 
   return router;
