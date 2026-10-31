@@ -11,7 +11,9 @@
  * All four values persist to localStorage: a rail you collapsed and a width you
  * dragged are preferences, and losing them on every reload makes the controls feel
  * broken. Reads are defensive — private mode throws on access, and a stored width
- * from an older build must not be able to wedge the drawer off-screen.
+ * from an older build must not be able to wedge the drawer off-screen. The one
+ * exception is whether the drawer is open on a phone, which is not a preference
+ * (see "Right details drawer").
  */
 import { createSignal } from 'solid-js';
 
@@ -25,6 +27,18 @@ const KEY = {
 export const DETAILS_MIN_W = 300;
 export const DETAILS_MAX_W = 720;
 export const DETAILS_DEFAULT_W = 400;
+
+/** The layout breakpoint index.css turns the drawer into a bottom sheet at (Tailwind's `md`, 768px, from below). */
+const PHONE_QUERY = '(max-width: 767px)';
+
+/** Is the page laid out as a phone? Read when asked, not cached: the answer is only used for what to do now. */
+function isPhone(): boolean {
+  try {
+    return typeof window !== 'undefined' && window.matchMedia?.(PHONE_QUERY).matches === true;
+  } catch {
+    return false;
+  }
+}
 
 function readBool(key: string, fallback: boolean): boolean {
   try {
@@ -66,12 +80,20 @@ export function toggleNav(): void {
 }
 
 // ── Right details drawer ──────────────────────────────────────────────────
-const [detailsOpen, setDetailsOpenSignal] = createSignal(readBool(KEY.open, true));
+/**
+ * Open on a desktop, where it is a docked column beside the content, and remembered. On a
+ * phone it is a sheet laid over up to 62% of the screen (index.css), so it starts closed:
+ * open at launch it covers what the person opened the app to see, and it comes up by itself
+ * when they select something (`revealDetails`). It is not remembered there either. "Open" on
+ * a phone means "something is selected", not a layout the person chose, so saving it would
+ * bring the sheet back on the next launch for no reason they could see.
+ */
+const [detailsOpen, setDetailsOpenSignal] = createSignal(isPhone() ? false : readBool(KEY.open, true));
 export { detailsOpen };
 
 export function setDetailsOpen(next: boolean): void {
   setDetailsOpenSignal(next);
-  write(KEY.open, String(next));
+  if (!isPhone()) write(KEY.open, String(next));
 }
 export function toggleDetails(): void {
   setDetailsOpen(!detailsOpen());
