@@ -22,6 +22,17 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<!-- Export compliance. The app's only cryptography is HTTPS/TLS to the server the person
+	     runs, done by the operating system (URLSession, WKWebView). It has no encryption of
+	     its own (the client's one crypto call is getRandomValues for ids, and no plugin is
+	     installed), which is the exempt case, so each upload is not asked the export
+	     questions. Companion Memory's Info.plist gives the same answer on the same basis;
+	     its notes re-open that for its SQLCipher store, which Planning does not have. If a
+	     plugin that brings its own cryptography is ever added, this must be answered again,
+	     by someone qualified to: it is the company's attestation to Apple and to the US
+	     export rules, so the owner should confirm it before the first upload. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSAppTransportSecurity</key>

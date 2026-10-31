@@ -40,6 +40,24 @@ describe('iOS', () => {
     for (const target of targets) expect(atLeast(target, FLOOR.ios), target).toBe(true);
   });
 
+  it('ships a privacy manifest in the app target, and says it tracks nothing', () => {
+    const path = join(repo, 'mobile', 'ios', 'ios', 'App', 'App', 'PrivacyInfo.xcprivacy');
+    expect(existsSync(path)).toBe(true);
+    // A file that is on disk but not in the Resources phase is not in the app, so check the phase itself.
+    const resources = pbxproj.split('/* Begin PBXResourcesBuildPhase section */')[1]?.split('/* End PBXResourcesBuildPhase section */')[0];
+    expect(resources).toMatch(/PrivacyInfo\.xcprivacy in Resources/);
+    const group = pbxproj.split('/* Begin PBXGroup section */')[1]?.split('/* End PBXGroup section */')[0];
+    expect(group).toMatch(/PrivacyInfo\.xcprivacy/);
+
+    const manifest = readFileSync(path, 'utf8');
+    expect(manifest).toMatch(/<key>NSPrivacyTracking<\/key>\s*<false\/>/);
+    expect(manifest).toMatch(/<key>NSPrivacyTrackingDomains<\/key>\s*<array\/>/);
+  });
+
+  it('answers the export-compliance question, so TestFlight does not ask on every upload', () => {
+    expect(infoPlist).toMatch(/<key>ITSAppUsesNonExemptEncryption<\/key>\s*<false\/>/);
+  });
+
   it('does not turn App Transport Security off, only relaxes it for the local network', () => {
     expect(infoPlist).toMatch(/<key>NSAllowsLocalNetworking<\/key>\s*<true\/>/);
     expect(infoPlist).not.toMatch(/NSAllowsArbitraryLoads<\/key>\s*<true\/>/);
