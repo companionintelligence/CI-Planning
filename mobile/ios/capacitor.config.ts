@@ -22,6 +22,12 @@ const config: CapacitorConfig = {
     // What shows in the inset strips and when over-scrolling: the app's dark theme colour
     // (the same #041620 as client/index.html's theme-color).
     backgroundColor: '#041620',
+    // Pinch-to-zoom stays on: WCAG 1.4.4, and for a planner some people simply cannot read
+    // at 1x. Capacitor's default is OFF, and it is independent of the page's viewport tag
+    // (client/index.html carries no maximum-scale), so both have to allow it. What keeps iOS
+    // from zooming in whenever a field takes focus, the reason the shell used to lock zoom,
+    // is the 16px floor on touch devices in client/src/index.css.
+    zoomEnabled: true,
   },
   plugins: {
     // Send fetch / XHR through the native HTTP stack (URLSession) instead of WKWebView's.

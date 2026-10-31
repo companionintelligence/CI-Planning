@@ -18,6 +18,11 @@ const config: CapacitorConfig = {
     // The WebView's own background (shown before first paint and when over-scrolling): the
     // app's dark theme colour, the same #041620 as client/index.html's theme-color.
     backgroundColor: '#041620',
+    // Pinch-to-zoom stays on: WCAG 1.4.4. Capacitor's default is OFF, and it is independent
+    // of the page's viewport tag (client/index.html carries no maximum-scale), so both have
+    // to allow it. Fields stay at 16px or more on touch devices (client/src/index.css), so
+    // focusing one does not zoom the page.
+    zoomEnabled: true,
     // No allowMixedContent. The page is https://localhost and the user's server is often
     // plain http on their LAN, but nothing here loads http from the page: fetch and XHR
     // go through native HTTP (CapacitorHttp below), which mixed-content rules do not cover,

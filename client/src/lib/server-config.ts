@@ -59,23 +59,6 @@ export function supportsRedirectFlows(): boolean {
   return !isNativeShell();
 }
 
-/**
- * Shell only: stop iOS zooming the page in whenever a text field takes focus. WKWebView
- * does that for any field whose text is under 16px, and most of this app's inputs are
- * 14px (`text-sm`); inside a native app it just looks like the layout broke. A viewport
- * `maximum-scale=1` is the switch. Nothing is taken away from the person: the shell
- * already disables pinch-zoom (Capacitor's `zoomEnabled` defaults to false). No-op in a
- * browser, where zooming is a right and the viewport tag stays as written.
- */
-export function lockViewportZoom(): void {
-  if (!isNativeShell() || typeof document === 'undefined') return;
-  const meta = document.querySelector('meta[name="viewport"]');
-  const content = meta?.getAttribute('content') ?? '';
-  if (meta && !/maximum-scale/i.test(content)) {
-    meta.setAttribute('content', `${content}, maximum-scale=1`);
-  }
-}
-
 /** The saved server URL, or null when none has been chosen (or storage is unavailable). */
 export function getServerUrl(): string | null {
   try {

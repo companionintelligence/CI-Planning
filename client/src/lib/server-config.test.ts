@@ -7,7 +7,6 @@ import {
   connectTo,
   getServerUrl,
   isNativeShell,
-  lockViewportZoom,
   needsServerSetup,
   normalizeServerUrl,
   probeServer,
@@ -293,44 +292,6 @@ describe('changeServer', () => {
     await changeServer();
 
     expect(await oplog.pending()).toHaveLength(0);
-  });
-});
-
-describe('lockViewportZoom', () => {
-  /** A viewport <meta> reduced to what the function touches. */
-  function stubViewport(content: string | null) {
-    const meta = { content, getAttribute: () => meta.content, setAttribute: (_: string, v: string) => { meta.content = v; } };
-    vi.stubGlobal('document', { querySelector: (sel: string) => (sel === 'meta[name="viewport"]' ? meta : null) });
-    return meta;
-  }
-
-  it('adds maximum-scale=1 in the shell, once', () => {
-    asShell();
-    const meta = stubViewport('width=device-width, initial-scale=1.0');
-    lockViewportZoom();
-    expect(meta.content).toBe('width=device-width, initial-scale=1.0, maximum-scale=1');
-    lockViewportZoom(); // idempotent
-    expect(meta.content).toBe('width=device-width, initial-scale=1.0, maximum-scale=1');
-  });
-
-  it('leaves the tag alone if it already states a maximum-scale', () => {
-    asShell();
-    const meta = stubViewport('width=device-width, maximum-scale=3');
-    lockViewportZoom();
-    expect(meta.content).toBe('width=device-width, maximum-scale=3');
-  });
-
-  it('does nothing in a browser — zoom stays a right there', () => {
-    asBrowser();
-    const meta = stubViewport('width=device-width, initial-scale=1.0');
-    lockViewportZoom();
-    expect(meta.content).toBe('width=device-width, initial-scale=1.0');
-  });
-
-  it('survives a page with no viewport tag', () => {
-    asShell();
-    vi.stubGlobal('document', { querySelector: () => null });
-    expect(() => lockViewportZoom()).not.toThrow();
   });
 });
 
