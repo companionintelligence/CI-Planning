@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Apple Privacy Manifest for the app target. Capacitor and Cordova ship their own for their
+  frameworks (both declare nothing); this one covers the app's own bundle, and is where the
+  declarations for any Capacitor plugin added later belong.
+
+  NSPrivacyAccessedAPITypes is empty because nothing in the build uses a required-reason API.
+  Checked on 2026-10-30 by scanning the Debug Simulator build's App, App.debug.dylib,
+  Capacitor and Cordova binaries for the symbols and keys of the five categories (file
+  timestamps, system boot time, disk space, active keyboard, UserDefaults): no references.
+  There are no plugins today. Re-run that scan when one is added; each API it brings needs
+  a declaration here with an approved reason code, and App Store Connect rejects an upload
+  with an undeclared one (an automated email, after the build is processed).
+
+  NSPrivacyCollectedDataTypes is empty on purpose. Companion Planning is a client for a
+  server the person runs; what they enter is sent only to that server, which Lifescope has
+  no access to, so under Apple's access-based definition the developer collects nothing.
+  The App Store Connect "App Privacy" label is a separate artifact and the owner's to
+  answer; keep the two in step. A demo server run by Lifescope for App Review would change
+  this: data sent to it is developer-accessible and must then be declared here and on the
+  label. The one third-party request the bundle makes is the Manrope stylesheet from
+  fonts.googleapis.com (client/index.html), which carries no user data.
+
+  Tracking: none. No ads, no analytics SDK, no cross-app identifiers. The client reports
+  errors only if VITE_SENTRY_DSN was baked in at build time, and the mobile build sets none.
+-->
+<plist version="1.0">
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array/>
+</dict>
+</plist>

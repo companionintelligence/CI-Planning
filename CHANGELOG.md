@@ -17,6 +17,35 @@ version at `GET /api/health` (`release`).
   store-ready: see "Mobile app" in the README. Companion Portal sign-in is not available in the
   app yet.
 
+### Changed
+- **App shells: live updates by polling.** An `EventSource` in the app cannot carry the session
+  cookie and the server allows no foreign origin, so in every shipped configuration the stream
+  failed and retried forever. The shells now poll `GET /api/sync/changes` (every 15s while on
+  screen, on resume or reconnect, and shortly after the app's own writes); browsers keep the
+  stream. Needs a server newer than v4.2.2; an older one answers 404 and the app has no live
+  updates, as before. Android `allowMixedContent` is gone, as it existed only for the stream.
+- **App shells: password sign-in only.** The sign-in screen shows the username form and nothing
+  else, `/signup` sends you to sign-in, and Settings no longer offers "Connect Google" or "Sign in
+  with Companion Portal" (Companion Memory) in the app, nor does the onboarding wizard. All of them
+  are redirects out and back with a cookie, which Capacitor sends to the system browser, so they
+  could not finish in the app. A server that offers Portal sign-in alone gets an explanation
+  instead of a button that cannot work. Browsers are unchanged.
+- **App shells: pinch-to-zoom is on** for iOS and Android (`zoomEnabled`), the runtime
+  `maximum-scale=1` the shell used to add is gone, and text fields are 16px or larger on touch
+  devices so focusing one no longer zooms the page (WCAG 1.4.4). A test fails if any of it
+  comes undone. On touch devices date and time inputs also drop iOS's native appearance, which
+  ignored `width: 100%` and made the onboarding wizard's wake and bed times overflow a phone.
+- **App shells: minimum OS raised to what the bundle needs.** iOS 16.4 (was 15) and Android
+  System WebView 111 (was Capacitor's 60), the floor of Vite 8's default target and Tailwind 4.
+  Below it the Android app shows a page saying to update WebView instead of opening unstyled.
+- **The details sheet starts closed on phones.** At phone width it is a sheet over up to 62% of
+  the screen; it now opens when something is selected and is not remembered. Desktop is
+  unchanged.
+- **iOS: privacy manifest and export-compliance key.** The app target has a
+  `PrivacyInfo.xcprivacy` (no tracking, nothing collected, no required-reason APIs, checked by
+  scanning the built binaries) and `Info.plist` declares `ITSAppUsesNonExemptEncryption` as
+  `false`. Both are for the owner to confirm before a first upload.
+
 ## [4.2.0] — 2026-10-29
 
 ### Changed

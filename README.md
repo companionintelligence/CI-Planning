@@ -1932,7 +1932,7 @@ only useful with one the phone can reach.
 |---|---|---|
 | Path | `mobile/ios` | `mobile/android` |
 | Toolchain | macOS, Xcode 26+ (Swift Package Manager; no CocoaPods) | JDK 21, Android SDK 36 (the Gradle wrapper pins Gradle 8.14 / AGP 8.13) |
-| Minimum OS | iOS 15 | Android 7 (API 24), target API 36 |
+| Minimum OS | iOS 16.4 | Android 7 (API 24), target API 36, with Android System WebView 111 or newer |
 
 ### How it connects
 
@@ -1945,6 +1945,10 @@ only useful with one the phone can reach.
 - **The address is configuration, not a secret, and is never built into the bundle.** It lives in the
   app's local storage on the device. Credentials are not stored by the app at all: you sign in through
   the server's own login screen, and the session cookie sits in the operating system's cookie jar.
+- **Pinch-to-zoom works** in both shells (Capacitor's `zoomEnabled`, which is off by default and is
+  independent of the page's viewport tag), and text fields are at least 16px on touch devices so that
+  focusing one does not zoom the page. `client/src/mobile-zoom.test.ts` fails if either is switched off
+  again.
 - **The web app does not change.** `client/src/lib/server-config.ts` is the one place that knows the
   difference. In a browser (no `window.Capacitor`) the API base is `/api` as ever; in the shell it is
   `<your server>/api`. Everything else Capacitor-specific is guarded the same way, so the Docker image
@@ -1962,15 +1966,25 @@ only useful with one the phone can reach.
   `localhost`; in the Android emulator it is `10.0.2.2`.
 - **Sign-in.** The app is built for username and password sign-in (`AUTH_MODE=sso` with
   `DISABLE_OIDC=true`, the Docker Compose default) and for the open dev mode (`AUTH_MODE=test`).
-  **Companion Portal sign-in is not available in the app yet** — it is a browser redirect that cannot
-  return to the app — so a server that only offers Portal sign-in cannot be used from the app until
-  that is built.
-- **Live updates are limited.** The server-sent event stream (`/api/events`) is opened by the web
-  view, not the native HTTP stack: it only receives anything if the server's CORS allow-list names the
-  app, and it cannot carry the session cookie. Against a server that requires sign-in the app
-  therefore gets no push updates; it still works, and shows changes after its own actions and on
-  reload. Against an open dev server, add
-  `CORS_ALLOWED_ORIGINS=capacitor://localhost,https://localhost` to switch them on.
+  Its sign-in screen shows the username form and nothing else: no Companion Portal button, no
+  sign-up link (and `/signup` sends you to sign-in). **Companion Portal sign-in is not available in
+  the app yet.** It is a redirect out to another site and back with a cookie, and Capacitor opens any
+  navigation off the app's own origin in the system browser, so the session would land in Safari or
+  Chrome and never in the app. A server that only offers Portal sign-in therefore cannot be used from
+  the app until the native handoff is built, and the app says so instead of showing a button that
+  cannot work. Settings has the same limit in two places: *Connect Google* and *Sign in with Companion
+  Portal* (for Companion Memory) are redirects too, so they are not offered in the app. Make those
+  connections from a browser; they live on your server and appear in the app once made.
+- **Live updates are polled.** A browser tab holds a server-sent event stream (`/api/events`); the
+  app cannot, because the stream would be opened by the web view rather than the native HTTP stack,
+  so it would carry no session cookie and the server allows no foreign origin. The app asks instead:
+  `GET /api/sync/changes?since=` returns the same `sync_events` the stream replays, and the app calls
+  it every 15 seconds while it is on screen, when it comes back to the foreground or the network
+  returns, and a moment after a change of its own (whose server-side effects, such as blocks being
+  placed, then show up promptly). Nothing is polled while the app is in the background. The endpoint
+  needs a server newer than v4.2.2; an older one answers 404 and the app simply has no live updates, as
+  before: it still shows changes after its own actions and on reload. Browsers are unchanged and keep
+  the stream. No CORS setting is needed.
 
 Also not available in the app yet: browser reminders and Web Push (there is no service worker in the
 shell), and the *Export JSON* / calendar `.ics` links, which open in the system browser outside the
@@ -2031,16 +2045,19 @@ and the Simulator `.app` is unsigned. Nothing here is store-ready.
 - **Artwork and listings.** The app icon and launch screen are Capacitor's placeholders; both stores
   need the real icon set (iOS 1024 px without alpha; Android adaptive icon), screenshots, descriptions,
   a support URL, a **privacy policy URL**, content ratings, and the privacy disclosures (Apple's App
-  Privacy answers and Google's Data safety form). Set `ITSAppUsesNonExemptEncryption` once the export
-  answer is settled.
+  Privacy answers and Google's Data safety form). `Info.plist` declares `ITSAppUsesNonExemptEncryption`
+  as `false` (the app's only cryptography is the operating system's TLS) and the app target carries a
+  `PrivacyInfo.xcprivacy` that declares nothing collected and no required-reason APIs, checked by
+  scanning the built binaries; both are the owner's to confirm before the first upload, and the
+  manifest needs a new entry whenever a plugin brings one of those APIs.
 - **App Review.** Apple will not accept a client that cannot be exercised, so submission needs a
   reachable **demo server with review credentials**, and a position on guideline 4.2 (a web-technology
-  app must feel like an app). The app lets a person create an account on the server (`/signup`), which
-  may bring Apple's in-app account-deletion rule (5.1.1(v)) into play. Play will ask why
-  `usesCleartextTraffic` is on (people's own LAN servers).
+  app must feel like an app). The app offers no way to create an account (the sign-up links and
+  `/signup` are hidden in it), so Apple's in-app account-deletion rule (5.1.1(v)) does not apply to it
+  as it stands. Play will ask why `usesCleartextTraffic` is on (people's own LAN servers).
 - **Product gaps listed above.** Companion Portal sign-in (system browser with a custom-scheme or
-  universal-link return, PKCE), live updates for session-authenticated servers, native push or local
-  notifications for reminders, and downloads through the share sheet.
+  universal-link return, PKCE), native push or local notifications for reminders, and downloads through
+  the share sheet.
 - **Real devices.** Everything here was exercised in the iOS Simulator and an Android emulator only.
 
 ## Local development

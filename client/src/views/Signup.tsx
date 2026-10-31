@@ -1,7 +1,8 @@
-import { createSignal, createMemo, createResource, createEffect, Show } from 'solid-js';
+import { createSignal, createMemo, createResource, createEffect, onMount, Show } from 'solid-js';
 import { useNavigate } from '@solidjs/router';
 import { Cpu, Loader2, LogIn, UserPlus } from 'lucide-solid';
 import { api, CIPORTAL_START } from '../lib/api.js';
+import { isNativeShell } from '../lib/server-config.js';
 
 /**
  * B2 — local self-serve sign-up (Companion Memory's `/signup` page). Unauthenticated
@@ -14,11 +15,19 @@ import { api, CIPORTAL_START } from '../lib/api.js';
  *
  * Under Companion Portal login the page also offers "Sign up with Companion Portal" —
  * the same /start URL as sign-in (the Portal's own card carries its sign-up toggle).
+ *
+ * Not in the Capacitor app shell, which offers no way to create an account (Login.tsx says
+ * why): there the route sends whoever lands on it, a stale link or a typed address, to
+ * sign-in and asks the server for nothing.
  */
 const MIN_PASSWORD_LENGTH = 8;
 
 export function Signup() {
   const navigate = useNavigate();
+  if (isNativeShell()) {
+    onMount(() => navigate('/login', { replace: true }));
+    return null;
+  }
   const [cfg] = createResource(() => api.auth.config());
   const [req] = createResource(() => api.auth.signupRequirements());
 

@@ -7,10 +7,10 @@ import {
   connectTo,
   getServerUrl,
   isNativeShell,
-  lockViewportZoom,
   needsServerSetup,
   normalizeServerUrl,
   probeServer,
+  supportsRedirectFlows,
 } from './server-config.js';
 import * as oplog from './oplog.js';
 
@@ -295,40 +295,17 @@ describe('changeServer', () => {
   });
 });
 
-describe('lockViewportZoom', () => {
-  /** A viewport <meta> reduced to what the function touches. */
-  function stubViewport(content: string | null) {
-    const meta = { content, getAttribute: () => meta.content, setAttribute: (_: string, v: string) => { meta.content = v; } };
-    vi.stubGlobal('document', { querySelector: (sel: string) => (sel === 'meta[name="viewport"]' ? meta : null) });
-    return meta;
-  }
-
-  it('adds maximum-scale=1 in the shell, once', () => {
-    asShell();
-    const meta = stubViewport('width=device-width, initial-scale=1.0');
-    lockViewportZoom();
-    expect(meta.content).toBe('width=device-width, initial-scale=1.0, maximum-scale=1');
-    lockViewportZoom(); // idempotent
-    expect(meta.content).toBe('width=device-width, initial-scale=1.0, maximum-scale=1');
-  });
-
-  it('leaves the tag alone if it already states a maximum-scale', () => {
-    asShell();
-    const meta = stubViewport('width=device-width, maximum-scale=3');
-    lockViewportZoom();
-    expect(meta.content).toBe('width=device-width, maximum-scale=3');
-  });
-
-  it('does nothing in a browser — zoom stays a right there', () => {
+describe('supportsRedirectFlows', () => {
+  // Capacitor cancels a top-level navigation to any host that is not the app's own and opens it
+  // in the system browser, so a flow that goes out and expects to come back with a cookie (Portal
+  // sign-in, Connect Google) finishes in Safari or Chrome and never in the app.
+  it('is true in a browser, where a redirect out can come back', () => {
     asBrowser();
-    const meta = stubViewport('width=device-width, initial-scale=1.0');
-    lockViewportZoom();
-    expect(meta.content).toBe('width=device-width, initial-scale=1.0');
+    expect(supportsRedirectFlows()).toBe(true);
   });
 
-  it('survives a page with no viewport tag', () => {
+  it('is false in the shell', () => {
     asShell();
-    vi.stubGlobal('document', { querySelector: () => null });
-    expect(() => lockViewportZoom()).not.toThrow();
+    expect(supportsRedirectFlows()).toBe(false);
   });
 });

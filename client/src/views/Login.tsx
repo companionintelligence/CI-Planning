@@ -5,7 +5,7 @@ import { api, CIPORTAL_START } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
 import { ForgotPassword } from '../components/ForgotPassword.js';
 import { ServerConnection } from '../components/ServerConnection.js';
-import { isNativeShell } from '../lib/server-config.js';
+import { isNativeShell, supportsRedirectFlows } from '../lib/server-config.js';
 
 /**
  * U3/A4 — the login screen. Rendered OUTSIDE the app shell (no nav/top bar), reached
@@ -21,6 +21,14 @@ import { isNativeShell } from '../lib/server-config.js';
  *                 sign-up; the same /start URL, the Portal's own card carries the
  *                 sign-up toggle), `invite`/`open` (B2 — /signup), or nothing.
  * `test`/`standalone` never reach this component (App.tsx renders the ungated router).
+ *
+ * In the Capacitor app shell only the username form is ever offered. The Portal button
+ * and both sign-up links are redirects that have to come back with a cookie, which the
+ * shell cannot do (see `supportsRedirectFlows`), and with no sign-up there is no account
+ * creation in the app (App Store guideline 5.1.1(v) asks for in-app deletion wherever
+ * there is). A server that offers Portal sign-in alone has nothing the shell can use, and
+ * the screen says so rather than showing a dead button.
+ *
  * House-style only (this app's tokens/classes) — CI-Portal/CI-Hub visual parity is a
  * later reconciliation pass, per the plan (their components aren't available here).
  */
@@ -54,10 +62,13 @@ export function Login() {
   const [localExpanded, setLocalExpanded] = createSignal(false);
   let usernameInput: HTMLInputElement | undefined;
 
-  const portal = () => cfg()?.portal === true;
+  const redirects = supportsRedirectFlows();
+  const portal = () => redirects && cfg()?.portal === true;
   const local = () => cfg()?.local === true;
   const showLocalForm = () => local() && (!portal() || localExpanded());
-  const signup = () => cfg()?.signup ?? 'off';
+  const signup = () => (redirects ? (cfg()?.signup ?? 'off') : 'off');
+  /** The shell, on a server that signs in with Companion Portal alone: nothing it can offer. */
+  const portalOnlyServer = () => !redirects && cfg()?.portal === true && !local();
 
   function expandLocal() {
     setLocalExpanded(true);
@@ -137,11 +148,22 @@ export function Login() {
                 <p class="text-xs text-muted-foreground mt-1">
                   <Show
                     when={portal()}
-                    fallback={local() ? 'Enter your username and password.' : 'Sign-in is not enabled on this deployment.'}
+                    fallback={
+                      portalOnlyServer()
+                        ? "This server only offers Companion Portal sign-in, which the app can't do yet."
+                        : local()
+                          ? 'Enter your username and password.'
+                          : 'Sign-in is not enabled on this deployment.'
+                    }
                   >
                     Use your Companion Portal account to continue.
                   </Show>
                 </p>
+                <Show when={portalOnlyServer()}>
+                  <p class="text-xs text-muted-foreground mt-2">
+                    Sign in from a browser, or ask whoever runs this server to turn on username and password sign-in.
+                  </p>
+                </Show>
               </div>
 
               {/* Companion Portal SSO — top-level navigation (NOT fetch) so the browser follows the redirect to the portal. */}

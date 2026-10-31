@@ -45,20 +45,18 @@ export function isNativeShell(): boolean {
 }
 
 /**
- * Shell only: stop iOS zooming the page in whenever a text field takes focus. WKWebView
- * does that for any field whose text is under 16px, and most of this app's inputs are
- * 14px (`text-sm`); inside a native app it just looks like the layout broke. A viewport
- * `maximum-scale=1` is the switch. Nothing is taken away from the person: the shell
- * already disables pinch-zoom (Capacitor's `zoomEnabled` defaults to false). No-op in a
- * browser, where zooming is a right and the viewport tag stays as written.
+ * Can a flow that sends the page to another site, and expects that site to send the
+ * person back with something in the cookie jar, work here?
+ *
+ * In a browser, yes. In the shell, no: Capacitor cancels a top-level navigation to any
+ * host that is not the app's own and opens it in the system browser instead (read in
+ * 8.6.0: `WebViewDelegationHandler` on iOS, `Bridge.launchIntent` on Android). The flow
+ * then runs in Safari or Chrome, the session cookie is set there, and nothing ever comes
+ * back to the app. That is every flow built as "redirect out, redirect back": signing in
+ * with Companion Portal, "Connect Google", and the Companion Memory Portal connect.
  */
-export function lockViewportZoom(): void {
-  if (!isNativeShell() || typeof document === 'undefined') return;
-  const meta = document.querySelector('meta[name="viewport"]');
-  const content = meta?.getAttribute('content') ?? '';
-  if (meta && !/maximum-scale/i.test(content)) {
-    meta.setAttribute('content', `${content}, maximum-scale=1`);
-  }
+export function supportsRedirectFlows(): boolean {
+  return !isNativeShell();
 }
 
 /** The saved server URL, or null when none has been chosen (or storage is unavailable). */
