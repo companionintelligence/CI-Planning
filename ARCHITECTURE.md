@@ -450,7 +450,7 @@ pre-existing gap this pass didn't close. The live count is 70 including those fo
 | `external_events` | Sync identity map — provider events ↔ local time_blocks | ✓ | 0051 |
 | `outbound_queue` | Local blocks pending push to provider (when `CP_SYNC_WRITEBACK=true`) | ✓ | 0057 |
 | `sync_state` | Incremental-sync cursors per `(owner, provider, account, resource)` | ✓ | 0060 |
-| `sync_events` | Append-only SSE event log for `Last-Event-ID` catch-up replay; owner FK (0098) | ✓ | 0077, 0098 |
+| `sync_events` | Append-only change log behind live updates: SSE replays it by `Last-Event-ID`, and `GET /api/sync/changes?since=` serves the same rows as JSON for the app shells, which cannot hold an `EventSource`; owner FK (0098) | ✓ | 0077, 0098 |
 
 #### Ops, notifications & audit
 
@@ -1107,7 +1107,7 @@ flowchart TD
 
 ## 12. Multi-device sync (Phase L)
 
-**Two-clock merge strategy:** every mutating route increments a monotonic `version` counter and records a `field_ts` (per-field timestamp) alongside the updated row. A `sync_events` append-only log backs `Last-Event-ID` SSE catch-up. Synced entities: **tasks, time blocks, objectives, and objective↔task links** (objectives joined the allowlist in 0087; links merge via an `unlink` tombstone so a removal round-trips under field-LWW).
+**Two-clock merge strategy:** every mutating route increments a monotonic `version` counter and records a `field_ts` (per-field timestamp) alongside the updated row. A `sync_events` append-only log backs `Last-Event-ID` SSE catch-up, and `GET /api/sync/changes?since=<seq>` returns the same rows as JSON for clients that poll instead of streaming. The iOS and Android app shells poll it, because their `EventSource` cannot carry the session cookie. A cursor older than the 500-event window, or ahead of the owner's log, answers `resync: true`: refetch everything, then carry on from the returned cursor. Synced entities: **tasks, time blocks, objectives, and objective↔task links** (objectives joined the allowlist in 0087; links merge via an `unlink` tombstone so a removal round-trips under field-LWW).
 
 ```mermaid
 sequenceDiagram
@@ -1120,6 +1120,7 @@ sequenceDiagram
     Server->>Server: append to sync_events
     Server-->>Device: merged state + new seq cursor
     Server-)All: SSE broadcast (other devices catch up via Last-Event-ID)
+    Note over Device,Server: App shells poll GET /api/sync/changes?since=N instead of holding SSE
 ```
 
 **Monotonic completions:** a concurrent edit on another device can never un-complete a task — the `done_at` field is monotonically forward-only in the merge. The same guard pins task **placement**: a stale offline op carrying `status:'open'` can't revert a server-side `scheduled` (mirrors the `done` pin), so placement isn't lost across devices.
