@@ -1,13 +1,25 @@
 /**
+ * Live updates: `on(event, handler)` calls `handler` with the data of each server event.
+ *
+ * Two transports behind the one API. A browser tab holds an `EventSource` to
+ * `/api/events` and the server pushes. The Capacitor app shell cannot (its page is on its
+ * own origin, so an `EventSource` carries no session cookie and the server allows no
+ * foreign origin), so there it polls `GET /api/sync/changes` instead (lib/live-poll.ts).
+ * Subscribers cannot tell the difference, and `onReconnect` means the same in both.
+ *
  * Phase L additions:
  * - Persist `lastEventId` in localStorage so a page reload can pass
- *   `?lastEventId=<cursor>` and the server replays any missed events.
+ *   `?lastEventId=<cursor>` and the server replays any missed events. The poller keeps
+ *   its cursor in the same key.
  * - `registerFlushHook`: called by mutations.ts so local ops are server-acked
  *   BEFORE trusting catch-up frames (prevents our own edits arriving as
  *   "remote" changes from another device).
  */
 
-import { apiUrl, needsServerSetup } from './server-config.js';
+import { api } from './api.js';
+import { createPoller, type Poller } from './live-poll.js';
+import { apiUrl, isNativeShell, needsServerSetup } from './server-config.js';
+import { onWrite } from './write-signal.js';
 
 type Handler = (data: unknown) => void;
 const handlers = new Map<string, Set<Handler>>();
@@ -52,7 +64,8 @@ let hasConnectedOnce = false;
  * Register a callback fired every time the EventSource re-opens after a drop — NOT
  * on the initial connect. A container restart under an open tab produces exactly one
  * of these, so it's the natural place to notice "the server might be a new build now"
- * (stores/updateAvailable.ts) without a separate polling loop.
+ * (stores/updateAvailable.ts) without a separate polling loop. In the app shell it
+ * fires when a poll succeeds after one or more failed.
  */
 export function onReconnect(handler: ReconnectHandler): () => void {
   reconnectHandlers.add(handler);
@@ -110,11 +123,58 @@ function attach(event: string): void {
   });
 }
 
+// ── Polling (the app shell) ────────────────────────────────────────────────────
+
+let poller: Poller | null = null;
+
+/** The persisted cursor as the number the endpoint takes, or null when there is none (or it is not one). */
+function pollCursor(): number | null {
+  return /^\d{1,15}$/.test(lastEventId) ? Number(lastEventId) : null;
+}
+
+function startPolling(): void {
+  if (poller) return;
+  poller = createPoller({
+    fetchChanges: (since) => api.sync.changes(since ?? undefined),
+    getCursor: pollCursor,
+    setCursor: (seq) => persistCursor(String(seq)),
+    dispatch: (event, data) => handlers.get(event)?.forEach((h) => h(data)),
+    // Our own edits reach the server before we ask what changed, as for a (re)connect.
+    beforePoll: () => flushHook?.(),
+    onRecovered: () => reconnectHandlers.forEach((h) => h()),
+    isVisible: () => typeof document === 'undefined' || !document.hidden,
+  });
+
+  // The app came back, or the network did: ask now instead of at the next tick. `focus`
+  // covers a WebView that resumes without a visibilitychange; the poller's own minimum gap
+  // turns two of these in a row into one request.
+  const resume = () => poller?.resume();
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) resume(); });
+  }
+  if (typeof window !== 'undefined') {
+    window.addEventListener('online', resume);
+    window.addEventListener('focus', resume);
+  }
+  // A write we just made: its server-side effects are worth fetching soon.
+  onWrite(() => poller?.nudge());
+
+  poller.start();
+}
+
+// ── Connecting ─────────────────────────────────────────────────────────────────
+
 function connect(): void {
-  if (es || reconnectTimer !== undefined) return; // already live, or a reconnect is already pending
+  if (es || poller || reconnectTimer !== undefined) return; // already live, or a reconnect is already pending
   // Mobile shell before a server is chosen: there is nothing to stream from. Handlers stay
   // registered; choosing a server reloads the app, which connects for real.
   if (needsServerSetup()) return;
+
+  // The shell polls rather than streams (see the header).
+  if (isNativeShell()) {
+    startPolling();
+    return;
+  }
 
   // Flush pending ops before opening (or reopening) the stream so our own edits
   // are server-acked and won't arrive as surprising "remote" catch-up frames.

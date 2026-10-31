@@ -18,12 +18,12 @@ const config: CapacitorConfig = {
     // The WebView's own background (shown before first paint and when over-scrolling): the
     // app's dark theme colour, the same #041620 as client/index.html's theme-color.
     backgroundColor: '#041620',
-    // The page is https://localhost; the user's server is often plain http on their LAN. fetch
-    // and XHR avoid the mixed-content rule by going through native HTTP (CapacitorHttp below),
-    // but the live-update stream is an EventSource, which stays in the WebView and would be
-    // blocked outright. Only the bundled, local page runs here, and it loads nothing else
-    // over http.
-    allowMixedContent: true,
+    // No allowMixedContent. The page is https://localhost and the user's server is often
+    // plain http on their LAN, but nothing here loads http from the page: fetch and XHR
+    // go through native HTTP (CapacitorHttp below), which mixed-content rules do not cover,
+    // and live updates poll through the same stack (lib/live-poll.ts) rather than holding
+    // an EventSource, which stays in the WebView and would have been blocked. Capacitor
+    // marks the setting as not for production.
   },
   server: {
     // Serve the bundle from https://localhost (the default since Capacitor 6, stated so

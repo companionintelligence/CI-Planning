@@ -74,3 +74,74 @@ describe('api base', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe('api.sync.changes', () => {
+  it('asks where "now" is with no cursor, and for what came after one with it', async () => {
+    vi.stubGlobal('Capacitor', { isNativePlatform: () => true });
+    localStorage.setItem(SERVER_URL_KEY, 'http://192.168.1.20:3848');
+    const { api } = await loadApi();
+
+    await api.sync.changes();
+    await api.sync.changes(0); // zero is a cursor, not an absent one: it means "everything after 0"
+    await api.sync.changes(41);
+
+    expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([
+      'http://192.168.1.20:3848/api/sync/changes',
+      'http://192.168.1.20:3848/api/sync/changes?since=0',
+      'http://192.168.1.20:3848/api/sync/changes?since=41',
+    ]);
+  });
+
+  it('carries the status of a refusal, which is how the poller tells an old server from a signed-out one', async () => {
+    vi.stubGlobal('Capacitor', { isNativePlatform: () => true });
+    localStorage.setItem(SERVER_URL_KEY, 'http://192.168.1.20:3848');
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 404, statusText: 'Not Found', json: async () => ({}) });
+    const { api, ApiError } = await loadApi();
+
+    const err = await api.sync.changes().catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as InstanceType<typeof ApiError>).status).toBe(404);
+  });
+});
+
+describe('the write signal', () => {
+  it('is raised by a write the server accepted, and by nothing else', async () => {
+    vi.stubGlobal('Capacitor', undefined);
+    const { api } = await loadApi();
+    const { onWrite } = await import('./write-signal.js');
+    const wrote = vi.fn();
+    onWrite(wrote);
+
+    await api.auth.config(); // a read
+    expect(wrote).not.toHaveBeenCalled();
+
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 400, statusText: 'Bad Request', json: async () => ({ error: 'no' }) });
+    await api.sync.apply([]).catch(() => undefined); // a write the server refused
+    expect(wrote).not.toHaveBeenCalled();
+
+    fetchMock.mockRejectedValueOnce(new Error('offline'));
+    await api.sync.apply([]).catch(() => undefined); // a write that never arrived
+    expect(wrote).not.toHaveBeenCalled();
+
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ results: [] }) });
+    await api.sync.apply([]); // a write the server took
+    expect(wrote).toHaveBeenCalledTimes(1);
+  });
+
+  it('survives a listener that throws, and stops after unsubscribing', async () => {
+    const { noteWrite, onWrite } = await import('./write-signal.js');
+    const later = vi.fn();
+    onWrite(() => {
+      throw new Error('bug');
+    });
+    const off = onWrite(later);
+
+    expect(() => noteWrite()).not.toThrow();
+    expect(later).toHaveBeenCalledTimes(1);
+
+    off();
+    noteWrite();
+    expect(later).toHaveBeenCalledTimes(1);
+  });
+});
