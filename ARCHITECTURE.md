@@ -1,6 +1,6 @@
 # Companion Planning — Architecture Reference
 
-**Status:** Living document · last updated 2026-08-13 · migration head `0147` in `main` (authoritative list: `server/src/db/migrations/index.ts`)
+**Status:** Living document · last updated 2026-11-01 · migration head `0172` in `main` (authoritative list: `server/src/db/migrations/index.ts`)
 
 > This document describes the **as-built** system — what is actually running, not what was planned. For future phases, see [docs/ROADMAP.md](docs/ROADMAP.md).
 >
@@ -198,7 +198,7 @@ no-op for the proper ISO strings every other caller passes.
 | LLM runtime | **Ollama** (local) | Graceful degradation when offline |
 | MCP | `@modelcontextprotocol/sdk` | Gmail + Google Calendar over OAuth |
 | Cron | `croner` + `scheduled_jobs` table | Persistent job registry |
-| PWA | `vite-plugin-pwa` | Offline shell + service worker; Web Push (VAPID) |
+| PWA | Hand-written service worker (`client/public/sw.js`) + manifest | Web Push (VAPID) only; no offline shell |
 | Auth | Session-cookie login (OIDC/PKCE RP + local argon2id) + hashed API-key | Mints a signed, httpOnly cp_session on sso login; hashed x-api-key for standalone; no per-request Bearer |
 | Crypto | AES-256-GCM (`CP_KEK_B64`) | OAuth tokens sealed in `connection_tokens` |
 
@@ -1147,7 +1147,7 @@ pnpm build && pnpm --filter server start
 # Runs on port 3848; access from any Tailscale device
 ```
 
-Install as a launch agent: `ops/companion-planning.plist` (macOS). Set `DB_PATH` explicitly on Linux or Windows (default is `~/Library/Application Support/CompanionPlanning/companion.db` on macOS).
+Install as launch agents: `bash ops/scripts/install.sh` (macOS). Set `DB_PATH` explicitly on Linux or Windows (default is `~/Library/Application Support/CompanionPlanning/companion.db` on macOS).
 
 ### Docker
 
@@ -1180,6 +1180,10 @@ Full variable reference: [README.md](README.md#environment-variables)
 
 ---
 
+### Mobile apps (iOS and Android)
+
+`mobile/ios` and `mobile/android` are Capacitor shells around the `client/` build (`pnpm --filter client build:mobile`, output `client/dist`). They call a server the person runs through native HTTP, which keeps the session cookie and needs no CORS entry. Live updates poll `GET /api/sync/changes?since=` every 15 s while the app is visible, and again at once when it resumes or the network returns; the browser keeps `/api/events`. Sign-in is password-only. Settings hides the controls a WebView cannot run: Export JSON, the calendar export, the push switch, and account creation. The Android build number and name come from `-PappVersionCode` and `-PappVersionName`; the iOS ones from `xcodebuild MARKETING_VERSION=… CURRENT_PROJECT_VERSION=…`.
+
 ## 14. Backup & recovery
 
 Everything lives in the single SQLite file at `DB_PATH`.
@@ -1190,7 +1194,7 @@ Everything lives in the single SQLite file at `DB_PATH`.
 | **Litestream** | `litestream replicate -config ops/litestream.yml` | Continuous WAL replication to object storage |
 | **Export/import** | `GET /api/export` → `POST /api/import` | On-demand; owner-scoped JSON |
 
-⚠ **Do not sync the live `.db` file with Syncthing/rsync** — SQLite WAL spans three files (`.db`, `.db-wal`, `.db-shm`) and file-sync tools copy them at different moments, producing a corrupt or inconsistent database. Use `pnpm snapshot` or Litestream.
+⚠ **Do not sync the live `.db` file with Syncthing/rsync** — SQLite WAL spans three files (`.db`, `.db-wal`, `.db-shm`) and file-sync tools copy them at different moments, producing a corrupt or inconsistent database. Use `pnpm --filter server snapshot` or Litestream.
 
 ---
 

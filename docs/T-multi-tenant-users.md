@@ -68,7 +68,7 @@ Full detail per ticket in [T-multitenant-tickets.md](T-multitenant-tickets.md).
 
 ## 3 · Migration safety, rollback & the backup gate
 
-- **Forward-only runner, no `down()`** — "rollback" = `pnpm snapshot` / Litestream restore. Snapshot before every T migration.
+- **Forward-only runner, no `down()`** — "rollback" = `pnpm --filter server snapshot` / Litestream restore. Snapshot before every T migration.
 - ⚠️ **`rebuildTable` cannot populate a new `NOT NULL owner_id` in one pass** (its `INSERT..SELECT` copies only shared columns). Use the **two-phase** pattern: create the new table with `owner_id` **nullable**, copy, backfill in `afterSql`, then tighten to `NOT NULL` (a second rebuild) — or hand-write the 12-step with the `COALESCE` backfill inline. Add `PRAGMA foreign_key_check` explicitly (rebuildTable does not). ([F-REBUILD](T-multitenant-tickets.md#fault-f-rebuild))
 - **The `backup.ts` gate (same PR as each column add, non-negotiable):** convert the owner-less `DELETE FROM …` to `… WHERE owner_id = ?`, owner-scope the export selects, and **explicitly fix the `entity_tags` restore-delete `UNION SELECT id FROM time_blocks` → `… WHERE owner_id = ?`** (it does *not* auto-scope — [F-ETAGS](T-multitenant-tickets.md#fault-f-etags)). Bump `EXPORT_VERSION` per the T0 policy. Coordinate with the in-flight backup export-completeness fix (`task_0b00e839`) which also touches this file + `EXPORT_VERSION`.
 - **Integrity:** `PRAGMA foreign_key_check`/`integrity_check` clean; a zero-NULL-`owner_id` test per newly-scoped table; regenerate + eyeball the `baseline.characterization` golden; extend `schema-parity.test.ts` to each newly-scoped table.
@@ -97,7 +97,7 @@ Per-ticket DoD/acceptance/tests are in [T-multitenant-tickets.md](T-multitenant-
 
 - [ ] Decisions #1/#2 recorded (done); **#3 auth columns finalized with U** before T5.
 - [ ] `time_blocks`, `tags` (+ junctions via parent), `sync_events` genuinely owner-scoped/enforced; the cron runner fans out per owner (T3).
-- [ ] Backfill to the single owner with a **zero-NULL-`owner_id` test** per newly-scoped table; `foreign_key_check`/`integrity_check` clean; `pnpm snapshot` pre-migration.
+- [ ] Backfill to the single owner with a **zero-NULL-`owner_id` test** per newly-scoped table; `foreign_key_check`/`integrity_check` clean; `pnpm --filter server snapshot` pre-migration.
 - [ ] `backup.ts` owner-scoped (export + restore + `entity_tags` UNION) in the same PR as each column add; **restore-isolation test** (owner A restore leaves owner B intact); `EXPORT_VERSION` policy honored.
 - [ ] `applyOp` block owner-check added (L Gap 5 closed).
 - [ ] T0 scaffolding merged (2nd-owner helper, `currentOwnerId()` throw-outside-context, widened grep gate) before the scoping PRs rely on it.

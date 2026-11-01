@@ -51,6 +51,9 @@ gh workflow run style-canon-lint.yml --repo companionintelligence/CI-Planning --
 
 **Publish container** — `docker-publish.yml`
 
+Dispatch on the release tag's ref. A tag ref publishes `:latest`, `:sha-<short>` and `:<tag>`. Any
+other ref, `main` included, publishes an unversioned `0.0.0+sha-<short>` image and still moves `:latest`.
+
 ```bash
-gh workflow run docker-publish.yml --repo companionintelligence/CI-Planning --ref main
+gh workflow run docker-publish.yml --repo companionintelligence/CI-Planning --ref v4.2.2
 ```

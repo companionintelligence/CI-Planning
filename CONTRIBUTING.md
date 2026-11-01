@@ -1,27 +1,30 @@
 # Contributing
 
-## Merge policy — green CI is required before merge
+## Merge policy — green checks are required before merge
 
-**Do not merge a pull request into `main` while any required check is red.**
+**Do not merge a pull request into `main` while any check is red.**
 
-Every PR runs the CI workflows in `.github/workflows`. Two checks gate `main`:
+The workflows in `.github/workflows` are manual (`workflow_dispatch`), so a pull request starts
+none of them by itself. The two checks that matter are:
 
-- **Typecheck + Unit + Integration**
-- **Build, screenshot-test, publish**
+- **Typecheck + Unit + Integration** (`ci.yml`)
+- **Build, smoke-test, publish** (`docker-publish.yml`)
 
-Both must be **green** on the PR's latest commit before you merge. This is
-enforced by branch protection on `main` (required status checks), but treat it as
-a standing rule regardless of tooling — a red check means `main` will not compile
-or will ship a broken build to everyone.
+Run them on the PR's latest commit before you merge. Treat green as required regardless of tooling:
+a red check means `main` will not compile or will ship a broken build to everyone. Whether branch
+protection enforces this is set by the repository owner, so do not assume it does.
+
+From the repo root, the same checks are `pnpm typecheck`, `pnpm build` and `pnpm test`. A change to the
+container also needs `tests/container/run-local.sh`.
 
 ### Watch out for autofix / suggestion commits
 
 If a bot pushes a new commit to the branch after checks passed — for example a
 GitHub **Copilot "Potential fix for pull request finding"** autofix, or an applied
-review suggestion — that new commit **re-runs the required checks**. Wait for them
-to go green again before merging. A dropped paren from exactly this kind of autofix
-put a non-compiling `main` into the tree once (PRs #321 → #322); the required-check
-gate exists to prevent a repeat.
+review suggestion — that new commit **needs the checks run again**. Run them, and wait
+for green before merging. A dropped paren from exactly this kind of autofix
+put a non-compiling `main` into the tree once (PRs #321 → #322); the checks exist
+to prevent a repeat.
 
 ### If CI is genuinely broken (not your change)
 

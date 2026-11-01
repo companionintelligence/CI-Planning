@@ -6,6 +6,17 @@ version at `GET /api/health` (`release`).
 
 ## [Unreleased]
 
+### Changed
+- **The native shells do not show controls they cannot run.** Export JSON, the calendar `.ics` export,
+  the push switch, New account and invite codes are hidden in the iOS and Android apps.
+- **Manrope is bundled.** The font ships in the bundle instead of loading from Google Fonts, so the web
+  app makes no third-party font request, and the Content-Security-Policy no longer allows Google Fonts.
+- **The web manifest uses the app's background colour** (`#041620`), as `index.html` does.
+- **Android versions come from the build.** `versionCode` and `versionName` read `-PappVersionCode` and
+  `-PappVersionName`, with `1` and `1.0` as defaults.
+- **Android backups are off** (`allowBackup="false"`), so the sign-in session is not restored onto
+  another device.
+
 ### Fixed
 - **No stack trace in the server log each time a live-update stream closes.** Koa reports a
   response stream that closes before it ends (`ERR_STREAM_PREMATURE_CLOSE`) as an error, and
@@ -59,6 +70,16 @@ version at `GET /api/health` (`release`).
   `PrivacyInfo.xcprivacy` (no tracking, nothing collected, no required-reason APIs, checked by
   scanning the built binaries) and `Info.plist` declares `ITSAppUsesNonExemptEncryption` as
   `false`. Both are for the owner to confirm before a first upload.
+
+## [4.2.2] — 2026-10-29
+
+### Fixed
+- Companion Portal links are marked external, so the router does a real page navigation (#628).
+
+## [4.2.1] — 2026-10-29
+
+### Fixed
+- The image build gets its GitHub Packages token through a BuildKit secret (#627).
 
 ## [4.2.0] — 2026-10-29
 
