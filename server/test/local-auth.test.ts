@@ -158,6 +158,19 @@ describe('U2 — login / session / logout', () => {
     expect(anon.status).toBe(401);
   });
 
+  it('the live-update poll belongs to the signed-in session: it answers the cookie and 401s without one', async () => {
+    // The app shell polls this with the session cookie it got at sign-in, over native HTTP.
+    await seedUser();
+    const { cookie } = await login(USER, PW);
+
+    const authed = await fetch(`${srv.url}/api/sync/changes`, { headers: { Cookie: cookie } });
+    expect(authed.status).toBe(200);
+    expect(await authed.json()).toMatchObject({ cursor: expect.any(Number) });
+
+    const anon = await fetch(`${srv.url}/api/sync/changes`);
+    expect(anon.status).toBe(401);
+  });
+
   it('logout clears the session so the cookie no longer authenticates', async () => {
     await seedUser();
     const { cookie } = await login(USER, PW);

@@ -54,4 +54,22 @@ describe('CORS', () => {
     });
     expect(res.headers.get('access-control-allow-origin')).toBeNull();
   });
+
+  // The page origins of the mobile shells: iOS serves its bundle from capacitor://localhost,
+  // Android from https://localhost. The shells call the server through the native HTTP stack,
+  // which CORS does not apply to, so a stock server grants these two nothing. An operator who
+  // wants a WebView to call it directly has to name them like any other origin.
+  const SHELL_ORIGINS = ['capacitor://localhost', 'https://localhost'];
+
+  it.each(SHELL_ORIGINS)('sets no CORS header for %s when the allowlist is empty (default)', async (origin) => {
+    config.corsOrigins = [];
+    const res = await fetch(`${srv.url}/api/auth/config`, { headers: { Origin: origin } });
+    expect(res.headers.get('access-control-allow-origin')).toBeNull();
+  });
+
+  it.each(SHELL_ORIGINS)('echoes %s when it is named via CORS_ALLOWED_ORIGINS', async (origin) => {
+    config.corsOrigins = [origin];
+    const res = await fetch(`${srv.url}/api/auth/config`, { headers: { Origin: origin } });
+    expect(res.headers.get('access-control-allow-origin')).toBe(origin);
+  });
 });
