@@ -6,8 +6,10 @@
          cleartext" the app could never reach it. Android has no way to scope this to private
          address ranges, so the server URL entered on first run is the only thing that decides
          where traffic goes, and the connect screen steers non-LAN hosts to https://. -->
+    <!-- No auto-backup: the sign-in session lives in the WebView's cookie store, and a restore
+         must not carry it onto another device. -->
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:usesCleartextTraffic="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
