@@ -16,7 +16,7 @@
 #   Syncing a live SQLite file with a generic file-sync tool WILL corrupt it.
 #   SQLite's WAL mode spreads a single logical write across multiple files
 #   (-wal, -shm). A file-sync tool captures them at different instants and
-#   can produce an unreadable database. Use `pnpm snapshot` or Litestream
+#   can produce an unreadable database. Use `pnpm --filter server snapshot` or Litestream
 #   instead — both open the database connection properly and export a
 #   consistent snapshot.
 

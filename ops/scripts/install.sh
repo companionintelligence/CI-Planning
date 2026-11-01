@@ -8,7 +8,7 @@ echo "→ Repo root: $REPO_ROOT"
 
 # Detect node
 if ! command -v node &>/dev/null; then
-  echo "Error: node not found. Install Node.js 26+ first." >&2
+  echo "Error: node not found. Install Node.js 22+ first." >&2
   exit 1
 fi
 
