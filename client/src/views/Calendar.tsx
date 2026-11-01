@@ -24,7 +24,7 @@ import type { TagAxis } from '../lib/overlay.js';
 import { isCommitment } from '../lib/overlay.js';
 import { tagColorVar } from '../lib/textures.js';
 import { api } from '../lib/api.js';
-import { apiUrl } from '../lib/server-config.js';
+import { apiUrl, isNativeShell } from '../lib/server-config.js';
 import { showToast } from '../stores/index.js';
 import { localISODate, rangeUTC, addDays, weekDaysOf, monthGridOf } from '../lib/dates.js';
 import { minutesIntoDay } from '../lib/grid.js';
@@ -309,15 +309,18 @@ export function Calendar() {
           {/* Below sm these four shed their WORDS, not themselves: each already carries a
               `title`, and the icon set is distinct. Keeping the labels here is what pushed
               the toolbar to three stacked rows on a phone and left the grid ~250px tall. */}
-          <a
-            href={exportHref()}
-            download=""
-            class="btn-ghost text-xs gap-1"
-            aria-label="Export this range as an .ics calendar file"
-            title="Download this range as an .ics calendar file"
-          >
-            <Download size={13} /> <span class="hidden sm:inline">Export</span>
-          </a>
+          {/* A download saves nothing in the native WebView, so the shells leave this out. */}
+          <Show when={!isNativeShell()}>
+            <a
+              href={exportHref()}
+              download=""
+              class="btn-ghost text-xs gap-1"
+              aria-label="Export this range as an .ics calendar file"
+              title="Download this range as an .ics calendar file"
+            >
+              <Download size={13} /> <span class="hidden sm:inline">Export</span>
+            </a>
+          </Show>
           <Show when={view() === 'week'}>
             <button
               onClick={() => setShowReview((s) => !s)}
