@@ -12,7 +12,7 @@ import { ConnectServer } from './views/ConnectServer.js';
 import { needsServerSetup } from './lib/server-config.js';
 import { Signup }   from './views/Signup.js';
 import { ResetPassword } from './views/ResetPassword.js';
-import { authGateActive } from './lib/api.js';
+import { authGateActive, UNAUTHENTICATED_EVENT } from './lib/api.js';
 import { BottomNav } from './components/BottomNav.js';
 import { ToastContainer } from './components/Toast.js';
 import { ConflictBanner } from './components/ConflictBanner.js';
@@ -317,6 +317,13 @@ function SessionGate(props: { children?: any }) {
       navigate('/login', { replace: true, state: { from: location.pathname + location.search } });
     }
   });
+
+  // The session can end while the app is open; a 401 from any request takes the same route.
+  const onUnauthenticated = () => {
+    if (location.pathname !== '/login') navigate('/login', { replace: true });
+  };
+  onMount(() => window.addEventListener(UNAUTHENTICATED_EVENT, onUnauthenticated));
+  onCleanup(() => window.removeEventListener(UNAUTHENTICATED_EVENT, onUnauthenticated));
 
   return (
     <Show when={!me.loading} fallback={<BootScreen />}>
