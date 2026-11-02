@@ -1,7 +1,8 @@
 # Changelog
 
 All notable changes to Companion Planning. Releases are git tags (`v4.1.0` was the last
-cut before this file existed); the container image publishes on each tag and reports the
+cut before this file existed). The container image is published by dispatching
+`docker-publish.yml` on the tag's ref (see [docs/CI.md](docs/CI.md)) and reports the
 version at `GET /api/health` (`release`).
 
 ## [Unreleased]
@@ -13,6 +14,10 @@ version at `GET /api/health` (`release`).
   reload, a closed tab, a locked phone), so every disconnect logged a failure that was not one.
   The app now owns the `error` listener: it drops that one code and logs the rest through the
   server's logger.
+- **Two server tests no longer depend on when or in what order they run (#632).** The
+  recurrence test compares the New York wall clock across a DST change (it compared UTC
+  hours, so it failed whenever its window crossed one), and `startTestServer` clears the
+  stored VAPID pair so a pair sealed by an earlier test file cannot leave push dormant.
 
 ### Added
 - **`GET /api/sync/changes?since=<seq>`.** The `sync_events` log the SSE stream replays from,
@@ -59,6 +64,24 @@ version at `GET /api/health` (`release`).
   `PrivacyInfo.xcprivacy` (no tracking, nothing collected, no required-reason APIs, checked by
   scanning the built binaries) and `Info.plist` declares `ITSAppUsesNonExemptEncryption` as
   `false`. Both are for the owner to confirm before a first upload.
+
+## [4.2.2] — 2026-10-29
+
+### Fixed
+- **The Companion Portal button on the login and sign-up screens does a real navigation
+  (#628).** Solid Router intercepts plain same-origin anchors, so the button resolved
+  client-side to an unknown route and never reached `/api/auth/ciportal/start`. The links
+  are marked `rel="external"`. This is what failed the publish workflow's Portal login
+  smoke test.
+
+## [4.2.1] — 2026-10-29
+
+### Fixed
+- **The container image builds again (#627).** The `@companionintelligence/*` packages
+  resolve to `npm.pkg.github.com` and `.npmrc` is dockerignored, so `pnpm install` in the
+  Dockerfile failed with `ERR_PNPM_TARBALL_URL_MISMATCH`. The install step now writes a
+  throwaway user npmrc from a BuildKit secret (`--secret id=NODE_AUTH_TOKEN`) that never
+  reaches a layer, and `docker-publish.yml` passes `GITHUB_TOKEN` as that secret.
 
 ## [4.2.0] — 2026-10-29
 

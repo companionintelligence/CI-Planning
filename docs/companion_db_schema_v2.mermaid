@@ -1,61 +1,92 @@
 erDiagram
-    %% companion.db — EXPECTED schema after Phase Q (docs/Q-schema-hygiene.md)
-    %% Base: migration head 0091 (main). Plus Q2(0092)/Q3(0093)/Q4(0094).
-    %% Q3/Q4 changes are marked inline below. Q2 adds indexes only (not shown; see companion_db_data_dictionary_v2.md).
+    %% companion.db — schema at migration head 0172 (server/src/db/migrations/index.ts)
+    %% Fresh install: every migration applied in order to an empty database (75 tables incl. schema_migrations).
+    %% Indexes are not shown; see companion_db_data_dictionary_v2.md.
 
     OBJECTIVES ||--o{ OBJECTIVE_TASKS : "objective_id"
     OBJECTIVES ||--o{ OBJECTIVES : "parent_id"
     OWNERS ||--o{ API_KEYS : "owner_id"
     OWNERS ||--o{ AUDIT_LOG : "owner_id"
+    OWNERS ||--o{ BALANCE_WEEK_LOG : "owner_id"
     OWNERS ||--o{ BLOCK_TEMPLATES : "owner_id"
-    OWNERS ||--o{ CATEGORY_PREFS : "owner_id"
+    OWNERS ||--o{ CALIBRATION_COMBO_PINS : "owner_id"
+    OWNERS ||--o{ CALIBRATION_HISTORY : "owner_id"
+    OWNERS ||--o{ CLASSIFICATION_ACCURACY : "owner_id"
+    OWNERS ||--o{ CLASSIFICATION_EXEMPLARS : "owner_id"
+    OWNERS ||--o{ CLASSIFICATION_LOG : "owner_id"
+    OWNERS ||--o{ CONNECTION_PREFS : "owner_id"
     OWNERS ||--o{ CONNECTION_TOKENS : "owner_id"
+    OWNERS ||--o{ COPY_HISTORY : "owner_id"
     OWNERS ||--o{ DAILY_PLAN : "owner_id"
-    OWNERS ||--o{ DAILY_SUMMARIES : "owner_id"
+    OWNERS ||--o{ DAILY_RECAP : "owner_id"
     OWNERS ||--o{ DAY_ASSIGNMENTS : "owner_id"
     OWNERS ||--o{ DAY_OF_WEEK_MAP : "owner_id"
-    OWNERS ||--o{ DAY_STARS : "owner_id"
     OWNERS ||--o{ DAY_TYPES : "owner_id"
     OWNERS ||--o{ ESTIMATE_CALIBRATION : "owner_id"
     OWNERS ||--o{ EXTERNAL_EVENTS : "owner_id"
     OWNERS ||--o{ FLIGHT_PLAN : "owner_id"
+    OWNERS ||--o{ LIFE_PRIORITIES : "owner_id"
     OWNERS ||--o{ OAUTH_STATES : "owner_id"
     OWNERS ||--o{ OBJECTIVES : "owner_id"
     OWNERS ||--o{ OUTBOUND_QUEUE : "owner_id"
+    OWNERS ||--o{ PASSWORD_RESET_TOKENS : "owner_id"
     OWNERS ||--o{ PATTERN_BLOCKS : "owner_id"
     OWNERS ||--o{ PATTERN_DAY_OPTOUTS : "owner_id"
-    OWNERS ||--o{ PATTERN_PREFS : "owner_id"
     OWNERS ||--o{ PATTERN_TYPES : "owner_id"
     OWNERS ||--o{ PATTERNS : "owner_id"
+    OWNERS ||--o{ PEOPLE : "account_id"
+    OWNERS ||--o{ PEOPLE : "owner_id"
+    OWNERS ||--o{ PERSON_EMAILS : "owner_id"
+    OWNERS ||--o{ PLACEMENT_LOG : "owner_id"
+    OWNERS ||--o{ PLACEMENT_PREFERENCES : "owner_id"
+    OWNERS ||--o{ PLACEMENT_SURVIVAL : "owner_id"
     OWNERS ||--o{ PLAN_HINTS : "owner_id"
-    OWNERS ||--o{ PLAN_OUTCOMES : "owner_id"
+    OWNERS ||--o{ PLAN_LOOP_RUNS : "owner_id"
+    OWNERS ||--o{ PLAN_LOOP_STATS : "owner_id"
+    OWNERS ||--o{ PLAN_REVISION_LOG : "owner_id"
+    OWNERS ||--o{ PLANNING_SESSIONS : "owner_id"
+    OWNERS ||--o{ POSSIBLE_DISMISSAL_EXEMPLARS : "owner_id"
+    OWNERS ||--o{ POSSIBLE_DISMISSAL_RATE : "owner_id"
+    OWNERS ||--o{ POSSIBLE_OUTCOME_LOG : "owner_id"
     OWNERS ||--o{ POSSIBLE_TASKS : "proposed_owner_id"
     OWNERS ||--o{ PUSH_SUBSCRIPTIONS : "owner_id"
     OWNERS ||--o{ REFLECTIONS : "owner_id"
     OWNERS ||--o{ REMINDERS : "owner_id"
     OWNERS ||--o{ REPLAN_SUGGESTIONS : "owner_id"
     OWNERS ||--o{ SCHEDULING_PREFS : "owner_id"
+    OWNERS ||--o{ SIGNUP_CODES : "created_by"
+    OWNERS ||--o{ SIGNUP_CODES : "used_by"
+    OWNERS ||--o{ SYNC_EVENTS : "owner_id"
     OWNERS ||--o{ SYNC_STATE : "owner_id"
+    OWNERS ||--o{ TAG_PREFS : "owner_id"
+    OWNERS ||--o{ TAGS : "owner_id"
     OWNERS ||--o{ TASKS : "owner_id"
+    OWNERS ||--o{ TIME_BLOCKS : "owner_id"
     OWNERS ||--o{ TIME_ENTRIES : "owner_id"
+    OWNERS ||--o{ TRIALITY_LOG : "owner_id"
+    OWNERS ||--o{ TRIALITY_WEIGHTS : "owner_id"
     PATTERN_TYPES ||--o{ PATTERNS : "type_id"
     PATTERNS ||--o{ PATTERN_DAY_OPTOUTS : "pattern_id"
     PATTERNS ||--o{ PATTERN_TASKS : "pattern_id"
+    PEOPLE ||--o{ ENTITY_PEOPLE : "person_id"
+    PEOPLE ||--o{ PERSON_EMAILS : "person_id"
+    PEOPLE ||--o{ POSSIBLE_TASK_PEOPLE : "person_id"
+    POSSIBLE_TASKS ||--o{ POSSIBLE_TASK_PEOPLE : "possible_task_id"
     POSSIBLE_TASKS ||--o{ POSSIBLE_TASK_TAGS : "possible_task_id"
     SCHEDULED_JOBS ||--o{ JOB_RUNS : "job_id"
     TAGS ||--o{ CATEGORY_DIRECTION_OPTOUTS : "category_tag_id"
-    TAGS ||--o{ CATEGORY_DIRECTION_OPTOUTS : "pattern_tag_id"
-    TAGS ||--o{ CATEGORY_PREFS : "category_tag_id"
+    TAGS ||--o{ CATEGORY_DIRECTION_OPTOUTS : "direction_tag_id"
+    TAGS ||--o{ ENTITY_CATEGORIES : "category_tag_id"
     TAGS ||--o{ ENTITY_TAGS : "tag_id"
     TAGS ||--o{ OBJECTIVES : "category_id"
-    TAGS ||--o{ PATTERN_BLOCKS : "pattern_tag_id"
-    TAGS ||--o{ PATTERN_PREFS : "pattern_tag_id"
+    TAGS ||--o{ PATTERN_BLOCKS : "direction_tag_id"
     TAGS ||--o{ POSSIBLE_TASK_TAGS : "tag_id"
     TAGS ||--o{ REFLECTIONS : "category_id"
     TAGS ||--o{ TAG_CATEGORIES : "category_tag_id"
     TAGS ||--o{ TAG_CATEGORIES : "intention_tag_id"
-    TAGS ||--o{ TAG_PATTERNS : "intention_tag_id"
-    TAGS ||--o{ TAG_PATTERNS : "pattern_tag_id"
+    TAGS ||--o{ TAG_DIRECTIONS : "direction_tag_id"
+    TAGS ||--o{ TAG_DIRECTIONS : "intention_tag_id"
+    TAGS ||--o{ TAG_PREFS : "tag_id"
     TAGS ||--o{ TIME_BLOCKS : "category_id"
     TASKS ||--o{ DAILY_PLAN : "task_id"
     TASKS ||--o{ FLIGHT_PLAN : "task_id"
@@ -88,6 +119,12 @@ erDiagram
         string revoked_at
     }
 
+    APP_CONFIG {
+        string key PK
+        string value
+        string updated_at
+    }
+
     AUDIT_LOG {
         string id PK
         string owner_id FK
@@ -95,6 +132,27 @@ erDiagram
         string action
         string entity
         string at
+    }
+
+    AUTH_STATES {
+        string id PK
+        string state
+        string code_verifier
+        string nonce
+        string redirect_uri
+        string created_at
+        string expires_at
+    }
+
+    BALANCE_WEEK_LOG {
+        string id PK
+        string owner_id FK
+        string week_start
+        string category
+        int target_hours
+        int scheduled_minutes
+        int timed_minutes
+        string created_at
     }
 
     BLOCK_TEMPLATES {
@@ -106,17 +164,69 @@ erDiagram
         string tasks
     }
 
-    CATEGORY_DIRECTION_OPTOUTS {
-        string category_tag_id PK,FK
-        string pattern_tag_id PK,FK
+    CALIBRATION_COMBO_PINS {
+        string owner_id PK,FK
+        string scope_ref PK
+        string created_at
     }
 
-    CATEGORY_PREFS {
+    CALIBRATION_HISTORY {
+        string owner_id PK,FK
+        string scope_kind PK
+        string scope_ref PK
+        string computed_date PK
+        int sample_count
+        float bias_ratio
+        float p25
+        float p50
+        float p75
+    }
+
+    CATEGORY_DIRECTION_OPTOUTS {
+        string category_tag_id PK,FK
+        string direction_tag_id PK,FK
+    }
+
+    CLASSIFICATION_ACCURACY {
+        string owner_id PK,FK
+        string field PK
+        string computed_date PK
+        int held_out
+        int correct
+        float accuracy
+    }
+
+    CLASSIFICATION_EXEMPLARS {
+        string owner_id PK,FK
+        string field PK
+        string log_id PK
+        string input_text
+        string llm_value
+        string correct_value
+        blob embedding
+        string computed_date
+    }
+
+    CLASSIFICATION_LOG {
         string id PK
         string owner_id FK
-        string category_tag_id FK
+        string task_id
+        string field
+        string input_text
+        string llm_value
+        string final_value
+        string assigned_at
+        string corrected_at
+        string local_date
+    }
+
+    CONNECTION_PREFS {
+        string id PK
+        string owner_id FK
+        string provider
+        string account
         string color_token
-        int default_minutes
+        string texture
     }
 
     CONNECTION_TOKENS {
@@ -128,9 +238,17 @@ erDiagram
         string auth_tag
         string ciphertext
         int key_version
-        string status
         string created_at
         string updated_at
+        string status
+    }
+
+    COPY_HISTORY {
+        string id PK
+        string owner_id FK
+        string surface
+        string signature
+        string created_at
     }
 
     DAILY_PLAN {
@@ -144,7 +262,7 @@ erDiagram
         string outcome
     }
 
-    DAILY_SUMMARIES {
+    DAILY_RECAP {
         string owner_id PK,FK
         string date PK
         string prose
@@ -152,6 +270,13 @@ erDiagram
         string focus
         int llm
         string inputs_hash
+        int star_objective
+        int star_habits
+        int star_tasks
+        int star_bonus
+        int star_note
+        int total
+        string frozen_at
         string created_at
         string updated_at
     }
@@ -168,18 +293,6 @@ erDiagram
         string day_type_key
     }
 
-    DAY_STARS {
-        string owner_id PK,FK
-        string date PK
-        int star_objective
-        int star_habits
-        int star_tasks
-        int star_bonus
-        int star_note
-        int total
-        string frozen_at
-    }
-
     DAY_TYPES {
         string id PK
         string owner_id FK
@@ -188,15 +301,36 @@ erDiagram
         int is_builtin
     }
 
+    ENTITY_CATEGORIES {
+        string entity_kind PK
+        string entity_id PK
+        string category_tag_id PK,FK
+        int position
+        string created_at
+    }
+
+    ENTITY_PEOPLE {
+        string entity_kind PK
+        string entity_id PK
+        string person_id PK,FK
+        string role PK
+        string source
+        int position
+        string created_at
+    }
+
     ENTITY_TAGS {
         string entity_kind PK
         string entity_id PK
         string tag_id PK,FK
         int level
+        string created_at
     }
 
     ESTIMATE_CALIBRATION {
         string owner_id PK,FK
+        string scope_kind PK
+        string scope_ref PK
         string computed_at
         int sample_count
         float bias_ratio
@@ -220,11 +354,11 @@ erDiagram
     FLIGHT_PLAN {
         string owner_id PK,FK
         string task_id PK,FK
-        string source_kind
-        string source_ref
         int selected
         int position
         string added_at
+        string source_kind
+        string source_ref
     }
 
     JOB_RUNS {
@@ -236,6 +370,17 @@ erDiagram
         int items_created
         int items_updated
         string log
+    }
+
+    LIFE_PRIORITIES {
+        string id PK
+        string owner_id FK
+        string category
+        int satisfaction
+        int importance
+        int target_hours_per_week
+        string created_at
+        string updated_at
     }
 
     OAUTH_STATES {
@@ -281,6 +426,10 @@ erDiagram
         string source_task_id
         int version
         string field_ts
+        string archived_at
+        string archive_root_id
+        string purge_after
+        string color_token
     }
 
     OUTBOUND_QUEUE {
@@ -297,12 +446,27 @@ erDiagram
         string name
         string email
         string last_auto_run_id
+        string external_subject
+        string username
+        string password_hash
+        string backup_email
+        int session_epoch
+        string role
+    }
+
+    PASSWORD_RESET_TOKENS {
+        string id PK
+        string owner_id FK
+        string token_hash
+        string expires_at
+        string used_at
+        string created_at
     }
 
     PATTERN_BLOCKS {
         string id PK
         string owner_id FK
-        string pattern_tag_id FK
+        string direction_tag_id FK
         string day_type
         string start_time
         string end_time
@@ -312,17 +476,6 @@ erDiagram
         string owner_id PK,FK
         string pattern_id PK,FK
         string date PK
-    }
-
-    PATTERN_PREFS {
-        string id PK
-        string owner_id FK
-        string pattern_tag_id FK
-        int auto_fill
-        string reminder_offsets
-        string icon_shape
-        string color_token
-        int default_minutes
     }
 
     PATTERN_TASKS {
@@ -352,9 +505,69 @@ erDiagram
         string name
         string tag
         string notes
+        string created_at
         string recurrence_rule
         string recurrence_dtstart
+        string color_token
+    }
+
+    PEOPLE {
+        string id PK
+        string owner_id FK
+        string account_id FK
+        string display_name
+        int confirmed
+        string source
+        string notes
         string created_at
+    }
+
+    PERSON_EMAILS {
+        string owner_id PK,FK
+        string person_id FK
+        string email PK
+    }
+
+    PLACEMENT_LOG {
+        string id PK
+        string owner_id FK
+        string block_id
+        string task_id
+        string slot_key
+        string auto_run_id
+        string chosen_start_at
+        string chosen_end_at
+        int chosen_hour
+        int fit
+        string candidates
+        string moved_start_at
+        string moved_end_at
+        int moved_hour
+        string placed_at
+        string moved_at
+        string local_date
+    }
+
+    PLACEMENT_PREFERENCES {
+        string owner_id PK,FK
+        string slot_key PK
+        float p25_hour
+        float p75_hour
+        int corrections
+        int sample_count
+        string computed_date
+    }
+
+    PLACEMENT_SURVIVAL {
+        string owner_id PK,FK
+        string computed_date PK
+        int period_days
+        int decided
+        int accepted
+        int corrected
+        float survival_rate
+        int keys_learned
+        int biased
     }
 
     PLAN_HINTS {
@@ -367,11 +580,96 @@ erDiagram
         string created_at
     }
 
-    PLAN_OUTCOMES {
+    PLAN_LOOP_RUNS {
+        string id PK
+        string owner_id FK
+        string stage
+        int passed
+        int escaped
+        string escape_reason
+        float score
+        int iterations
+        string at
+    }
+
+    PLAN_LOOP_STATS {
         string owner_id PK,FK
-        string date PK
-        int planned
-        int completed
+        string stage PK
+        string computed_date PK
+        int period_days
+        int runs
+        int passed
+        int escaped
+        int first_try_pass
+        float avg_iterations
+        float pass_rate
+    }
+
+    PLAN_REVISION_LOG {
+        string id PK
+        string owner_id FK
+        string run_id
+        string stage
+        int iter
+        float score
+        string reason
+        string defects
+        string critique
+        string candidate
+        string at
+    }
+
+    PLANNING_SESSIONS {
+        string id PK
+        string owner_id FK
+        string started_at
+        string ended_at
+        string entry_branch
+        string status
+        int llm_used
+        string transcript
+        string summary
+        string created_at
+    }
+
+    POSSIBLE_DISMISSAL_EXEMPLARS {
+        string owner_id PK,FK
+        string log_id PK
+        string input_text
+        string source_kind
+        blob embedding
+        string computed_date
+    }
+
+    POSSIBLE_DISMISSAL_RATE {
+        string owner_id PK,FK
+        string computed_date PK
+        int period_days
+        int created
+        int decided
+        int dismissed
+        float rate
+        int exemplars
+        int hinted
+    }
+
+    POSSIBLE_OUTCOME_LOG {
+        string id PK
+        string owner_id FK
+        string possible_task_id
+        string source_kind
+        string input_text
+        string outcome
+        string decided_at
+        string local_date
+    }
+
+    POSSIBLE_TASK_PEOPLE {
+        string possible_task_id PK,FK
+        string person_id PK,FK
+        string role PK
+        string source
+        float confidence
     }
 
     POSSIBLE_TASK_TAGS {
@@ -393,6 +691,9 @@ erDiagram
         string status
         string promoted_task_id FK
         string created_at
+        int proposed_estimated_minutes
+        string proposed_scheduled_for
+        string proposed_task_time
     }
 
     PUSH_SUBSCRIPTIONS {
@@ -427,8 +728,8 @@ erDiagram
         string fire_at
         string status
         string fired_at
-        string source
         string created_at
+        string source
     }
 
     REPLAN_SUGGESTIONS {
@@ -463,24 +764,6 @@ erDiagram
         string planning_mode
         string timezone
         int planning_horizon_days
-        int recurrence_horizon_days
-        int max_time_block_minutes
-        int min_time_block_minutes
-        int default_time_block_minutes
-        int plan_allday_always
-        int plan_daylong_for_promoted
-        int plan_autofill_gaps
-        int auto_fill_workday
-        string auto_mode
-        string trust_mode
-        string fill_order
-        int concept_default_minutes
-        int concept_autosurface
-        int concept_horizon_days
-        string concept_tags
-        int enable_rituals
-        int enable_routines
-        int recall_keeps_pattern
         string fast_model
         string quality_model
         string embed_model
@@ -490,7 +773,40 @@ erDiagram
         int memory_sync_reflections
         string memory_account
         string memory_last_synced_at
+        int max_time_block_minutes
+        int min_time_block_minutes
+        int plan_allday_always
+        int plan_daylong_for_promoted
+        int plan_autofill_gaps
+        int concept_default_minutes
+        int concept_autosurface
+        int concept_horizon_days
+        string concept_tags
+        int enable_rituals
+        int auto_fill_workday
+        int recall_keeps_pattern
+        string fill_order
         int auto_defense_enabled
+        string trust_mode
+        int default_time_block_minutes
+        int enable_routines
+        int recurrence_horizon_days
+        int time_sense_enabled
+        int focus_ritual_enabled
+        int haptic_cues_enabled
+        int ambient_color_enabled
+        int calibration_loop_enabled
+        string z_experiment_arm
+        string view_prefs
+        int memory_pull_enabled
+        int sleep_hours_per_week
+        string onboarded_at
+        int triality_enabled
+        int memory_window_days
+        int email_lookback_days
+        int llm_thinking_enabled
+        int capacity_hours_per_week
+        int balance_bias_enabled
     }
 
     SCHEMA_MIGRATIONS {
@@ -499,9 +815,21 @@ erDiagram
         string checksum
     }
 
+    SIGNUP_CODES {
+        string id PK
+        string code_hash
+        string note
+        string created_by FK
+        string created_at
+        string expires_at
+        string used_at
+        string used_by FK
+        string revoked_at
+    }
+
     SYNC_EVENTS {
         int seq PK
-        string owner_id
+        string owner_id FK
         string entity
         string entity_id
         int version
@@ -525,13 +853,27 @@ erDiagram
         string category_tag_id PK,FK
     }
 
-    TAG_PATTERNS {
+    TAG_DIRECTIONS {
         string intention_tag_id PK,FK
-        string pattern_tag_id PK,FK
+        string direction_tag_id PK,FK
+    }
+
+    TAG_PREFS {
+        string id PK
+        string owner_id FK
+        string tag_id FK
+        string kind
+        int auto_fill
+        string reminder_offsets
+        string icon_shape
+        string color_token
+        int default_minutes
+        int show_open_time
     }
 
     TAGS {
         string id PK
+        string owner_id FK
         string name
         string kind
         int muted
@@ -550,63 +892,75 @@ erDiagram
         string description
         string notes
         string due_at
-        string scheduled_for
-        string defer_until
         string task_time
         int estimated_minutes
-        int actual_minutes
         int priority
         string status
         string parent_id FK
-        string recurrence_rule
-        string recurrence_parent_id FK
-        string recurrence_dtstart
-        string recurrence_exdates
-        string occurrence_date
-        string subtype
-        int defer_count
         string owner_id FK
         string source_kind
         string source_ref
         string created_at
         string completed_at
+        string scheduled_for
+        string defer_until
+        int actual_minutes
+        string recurrence_rule
+        string recurrence_parent_id FK
+        string recurrence_dtstart
+        string recurrence_exdates
+        string occurrence_date
+        int defer_count
+        string subtype
         int version
         string updated_at
         string field_ts
+        int texture_enabled
+        string texture_color_token
+        string completion_note
+        string reaction_at
+        string motivation
+        string motivation_source
+        int completion_score
     }
 
     TIME_BLOCKS {
         string id PK
         string task_id FK
+        string owner_id FK
         string title
         string block_kind
+        string start_at
+        string end_at
+        int is_locked
+        int is_auto
+        string source_kind
+        string source_ref
+        string status
+        string created_at
+        int all_day
         string tag
         string block_type
         string goal_start_date
         int duration_minutes
         string note
-        string start_at
-        string end_at
-        int is_locked
-        int is_auto
-        int all_day
-        string source_kind
-        string source_ref
-        string status
         string parent_block_id FK
-        string category_id FK
-        string color_token
         string recurrence_rule
         string recurrence_dtstart
         string recurrence_parent_id
-        string recurrence_exdates
         string occurrence_date
         string auto_run_id
         string last_moved_at
-        string created_at
+        string category_id FK
+        string color_token
+        string recurrence_exdates
         int version
         string updated_at
         string field_ts
+        int texture_enabled
+        string texture_color_token
+        int responsible_pinned
+        int beneficiaries_pinned
     }
 
     TIME_ENTRIES {
@@ -618,4 +972,26 @@ erDiagram
         string ended_at
         string source
         string created_at
+    }
+
+    TRIALITY_LOG {
+        string id PK
+        string owner_id FK
+        string shown_at
+        string local_date
+        string slot
+        string action_kind
+        string action_ref
+        string scores
+        string outcome
+        string outcome_at
+        string confidence
+    }
+
+    TRIALITY_WEIGHTS {
+        string owner_id PK,FK
+        string slot PK
+        string weights
+        int sample_count
+        string computed_date
     }

@@ -1,8 +1,66 @@
 # Companion Planning — Best-in-Class Roadmap (v2, resequenced)
 
-> ## ⚠️ Current status (2026-08-13 GitHub issue audit)
+> ## Current status (2026-11-01, `main` @ `3cfbbdf2`)
 >
-> **Read this box, not the archaeology below.** Live `gh issue list --state open` on
+> **Read this box first.** It was checked against the code and git history; where it disagrees
+> with the older boxes and "Update:" paragraphs below, this box wins.
+>
+> - **Release:** package version `4.2.0`, git tags through `v4.2.2`. [CHANGELOG.md](../CHANGELOG.md)
+>   has `[4.2.0] — 2026-10-29` and an `[Unreleased]` section above it. The license has been
+>   PolyForm Noncommercial 1.0.0 since 4.2.0 (it was CI-Commercial-1.0).
+> - **Migration head: `0172_signup_codes`** — 168 migrations in
+>   `server/src/db/migrations/index.ts`; the numbers 0009, 0119, 0159 and 0160 are unused.
+>   Since the 2026-08-13 box below (head `0138`): 0139–0144 Triality (flag, log, weights,
+>   weekly `calibrate_triality` job, confidence) and the per-task `motivation` axis (0141) ·
+>   0145 `connection_prefs` · 0146 Gmail ingest every 15 min · 0147 ingest windows · 0148 synced
+>   calendar blocks locked · 0149/0150 classification learning + `calibrate_classification` ·
+>   0151–0154 people on work · 0155 per-owner LLM thinking opt-in · 0156
+>   `capacity_hours_per_week` (replaces the unread `workday_start`/`workday_end`) · 0157/0158
+>   dismissal evidence + `calibrate_dismissals` · 0161 `completion_score` (the close ritual's
+>   1–5 rating; replaces `completion_mood`) · 0162/0163 plan-loop evidence + `calibrate_plan_loop`
+>   · 0164/0165 balance bias pref + `balance_week_log` · 0166/0167 placement evidence +
+>   `calibrate_placement` · 0168/0169 indexes · 0170 per-direction `show_open_time` · 0171
+>   `planning_mode` split from the trust dial · 0172 `signup_codes`. When this goes stale,
+>   `migrations/index.ts` wins.
+> - **Phases A–AG: shipped**, and so is everything the box below lists. Also shipped since,
+>   with no phase letter:
+>   - **AH — Focus × Time Blocks** ([AH-focus-timeblocks.md](AH-focus-timeblocks.md); wrap-up in
+>     [HANDOFF-2026-08-14-focus-timeblocks-phases-1-7.md](HANDOFF-2026-08-14-focus-timeblocks-phases-1-7.md)):
+>     all nine phases are merged (PRs #543–#561) — the lock model, Time Blocks as Focus sections,
+>     add-into-block, calendar containment, auto-nest, the reflow mobility ladder, the confirmed
+>     day-type reflow, classification learning, and an honest Open Time.
+>   - **Learning loops** — the scheduler and parser learn from the owner's own behaviour, each as
+>     an append-only evidence log plus a weekly `calibrate_*` batch job: classification
+>     corrections, dismissed suggestions, plan-loop revisions, placement choices, and Triality
+>     outcomes (the factory tickets are in `docs/factory/`).
+>   - **People on work** — Responsible & Beneficiaries on tasks and time blocks (PR #574,
+>     [people-on-work.md](people-on-work.md)).
+>   - **Close ritual** (0137, 0161), **Balance targets reaching the scheduler** (#590), the
+>     **trust dial as an ordering policy** (#605), **cancel a scheduled task** (#606), and
+>     the **Open Time range**, Planner-in-the-middle Today layout and Flight Plan drawer tab
+>     (#601, #604).
+>   - **Sign-in and onboarding for 4.2.0** (#619): sign-in against the real Companion Portal, a
+>     new-user path with invite-code local sign-up (`AUTH_SIGNUP`, 0172), curated sample data, a
+>     Content-Security-Policy and other security headers, and an explicit CORS origin allowlist.
+>     GitHub Actions are manual-dispatch only (#618): the merge gate is
+>     `pnpm typecheck && pnpm build && pnpm test`, and `tests/container/run-local.sh` is the
+>     container smoke gate.
+>   - **Mobile shells** — Capacitor iOS and Android apps in `mobile/` that connect to a server
+>     you run, plus `GET /api/sync/changes`, the polling twin of the SSE stream (#629–#631;
+>     `[Unreleased]` in the CHANGELOG). Not store-ready.
+> - **Still open / deferred:** naming-Z **W1** (`patterns`→`routines` table rename; the DB still
+>   has `patterns`) · multi-user shared events M1–M5 (no tables or routes for them exist; only
+>   the ticket drafts in `docs/factory/drafts/`) · G-INT timing intelligence · the Postgres
+>   schema port (`server/db/postgres/migrations/` stops at a 2026-08-02 baseline; compose no
+>   longer needs Postgres) · live-mode smoke of the CI-Server memory link against a real
+>   CI-Server (carried over from the older notes below; not re-tested).
+> - **Issues:** GitHub was not queried for this check, so the issue states below (#337–#363,
+>   #517/#518) are as of the 2026-08-13 audit.
+
+> ## Earlier status (2026-08-13 GitHub issue audit) — kept for history
+>
+> **Read this box, not the archaeology below (the migration head and the open-work list are
+> superseded by the box above).** Live `gh issue list --state open` on
 > 2026-08-13 shows **7 open issues total**, down from the 14-ticket FTUE track +
 > deferred M1–M5 this doc previously tracked:
 > - **FTUE track T1–T14 (#337–#350): all 14 CLOSED.** The 2026-07-29 box below still
@@ -34,7 +92,7 @@
 > (it says 0126, 0117 and 0112 in three places) and on naming-Z W4 (both "planned/unbuilt"
 > and "shipped")**. It is kept for history. Where they disagree, this box wins.
 >
-> - **Migration head: `0138_calibration_history`** (0133–0138: item colors, the
+> - **Migration head at the time: `0138_calibration_history`** (0133–0138: item colors, the
 >   Categories⇄Balance re-seed + capture, the enrich-tasks job, the close ritual,
 >   calibration history; 0119 stays an intentional gap). The authoritative ordered list is
 >   `server/src/db/migrations/index.ts` — whenever this box next goes stale, that file wins.
@@ -54,7 +112,7 @@
 > - **Spike #361 is DECIDED** — decision record `docs/objectives-in-planner.md` (option (c):
 >   non-geometric objective accent + opt-in single-objective rail; the derived spanning band is
 >   rejected on measurement). Follow-up recipe drafted at
->   `docs/factory/drafts/spike361_followup_objective_accent.md`, not yet promoted to an issue.
+>   `docs/factory/drafts/spike361_followup_objective_accent.md`, not yet promoted to an issue *(since shipped as #386, re-merged in #401: the accent and the shared objectives store; the opt-in focused rail is not built)*.
 > - **2026-07-19 full-codebase audit** (33 verified findings: stubs, dead wiring, data-flow gaps).
 >   The 8 clear correctness bugs are fixed on branch `fix/audit-findings-2026-07-19` (orphaned
 >   blocks on task-cancel, mode-blind calendar sync, backup dropping `life_priorities`/
@@ -66,7 +124,7 @@
 > - **Known doc gaps:** `docs/ftue-plan.md` §1 "honest current state" is **materially false** as of
 >   this head (see its own status box).
 
-**Status (2026-07-12, migration head 0126) — HISTORICAL, superseded by the box above:** **A–Y all shipped & merged, plus AA–AG.** *(Update 2026-07-12: since the 2026-07-07 / head-0117 snapshot below, Phases **AF** (task management + Inbox retirement, migs 0118/0120/0121), **AF-11** (tag unification), and **AG** (multi-tenant RBAC — `owners.role` + operator-gated `/api/accounts`, mig 0125) have shipped, along with ship-readiness/hardening work: seed-identity scrub (0122), `auto_mode` drop → `trust_mode` (0123), in-app Google setup + auto-provisioned Web Push VAPID keys via `app_config` (0124), and base **category** tags Personal/Professional/Social (0126). The license is **CI-Commercial-1.0**, not MIT. **Migration head is now 0126.** The head-0117 numbers in the paragraph below are the prior snapshot.)* Since the previous status (2026-07-01, head 0086), the following have landed to main: **O** (gamified five-star day, migs 0087–0090, #191/#192/#193/#198), **P** (planner hygiene — recurrence horizon + Clear Date Range, #188/#190), **Q** (schema hygiene, migs 0092–0094, #205), **S** (schema consolidation — `daily_recap`, `tag_prefs`, migs 0095–0097, #207–#211), **T** (multi-tenant owner-scoping, migs 0098–0100), **U** (CI-Portal OIDC + local auth, migs 0101–0102, #230), **V** (password reset, migs 0103–0104, #232), **X** (MCP intent vocabulary, #234/#237), and **Y** (env-config, #217). **Phase Z — Time-Sense** (Focus Ritual + calibration loop) has landed behind the `time_sense_enabled` master flag (flag-off = behavior-neutral; migs 0106–0109, PRs #246/#251/#257), alongside the **calendar / UI feedback waves** (QuickAdd-in-Today, Planner de-scroll, Flight-Plan tabs + saved-blocks + search, three-axis tag filter, click-to-add, day-type picker, collapsed night hours — #240–#256). **Phase W** (a **GraphQL CRUD layer alongside** the untouched REST API, at `POST /api/graphql`) is **✅ done** — every type W1–W13 + W-sandbox + W-close is merged (the full tag/task/block/flight-plan/pattern/day-type/life-planning/inbox/notification/prefs/admin/engine-ops surface; #235/#238/#243–#285 and the W-close perf-index migration 0112); the board is [W-graphql-crud.md](W-graphql-crud.md). The separate **naming-consolidation "Z"**: **W2** (tag-axis revert `pattern`→`direction`, mig 0105, #239) shipped; **W1** (`patterns`→`routines` table rename) and **W4** (drop vestigial `auto_mode`) remain **planned/unbuilt**. Since then, **Phases AA–AE** (migs 0113–0117) have shipped: **AA** (CI-Portal `companion-memory` pull-first integration behind `memory_pull_enabled` — connector, `memory_suggest` inbox agent, memory Daily Brief, memory-aware autoplan ordering + estimate, and one-way `push_memory` sync behind `memory_sync_enabled`), **AB** (natural scheduling — `scheduled_for`/`task_time` = START intent), **AC** (Today + Tasks UI overhaul — header-row popovers + FAB, Routine grouping + midnight `reset_routines`), **AD** (calendar reliability — `task_time` honored everywhere, container→task direction inheritance, Alt-drag), and **AE** (reflow correctness — snapshot-based reflow so a task edit can't wipe other placed blocks, plus status parity / not-before-now clamp / locked-block guards). **Migration head is now 0117** (`0117_push_memory_job`; runner applies 0001 → 0117 on boot). The §3b `patterns`→`routines` rename stays **deferred** (the as-built `patterns` naming stands; see GLOSSARY and naming-Z W1). *Superseded planning docs now live in [archive/](archive/); see [archive/README.md](archive/README.md).*
+**Status (2026-07-12, migration head 0126) — HISTORICAL, superseded by the box above:** **A–Y all shipped & merged, plus AA–AG.** *(Update 2026-07-12: since the 2026-07-07 / head-0117 snapshot below, Phases **AF** (task management + Inbox retirement, migs 0118/0120/0121), **AF-11** (tag unification), and **AG** (multi-tenant RBAC — `owners.role` + operator-gated `/api/accounts`, mig 0125) have shipped, along with ship-readiness/hardening work: seed-identity scrub (0122), `auto_mode` drop → `trust_mode` (0123), in-app Google setup + auto-provisioned Web Push VAPID keys via `app_config` (0124), and base **category** tags Personal/Professional/Social (0126). The license was **CI-Commercial-1.0**, not MIT (it has been PolyForm Noncommercial 1.0.0 since 4.2.0). **Migration head is now 0126.** The head-0117 numbers in the paragraph below are the prior snapshot.)* Since the previous status (2026-07-01, head 0086), the following have landed to main: **O** (gamified five-star day, migs 0087–0090, #191/#192/#193/#198), **P** (planner hygiene — recurrence horizon + Clear Date Range, #188/#190), **Q** (schema hygiene, migs 0092–0094, #205), **S** (schema consolidation — `daily_recap`, `tag_prefs`, migs 0095–0097, #207–#211), **T** (multi-tenant owner-scoping, migs 0098–0100), **U** (CI-Portal OIDC + local auth, migs 0101–0102, #230), **V** (password reset, migs 0103–0104, #232), **X** (MCP intent vocabulary, #234/#237), and **Y** (env-config, #217). **Phase Z — Time-Sense** (Focus Ritual + calibration loop) has landed behind the `time_sense_enabled` master flag (flag-off = behavior-neutral; migs 0106–0109, PRs #246/#251/#257), alongside the **calendar / UI feedback waves** (QuickAdd-in-Today, Planner de-scroll, Flight-Plan tabs + saved-blocks + search, three-axis tag filter, click-to-add, day-type picker, collapsed night hours — #240–#256). **Phase W** (a **GraphQL CRUD layer alongside** the untouched REST API, at `POST /api/graphql`) is **✅ done** — every type W1–W13 + W-sandbox + W-close is merged (the full tag/task/block/flight-plan/pattern/day-type/life-planning/inbox/notification/prefs/admin/engine-ops surface; #235/#238/#243–#285 and the W-close perf-index migration 0112); the board is [W-graphql-crud.md](W-graphql-crud.md). The separate **naming-consolidation "Z"**: **W2** (tag-axis revert `pattern`→`direction`, mig 0105, #239) shipped; **W1** (`patterns`→`routines` table rename) and **W4** (drop vestigial `auto_mode`) remain **planned/unbuilt**. Since then, **Phases AA–AE** (migs 0113–0117) have shipped: **AA** (CI-Portal `companion-memory` pull-first integration behind `memory_pull_enabled` — connector, `memory_suggest` inbox agent, memory Daily Brief, memory-aware autoplan ordering + estimate, and one-way `push_memory` sync behind `memory_sync_enabled`), **AB** (natural scheduling — `scheduled_for`/`task_time` = START intent), **AC** (Today + Tasks UI overhaul — header-row popovers + FAB, Routine grouping + midnight `reset_routines`), **AD** (calendar reliability — `task_time` honored everywhere, container→task direction inheritance, Alt-drag), and **AE** (reflow correctness — snapshot-based reflow so a task edit can't wipe other placed blocks, plus status parity / not-before-now clamp / locked-block guards). **Migration head is now 0117** (`0117_push_memory_job`; runner applies 0001 → 0117 on boot). The §3b `patterns`→`routines` rename stays **deferred** (the as-built `patterns` naming stands; see GLOSSARY and naming-Z W1). *Superseded planning docs now live in [archive/](archive/); see [archive/README.md](archive/README.md).*
 
 > **v2 supersedes the original A–K plan.** See [§ What changed](#what-changed-from-v1). Each phase has its own `docs/<id>-*.md` spec; the new G UX is canonical in [design-today-cockpit.md](archive/design-today-cockpit.md).
 
@@ -109,7 +167,7 @@
 | | *Settings* — Ollama model picker + Companion Memory sync | E | S | ✅ done |
 | | *Responsive* — mobile shell (bottom nav, sheets, touch) | F | S | ✅ done |
 | | **G** **Time-Blocking, Patterns & the TODAY cockpit** | B0, C, E, F | **L** | ✅ done (#60–#65, #77) — cockpit, PLANNER, flight-plan, textures all landed; drawer superseded by ElementWizard |
-| | **H** Notifications + service worker / Web Push | B0 (G for pattern-reminder content) | M | ✅ done (#100–#102) — live once VAPID keys are set |
+| | **H** Notifications + service worker / Web Push | B0 (G for pattern-reminder content) | M | ✅ done (#100–#102) — live; the server generates a VAPID keypair on first boot unless the env pins one (`services/vapid-config.ts`) |
 | 2 Resilience | **R** Backups, restore, export/import | B0 | S–M | ✅ done (#108–#110) — every mutating route writes an audit row |
 | 3 Multi-user & cloud *(gated on a real driver)* | **I** Identity, auth & connector infra | B0, R | L | ⚠️ **partial** (#116–#120) — API-key standalone store + `requireAuth` + encrypted tokens shipped; the JWKS verify-only SSO Bearer path (PR2) **superseded by Phase U** (OIDC session cookie) |
 | | **J** Two-way calendar sync | I, F | L | ✅ done (#128, `external_events` `0051`) — inbound; extended by the Connectors track below |
@@ -134,9 +192,15 @@
 | | **AG** Multi-tenant RBAC (`owners.role` → `roleToScopes`; operator-gated `/api/accounts`) | T, U | M | ✅ done (mig 0125) — supersedes **D1** |
 | Post-AG *(no phase letter)* | **Life priorities** — `/priorities` wizard + `/balance` dashboard; sleep reserved from the weekly pool | AG | M | ✅ done (migs 0127/0128, #356) |
 | | **ENTITY** — wizard gating · confirm-before-delete · promote-task-to-objective (Planner + picker) · **objectives archive + 48h purge** | N, AF | M | ✅ done (#357–#360, #363 → PRs #362–#368; migs 0129/0130). Archive leak follow-ups #369–#372 |
-| | **ENTITY-5** Spike — objectives as Planner block groupings | ENTITY | S | ✅ **closed (#361)** — decided (option c, non-geometric accent); see [objectives-in-planner.md](objectives-in-planner.md) |
+| | **ENTITY-5** Spike — objectives as Planner block groupings | ENTITY | S | ✅ **closed (#361)** — decided (option c, non-geometric accent); see [objectives-in-planner.md](objectives-in-planner.md). Step 1 (the accent) shipped as #386 |
 | | **FTUE / weekly-planning assistant** — T1–T14 (session logs · "Plan my week" · deterministic branches · LLM hybrid follow-ups · onboarding wizard) | AG | L | ✅ **done** — 14/14 tickets closed (#337–#350) as of 2026-08-13; doc `ftue-plan.md` §1 is stale |
-| | **Multi-user shared events** — M1–M5 (outbound share · share chip · cross-owner comments · comment UI · structured apply) | FTUE | L | ⏸ **deferred** — 5 tickets (#351–#355) |
+| | **Multi-user shared events** — M1–M5 (outbound share · share chip · cross-owner comments · comment UI · structured apply) | FTUE | L | ⏸ **deferred** — 5 tickets (#351–#355); nothing built (no share or comment tables or routes) |
+| Post-FTUE *(no phase letter)* | **AH** Focus × Time Blocks — lock model · Focus sections · auto-nest · mobility ladder · day-type reflow · classification learning · honest Open Time | AG | L | ✅ done — all 9 phases merged (PRs #543–#561; migs 0148–0150); [AH-focus-timeblocks.md](AH-focus-timeblocks.md) |
+| | **Learning loops** — classification · dismissals · plan-loop revisions · placement · Triality weights, each an evidence log + a weekly `calibrate_*` job | AH | L | ✅ done (migs 0139–0144, 0149/0150, 0157/0158, 0162/0163, 0166/0167); ticket waves in `docs/factory/` |
+| | **People on work** — Responsible & Beneficiaries on tasks and time blocks | AG | M | ✅ done (#574, migs 0151–0154) — [people-on-work.md](people-on-work.md) |
+| | **Balance targets → scheduler** · close ritual (1–5 rating) · trust dial as an ordering policy | N, AG | M | ✅ done (#590, migs 0164/0165 · 0137/0161 · #605, mig 0171) |
+| | **Release readiness for 4.2.0** — real Portal sign-in, invite-code sign-up, security headers, local release gate, PolyForm license | U, V | M | ✅ done (#619, #622, #625; mig 0172) |
+| | **Mobile shells** — Capacitor iOS and Android apps for a server you run, polling sync | L | M | ◐ built, **not store-ready** (#629–#631; CHANGELOG `[Unreleased]`) |
 
 **G ticket order (✅ shipped):** G1 patterns → G3 time-blocks → G4/A′ flight-plan+Auto → G6/F′ PLANNER → G5 cockpit → G8 textures all landed (G2's "habit→pattern" was superseded: habits stayed **task-level** via `subtype`). **G7** custom Routine-type management UI is **shipped** (#115, W1-C); **G-INT** (timing intelligence) remains deferred. The detailed spec [archive/G-rituals-reflection.md](archive/G-rituals-reflection.md) is **HISTORICAL** (old `pattern_types`-as-routine model) — archived for history only.
 
@@ -157,7 +221,7 @@ Everything after N (the phase map above stopped at N in the old status). One lin
 **Two phases were both named "Z"** (confusingly):
 
 - **Z — Time-Sense** ✅ *flag-gated.* A Focus Ritual + estimate-calibration loop, entirely behind the `time_sense_enabled` master flag (flag-off = byte-identical to Phase N behavior). Z0 scoped estimate calibration, Z1 EOD alignment, Z2 daily-brief fold-in, Z3 "Keep working" `extendBlock` + "Schedule again", Z3b Focus Ritual client screen, Z4 focus-cue background reminders + vibrate, Z5 per-cue prefs, Z6 suggest-only estimate chip, Z7 voice loop. Migs 0106 (`time_sense_flag`) / 0107 (`calibration_scope`) / 0108 (`focus_prefs`) / 0109 (`copy_history`, not in owner export). PRs #246/#251/#257. Spec: docs/Z-focus-ritual.md.
-- **Z — Naming consolidation** ◐ *separate phase.* W2 (tag-axis revert `pattern`→`direction`: `tags.kind='direction'`, `tag_directions`, GraphQL `TagKind=DIRECTION`) **shipped** (mig 0105, #239). W4 (drop vestigial `auto_mode`) **shipped** (mig 0123; the top-bar Suggest/Schedule toggle now drives `trust_mode` — Schedule ⇔ `hands_off`). W1 (`patterns`→`routines` table rename) remains **unbuilt/planned**.
+- **Z — Naming consolidation** ◐ *separate phase.* W2 (tag-axis revert `pattern`→`direction`: `tags.kind='direction'`, `tag_directions`, GraphQL `TagKind=DIRECTION`) **shipped** (mig 0105, #239). W4 (drop vestigial `auto_mode`) **shipped** (mig 0123; the top-bar trust dial (Cautious · Balanced · Hands-off, `TrustModal`) drives `trust_mode`, and since mig 0171 `planning_mode` is read independently of it). W1 (`patterns`→`routines` table rename) remains **unbuilt/planned**.
 
 **UI / calendar feedback waves** ✅ (owner feedback, landed): QuickAdd mounted in Today (#241), Planner de-scroll (#240), Flight-Plan tabs + saved-blocks + search (#242), calendar three-axis tag filter (#247), calendar container-outlines + click-to-add + no-task-drag (#248), select-date → day-type picker (#253), collapsed night hours (12am–7am / 9pm–midnight, #256).
 
@@ -169,14 +233,14 @@ Everything after N (the phase map above stopped at N in the old status). One lin
 **AA–AE — memory, natural scheduling, UI, reliability** (2026-07, migs 0113–0117):
 
 - **AA — Memory-aware agentic layer** ✅ *flag-gated (`memory_pull_enabled` / `memory_sync_enabled`, both default 0).* Pull-first, read-only CI-Server `companion-memory` integration. **AA0** connector (`connectors/memory.ts`, fixture/live, per-owner creds in `connection_tokens` provider `ci_memory`) + **AA0b** CI-Portal OAuth (PKCE + `offline_access`, self-refresh); **AA1** `memory_suggest` job (0113, every 6h) stages next-48h events as Inbox items; **AA2** memory-informed Daily Brief; **AA3a** memory-aware autoplan ordering (`memoryCmp` band after theme, before deadlines) + **AA3b** history-based default estimate for memory-drafted tasks; **AA4** one-way `push_memory` job (0117, daily 02:00). Flag-off = byte-identical. Migs 0113 (flag + job), 0114 (possible_tasks owner-scoped dedup + `proposed_estimated_minutes`), 0115 (`proposed_scheduled_for`/`proposed_task_time`), 0117 (push job). #290/#298/#299/#301/#302. Docs: docs/AA-memory-agentic.md, docs/AA3-smarter-autoplan.md.
-- **AB — Natural scheduling** ✅ `scheduled_for` + `task_time` are START intent that drives placement (`placeStartAnchoredTask`); `due_at` is a deadline only. AB1 engine + AB2 memory-event mirroring shipped; AB3/AB4 (client click-to-create, pinned Due card) deferred. Doc: docs/AB-natural-scheduling.md.
+- **AB — Natural scheduling** ✅ `scheduled_for` + `task_time` are START intent that drives placement (`placeStartAnchoredTask`); `due_at` is a deadline only. AB1 engine + AB2 memory-event mirroring shipped; AB3 (client click-to-create: `lib/create-click.ts`, Planner and Calendar) and AB4 (the pinned Due card on Today: `lib/task-buckets.ts`, `Today.tsx`) shipped later. Doc: docs/AB-natural-scheduling.md.
 - **AC — Today + Tasks UI overhaul** ✅ Today single header row (Brief · Focus · Note popovers) + FAB + collapsible DUE; Tasks task-chip redesign (merged direction-icon/done toggle), Routine grouping + end-of-day archive + midnight `reset_routines` job (0116). #292/#295.
 - **AD — Calendar reliability** ✅ `task_time` honored across quick-add + flight-plan (was: 2pm task landed at 10am); container→task direction inheritance; Alt-drag free placement; New-Task 2-col layout (Due defaults to Start). Doc: docs/AD-calendar-reliability.md.
 - **AE — Reflow correctness** ✅ Snapshot-based reactive reflow (clear set == re-place set, so a task edit can't wipe other auto-placed blocks); placement status parity (`open`↔`scheduled`, `task_time` stays user-only); not-before-now clamp; locked-block guards across reschedule/review/sweep; replan trigger narrowed to scheduling-relevant edits; legacy `runScheduler` removed. #296 (PR 1) / #297 (PR 2). Doc: docs/AE-reflow-correctness.md.
 
-**Migration head — new tables/columns since 0105** (what 0105-era docs miss): 0106 `scheduling_prefs.time_sense_enabled` · 0107 `estimate_calibration` scope columns · 0108 per-cue focus prefs on `scheduling_prefs` (`focus_ritual_enabled` / `haptic_cues_enabled` / `ambient_color_enabled` / `calibration_loop_enabled` / `z_experiment_arm`) · 0109 `copy_history` (Time-Sense voice-loop anti-repetition; not in owner export) · 0110 `entity_tags.created_at` (NOT NULL DEFAULT CURRENT_TIMESTAMP) · 0111 `scheduling_prefs.view_prefs` (cross-device calendar view-state JSON blob) · 0112 GraphQL perf indexes (`idx_tags_owner_kind_name_id` + composite `(parent, child)` on `tag_directions` / `tag_categories`; drops the now-redundant single-col prefixes). **Migration head = 0112.** From T/U/V: 0098 `sync_events` owner FK · 0099 `time_blocks.owner_id` NOT NULL · 0100 `tags.owner_id` · 0101 owners auth columns (`external_subject` / `username` / `password_hash`) · 0102 `auth_states` · 0103 owners reset columns (`backup_email` / `session_epoch`) · 0104 `password_reset_tokens`. From AA–AE: 0113 `scheduling_prefs.memory_pull_enabled` + `memory_suggest` job · 0114 `possible_tasks` owner-scoped dedup key + `proposed_estimated_minutes` · 0115 `possible_tasks.proposed_scheduled_for`/`proposed_task_time` · 0116 `reset_routines` job · 0117 `push_memory` job. **Migration head = 0117.**
+**Migration head — new tables/columns since 0105** (what 0105-era docs miss): 0106 `scheduling_prefs.time_sense_enabled` · 0107 `estimate_calibration` scope columns · 0108 per-cue focus prefs on `scheduling_prefs` (`focus_ritual_enabled` / `haptic_cues_enabled` / `ambient_color_enabled` / `calibration_loop_enabled` / `z_experiment_arm`) · 0109 `copy_history` (Time-Sense voice-loop anti-repetition; not in owner export) · 0110 `entity_tags.created_at` (NOT NULL DEFAULT CURRENT_TIMESTAMP) · 0111 `scheduling_prefs.view_prefs` (cross-device calendar view-state JSON blob) · 0112 GraphQL perf indexes (`idx_tags_owner_kind_name_id` + composite `(parent, child)` on `tag_directions` / `tag_categories`; drops the now-redundant single-col prefixes). **Migration head was 0112 at this point.** From T/U/V: 0098 `sync_events` owner FK · 0099 `time_blocks.owner_id` NOT NULL · 0100 `tags.owner_id` · 0101 owners auth columns (`external_subject` / `username` / `password_hash`) · 0102 `auth_states` · 0103 owners reset columns (`backup_email` / `session_epoch`) · 0104 `password_reset_tokens`. From AA–AE: 0113 `scheduling_prefs.memory_pull_enabled` + `memory_suggest` job · 0114 `possible_tasks` owner-scoped dedup key + `proposed_estimated_minutes` · 0115 `possible_tasks.proposed_scheduled_for`/`proposed_task_time` · 0116 `reset_routines` job · 0117 `push_memory` job. **Migration head was 0117 at this point** (0118–0138: see the 2026-08-13 box; 0139–0172: see the box at the top).
 
-**Known-deferred / not-blocking:** G-INT timing intelligence · L three P3 sync gaps · S optional D1/D2/D3 · Google live mode needs real creds · H Web Push needs VAPID keys · naming-Z W1/W4 · AB3/AB4 (client click-to-create + pinned Due card) · AA live-smoke against a real CI-Server (fixture-mode verified; no reachable CI-Server graph API yet).
+**Known-deferred / not-blocking:** G-INT timing intelligence · L three P3 sync gaps · S optional D1/D2/D3 · Google live mode needs real creds (the in-app Google setup stores them, 0124) · naming-Z W1 · AA live-smoke against a real CI-Server (fixture-mode verified; no reachable CI-Server graph API yet). *(Web Push no longer needs hand-set VAPID keys, and W4, AB3 and AB4 have shipped.)*
 
 ---
 
@@ -325,7 +389,7 @@ Time-Block's tag filter or a Pattern's rules.
 
 ### L — Multi-device sync & offline writes (D3, **revised**)
 
-> 🚧 **Core built** — migrations 0076–0079, field-level merge, `POST /api/sync`, SSE catch-up (`Last-Event-ID` replay + overflow `id:` cursor advance), client op-log (IndexedDB), optimistic mutations + 404-rollback, persistent conflict banner, SW push-wake flush, `sync_events` daily prune job, `field_ts` seeding from `updated_at`. All P1 + P2 gaps closed. Full implementation spec: [L-multi-device-sync.md](archive/L-multi-device-sync.md).
+> ✅ **Shipped** (see the Phase map) — migrations 0076–0079, field-level merge, `POST /api/sync`, SSE catch-up (`Last-Event-ID` replay + overflow `id:` cursor advance), client op-log (IndexedDB), optimistic mutations + 404-rollback, persistent conflict banner, SW push-wake flush, `sync_events` daily prune job, `field_ts` seeding from `updated_at`. All P1 + P2 gaps closed. Full implementation spec: [L-multi-device-sync.md](archive/L-multi-device-sync.md).
 **Goal:** PWA offline write path; converge across a single owner's devices.
 - **Infra:** client offline op-log (IndexedDB); server apply with a **monotonic per-record version** and **field-level merge** (not whole-record LWW); **completions are monotonic** — a concurrent edit can't silently un-complete a task. SSE pushes authoritative state; genuine conflicts surface a persistent banner (not a toast).
 - **Tests:** 25 server-side (22 apply + 3 SSE catch-up) + 18 client-side (10 oplog + 8 conflict-store); 96 server test files green.
@@ -336,7 +400,7 @@ Time-Block's tag filter or a Pattern's rules.
 
 ### M — AI scheduler (real LLM planning + reactive reflow + stub-backing) *(new — absorbs K)*
 
-> 📋 **Spec'd — next build.** Full implementation spec: [M-ai-scheduler.md](archive/M-ai-scheduler.md). Renamed from the draft `L-ai-scheduler-plan.md` (L is Multi-device sync). Dependencies A/F/G/J are all shipped, so it is buildable now; it builds on the autoplan engine (#121–#129).
+> ✅ **Shipped** (migs 0062–0067, #146–#148, per the Phase map). Full implementation spec: [M-ai-scheduler.md](archive/M-ai-scheduler.md). Renamed from the draft `L-ai-scheduler-plan.md` (L is Multi-device sync). It builds on the autoplan engine (#121–#129).
 
 **Goal:** close the gap between the marketed "local-LLM auto-block" and the code. The LLM **authors** a durable day order once per day (into a `daily_plan` table); placement and reflow **execute it deterministically**; a Phase-K reactive reflow defends the day without thrash. Also backs three stubbed claims (`overrun`, `day_theme`, `sqlite-vec`).
 - **Workstream A — real LLM planning** behind the §A0 generate→evaluate→iterate harness (generator ≠ judge, deterministic-gated rubric, bounded recursion, append-only `audit_log`, escape hatch on stall).
@@ -352,6 +416,7 @@ Time-Block's tag filter or a Pattern's rules.
 - Standing suites green every phase: server `pnpm test` (Vitest) + container Playwright smoke. Each phase extends them.
 - New harnesses: client component tests (`@solidjs/testing-library`); **scheduler property tests** (random task/gap sets → invariants: no overlaps, no lost minutes, deterministic); visual-regression via `capture-listing.mjs`.
 - CI gates: typecheck + both suites + grep gates (owner-id in business logic, hardcoded `Z` wall-clock) + **idempotent-migration check on a fixture DB** + a **restore-equivalence check** (Track 2).
+  *(As of 2026-11-01 the GitHub Actions workflows are manual-dispatch only (#618); the merge gate is run locally: `pnpm typecheck && pnpm build && pnpm test`, plus `tests/container/run-local.sh` for the container smoke.)*
 
 **Security.** A written **threat model + security review is a scheduled deliverable of Phase I**, not an afterthought — it gates the entire cloud track.
 

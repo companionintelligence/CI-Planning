@@ -6,9 +6,14 @@
 > Keychain dependency and no external agent bridge. Architecture: [ARCHITECTURE.md §10](../ARCHITECTURE.md#10-google-connector).
 > The README env table is the canonical list of variable names.
 >
-> Some route/flag names below are **assumed, in-flight contracts** from sibling work
-> packages and are labelled inline where they appear; provisioning steps and env-var
-> names reflect the as-built WP1 config (`server/src/lib/config.ts`).
+> Route, flag and variable names below match the code (`server/src/lib/config.ts`,
+> `server/src/routes/oauth.ts`).
+>
+> There are two ways to hand the OAuth client to the app: the `CP_GOOGLE_*` environment
+> variables this runbook walks through, or an admin pasting the client id and secret into
+> **Settings → Connections** at runtime (no restart, no secret in a file). The in-app path
+> needs `CP_KEK_B64` (§5) to seal the secret and is read-only whenever `GOOGLE_MODE` is set
+> in the environment (`server/src/services/google-config.ts`).
 
 ## 0. Prerequisites
 
@@ -54,15 +59,17 @@
 
 ## 3. Scopes
 
-Request exactly these — no more (least privilege):
+The app requests exactly these — no more (least privilege):
 
 | Scope | Sensitivity | Use |
 |---|---|---|
-| `https://www.googleapis.com/auth/calendar.events` | **Sensitive** | Read calendar events; write task blocks back (only when `CP_SYNC_WRITEBACK=true`). |
-| `https://www.googleapis.com/auth/gmail.readonly` | **RESTRICTED** | Read message bodies for task extraction. |
+| `openid`, `email` | Always requested | Identity: the callback resolves the connected account from the `id_token`'s `email` claim, and Google only returns an `id_token` when `openid` is requested. |
+| `https://www.googleapis.com/auth/calendar.events` | **Sensitive** | Read calendar events; write task blocks back (only when `CP_SYNC_WRITEBACK=true`). Always requested. |
+| `https://www.googleapis.com/auth/gmail.readonly` | **RESTRICTED** | Read message bodies for task extraction. Requested only when `CP_GOOGLE_ENABLE_GMAIL=true`. |
 
-These match `config.google.scopes` in `server/src/lib/config.ts` (calendar = `calendar.events`,
-gmail = `gmail.readonly`).
+These match `config.google.scopes` in `server/src/lib/config.ts` (identity = `openid` +
+`email`, calendar = `calendar.events`, gmail = `gmail.readonly`) and `buildGoogleScopes()` in
+`server/src/mcp/gmail-flag.ts`, which adds the Gmail scope only when the flag is set.
 
 > ⚠ **Restricted-scope warning.** `gmail.readonly` is a **RESTRICTED** scope. To publish
 > the app to Production with Gmail enabled, Google requires full **OAuth verification**
@@ -123,11 +130,18 @@ Keys are versioned; rows record the `key_version` they were sealed under.
 
 1. Generate a new key and expose it under the next version, e.g. `CP_KEK_B64_V2`.
 2. Set `CP_KEK_VERSION=2` so fresh seals use the new version.
-3. Run the rotation (re-seals every row under the new key in one atomic, idempotent
-   transaction; refuses downgrades). The historical key for any not-yet-rotated row must
-   still be present as `CP_KEK_B64_V{n}` (the current version may also live in plain
-   `CP_KEK_B64`). Rotation re-encrypts existing tokens — **no account needs to
-   re-authenticate.**
+3. Run the rotation: `rotateKek(newVersion)` in `server/src/lib/crypto/index.ts` re-seals
+   every `connection_tokens` row under the new key in one atomic, idempotent transaction
+   and refuses downgrades. **Nothing in the app calls it yet** — there is no CLI, route or
+   job for it (only `server/test/crypto.test.ts` exercises it) — so a rotation means
+   calling that function yourself against the database. The historical key for any
+   not-yet-rotated row must still be present as `CP_KEK_B64_V{n}` (the current version may
+   also live in plain `CP_KEK_B64`). Rotation re-encrypts existing tokens — **no account
+   needs to re-authenticate.**
+4. The rotation covers `connection_tokens` only. A client secret saved in **Settings →
+   Connections** is opened with the key version it was sealed under, so keep that
+   `CP_KEK_B64_V{n}` available, or save the client in Settings again after switching
+   versions (a save seals under the current version).
 
 ---
 
@@ -141,10 +155,10 @@ contradict the implementation:
   not from any browser-supplied parameter. The `id_token`'s signature is verified
   against Google's published keys at `CP_GOOGLE_JWKS_URI` before its identity claim is
   trusted. Treat the account label CP assigns as authoritative.
-- **Revoke targets the token endpoint in the request body.** Disconnecting an account
-  POSTs the token to `CP_GOOGLE_REVOKE_URI` **in the request body** (not the URL query),
-  so the secret is never placed in a URL. After revocation CP drops the
-  `connection_tokens` row.
+- **Revoke sends the token in the request body.** Disconnecting an account POSTs the
+  token to `CP_GOOGLE_REVOKE_URI` **in the request body** (not the URL query), so the
+  secret is never placed in a URL. The revoke is best-effort — a failure is logged and
+  swallowed — and CP then drops the `connection_tokens` row either way.
 
 ---
 
@@ -153,20 +167,22 @@ contradict the implementation:
 CP is an MCP **client** — it does not call Google directly. For each connected account it
 spawns a Google **MCP server** child process and injects that account's OAuth access token
 into the child via the `GOOGLE_ACCESS_TOKEN` env var (the only secret in the child's env).
-**Live mode does nothing until `CP_MCP_COMMAND` points at a server**: left unset,
-`GOOGLE_MODE=live` fails fast on the first sync with `McpUnavailable: No MCP command
-configured`.
-
 CP ships a calendar MCP server (`server/src/scripts/mcp-google-server.ts`) that fulfils the
-4 calendar tools against the Google Calendar REST API. Point `CP_MCP_COMMAND` at it under
-`tsx`, mirroring how the app itself runs (the server has no build step):
+4 calendar tools (`calendar_list_events`, `calendar_create_event`, `calendar_update_event`,
+`calendar_delete_event`) against the Google Calendar REST API, and `CP_MCP_COMMAND` defaults
+to running it under `tsx`, mirroring how the app itself runs (the server has no build step):
 
 ```
 CP_MCP_COMMAND="node_modules/.bin/tsx src/scripts/mcp-google-server.ts"
 ```
 
+Live mode therefore works without setting it. Set `CP_MCP_COMMAND` only to point at a
+different MCP server; an empty value fails the first sync with `McpUnavailable: No MCP
+command configured`.
+
 Run the CP server process with the `server/` directory as its working directory so both
-`node_modules/.bin/tsx` and the relative script path resolve.
+`node_modules/.bin/tsx` and the relative script path resolve (the Dockerfile, the systemd
+unit and `pnpm --filter server` all do).
 
 - **Calendar-only by default.** The shipped server exposes only the 4 calendar tools. CP
   requires the Gmail tools only when `CP_GOOGLE_ENABLE_GMAIL=true`, so a calendar-only
@@ -182,18 +198,24 @@ Run the CP server process with the `server/` directory as its working directory 
 
 Walk live mode up one rung at a time; verify at each step before advancing.
 
-1. **Fixture (default).** `GOOGLE_MODE=fixture`. Fully offline; confirm the app and the
-   sync reconciler behave on committed sample data.
+1. **Fixture (opt-in).** `GOOGLE_MODE=fixture`. Fully offline; confirm the app and the
+   sync reconciler behave on committed sample data. An unset `GOOGLE_MODE` is *off* — no
+   Google integration at all — not fixture, and under `NODE_ENV=production` the server
+   refuses to boot in fixture mode unless `CP_ALLOW_FIXTURE=true`.
 2. **Live inbound, read-only.** Set `GOOGLE_MODE=live`, `CP_GOOGLE_CLIENT_ID`
-   (+ secret for a Web client), `CP_KEK_B64`, a matching `CP_OAUTH_REDIRECT_URI`, and
-   `CP_MCP_COMMAND` (§7). Keep `CP_SYNC_WRITEBACK` **off**. Connect an account via
-   `GET /api/oauth/google/start` and confirm Calendar events mirror inbound as locked
-   meeting blocks. Nothing is written back to Google.
+   (+ secret for a Web client), `CP_KEK_B64` and a matching `CP_OAUTH_REDIRECT_URI`
+   (or leave `GOOGLE_MODE` unset and save the client in **Settings → Connections**
+   instead). Keep `CP_SYNC_WRITEBACK` **off**. Connect an account from **Settings →
+   Connections** — its button calls `GET /api/oauth/google/start`, which returns the Google
+   authorize URL — and confirm Calendar events mirror inbound as locked meeting blocks.
+   Nothing is written back to Google.
 3. **Enable write-back.** Set `CP_SYNC_WRITEBACK=true` once inbound is trusted; local block
    changes now push to Google (etag-guarded; remote wins on conflict).
 4. **Add Gmail last.** Gmail's `gmail.readonly` is the RESTRICTED scope (see §3). Add it
    only after Calendar is solid and you've accepted the verification/CASA implications of
-   going to Production (or the 100-user/7-day Testing limits).
+   going to Production (or the 100-user/7-day Testing limits). Turn it on with
+   `CP_GOOGLE_ENABLE_GMAIL=true` and reconnect the account: the scope is requested at
+   connect time.
 
 `CP_SYNC_DISABLED=true` is a master kill switch at any rung. The boot guard refuses
 `GOOGLE_MODE=live` without `CP_GOOGLE_CLIENT_ID` + a redirect URI, so a half-configured

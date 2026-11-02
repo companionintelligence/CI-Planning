@@ -30,12 +30,12 @@ three, mostly by two migrations that renamed the wrong thing.
   Routine table and the real day-arrangement sense.
 - **The rest of the codebase never went along with 0038/0043** — strong evidence the rename
   was wrong, not the concept:
-  - [`services/pattern-blocks.ts`](server/src/services/pattern-blocks.ts): `export type DirectionWindows` … `// dirTagId → ranges`
-  - [`agents/direction.ts`](server/src/agents/direction.ts): `inferDirection`
+  - [`services/pattern-blocks.ts`](../server/src/services/pattern-blocks.ts): `export type DirectionWindows` … `// dirTagId → ranges`
+  - [`agents/direction.ts`](../server/src/agents/direction.ts): `inferDirection`
   - client still says `DirectionColumn`, `byDirection`, `Tag.directions` (the
     `direction→patternTag` client rename was **HELD, never merged** — see
     [project_direction_rename_held])
-  - [0069](server/src/db/migrations/0069_category_tags.ts) created **`category_direction_optouts`**
+  - [0069](../server/src/db/migrations/0069_category_tags.ts) created **`category_direction_optouts`**
     — went *back* to "direction" — but gave it a `pattern_tag_id` column. A table that
     contradicts its own column name is the clearest proof 0038/0043 half-landed.
 - **Pattern** (the day arrangement) is the one thing named **correctly**: `pattern_blocks`

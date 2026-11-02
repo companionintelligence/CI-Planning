@@ -1,10 +1,12 @@
 # Color Styling Rules
 
-All color in the app resolves to a single source of truth: the CSS custom properties in `client/src/index.css`, surfaced to utility classes through `client/tailwind.config.js`. The system is "deep teal-navy", shared with CI-Hub. Light theme lives on `:root`, dark on `.dark`.
+All color in the app resolves to a single source of truth: the CSS custom properties in `client/src/index.css`, surfaced to utility classes through `client/tailwind.config.js` (Tailwind v4 loads it with `@config`, `index.css:2`). The system is "deep teal-navy", shared with CI-Hub. Light theme lives on `:root`, dark on `.dark`.
+
+`index.css` first imports the CI-Common canon token layer (`@import "@companionintelligence/tokens/tokens.css"`, `index.css:7`) and then overrides surfaces and text on top of it. `--primary` is never one of the overrides: `pnpm lint:canon` (`ci-lint-canon`) and `client/src/theme-tokens.test.ts` fail if it drifts from the canon values below (phthalo `#0a6358` light, `#c5e8dc` dark).
 
 ## Where colors are defined
 
-- `client/src/index.css` defines all raw color values as CSS variables (semantic tokens, tag palette) plus the component styles that consume them.
+- `client/src/index.css` defines the raw color values as CSS variables (semantic tokens, enriched tokens, tag palette) on top of the canon token layer, plus the component styles that consume them.
 - `client/tailwind.config.js` maps those variables to Tailwind utilities (`bg-card`, `text-primary`, `bg-tag-1`, etc.) and defines the constant brand scales (`ci-*`, `accent-*`).
 - `client/src/lib/pattern-meta.ts` and `client/src/lib/textures.ts` pick tokens at runtime (patterns, tags), always referencing tokens, never hex.
 
@@ -56,6 +58,18 @@ These are the primary tokens. Use them via Tailwind (`bg-background`, `text-fore
 | `--sidebar-border` | `oklch(92.9% 0.013 255.508)` | `#2c676d` |
 | `--sidebar-ring` | `#70a6af` | `#58ebbf` |
 
+### Enriched tokens
+
+Also in `index.css`, beyond the shadcn-style set above:
+
+| Token | Light (`:root`) | Dark (`.dark`) |
+|---|---|---|
+| `--success` / `--success-foreground` | `#16a34a` / `#ffffff` | `#4ade80` / `#052e16` |
+| `--warning` / `--warning-foreground` | `#d97706` / `#ffffff` | `#fbbf24` / `#422006` |
+| `--info` / `--info-foreground` | `#0284c7` / `#ffffff` | `#38bdf8` / `#082f49` |
+
+Mode-independent: the teal ramp `--teal-50` … `--teal-950` (`#eef7f8` … `#041620`), `--aqua` `#00a9a7`, `--aqua-light` `#72ddd4`, `--mint` `#58ebbf`, `--teal-accent` `#2c676d`, `--teal-mid` `#409b9b`, and the radius scale `--radius-sm` … `--radius-2xl`. `--gradient-brand`, `--gradient-hero`, `--gradient-aurora` and `--shadow-sm|md|lg` exist too (`--gradient-aurora` and the shadows differ per mode). `--select-chevron` is the themed `<select>` arrow.
+
 ## Brand teal scale (constant across modes)
 
 Defined in `tailwind.config.js`, not theme-dependent. This is the signature CI interaction family: CTAs, focus, glow. Used as `bg-ci-3`, `text-ci-2`, etc.
@@ -74,7 +88,7 @@ Defined in `tailwind.config.js`, not theme-dependent. This is the signature CI i
 | `ci-10` | `#244859` |
 | `ci-11` | `#172e39` |
 
-The `accent-*` utility keeps the bright legacy teal: `accent` `#409b9b`, `accent-hi` `#58ebbf`, `accent-light` `#ABD4D8`, `accent-glow` `#82ffe1`.
+The `accent-*` utility keeps the bright legacy teal: `accent` `#409b9b`, `accent-hi` `#58ebbf`, `accent-light` `#ABD4D8`, `accent-glow` `#82ffe1`. Note that `bg-accent` is this constant `#409b9b`, not the themed `--accent` variable in the table above.
 
 ## Tag palette (categorical labels only)
 
@@ -110,7 +124,7 @@ A tag string maps deterministically to a hue via an FNV hash, `tag-${(seed % 12)
 
 From `lib/pattern-meta.ts`. Patterns store CI-Hub token keys (e.g. `chart-1`), never hex, so they stay on the design system and flip with theme.
 
-Core (teal-first, the main interaction family): `primary` (Primary), `chart-1` (Mint), `chart-3` (Aqua), `chart-4` (Steel), `chart-5` (Navy).
+Core (teal-first, the main interaction family): `primary` (Primary), `chart-1` (Mint), `chart-3` (Aqua), `chart-4` (Steel), `chart-5` (Navy). The labels name the dark-mode values; the `chart-*` tokens are different hues in light mode (see the chart table above).
 
 Tag hues: the 12 `tag-1` through `tag-12` listed above.
 
@@ -120,12 +134,12 @@ Base tag defaults: `community` uses `primary`, `home` uses `chart-1`, `work` use
 
 A few values are intentionally fixed (constant across modes) in `index.css`:
 
-- Signature mint CTA gradient (`.btn-primary`, `.fab`, `.checkbox-checked`): `linear-gradient(135deg, #58ebbf, #409b9b)` with dark text `#041620`. Hover shifts to `linear-gradient(135deg, #82ffe1, #58ebbf)`.
-- Active nav item: text `#58ebbf` with a `2px solid #58ebbf` left border.
+- Primary actions (`.btn-primary`, `.fab`, `.checkbox-checked`) are not hard-coded any more: they fill with `var(--primary)` and put `var(--primary-foreground)` on it, so they flip with the theme. The old mint gradient (`linear-gradient(135deg, #58ebbf, #409b9b)`) is gone from `index.css`. Hover is `color-mix(in srgb, var(--primary) 90%, transparent)` plus a primary-tinted shadow.
+- Active nav item (`.nav-item-active`): text `var(--primary)` on `var(--sidebar-accent)`, with a `2px solid var(--primary)` left border.
 - Priority dots: `p1` `#ef4444`, `p2` `#f97316`, `p3` `#58ebbf`, `p4` `#409b9b`, `p5` `#244859` (each with a matching glow shadow).
-- Glow shadows throughout use `rgba(88,235,191,...)` (the mint `#58ebbf`), e.g. `shadow-glow-ci` `0 0 20px -4px rgba(88,235,191,.35)`.
-- Modal backdrop: `rgba(0,0,0,.7)`.
-- Badge tints: green on `rgba(88,235,191,.12)`, yellow on `bg-yellow-900/40` text `yellow-400`, red on `bg-red-900/40` text `red-400`.
+- Glow shadows in the places that keep them (focused inputs, `.card-hover`, the P3 dot, `toast-success`, the done-pulse) use `rgba(88,235,191,...)` (the mint `#58ebbf`), e.g. `shadow-glow-ci` `0 0 20px -4px rgba(88,235,191,.35)`.
+- Modal backdrop: `rgba(0,0,0,.7)` with a 6px blur.
+- Badge tints (dark): green on `rgba(88,235,191,.12)`, yellow on `bg-yellow-900/40` text `yellow-400`, red on `bg-red-900/40` text `red-400`. In light mode (`:root:not(.dark)`) the teal-family badges switch to `--teal-900` text, yellow becomes `#fef3c7` on `#92400e`, and red `#fee2e2` on `#b91c1c`.
 
 ## Legacy scale remaps
 
