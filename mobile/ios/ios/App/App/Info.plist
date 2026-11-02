@@ -43,6 +43,25 @@
 		     NSAllowsArbitraryLoads: that would turn ATS off for the whole app. -->
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
+		<!-- .lan and .home.arpa are not covered by NSAllowsLocalNetworking. The client already
+		     treats them as local (client/src/lib/server-config.ts, looksLocal), so they get http too. -->
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>lan</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+			<key>home.arpa</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Companion Planning connects to the Companion Planning server you run, which is often on your home network.</string>
