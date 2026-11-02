@@ -1,6 +1,6 @@
 [package]
 name = "companion-planning-desktop"
-version = "0.1.0"
+version = "4.3.0"
 description = "The Companion Planning desktop app: the bundled web client, with a local offline cache"
 edition = "2021"
 rust-version = "1.90"
