@@ -5,7 +5,7 @@
  * secondary tag helpers, the title+pattern "most likely" ranking, and the single
  * `saveElement` adapter the wizard calls. See plan: luminous-waddling-nest.
  */
-import { api, type TaskInput, type Tag } from './api.js';
+import { api, type TaskInput, type Tag, type ClassificationClaim } from './api.js';
 import {
   tags, patterns, patternTypes, patternPrefs,
   refetchTasks, refetchBlocks, refetchConcepts, refetchPatterns, refetchTags,
@@ -204,6 +204,16 @@ export interface ElementForm {
   /** D5 — titles the user picked from the suggest-only brainstorm; created as children
    *  of this task on add. Empty/absent unless the user actually tapped a chip. */
   subtaskTitles?: string[];
+  /** The Describe-it preview's category pick (see `claimIfFaithful`), echoed on the
+   *  add-mode task/habit create so the server can record the owner's answer to it.
+   *  Edit, routine and time-block saves never read it. */
+  classificationClaim?: ClassificationClaim;
+  /** Called once, the moment the add-mode task/habit create has landed and before any step
+   *  that can still fail (routine chip, subtasks). The wizard spends its stored claim here:
+   *  a retry after such a failure makes a second task, and the one decision the owner made
+   *  must not be recorded twice. A create that threw never calls it, so that retry keeps the
+   *  claim. Edit, routine and time-block saves never call it. */
+  onCreated?: () => void;
   // Routine membership (modal redesign): single-select "Routine" chip. Applied
   // after the task exists (works for add + edit); undefined = leave membership alone.
   routineAddId?: string;
@@ -286,7 +296,10 @@ export async function saveElement(
     if (rule) body.recurrence_rule = rule;
     let taskId = editId;
     if (mode === 'add') {
-      taskId = (await api.tasks.create(body)).task.id;
+      // The claim rides the create only (never an update, a subtask or a block): the server
+      // settles it against the row it just made and silently drops one it cannot trust.
+      taskId = (await api.tasks.create(form.classificationClaim ? { ...body, classification_claim: form.classificationClaim } : body)).task.id;
+      form.onCreated?.();
     } else if (form.editScope === 'series') {
       // Series edit → applies to the template; a rule change regenerates the window.
       await api.tasks.update(editId!, { ...body, recurrence_rule: rule ?? null, is_habit: kind === 'habit' }, 'series');
@@ -421,6 +434,22 @@ export async function saveElement(
   refetchBlocks(); refetchConcepts(); refetchTags();
   if (form.attachTaskIds?.length || form.attachRoutineIds?.length) { refetchTasks(); refetchPatterns(); }
   return 'Time Block saved';
+}
+
+/**
+ * Keep the preview's classification claim only while the category picker still shows
+ * exactly the model's pick (same names, same order, case-insensitive). `seedCategories`
+ * silently drops a name missing from a stale `tags()` store, and then the owner never saw
+ * the model's whole pick: Add would record a correction they did not make. Only the
+ * client can tell, so it decides here; the server still checks the rest.
+ */
+export function claimIfFaithful(
+  claim: ClassificationClaim | undefined,
+  shown: readonly string[],
+): ClassificationClaim | null {
+  if (!claim || claim.categories.length === 0) return null;
+  if (shown.length !== claim.categories.length) return null;
+  return claim.categories.every((n, i) => n.toLowerCase() === shown[i].toLowerCase()) ? claim : null;
 }
 
 /**

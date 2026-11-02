@@ -8,9 +8,10 @@ import { broadcast } from './sse.js';
 import { taskToApi } from '../lib/serialize.js';
 import { currentOwnerId } from '../lib/context.js';
 import { getDependencies, blockedTaskIds } from '../engine/deps.js';
-import { parseQuick } from '../engine/quickadd.js';
+import { parseQuick, type ParsedQuick } from '../engine/quickadd.js';
 import { enrichQuick } from '../agents/quickadd.js';
-import { isMotivation } from '../agents/rubric.js';
+import { constrainToVocabulary } from '../agents/constrain.js';
+import { isMotivation, MOTIVATION_VALUES } from '../agents/rubric.js';
 import { suggestTags } from '../agents/tags.js';
 import { tagUntaggedTasks } from '../services/auto-tag.js';
 import { suggestSubtasks } from '../agents/subtasks.js';
@@ -30,7 +31,9 @@ import {
 } from '../services/tasks.js';
 import { writeAudit } from '../lib/audit.js';
 import { closeTask, isScore, DECLINED_SCORE, MIN_SCORE, MAX_SCORE } from '../services/task-close.js';
-import { classificationInput, logAssignment } from '../services/classification-learning.js';
+import {
+  classificationHint, classificationInput, logAnsweredAssignment, logAssignment, type Exemplar,
+} from '../services/classification-learning.js';
 import { getEntityPeople, getEntityPeopleBulk } from '../services/people.js';
 
 // Task business logic lives in services/tasks.ts (Phase W step 3.1, shared with the
@@ -63,6 +66,176 @@ const DEFAULT_TASKS_LIMIT = 20_000;
 async function peopleFor(taskId: string): Promise<{ responsible: unknown[]; beneficiaries: unknown[] }> {
   const { responsible, beneficiaries } = await getEntityPeople('task', taskId);
   return { responsible, beneficiaries };
+}
+
+/**
+ * Keeps an exemplar only when the owner's lesson names values the model may answer with
+ * NOW: `correctValue` (a category pick is stored as its names joined by ', ', see
+ * `canonicalValue`) must be consumed whole as a sequence of `allowed` names, case-insensitive.
+ * A category since renamed, deleted or muted, or a cleared value, would otherwise appear as
+ * "the user chose X" in a prompt whose list lacks X; the model would pick it and
+ * `constrainToVocabulary` would drop it.
+ *
+ * A cleared value is dropped for motivation too, although that prompt allows null: quick-add
+ * does not teach null, and the wizard records no motivation (its rows come only from
+ * `POST /api/tasks/quick`, which no screen calls, and memory enrichment, which is off unless
+ * MEMORY_MODE is set), so a "(nothing)" motivation lesson here would be one nobody has
+ * measured. Memory enrichment, whose prompt allows null as well, passes no `accept` and still
+ * sees those rows as "the user chose (nothing)".
+ *
+ * Whole names, not a split on ',': nothing keeps a comma out of a category name
+ * (`normalizeTagName` leaves it, `createTag` only refuses an empty one, and a rename in
+ * Settings reaches it), so "Health, Fitness" is stored as `health,-fitness` and a split
+ * would cut it in two and drop every lesson that names it.
+ */
+function choosable(allowed: readonly string[]): (e: Exemplar) => boolean {
+  const names = [...new Set(allowed.map((a) => a.toLowerCase()).filter(Boolean))];
+  const SEP = ', ';
+  return (e) => {
+    const value = e.correctValue.toLowerCase();
+    // Positions already tried: one that had led to a match would have ended the walk.
+    const tried = new Set<number>();
+    // Whether `value` from `at` to its end is one name, or a name, ', ' and then more of the
+    // same. Every step eats a non-empty name, so a doubled or trailing separator cannot match.
+    const walk = (at: number): boolean => {
+      if (tried.has(at)) return false;
+      tried.add(at);
+      return names.some((n) => {
+        if (!value.startsWith(n, at)) return false;
+        const end = at + n.length;
+        return end === value.length || (value.startsWith(SEP, end) && walk(end + SEP.length));
+      });
+    };
+    return value.length > 0 && walk(0);
+  };
+}
+
+/**
+ * The overlay both quick routes run: the owner's own past corrections go into the prompt
+ * last, just before the entry (`enrichQuick` places them), and the rest is as it was.
+ *
+ * Frequency-only on purpose (`embedFn: null`): an embed here is an `embedReady` status read
+ * plus an embed on a path a person is watching, and on a box with few model slots it can push
+ * the classify model out. The live runs came after that choice and fit it without proving it:
+ * generate calls slower than 3x the warm median came with all or nearly all of the similarity
+ * lookups in three of the four runs (120 of 120 in runs 2 and 5, 109 of 120 in run 6) and
+ * with 11 of 120 in run 3, where the embedder stayed resident. They record the slowdown, not
+ * which model was evicted, and no eviction was observed
+ * (docs/classification-hint-measurement-2026-11.md). So the whole cost is one indexed read per
+ * field, an owner below the correction floor pays only that, and an install with no embedder
+ * pulled behaves the same. The text is still computed; the day the hint should be about THIS
+ * input, the change is `{ embedFn: null, accept }` to `{ accept }` here and nowhere else.
+ *
+ * Keyed on the title, the string the log records: `mergeEnrichment` never changes it, so
+ * the enriched title is the parsed one. Never throws on the hint side (`classificationHint`
+ * degrades to ''), and an owner with no usable corrections gets the stock prompt. A throw
+ * from the vocabulary read is the caller's, exactly as it was.
+ */
+async function enrichEntry(text: string, parsed: ParsedQuick): Promise<ParsedQuick> {
+  const owner = currentOwnerId();
+  const vocab = await suggestibleVocabulary(owner);
+  const input = classificationInput(parsed.title, null);
+  const [category, motivation] = await Promise.all([
+    // No categories ⇒ the question is not asked, so there is nothing for a lesson to govern.
+    vocab.categories.length
+      ? classificationHint(owner, 'category', input, { embedFn: null, accept: choosable(vocab.categories) })
+      : '',
+    classificationHint(owner, 'motivation', input, { embedFn: null, accept: choosable(MOTIVATION_VALUES) }),
+  ]);
+  return enrichQuick(text, parsed, vocab, { category, motivation });
+}
+
+/**
+ * What the MODEL chose, as opposed to what the deterministic parse carried. A category or
+ * motivation the parse carried came from the user's own typing, and "correcting" your own
+ * syntax teaches nothing about the classifier; nothing at all is claimed when the model did
+ * not run. The one predicate behind both what `/quick` logs and what `/quick/parse` offers
+ * the wizard as a claim, so the two cannot drift.
+ */
+function modelPicks(
+  parsed: ParsedQuick,
+  enriched: ParsedQuick,
+  llm: boolean,
+): { categories?: string[]; motivation?: 'me' | 'us' | 'them' } {
+  if (!llm) return {};
+  return {
+    ...(!parsed.categories?.length && enriched.categories?.length ? { categories: enriched.categories } : {}),
+    ...(!parsed.motivation && enriched.motivation ? { motivation: enriched.motivation } : {}),
+  };
+}
+
+/**
+ * Settle the wizard's preview claim once its task exists: the model's category pick
+ * (shown in the preview, echoed by the client as `classification_claim`) against what the
+ * owner actually saved. Called after a SUCCESSFUL create only, so nothing is written for a
+ * failed one, and never on the zero-write parse route, so an abandoned preview is never
+ * evidence of acceptance. At most one row, category only: the wizard neither shows nor
+ * sends motivation.
+ *
+ * TRUST BOUNDARY. The claim is client-attested, not server-verified; it is deliberately
+ * unsigned. Everything that matters is taken from the server instead: the owner is the
+ * caller, the task id and title are the row just created, the names must be in the caller's
+ * own suggestible vocabulary, the claimed text must equal that task's own title, and the
+ * final value is READ BACK from the database rather than echoed. So a forged claim only ever
+ * affects the caller's OWN evidence: at most one row in the caller's own log, about the task
+ * the caller just created, with that task's title and the caller's own category names. The
+ * caller can choose the claimed value (the model's side of the lesson), which is acceptable
+ * because they already own the corrections they could make by hand. Nothing here reaches
+ * another owner. Contrast `motivation_source`, which the route strips because a forged 'llm'
+ * would relabel task data other systems read; a claim only ever feeds the caller's own
+ * prompt hints.
+ *
+ * Nothing about the claim is ever an error. A claim that fails a check is dropped, the task
+ * is created as it would be without one, and the reason is debug-logged. Debug lines print
+ * only at LOG_LEVEL=debug, so counting the loss needs that level; there is no counter (log
+ * keys are reason and err only; SECRET_KEY_RE redacts any key containing "iv" or "code").
+ * The whole helper is best-effort: a broken log table must not fail the create.
+ */
+async function settlePreviewClaim(
+  owner: string,
+  task: { id: string; title: string },
+  rawClaim: unknown,
+  sent: unknown,
+  saved: string[],
+): Promise<void> {
+  if (rawClaim === undefined) return; // no claim: the ordinary case, nothing to say
+  const drop = (reason: 'shape' | 'no-categories-sent' | 'title' | 'vocabulary' | 'not-saved'): void => {
+    logger.debug('classification-learning: preview claim dropped', { reason });
+  };
+  try {
+    // Shape. Length is checked before anything iterates, so a hostile array is dropped
+    // without being walked. Keys beyond text and categories are never read.
+    if (!rawClaim || typeof rawClaim !== 'object' || Array.isArray(rawClaim)) return drop('shape');
+    const { text, categories } = rawClaim as { text?: unknown; categories?: unknown };
+    if (typeof text !== 'string' || text.length < 1 || text.length > 500) return drop('shape');
+    if (!Array.isArray(categories) || categories.length < 1 || categories.length > 3
+        || !categories.every((c) => typeof c === 'string')) return drop('shape');
+
+    // `undefined` means "leave the categories alone", not "the owner chose none": only a
+    // caller who sent a list (an empty one is the cleared picker) gave an answer.
+    if (!Array.isArray(sent)) return drop('no-categories-sent');
+
+    // Strict title binding, no case or whitespace folding beyond classificationInput's own
+    // trim: it can only under-record, never record a claim about some other text.
+    const input = classificationInput(task.title, null);
+    if (!input || input !== classificationInput(text, null)) return drop('title');
+
+    // All or nothing: an unknown, muted, other-owner, duplicate or renamed name changes
+    // the count and drops the whole claim. The stored value takes the vocabulary's casing.
+    const vocab = await suggestibleVocabulary(owner);
+    const picked = constrainToVocabulary(categories, vocab.categories, 3);
+    if (picked.length !== categories.length) return drop('vocabulary');
+
+    // Names were sent but none landed (all unknown to createTask): there is no answer to
+    // record, and recording "nothing" would invent one.
+    if (sent.length > 0 && saved.length === 0) return drop('not-saved');
+
+    await logAnsweredAssignment(owner, {
+      taskId: task.id, field: 'category', inputText: input, llmValue: picked, finalValue: saved,
+    });
+  } catch (err) {
+    logger.warn('classification-learning: could not settle preview claim', { err: (err as Error).message });
+  }
 }
 
 export function tasksRouter() {
@@ -165,6 +338,11 @@ export function tasksRouter() {
     // server-derived ONLY (a client claiming 'llm' would launder its own testimony as
     // the machine's; the z_experiment_arm strip is the precedent).
     delete (body as Record<string, unknown>).motivation_source;
+    // The wizard's preview claim rides the create but is not task data: read it here and
+    // remove it, so it can never be stored, audited, broadcast or returned. It is acted on
+    // only after the create succeeds (settlePreviewClaim).
+    const rawClaim = (body as Record<string, unknown>).classification_claim;
+    delete (body as Record<string, unknown>).classification_claim;
     if (body.motivation !== undefined && body.motivation !== null && !isMotivation(body.motivation)) {
       ctx.status = 422;
       ctx.body = { error: "motivation must be 'me', 'us', 'them', or null" };
@@ -182,6 +360,7 @@ export function tasksRouter() {
       const out = { ...taskToApi(res.template), tags: body.tags ?? [], secondary_tags: await taskSecondaryTags(res.template.id), categories: await entityCategoryNames('task', res.template.id), depends_on: [] as string[], blocked: false, ...(await peopleFor(res.template.id)) };
       broadcast(owner, 'task:created', out);
       broadcast(owner, 'recurrence:generated', res.generated);
+      await settlePreviewClaim(owner, res.template, rawClaim, body.categories, out.categories);
       ctx.status = 201;
       ctx.body = { task: out, generated: res.generated };
       return;
@@ -220,6 +399,7 @@ export function tasksRouter() {
     };
     broadcast(owner, 'task:created', out);
     requestReplan('task:created'); // B2: a new task can shift today's plan (debounced + toggle-gated)
+    await settlePreviewClaim(owner, task, rawClaim, body.categories, out.categories);
     ctx.status = 201;
     ctx.body = { task: out, ...(placement ? { placement } : {}) };
   });
@@ -235,6 +415,12 @@ export function tasksRouter() {
   // /plan-week/parse vs /plan/instruct (#387). Deterministic parse always succeeds;
   // the Ollama overlay is best-effort and `llm` reports truthfully whether it ran.
   // Registered BEFORE /quick only for reading order — @koa/router matches exactly.
+  //
+  // `classification_claim` is the one thing it offers beyond the parse: the category pick
+  // the MODEL made, which the wizard echoes on its Add so the owner's edit of it becomes
+  // evidence (settlePreviewClaim). Present only when the model chose categories the parse
+  // did not carry; otherwise the response is exactly what it always was. Offering it writes
+  // nothing, so a preview that is never saved leaves no trace.
   router.post('/api/tasks/quick/parse', async (ctx) => {
     const text = (ctx.request.body as { text?: string })?.text?.trim();
     if (!text) {
@@ -247,13 +433,19 @@ export function tasksRouter() {
     let enriched = parsed;
     let llm = false;
     try {
-      enriched = await enrichQuick(text, parsed, await suggestibleVocabulary(currentOwnerId())); // additive overlay
+      enriched = await enrichEntry(text, parsed); // additive overlay
       llm = true;
     } catch {
       /* OllamaUnavailable / bad JSON → keep the deterministic parse */
     }
 
-    ctx.body = { parsed: enriched, llm };
+    const picks = modelPicks(parsed, enriched, llm);
+    const claimText = classificationInput(enriched.title, null);
+    ctx.body = {
+      parsed: enriched,
+      llm,
+      ...(picks.categories && claimText ? { classification_claim: { text: claimText, categories: picks.categories } } : {}),
+    };
   });
 
   // POST /api/tasks/quick — natural-language quick add (deterministic + optional AI)
@@ -269,7 +461,7 @@ export function tasksRouter() {
     let enriched = parsed;
     let llm = false;
     try {
-      enriched = await enrichQuick(text, parsed, await suggestibleVocabulary(currentOwnerId())); // additive overlay
+      enriched = await enrichEntry(text, parsed); // additive overlay
       llm = true;
     } catch {
       /* OllamaUnavailable / bad JSON → keep the deterministic parse */
@@ -313,21 +505,20 @@ export function tasksRouter() {
     // Phase 8 — record what the MODEL claimed, so a later edit becomes evidence about
     // the classifier. Only when the model actually ran (`llm`), and only for values it
     // chose: a category or motivation the PARSE carried came from the user's own typing,
-    // and "correcting" your own syntax teaches nothing about the classifier.
-    if (llm) {
-      // Keyed on the title rather than the raw entry, so the indexed text and the text a
-      // later classification queries with (title [+ notes]) live in the same space.
-      const classifyText = classificationInput(enriched.title, null);
-      if (!parsed.categories?.length && enriched.categories?.length) {
-        await logAssignment(currentOwnerId(), {
-          taskId: task.id, field: 'category', inputText: classifyText, llmValue: enriched.categories,
-        });
-      }
-      if (!parsed.motivation && enriched.motivation) {
-        await logAssignment(currentOwnerId(), {
-          taskId: task.id, field: 'motivation', inputText: classifyText, llmValue: enriched.motivation,
-        });
-      }
+    // and "correcting" your own syntax teaches nothing about the classifier (modelPicks).
+    const picks = modelPicks(parsed, enriched, llm);
+    // Keyed on the title rather than the raw entry, so the indexed text and the text a
+    // later classification queries with (title [+ notes]) live in the same space.
+    const classifyText = classificationInput(enriched.title, null);
+    if (picks.categories) {
+      await logAssignment(currentOwnerId(), {
+        taskId: task.id, field: 'category', inputText: classifyText, llmValue: picks.categories,
+      });
+    }
+    if (picks.motivation) {
+      await logAssignment(currentOwnerId(), {
+        taskId: task.id, field: 'motivation', inputText: classifyText, llmValue: picks.motivation,
+      });
     }
 
     // AD1: a scheduled task is placed on its day right away — task_time set → exact

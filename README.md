@@ -1107,7 +1107,7 @@ numbering skips 0009, 0119, 0159 and 0160).
 | `triality_log` | Append-only Triality outcome log — one row per suggestion **shown**, stamped at most once more when it is opened / staged / dismissed. Each row keeps that pick's full per-component score breakdown as JSON, which is what makes the weekly weight calibration evidence-based rather than guesswork; never recomputed, never pruned (0140). A `confidence` reading is stamped at *show* time (0144) — reported, never fed back into ranking; `NULL` means "shown before that column existed" permanently, and readers must exclude those rows rather than coerce them |
 | `triality_weights` | Learned per-(owner, slot) Triality weights — regenerable, replaced wholesale by the weekly `calibrate_triality` job. A missing row means "score on the defaults", so deleting an owner's rows is the reset switch; the log above survives it (0142) |
 | `classification_log` | Append-only evidence for the parse/classify LLM's `category`/`motivation` picks — what the model said, what the owner ultimately settled on (`NULL` until corrected), and the text judged; never recomputed, never pruned (Phase 8, 0149) |
-| `classification_exemplars` | Regenerable few-shot retrieval index the classify prompt reads, rebuilt wholesale per owner by the weekly `calibrate_classification` job; deleting an owner's rows resets the adaptation without losing the log above (0149) |
+| `classification_exemplars` | Regenerable few-shot retrieval index the classify prompts read (quick add and the Describe-it preview by frequency, memory enrichment by similarity), rebuilt wholesale per owner by the weekly `calibrate_classification` job; deleting an owner's rows resets the adaptation without losing the log above (0149) |
 | `classification_accuracy` | One held-out accuracy score per field per calibration run — `NULL` (not `0`) when a run measured nothing, so a trend chart draws a gap rather than a false dip (0149) |
 | `possible_outcome_log` | Append-only evidence for dismissal learning — one row per decided suggestion (`dismissed` / `promoted`) with the text the extractor proposed and when it was decided; deliberately no FK to `possible_tasks`, so pruning a suggestion never deletes what it taught (0157) |
 | `possible_dismissal_exemplars` | Regenerable retrieval index the extraction prompt reads, rebuilt wholesale per owner by the weekly `calibrate_dismissals` job (0157) |
@@ -1289,7 +1289,27 @@ Connections**. Replay the walkthrough from **Settings → Profile**.
   caused it, and `DELETE /api/classification/exemplars` resets the adaptation without
   touching the correction log underneath it. Settings → Learning shows the trend with the
   number of cases behind each figure and has the clear button. No feature flag — an owner who
-  has never corrected anything simply sees an empty trend
+  has never corrected anything simply sees an empty trend. That trend comes from the
+  Monday scorer, which asks a narrow one-field question; it is not a score of quick add's own
+  prompt. Judgments are logged by `POST /api/tasks/quick`, by memory enrichment (off unless
+  `MEMORY_MODE` is set) and by the Add wizard's Describe-it preview, which logs the category pick
+  only: the preview returns the model's category pick as an opaque `classification_claim`, the wizard
+  echoes it on Add, and changing the pick before you save, in value or in order, is recorded as a
+  correction (a preview you never save records nothing). No screen in the app calls
+  `POST /api/tasks/quick` today, so a who-it's-for pick is logged only by that route or by memory
+  enrichment. The examples reach a prompt in three places. The quick-add routes
+  (`/api/tasks/quick/parse`, which the Describe-it line calls, and `/api/tasks/quick`) show the
+  model up to 3 of your most common corrections for each of category and who-it's-for, last in the
+  prompt, read straight from the last weekly run with no embedder on that path. Memory enrichment
+  shows the ones most like the task when an embedder is available, and so do the Monday run's
+  held-out scoring prompts. The loop is batch: a correction you make changes no prompt until the next
+  Monday `calibrate_classification` run (an admin can run the job early from the Jobs page, for
+  their own account), a field needs at least 2 corrections first, and corrections on guesses made
+  more than 90 days ago stop counting. The category lessons only help when the AI model answers
+  categories as a list; the built-in fast model, `qwen2.5:0.5b`, answers a bare word on the box
+  measured, so there it picks no category and has nothing to learn from. The who-it's-for lessons
+  were not measured, and the Add wizard does not record those picks, so on a default install that
+  half stays empty. The measurement is in `docs/classification-hint-measurement-2026-11.md`
 - **Dismissal learning** — what you dismiss or approve from the suggestion stream is logged
   (`possible_outcome_log`); once you have 5 settled dismissals a weekly `calibrate_dismissals`
   job keeps a per-owner rollup of them, and up to 3 relevant ones are shown to the extraction
@@ -1915,7 +1935,9 @@ than a false dip) and `DELETE /api/classification/exemplars` ("reset learning" �
 re-earns the adaptation from it rather than losing it). Unlike `routes/triality.ts`, there is
 no feature flag here — an owner who has never corrected anything just has an empty trend and
 an empty exemplar index, which is exactly what a fresh install reports anyway. The client for both
-endpoints is Settings → Learning, which prints the number of scored cases beside every reading.
+endpoints is Settings → Learning, which prints the number of scored cases beside every reading. Quick add's prompt
+(reached through the Describe-it line) and the wizard's Add joined the loop on 2 Nov 2026; the
+Classification learning bullet above says how.
 
 The original three-part narrative below (ingestion windows, the Tasks-view section-ordering
 swap, and the `CURRENT_TIMESTAMP` local-time bug) shipped in migration 0147 and is kept as
@@ -2714,13 +2736,13 @@ This table lists the notable endpoints, not every route; the routers are in
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/tasks?status=&tag=&q=&priority=&due_before=&owner_id=` | List/filter tasks (with tags) |
-| POST | `/api/tasks` | Create a task (`title` required) |
+| POST | `/api/tasks` | Create a task (`title` required). Also accepts the optional `classification_claim` that `/api/tasks/quick/parse` returned, so a changed category pick is recorded as a correction; it is validated, dropped silently if it does not check out, and never stored on the task or returned (if it checks out, its pick and text become one `classification_log` row) |
 | PATCH | `/api/tasks/:id` | Update fields; `{"completed": true}` marks done |
 | DELETE | `/api/tasks/:id` | Soft delete (status → `cancelled`) |
 | POST | `/api/tasks/:id/close` | The close ritual: completes the task if it is still open (an already-completed task is accepted too, for reflecting later). Records `score` 1–5, or 0 = declined · note · actual minutes; stamps `reaction_at` server-side for a real rating or a note. **400** on a present-but-invalid score |
 | POST | `/api/tasks/:id/enrich` | Fill blank description / direction / categories from Companion Memory; always resolves — `enriched:false` carries the reason |
 | GET | `/api/tasks/:id/subtasks` | List subtasks |
-| POST | `/api/tasks/quick/parse` \| `/api/tasks/quick` | Natural-language quick add: `/quick/parse` previews the parse and writes nothing (deterministic, with an Ollama overlay when it is up); `/quick` creates the task |
+| POST | `/api/tasks/quick/parse` \| `/api/tasks/quick` | Natural-language quick add: `/quick/parse` previews the parse and writes nothing (deterministic, with an Ollama overlay when it is up; when the model chose a category it also returns an opaque `classification_claim`, which the wizard echoes on `POST /api/tasks`); `/quick` creates the task (no screen in the app calls it today). Both show the model your most common category and who-it's-for corrections, as of the last Monday `calibrate_classification` run |
 | POST · GET | `/api/tasks/:id/timer/start` \| `/api/tasks/:id/timer/stop` · `/api/timer` | The single running timer: start (stops any other first), stop (**409** when none is running), and `GET /api/timer` for the current entry or `null` |
 | POST · GET | `/api/tasks/:id/skip` \| `/reschedule` \| `/promote-habit` \| `/promote-objective` · `/api/tasks/:id/streak` | Per-task actions: skip a recurring instance, bump a missed task out by `days`, make a task a habit, surface it in the Objectives tree, and read a habit's streak |
 | POST | `/api/tasks/suggest-tags` \| `/api/tasks/suggest-subtasks` \| `/api/tasks/auto-tag` | Best-effort Ollama helpers: tags for a title, a subtask brainstorm, and auto-tagging for the Tasks view |

@@ -14,7 +14,7 @@ import {
 } from '../stores/index.js';
 import {
   patternTagList, patternDefaultMinutes, rankedSecondaryTags,
-  nextHalfHour, saveElement, splitBlockTag, mergeTagNames, isoAt, type ElementForm,
+  nextHalfHour, saveElement, splitBlockTag, mergeTagNames, isoAt, claimIfFaithful, type ElementForm,
 } from '../lib/element.js';
 import { sortCategories, displayTag } from '../lib/tag-tax.js';
 import { colorVar } from '../lib/pattern-meta.js';
@@ -23,7 +23,7 @@ import { buildRule, rulePreset, describeRule, WEEKDAYS, DAY_INITIAL, type Repeat
 import { proposeSlot, narrowToBand } from '../lib/propose-slot.js';
 import { findSimilarTasks } from '../lib/similar-tasks.js';
 import { inheritedBlockTag } from '../lib/planner.js';
-import { api, type Task, type Person } from '../lib/api.js';
+import { api, type Task, type Person, type ClassificationClaim } from '../lib/api.js';
 
 const TB_REPEAT: RepeatPreset[] = ['none', 'daily', 'weekly', 'custom'];
 const TASK_REPEAT: RepeatPreset[] = ['none', 'daily', 'weekly', 'custom'];
@@ -137,6 +137,12 @@ export function ElementWizard() {
   const [tbCustomRule, setTbCustomRule] = createSignal('');
   // Phase B (0134): 1–3 categories, tasks AND blocks; array order = stripe order.
   const [categoryIds, setCategoryIds] = createSignal<string[]>([]);
+  // True once the owner used the picker themselves; seeding an edit's own row and a fresh
+  // open put it back to false (a parse seeds too, but only in Add, which sends the picker
+  // either way). It latches: tapping a chip back off does not clear it, deliberately, the
+  // owner used the picker. A task or habit EDIT save sends the picker only when it is true;
+  // a Time Block edit sends it either way.
+  const [categoriesTouched, setCategoriesTouched] = createSignal(false);
   // Phase B (0135): per-element texture override (on by default; null colour = derive).
   const [textureEnabled, setTextureEnabled] = createSignal(true);
   const [textureColorToken, setTextureColorToken] = createSignal<string | null>(null);
@@ -178,6 +184,10 @@ export function ElementWizard() {
   const [nlBusy, setNlBusy] = createSignal(false);
   const [nlLlm, setNlLlm] = createSignal(false);
   const [nlError, setNlError] = createSignal<string | null>(null);
+  // The model's category pick for the last parse, as the server reported it. Echoed on Add
+  // so the owner's answer to it is evidence; null whenever there is no pick to answer, and
+  // again as soon as the create lands (onCreated). A create that failed keeps it for the retry.
+  const [nlClaim, setNlClaim] = createSignal<ClassificationClaim | null>(null);
 
   // D5 — suggest-only subtask brainstorm. `ideas` is what the model offered; `picked` is
   // what the USER tapped. Only `picked` is ever created (saveElement → subtaskTitles), so
@@ -230,9 +240,10 @@ export function ElementWizard() {
   const categoryOptions = () => sortCategories((tags() ?? []).filter((t) => t.kind === 'category'));
   function toggleCategory(id: string) {
     const cur = categoryIds();
-    if (cur.includes(id)) { setCategoryIds(cur.filter((x) => x !== id)); return; }
+    if (cur.includes(id)) { setCategoryIds(cur.filter((x) => x !== id)); setCategoriesTouched(true); return; }
     if (cur.length >= 3) return; // cap 3 — mirrors setEntityCategories
     setCategoryIds([...cur, id]);
+    setCategoriesTouched(true);
     // First pick prefills the block length from the category's default (0069 behavior).
     if (cur.length === 0) {
       const p = categoryPrefs()?.prefs?.[id];
@@ -357,7 +368,7 @@ export function ElementWizard() {
     if (st.open && !wasOpen) {
       const pf = st.prefill ?? {};
       setTitle(''); setPrimary(''); setIntentions([]); setTagDraft(''); setLlm([]);
-      setNlText(''); setNlBusy(false); setNlLlm(false); setNlError(null);
+      setNlText(''); setNlBusy(false); setNlLlm(false); setNlError(null); setNlClaim(null);
       setSubtaskIdeas([]); setPickedSubtasks([]); setSubtaskBusy(false); setTimeHint(null);
       setDay(pf.day || localISODate());
       setStart(pf.start || nextHalfHour());
@@ -371,7 +382,7 @@ export function ElementWizard() {
       setEstimate(30); setDueAt(pf.day || localISODate()); setDueEdited(false); setPriority(3);
       setTaskRepeat('none'); setTaskWeekdays([]); setTaskCustomRule('');
       setDeferUntil(''); setDependsOn([]); setDepDraft(''); setEditScope('instance'); setWasRecurring(false);
-      setNote(''); setNoteExpanded(false); setTbRepeat('none'); setTbWeekdays([]); setTbCustomRule(''); setCategoryIds([]); setMakeHabit(false);
+      setNote(''); setNoteExpanded(false); setTbRepeat('none'); setTbWeekdays([]); setTbCustomRule(''); setCategoryIds([]); setCategoriesTouched(false); setMakeHabit(false);
       setTextureEnabled(true); setTextureColorToken(null);
       setMotivation(null); setMotivationSource(null); setMotivationTouched(false);
       setLocked(false); setAllDay(false); setRoutineId(''); setInitialRoutineId('');
@@ -468,6 +479,7 @@ export function ElementWizard() {
     setCategoryIds(names
       .map((n) => all.find((t) => t.kind === 'category' && t.name.toLowerCase() === n.toLowerCase())?.id)
       .filter((id): id is string => !!id));
+    setCategoriesTouched(false); // seeded, not testimony — the same rule as motivation and people
   }
   function seedTags(names: string[], secondary: string[] = []) {
     const patternNames = new Set(patternTagList().map((p) => p.name.toLowerCase()));
@@ -503,7 +515,12 @@ export function ElementWizard() {
     setNlBusy(true);
     const isBlock = tab() === 'timeblock';
     try {
-      const { parsed, llm } = await api.tasks.quickParse(value);
+      const { parsed, llm, classification_claim } = await api.tasks.quickParse(value);
+      // The modal may have been reopened in Edit while this was in flight (the title stays
+      // typeable, so "open instead of adding?" is reachable; so is closing it and opening a
+      // task). Edit has no Describe-it line, so the answer belongs to a form that is gone:
+      // drop it before it touches a field, the picker or the claim.
+      if (isEdit()) return;
       setNlLlm(llm);
       // Hydrate the form fields — every value below is visible in the wizard for
       // review/correction before Add.
@@ -527,6 +544,10 @@ export function ElementWizard() {
       // Phase B: the classifier's best-guess categories seed the picker (best fit
       // first = position 0 = first stripe) — reviewable chips, like every NL field.
       if (parsed.categories?.length) seedCategories(parsed.categories);
+      // Every successful parse REPLACES the claim, so one where the model abstained clears a
+      // stale one. A Time Block parse is about a block (no task row to settle against), and
+      // categoryNames() is read after the seed: the claim holds only if the picker shows it.
+      setNlClaim(isBlock ? null : claimIfFaithful(classification_claim, categoryNames()));
       // Motivation (0141): the overlay's pick seeds as SUGGESTED (source 'llm', not
       // touched) — the user's Add is approval of the task, not testimony about who
       // it's for; only tapping the control itself makes it user's.
@@ -899,7 +920,23 @@ export function ElementWizard() {
         // AF-9: time-block secondary tags live in `intentions` (round-tripped on
         // edit), so no separate blind-preserve set is passed.
         // Phase B: 1–3 category names (picker order = stripe order) + texture override.
-        categories: categoryNames(),
+        // A task or habit EDIT sends the picker only if the owner used it. The edit form used
+        // to re-send it on every save, and the seed is not testimony: it is a snapshot taken
+        // when the form opened, short of any category the tags() store could not show and of
+        // anything the server changed since. A series save opened from a generated instance
+        // is the sharp case: instances carry no category rows, so the seed is empty, and
+        // sending it wipes the template's categories. The server's changed-only read-back
+        // (updateTask) is a second guard behind this one: a same-set re-send changes nothing
+        // and closes no learning row. The gate latches once the owner touched the picker, even
+        // if they tapped a chip back off: they used it, so it sends what the picker shows (on
+        // an instance's series save, that can be the empty set).
+        // Still open, and older than this gate: that same instance series save sends tags []
+        // and secondary_tags [] (taskTagPayload), which wipes the template's direction and
+        // intention tags. Left for a follow-up. Add sends the picker. A Time Block edit sends
+        // it always, as before: a block has no learning row, and its save re-stamps the
+        // block's frozen colour from the first category (services/blocks.ts updateBlock).
+        categories: isEdit() && (effectiveKind === 'task' || effectiveKind === 'habit') && !categoriesTouched()
+          ? undefined : categoryNames(),
         textureEnabled: textureEnabled(),
         textureColorToken: textureColorToken(),
         // Motivation (0141): only when the user touched the control this session.
@@ -933,6 +970,12 @@ export function ElementWizard() {
         detachBlockIds: removedMemberIds(),
         // D5 — only the chips the user tapped; an untouched suggestion never gets here.
         subtaskTitles: pickedSubtasks(),
+        // The preview's category pick, so Add records the owner's answer to it. saveElement
+        // sends it on the add-mode task/habit create only; the server decides if it counts.
+        classificationClaim: nlClaim() ?? undefined,
+        // Spent once the task exists: a later failing step (routine chip) leaves the modal
+        // open, and Add again would otherwise send the same claim for a second task.
+        onCreated: () => setNlClaim(null),
       };
       const msg = await saveElement(effectiveKind, m().mode, form, m().editTarget?.id);
       showToast(msg, 'success');
