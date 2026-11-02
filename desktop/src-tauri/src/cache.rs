@@ -25,6 +25,11 @@ impl Cache {
         Self::with_connection(conn)
     }
 
+    /// A cache that lives only as long as the app runs. Used when the cache file cannot be opened.
+    pub fn in_memory() -> Result<Self, String> {
+        Self::with_connection(Connection::open_in_memory().map_err(|error| error.to_string())?)
+    }
+
     fn with_connection(conn: Connection) -> Result<Self, String> {
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS responses (
@@ -83,8 +88,17 @@ mod tests {
     use super::*;
 
     fn in_memory() -> Cache {
-        Cache::with_connection(Connection::open_in_memory().expect("an in-memory database"))
-            .expect("the table is created")
+        Cache::in_memory().expect("an in-memory database")
+    }
+
+    #[test]
+    fn a_path_that_is_not_a_database_is_refused_so_the_app_can_fall_back() {
+        let dir =
+            std::env::temp_dir().join(format!("companion-planning-cache-dir-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a folder to try to open as a database");
+        assert!(Cache::open(&dir).is_err());
+        std::fs::remove_dir_all(&dir).expect("clean up the test folder");
+        in_memory().put("k", "v").expect("the in-memory fallback works");
     }
 
     #[test]
