@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The main window: the connect page, and then the server's own web app.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
