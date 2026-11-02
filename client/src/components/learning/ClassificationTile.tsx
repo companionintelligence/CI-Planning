@@ -75,9 +75,10 @@ const MEANING =
 //   - the Describe-it line in the Add dialog (routes/tasks.ts enrichEntry; POST /api/tasks/quick,
 //     which no screen calls, gets the same prompt): the owner's most frequent corrections, never
 //     picked by similarity (embedFn: null), at the end of the prompt (agents/quickadd.ts). No
-//     Companion Memory. It only does anything for categories when the model answers `categories`
-//     as an array: constrainToVocabulary drops a bare string, so a small model that answers one
-//     word (qwen2.5:0.5b) yields no pick and nothing to learn from.
+//     Companion Memory. It only does anything for categories when the model names one of the
+//     owner's categories, as a list or as one word: quick-add's merge reads a bare string as one
+//     name (since 2026-11-02; before that a small model that answers one word, qwen2.5:0.5b,
+//     yielded no pick and nothing to learn from).
 //   - the fill-in from memory (services/task-enrich.ts): similarity when an embedder answers,
 //     else frequency. It returns early when memory is off ("Memory is off") and again when the
 //     search finds nothing ("No related memory found"), both BEFORE it reads the examples.
@@ -94,8 +95,8 @@ const CHANGES =
   'What it changes: your past corrections reach the model in three places. ' +
   `The Describe-it line in the Add dialog (and quick add through the API) shows up to ${F.retrieveK} of the corrections you make most often, ` +
   'for each field, at the end of its prompt, whatever you typed. ' +
-  'This needs no Companion Memory. The category part only works when the model answers categories as a list; ' +
-  'a model that answers with one word picks no category, so there is nothing to learn from. ' +
+  'This needs no Companion Memory. The category part needs the model to name one of your categories, as a list or as one word; ' +
+  'an answer that names none of them gives nothing to learn from. ' +
   `The fill-in from memory (the "Fill in details from memory" button and the nightly fill-in) shows up to ${F.retrieveK} corrections that look like the task, ` +
   'or your most frequent ones with no embedding model. ' +
   `${MEMORY_FILL_IN} ` +

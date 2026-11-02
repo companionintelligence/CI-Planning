@@ -31,16 +31,29 @@ version at `GET /api/health` (`release`).
   them, just before your text. `POST /api/tasks/quick` gets the same prompt; no screen in the app calls
   it today. The corrections come from what the Monday `calibrate_classification` run built, so a
   correction you make changes no prompt until the next Monday run, and a field needs at least 2
-  corrections first; with fewer, the prompt is exactly what it was. The category part only does
-  anything when the AI model answers categories as a list. The smallest default model, `qwen2.5:0.5b`,
-  answers with a bare word instead, so on the machine measured it never picks a category and has
-  nothing to learn from. The who-it's-for part was not measured, and the Add dialog does not record
+  corrections first; with fewer, the prompt is exactly what it was. The category part needs the AI
+  model to name one of your categories. The smallest default model, `qwen2.5:0.5b`, answers with a
+  bare word instead of a list; Describe-it did not read that, and the next entry says it now does.
+  The who-it's-for part was not measured, and the Add dialog does not record
   those picks, so on a default install it stays empty. In a test with an invented owner, `gemma3n:e4b`
   (set as the fast model for the test; the default fast model is `qwen2.5:0.5b`) filed 7 of 12
   held-out titles the owner's way, up from 3. It learned two of the owner's three rules and none of the
   exercise titles. `gemma3:1b` answers a list on about 1 call in 5, so the test could not measure it.
   The Settings → Learning card for categories now says the examples also reach the Describe-it line.
   See `docs/classification-hint-measurement-2026-11.md`.
+- **Describe-it reads a one-word category answer.** The smallest default AI model, `qwen2.5:0.5b`,
+  answers the category question with one word (`"leisure"`) where the prompt asks for a list, and
+  `gemma3:1b` does on about 4 calls in 5. Describe-it kept lists only, so on those models it never
+  suggested a category, the Add dialog had no pick to record, and no correction could be learned. It now
+  takes a single word as one category when it is exactly one of your categories, ignoring case; several
+  words written as one string still name nothing. The prompt is unchanged. In a test with an invented
+  owner and 42 titles, the share of answers that name one of the owner's categories went from 0% to 80%
+  on `qwen2.5:0.5b` and from 21% to 91% on `gemma3:1b`, and `gemma3n:e4b`'s answers did not change. That
+  counts answers, not good answers: on the 12 titles with an obvious category, `qwen2.5:0.5b` named it
+  in 20 of 60 answers (it said `leisure` for 6 in 10 of all of them), `gemma3:1b` in 49 of 60 and
+  `gemma3n:e4b` in 60 of 60, so on the smallest model most suggestions will need your correction.
+  Learning is still weekly: the Monday `calibrate_classification` run folds corrections in, and a field
+  needs at least 2 first. See `docs/classification-shape-fix-2026-11.md`.
 - **AI works through your CI Hub when the Hub is not running Ollama.** On a Hub whose AI runs on vLLM or
   Lemonade, Planning uses the Hub's OpenAI-compatible endpoint for chat, and for embeddings when one is named.
   An Ollama address always wins when one is set.

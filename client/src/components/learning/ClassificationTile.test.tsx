@@ -737,13 +737,13 @@ describe('ClassificationTile: what the card says about itself', () => {
   it('what it changes: the three places the examples reach a prompt, each with what it needs', async () => {
     const { about } = await open();
     expect(about).toContain('your past corrections reach the model in three places.');
-    // 1. The Describe-it line: most frequent, last in the prompt, no Companion Memory, needs a list answer.
+    // 1. The Describe-it line: most frequent, last in the prompt, no Companion Memory, needs a category the model names (list or one word).
     expect(about).toContain(
       'The Describe-it line in the Add dialog (and quick add through the API) shows up to 3 of the corrections you make most often, ' +
         'for each field, at the end of its prompt, whatever you typed.',
     );
-    expect(about).toContain('This needs no Companion Memory. The category part only works when the model answers categories as a list;');
-    expect(about).toContain('a model that answers with one word picks no category, so there is nothing to learn from.');
+    expect(about).toContain('This needs no Companion Memory. The category part needs the model to name one of your categories, as a list or as one word;');
+    expect(about).toContain('an answer that names none of them gives nothing to learn from.');
     // 2. The memory fill-in: look-alikes (or the most frequent with no embedder), and only with memory.
     expect(about).toContain('the "Fill in details from memory" button and the nightly fill-in');
     expect(about).toContain('shows up to 3 corrections that look like the task, or your most frequent ones with no embedding model.');
@@ -902,6 +902,9 @@ describe('ClassificationTile: wording the card must carry', () => {
       [/shown only when the app fills in details/i, 'shown only when the app fills in details'],
       [/not shown examples/i, 'not shown examples'],
       [/while you add a task by typing/i, 'typed guesses are not given examples'],
+      // True until 2026-11-02, when quick add began reading a one-word category answer as one category.
+      [/only works when the model answers categories as a list/i, 'categories only work from a list answer'],
+      [/answers with one word picks no category/i, 'a one-word answer picks no category'],
     ];
     for (const r of [NONE, MEASURED, NOT_MEASURED]) {
       accuracyMock.mockResolvedValue(r);
@@ -912,7 +915,7 @@ describe('ClassificationTile: wording the card must carry', () => {
       // Present in every state, because the explanation does not depend on the readings.
       expect(text).toContain('your past corrections reach the model in three places.');
       expect(text).toContain('The Describe-it line needs no Companion Memory.');
-      expect(text).toContain('only works when the model answers categories as a list');
+      expect(text).toContain('needs the model to name one of your categories, as a list or as one word');
       expect(text).toContain('not a score of the Describe-it line');
       unmount();
     }

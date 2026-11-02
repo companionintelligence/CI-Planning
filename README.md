@@ -1305,9 +1305,10 @@ Connections**. Replay the walkthrough from **Settings → Profile**.
   held-out scoring prompts. The loop is batch: a correction you make changes no prompt until the next
   Monday `calibrate_classification` run (an admin can run the job early from the Jobs page, for
   their own account), a field needs at least 2 corrections first, and corrections on guesses made
-  more than 90 days ago stop counting. The category lessons only help when the AI model answers
-  categories as a list; the built-in fast model, `qwen2.5:0.5b`, answers a bare word on the box
-  measured, so there it picks no category and has nothing to learn from. The who-it's-for lessons
+  more than 90 days ago stop counting. The category part needs the AI model to name one of your
+  categories. The built-in fast model, `qwen2.5:0.5b`, answers a bare word instead of a list, and
+  quick add reads that as one category (`docs/classification-shape-fix-2026-11.md`); most of its
+  suggestions are wrong on obvious titles, so they will need your correction. The who-it's-for lessons
   were not measured, and the Add wizard does not record those picks, so on a default install that
   half stays empty. The measurement is in `docs/classification-hint-measurement-2026-11.md`
 - **Dismissal learning** — what you dismiss or approve from the suggestion stream is logged
