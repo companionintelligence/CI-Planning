@@ -38,6 +38,7 @@ describe('D2 — security headers', () => {
     expect(csp).not.toMatch(/script-src[^;]*unsafe/);
     expect(csp).toContain("style-src 'self' 'unsafe-inline';");
     expect(csp).toContain("font-src 'self' data:;");
+    expect(csp).not.toMatch(/fonts\.(googleapis|gstatic)\.com/); // Manrope is bundled; no font host
     expect(csp).toContain("frame-ancestors 'none'");
     expect(csp).toContain("worker-src 'self'");
     expect(csp).toMatch(/connect-src 'self'(;|$)/); // nothing extra by default
