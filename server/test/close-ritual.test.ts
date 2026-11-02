@@ -83,6 +83,22 @@ describe('closeTask', () => {
     expect(r.reaction_at).toBeNull(); // bookkeeping is not a reflection
   });
 
+  // The client sends actual_minutes only when the owner edited the field (CloseRitual): the
+  // pre-fill is derived from the schedule and must never reach calibration as if measured. So
+  // a close that omits it has to leave whatever is already there.
+  it('leaves a measured actual_minutes alone when the close omits it', async () => {
+    const id = insertTask('Timed run', { estimated: 60, actual: 40 });
+    await closeTask(OWNER, id, { score: 3 });
+    expect(row(id).actual_minutes).toBe(40);
+  });
+
+  it('leaves actual_minutes at 0 for a task nobody timed or typed a number for', async () => {
+    const id = insertTask('Never timed', { estimated: 60 });
+    const res = await closeTask(OWNER, id, { score: 5 });
+    expect(res.ok && res.actualMinutes).toBe(0);
+    expect(row(id).actual_minutes).toBe(0); // calibration only reads actual_minutes > 0
+  });
+
   it('never writes the reflection into `notes` (the description)', async () => {
     const id = insertTask('Has a description');
     sqlite.prepare(`UPDATE tasks SET notes = 'what this is about' WHERE id = ?`).run(id);
