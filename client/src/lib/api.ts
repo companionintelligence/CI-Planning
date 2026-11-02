@@ -23,6 +23,9 @@ export class ApiError extends Error {
   }
 }
 
+/** Dispatched on `window` when an app request comes back 401 (see `request`). */
+export const UNAUTHENTICATED_EVENT = 'auth:unauthenticated';
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   // Mobile shell, first run, before the user has chosen a server: BASE is a bare '/api',
   // which would hit the app's own bundle and come back as HTML. Fail as "never reached
@@ -41,6 +44,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
+    // The auth endpoints answer 401 to a wrong password; anywhere else it means the session ended.
+    if (res.status === 401 && !path.startsWith('/auth/')) window.dispatchEvent(new Event(UNAUTHENTICATED_EVENT));
     throw new ApiError((err as any).error ?? res.statusText, res.status);
   }
   // The server accepted a change from this client: let lib/sse.ts poll for its effects
