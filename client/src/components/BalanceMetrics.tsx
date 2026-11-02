@@ -2,6 +2,7 @@ import { createResource, createSignal, For, Show } from 'solid-js';
 import { TrendingUp, TrendingDown, Minus } from 'lucide-solid';
 import { api, type AxisMetrics, type MetricsGroup, type ScoreDistribution } from '../lib/api.js';
 import { TrialityMetricsTiles } from './TrialityMetricsTiles.js';
+import { Skeleton } from './Skeleton.js';
 
 /**
  * Balance → Metrics: how the user's tasks actually land across the two axes they think
@@ -231,7 +232,7 @@ export function BalanceMetrics() {
         </div>
       </div>
 
-      <Show when={metrics()} fallback={<div class="card p-6 text-center text-xs text-muted-foreground">Loading metrics…</div>}>
+      <Show when={metrics()} fallback={<div role="status" class="card p-6 flex flex-col gap-3"><span class="sr-only">Loading metrics</span><Skeleton class="h-4 w-1/3" /><Skeleton class="h-20" /></div>}>
         {(m) => (
           <>
             <GroupSection group={m()} label="Tasks" />

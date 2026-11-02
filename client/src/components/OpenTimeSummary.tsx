@@ -5,6 +5,7 @@ import {
   busyFromBlocks, formatClock, formatDuration, openTime, parseHHMM, totalOpen,
   type TimeRange,
 } from '../lib/open-time.js';
+import { Skeleton } from './Skeleton.js';
 
 /**
  * Today's header answers "when could I put something?" rather than re-listing the
@@ -22,15 +23,6 @@ const DIRECTION_ORDER = ['work', 'home', 'community'];
 function directionRank(direction: string): number {
   const i = DIRECTION_ORDER.indexOf(direction);
   return i === -1 ? DIRECTION_ORDER.length : i;
-}
-
-/** Single-letter tag for the open-window row; an unrecognized (custom) direction
- *  still gets a sane initial rather than rendering blank. */
-function directionLetter(direction: string): string {
-  if (direction === 'work') return 'W';
-  if (direction === 'home') return 'H';
-  if (direction === 'community') return 'C';
-  return direction.charAt(0).toUpperCase();
 }
 
 /** "Work, home & community hours" — built from whichever directions are actually
@@ -115,7 +107,13 @@ export function OpenTimeSummary(props: { date: string }) {
 
       <Show
         when={!loading()}
-        fallback={<p class="text-xs text-muted-foreground">Reading the day's windows…</p>}
+        fallback={
+          <div role="status" class="flex flex-col gap-1.5">
+            <span class="sr-only">Reading the day's windows</span>
+            <Skeleton class="h-9" />
+            <Skeleton class="h-9 w-4/5" />
+          </div>
+        }
       >
         <Show
           when={segments().length > 0}
@@ -138,7 +136,7 @@ export function OpenTimeSummary(props: { date: string }) {
                 </span>
                 <span class="open-window-tags">
                   <For each={s.directions}>
-                    {(d) => <span class="open-window-tag" data-direction={d} title={d}>{directionLetter(d)}</span>}
+                    {(d) => <span class="open-window-tag" data-direction={d}>{d}</span>}
                   </For>
                 </span>
                 <span class="open-window-dur">{formatDuration(s.end - s.start)}</span>

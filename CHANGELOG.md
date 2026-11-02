@@ -56,6 +56,16 @@ version at `GET /api/health` (`release`).
   placeholder showed while the app started.
 - **The app installs with a maskable icon**, so Android can crop it to the launcher's shape without clipping the mark.
 - **The Tasks page offers Add a task when it is empty**, as well as connecting a source.
+- **Phone tabs scroll sideways on one line.** The tabs on Tasks, Balance and Settings wrapped into a second row
+  that pushed the content down.
+- **Open-time windows name their directions.** Each window shows work, home or community, where it showed a
+  single letter.
+- **A new account's Today is quieter.** Until there are tasks or blocks, the header drops the open-time windows and
+  the capacity bar, and shows the day with the connect prompt.
+- **Loading shows placeholder bars** on the open-time card, the Tasks archive and the balance metrics, instead of a
+  line of text.
+- **The desktop details drawer has a collapse button.** It folds the drawer away and keeps the selection, so
+  reopening brings the same item back. The close button still clears the selection.
 
 ### Fixed
 - **The name field no longer opens as "System".** A new owner is seeded with that placeholder, and the first-run
@@ -82,6 +92,8 @@ version at `GET /api/health` (`release`).
   stored VAPID pair so a pair sealed by an earlier test file cannot leave push dormant.
 
 ### Added
+- **Accessibility checks run in the test suite.** axe-core checks the login screen and the boot screen, so a rule
+  that breaks in jsdom fails CI. Colour contrast needs a real browser and is not checked yet.
 - **`pnpm snapshot` works from the repo root.** The backup script only existed in `server/`, but
   `ops/litestream.yml` and the Settings backup warning already told people to run `pnpm snapshot`.
   The root now has the shortcut, like `seed` and `migrate`.
