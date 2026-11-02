@@ -2688,7 +2688,7 @@ All from the repo root:
 | `pnpm seed` | Seed ~100 fixture tasks into the dev DB |
 | `pnpm migrate` | Apply migrations explicitly (they also run on every server boot) |
 | `pnpm db:generate` / `pnpm db:migrate` | Root-level convenience wrappers around the server's Drizzle schema-generate / migrate scripts |
-| `pnpm --filter server snapshot` | Point-in-time DB backup into `<DB_DIR>/backups/` |
+| `pnpm snapshot` | Point-in-time DB backup into `<DB_DIR>/backups/` (root shortcut for `pnpm --filter server snapshot`) |
 | `pnpm --filter server restore -- <file>` | Restore a snapshot (server stopped) |
 | `pnpm --filter server db:check-drift` | Diff `schema.ts` against what the migrations actually produce (exits non-zero on drift) |
 | `pnpm --filter server key:issue` | Mint a standalone API key for `AUTH_MODE=standalone` (`--scopes read\|write`, `--ttl-days N`, `--owner <uuid>`); the raw key is printed once |

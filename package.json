@@ -22,6 +22,7 @@
     "db:generate": "pnpm --filter server db:generate",
     "db:migrate": "pnpm --filter server db:migrate",
     "migrate": "pnpm --filter server migrate",
+    "snapshot": "pnpm --filter server snapshot",
     "lint:canon": "ci-lint-canon ."
   },
   "devDependencies": {
