@@ -258,6 +258,11 @@ components aren't available in this repo); U3 uses this app's own design tokens.
   Companion Portal"** (B1, same `/start` URL, plus the note that on a Hub the account must also be a
   member of the Hub's organization), or **"Don't have an account? Sign up"** → `/signup` (B2, "with an
   invite code" under `invite`), or nothing under `off`.
+- **Back to the page they asked for.** `SessionGate` keeps the page it was sending the person away from, in
+  router state, and the Portal button passes it on as `/start?redirect=` (a same-origin path, checked again on
+  the way back). The server keeps it in a 10-minute `cp_portal_redirect` cookie. The callback, and the
+  new-account confirmation, return there and clear it. The local sign-in returns there too. Companion Memory
+  does the same with its `oidc_redirect` cookie.
 - **`?sso_error=`** from the callback: `invalid_redirect_uri`, `access_denied` and `unauthorized_client`
   — the shapes the Portal's org-membership refusal arrives in (§"Portal contract" in the
   [2026-10-21 readiness review](PRODUCTION-READINESS-2026-10-21.md)) — render as *"Companion Portal

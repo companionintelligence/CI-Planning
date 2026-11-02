@@ -55,6 +55,33 @@ describe('pattern types', () => {
     sqlite.prepare(`UPDATE scheduling_prefs SET enable_rituals = 0 WHERE owner_id = ?`).run(OWNER); // reset for sibling tests
   });
 
+  it('Settings toggles: PATCH /api/prefs flips enable_routines and enable_rituals, and the Ritual type follows', async () => {
+    // Both flags ship off (0024 / 0073). The Settings → Routine Settings toggles save them
+    // with the rest of the form through this one route. Start from a known state rather than
+    // the shared test DB's (other files leave enable_routines on), and put it back after.
+    const initial = (await api(srv.url, '/api/prefs')).body.prefs;
+    const set = (v: boolean) => api(srv.url, '/api/prefs', { method: 'PATCH', json: { enable_routines: v, enable_rituals: v } });
+
+    const off = await set(false);
+    expect(off.status).toBe(200);
+    expect(off.body.prefs.enable_routines).toBeFalsy();
+    expect(off.body.prefs.enable_rituals).toBeFalsy();
+    const hidden = await api(srv.url, '/api/pattern-types');
+    expect(hidden.body.pattern_types.map((t: any) => t.name)).not.toContain('Ritual');
+
+    const on = await set(true);
+    expect(on.status).toBe(200);
+    expect(on.body.prefs.enable_routines).toBeTruthy();
+    expect(on.body.prefs.enable_rituals).toBeTruthy();
+    const types = await api(srv.url, '/api/pattern-types');
+    expect(types.body.pattern_types.map((t: any) => t.name)).toContain('Ritual');
+
+    await api(srv.url, '/api/prefs', {
+      method: 'PATCH',
+      json: { enable_routines: !!initial.enable_routines, enable_rituals: !!initial.enable_rituals },
+    });
+  });
+
   it('creates a custom type (is_builtin false) and lists it', async () => {
     const c = await api(srv.url, '/api/pattern-types', { method: 'POST', json: { name: 'Errand-run', icon_shape: 'hexagon' } });
     expect(c.status).toBe(201);

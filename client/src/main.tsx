@@ -3,8 +3,13 @@ import { App } from './App.js';
 import { applyTheme, theme } from './lib/theme.js';
 import { registerSW } from './sw/register.js';
 import { initTelemetry } from './lib/telemetry.js';
-import './fonts.css';
 import './index.css';
+// Manrope is bundled, not fetched from Google Fonts, so the app makes no third-party requests.
+import '@fontsource/manrope/200.css';
+import '@fontsource/manrope/400.css';
+import '@fontsource/manrope/500.css';
+import '@fontsource/manrope/600.css';
+import '@fontsource/manrope/700.css';
 
 // Error reporting — opt-out, on by default once configured: reports when
 // VITE_SENTRY_DSN was baked in at BUILD time *and* the server confirms reporting has

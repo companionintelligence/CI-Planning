@@ -75,8 +75,8 @@ async function rawPost(path: string, form: Record<string, string>, headers?: Rec
 }
 
 /** Drive /start: returns the login-state cookie, the issued state, and its row nonce. */
-async function startFlow(): Promise<{ state: string; cookie: string; nonce: string }> {
-  const res = await realFetch(`${srv.url}/api/auth/ciportal/start`, { redirect: 'manual' });
+async function startFlow(query = ''): Promise<{ state: string; cookie: string; nonce: string }> {
+  const res = await realFetch(`${srv.url}/api/auth/ciportal/start${query}`, { redirect: 'manual' });
   const cookie = cookieHeader(res.headers.getSetCookie?.() ?? []);
   const state = new URL(res.headers.get('location')!).searchParams.get('state')!;
   const row = sqlite.prepare('SELECT nonce FROM auth_states WHERE state = ?').get(state) as { nonce: string };
@@ -1228,5 +1228,68 @@ describe('GET /api/auth/ciportal — discovery-driven', () => {
     const res = await completeLogin(await rawGet(`/api/auth/ciportal/callback?state=${state}&code=C`, { Cookie: cookie }));
     expect(res.status).toBe(302); // accepted — iss matched doc.issuer, not the …/api/auth config URL
     expect(sqlite.prepare(`SELECT id FROM owners WHERE external_subject = 'iss-sub'`).get()).toBeTruthy();
+  });
+});
+
+// Companion Memory parity: a sign-in brings the person back to the page they asked for.
+describe('return to the page the person asked for', () => {
+  const ASKED_FOR = '/shared/abc123?tab=notes';
+  const ASKED = `?redirect=${encodeURIComponent(ASKED_FOR)}`;
+
+  /** The confirmation POST as a browser sends it: the login's own cookies plus the callback's. */
+  async function confirmWithCookies(cb: RawResponse, browserCookie: string): Promise<RawResponse> {
+    const cookie = [browserCookie, cookieHeader(cb.setCookies)].join('; ');
+    const page = await rawGet(CONFIRM_PATH, { Cookie: cookie });
+    const csrf = /name="csrf" value="([^"]+)"/.exec(String(page.body))?.[1];
+    expect(csrf).toBeTruthy();
+    return rawPost(CONFIRM_PATH, { csrf: csrf!, decision: 'create' }, { Cookie: cookie });
+  }
+
+  it('remembers a same-origin page for the login, and forgets an unsafe one', async () => {
+    const good = await rawGet(`/api/auth/ciportal/start${ASKED}`);
+    expect(good.setCookies.join('\n')).toMatch(new RegExp(`cp_portal_redirect=${encodeURIComponent(ASKED_FOR)}`));
+
+    const bad = await rawGet(`/api/auth/ciportal/start?redirect=${encodeURIComponent('//evil.example')}`);
+    expect(bad.setCookies.join('\n')).not.toMatch(/cp_portal_redirect=%2F/);
+  });
+
+  it('a new Portal account is sent back to that page once it confirms', async () => {
+    const { state, cookie, nonce } = await startFlow(ASKED);
+    const { idToken, jwks } = makeIdToken({ nonce, sub: 'return-new', name: 'New Person' });
+    stubPortal({ access_token: 'A', id_token: idToken }, jwks);
+    const cb = await rawGet(`/api/auth/ciportal/callback?state=${state}&code=C`, { Cookie: cookie });
+    expectAwaitingConfirmation(cb);
+
+    const created = await confirmWithCookies(cb, cookie);
+    expect(created.status).toBe(302);
+    expect(created.location).toBe(ASKED_FOR);
+    expect(created.setCookies.join('')).toContain('cp_session=');
+  });
+
+  it('an account that already exists goes straight back to that page, and the memory is cleared', async () => {
+    // The first sign-in provisions the account (through the confirmation step), so the second is a plain login.
+    const first = await startFlow();
+    const a = makeIdToken({ nonce: first.nonce, sub: 'return-known' });
+    stubPortal({ access_token: 'A', id_token: a.idToken }, a.jwks);
+    await completeLogin(await rawGet(`/api/auth/ciportal/callback?state=${first.state}&code=C`, { Cookie: first.cookie }));
+
+    const { state, cookie, nonce } = await startFlow(ASKED);
+    const b = makeIdToken({ nonce, sub: 'return-known' });
+    stubPortal({ access_token: 'A', id_token: b.idToken }, b.jwks);
+    const cb = await rawGet(`/api/auth/ciportal/callback?state=${state}&code=C`, { Cookie: cookie });
+    expect(cb.status).toBe(302);
+    expect(cb.location).toBe(ASKED_FOR);
+    expect(cb.setCookies.join('')).toContain('cp_session=');
+    expect(cb.setCookies.some((c) => c.startsWith('cp_portal_redirect=;'))).toBe(true);
+  });
+
+  it('an unsafe destination is ignored: the person lands on the home page', async () => {
+    const { state, cookie, nonce } = await startFlow(`?redirect=${encodeURIComponent('//evil.example')}`);
+    const { idToken, jwks } = makeIdToken({ nonce, sub: 'return-unsafe' });
+    stubPortal({ access_token: 'A', id_token: idToken }, jwks);
+    const cb = await rawGet(`/api/auth/ciportal/callback?state=${state}&code=C`, { Cookie: cookie });
+
+    const created = await confirmWithCookies(cb, cookie);
+    expect(created.location).toBe('/');
   });
 });

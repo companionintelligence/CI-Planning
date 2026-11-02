@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
@@ -38,13 +38,21 @@ afterEach(() => {
   sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC' WHERE owner_id = ?`).run(OWNER);
 });
 
-async function makeRecurring(rule: string, tz = 'UTC', secondary: string[] = []) {
+// The wall clock in New York, to check that a recurring block holds its local time.
+const newYorkClock = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+});
+
+async function makeRecurring(
+  rule: string, tz = 'UTC', secondary: string[] = [],
+  startAt = at(T0, '09:00'), endAt = at(T0, '11:00'),
+) {
   if (tz !== 'UTC') sqlite.prepare(`UPDATE scheduling_prefs SET timezone = ? WHERE owner_id = ?`).run(tz, OWNER);
   return (await api(srv.url, '/api/blocks', {
     method: 'POST',
     json: {
       title: 'Deep Work', block_kind: 'timeblock', block_type: 'scheduled', tag: 'focus',
-      secondary_tags: secondary, start_at: at(T0, '09:00'), end_at: at(T0, '11:00'), recurrence_rule: rule,
+      secondary_tags: secondary, start_at: startAt, end_at: endAt, recurrence_rule: rule,
     },
   })).body.block;
 }
@@ -91,11 +99,56 @@ describe('CON-4 recurring Time Blocks', () => {
     // Compare the wall clock in the rule's zone. New York's DST change moves the UTC
     // hour inside a window that crosses it, while the local time must stay put, so a
     // UTC comparison only holds for windows that do not cross the change.
-    const newYorkClock = new Intl.DateTimeFormat('en-US', {
-      timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-    });
     const times = new Set(insts.map((b) => newYorkClock.format(new Date(b.start_at))));
     expect(times.size).toBe(1);
+  });
+
+  // The test above only crosses a New York DST change when the suite happens to run within a
+  // few days of one. These two fix the dates. The clock is frozen on the day before the change
+  // (Date only, as recurrence-horizon.test.ts does): the engine reads "today" from it, and the
+  // 7-day horizon resetDb pins then reaches past the change whenever the suite runs.
+  describe('across a New York DST change on a fixed date', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it.each([
+      {
+        name: 'spring forward, 2026-03-08',
+        now: '2026-03-07T12:00:00.000Z',
+        days: ['2026-03-07', '2026-03-08', '2026-03-09'],
+        utcHours: [14, 13, 13], // 09:00 is EST (UTC-5) on the 7th, EDT (UTC-4) from the 8th
+      },
+      {
+        name: 'fall back, 2026-11-01',
+        now: '2026-10-31T12:00:00.000Z',
+        days: ['2026-10-31', '2026-11-01', '2026-11-02'],
+        utcHours: [13, 14, 14], // 09:00 is EDT (UTC-4) on the 31st, EST (UTC-5) from the 1st
+      },
+    ])('keeps the New York wall clock of a daily block across the DST change: $name', async ({ now, days, utcHours }) => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(now));
+
+      // The template is 09:00 New York time on the first day, written as the UTC instant it is
+      // on that date.
+      const [first, , last] = days;
+      const startAt = at(first, `${pad(utcHours[0])}:00`);
+      const endAt = at(first, `${pad(utcHours[0] + 2)}:00`);
+      const tpl = await makeRecurring('FREQ=DAILY', 'America/New_York', [], startAt, endAt);
+
+      const blocks = await getBlocks(srv, at(first, '00:00'), at(last, '23:59'));
+      const insts = blocks
+        .filter((b) => b.recurrence_parent_id === tpl.id)
+        .sort((a, b) => a.start_at.localeCompare(b.start_at));
+
+      // One instance per New York day: the 23-hour and the 25-hour day lose and double nothing.
+      expect(insts.map((b) => b.occurrence_date)).toEqual(days);
+      // The wall clock is the same on every instance, either side of the change ...
+      expect(insts.map((b) => newYorkClock.format(new Date(b.start_at)))).toEqual(['09:00', '09:00', '09:00']);
+      // ... which is why the UTC hour has to move at the change. A wall clock that shifted
+      // instead would keep these equal and fail the line above.
+      expect(insts.map((b) => new Date(b.start_at).getUTCHours())).toEqual(utcHours);
+    });
   });
 
   it('deleting one instance EXDATEs it so it does not regenerate on the next read', async () => {

@@ -4,8 +4,8 @@
   "description": "Private, local-first todo & planning with optional local-LLM triage.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#070d11",
-  "theme_color": "#070d11",
+  "background_color": "#041620",
+  "theme_color": "#041620",
   "icons": [
     {
       "src": "/icon-192.png",

@@ -7,6 +7,17 @@ version at `GET /api/health` (`release`).
 
 ## [Unreleased]
 
+### Changed
+- **A new app icon:** a calendar with a check mark on the brand teal, for iOS, Android and the web. The desktop
+  app gets it with its own release.
+- **The iOS app is iPhone-only for now.** It has not been tested on iPad.
+- **iOS allows plain http to `.lan` and `.home.arpa` addresses**, as the app already allows for `.local` names and
+  IP addresses. Other names still need https.
+- **Companion Portal sign-in brings you back to the page you asked for**, as Companion Memory does. When the
+  app sends you to the login screen it remembers where you were going (same-origin paths only, for ten
+  minutes), and the Portal round trip, the first-time account confirmation and the username sign-in all
+  return you there. Before, every sign-in landed on the home page.
+
 ### Fixed
 - **No stack trace in the server log each time a live-update stream closes.** Koa reports a
   response stream that closes before it ends (`ERR_STREAM_PREMATURE_CLOSE`) as an error, and
@@ -20,6 +31,14 @@ version at `GET /api/health` (`release`).
   stored VAPID pair so a pair sealed by an earlier test file cannot leave push dormant.
 
 ### Added
+- **`pnpm snapshot` works from the repo root.** The backup script only existed in `server/`, but
+  `ops/litestream.yml` and the Settings backup warning already told people to run `pnpm snapshot`.
+  The root now has the shortcut, like `seed` and `migrate`.
+- **Settings switches for Routines and Rituals.** Settings → Preferences → Routine Settings now
+  has "Routines on the Planner" (`enable_routines`: the Routine option in the Add dialog, and recurring
+  Routines placing themselves on the Planner) and "Rituals" (`enable_rituals`: the Ritual type in the
+  Routines tab). Both were per-owner flags that only an API call could set; both stay off by default.
+  Saving also refreshes the pattern types, which the server filters on `enable_rituals`.
 - **`GET /api/sync/changes?since=<seq>`.** The `sync_events` log the SSE stream replays from,
   answered as JSON for a client that cannot hold an `EventSource`: the same rows, the same
   500-event window and the same overflow rule (`resync: true` means refetch everything, and is
@@ -37,11 +56,15 @@ version at `GET /api/health` (`release`).
   app yet.
 
 ### Changed
-- **Manrope is bundled, not loaded from Google Fonts.** The client now carries the variable
-  Manrope (`wght` 200-800) as six script-subset woff2 files in `client/src/fonts`, with the SIL OFL
-  1.1 licence beside them, instead of a stylesheet from `fonts.googleapis.com`. Opening the app, on
-  the web or in the iOS and Android shells, no longer contacts a third party, and the app works with
-  the font offline. The Content-Security-Policy drops `fonts.googleapis.com` and `fonts.gstatic.com`.
+- **The native shells do not show controls they cannot run.** Export JSON, the calendar `.ics` export,
+  the push switch, New account and invite codes are hidden in the iOS and Android apps.
+- **Manrope is bundled.** The font ships in the bundle instead of loading from Google Fonts, so the web
+  app makes no third-party font request, and the Content-Security-Policy no longer allows Google Fonts.
+- **The web manifest uses the app's background colour** (`#041620`), as `index.html` does.
+- **Android versions come from the build.** `versionCode` and `versionName` read `-PappVersionCode` and
+  `-PappVersionName`, with `1` and `1.0` as defaults.
+- **Android backups are off** (`allowBackup="false"`), so the sign-in session is not restored onto
+  another device.
 - **App shells: live updates by polling.** An `EventSource` in the app cannot carry the session
   cookie and the server allows no foreign origin, so in every shipped configuration the stream
   failed and retried forever. The shells now poll `GET /api/sync/changes` (every 15s while on

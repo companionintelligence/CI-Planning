@@ -131,8 +131,8 @@ export async function buildApp(): Promise<Koa> {
  * its own scripts (the theme-bootstrap script moved out of index.html into
  * /theme-init.js so no inline-script allowance is needed), its own styles plus inline
  * `style=` attributes (SolidJS sets them; hence 'unsafe-inline' for STYLES only), the
- * Manrope font files it bundles (no third-party font host), same-origin fetch/SSE, the service worker, and
- * — only when crash reporting is on — the Sentry ingest origin. Anything else an
+ * Manrope font it bundles (@fontsource/manrope, so no third-party font host), same-origin fetch/SSE, the
+ * service worker, and — only when crash reporting is on — the Sentry ingest origin. Anything else an
  * operator needs goes in CSP_EXTRA_CONNECT_SRC.
  *
  * The self-hosted GraphiQL sandbox (/api/graphql/sandbox, dev-on / prod-opt-in) is a

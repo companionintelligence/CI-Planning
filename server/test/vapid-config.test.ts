@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { randomBytes } from 'node:crypto';
+import type { Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { buildApp } from '../src/app.js';
 import { sqlite } from '../src/db/index.js';
 import { config } from '../src/lib/config.js';
 import { hydrateVapidConfig, vapidConfigState } from '../src/services/vapid-config.js';
@@ -137,6 +140,64 @@ describe('malformed stored envelope', () => {
     const env = JSON.parse(readRow('vapid_private_key')!);
     expect(env.sealed).toBe(true); // KEK present in this block → freshly sealed
     expect((await vapidConfigState()).configured).toBe(true);
+  });
+});
+
+describe('two boots of the app on one database', () => {
+  /**
+   * buildApp() + listen, which is helpers.startTestServer minus its `vapid_%` cleanup. That
+   * cleanup is there so every server starts from a pair of its own; it is also exactly what
+   * would hide whether a second boot reuses the first one's pair.
+   */
+  async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
+    const app = await buildApp();
+    const server: Server = await new Promise((resolve) => {
+      const s = app.listen(0, () => resolve(s));
+    });
+    const { port } = server.address() as AddressInfo;
+    return {
+      url: `http://127.0.0.1:${port}`,
+      close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    };
+  }
+
+  /** What a browser is told to subscribe with: GET /api/push/vapid-key (routes/notifications.ts). */
+  async function servedPublicKey(url: string): Promise<string> {
+    const res = await fetch(`${url}/api/push/vapid-key`);
+    expect(res.status).toBe(200);
+    return ((await res.json()) as { key: string }).key;
+  }
+
+  it('serve the same public key: the second boot reuses the stored pair instead of regenerating it', async () => {
+    const first = await boot();
+    let firstKey: string;
+    try {
+      firstKey = await servedPublicKey(first.url);
+    } finally {
+      await first.close();
+    }
+
+    // The first boot made a pair and stored it (without this, "same key" could be '' twice).
+    expect(firstKey).toBeTruthy();
+    expect(readRow('vapid_public_key')).toBe(firstKey);
+    const firstPrivateKey = config.vapidPrivateKey;
+    expect(firstPrivateKey).toBeTruthy();
+
+    // A restart: the process memory starts over, the database does not. With the singleton
+    // blank, the only place the second boot can get the key from is the stored pair.
+    config.vapidPublicKey = '';
+    config.vapidPrivateKey = '';
+
+    const second = await boot();
+    try {
+      expect(await servedPublicKey(second.url)).toBe(firstKey);
+    } finally {
+      await second.close();
+    }
+
+    // The private half came back too, and the stored pair is still the first boot's.
+    expect(config.vapidPrivateKey).toBe(firstPrivateKey);
+    expect(readRow('vapid_public_key')).toBe(firstKey);
   });
 });
 
