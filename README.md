@@ -1303,10 +1303,11 @@ Connections**. Replay the walkthrough from **Settings → Profile**.
   correction you make changes no prompt until the next Monday `calibrate_classification` run (an
   admin can run the job early from the Jobs page, for their own account), a field needs at least 2
   corrections first, and corrections on guesses made more than 90 days ago stop counting. The
-  Describe-it preview records a category pick only when the AI model answers categories as a list;
-  the built-in fast model, `qwen2.5:0.5b`, answers a bare word on the box measured, so there it picks
-  no category and there is nothing to capture. That measurement is kept in
-  `docs/classification-hint-measurement-2026-11.md`, the record of an experiment that showed the
+  Describe-it preview records a category pick only when the AI model names one of your categories,
+  as a list or as one word. The built-in fast model, `qwen2.5:0.5b`, answers one word, and quick add
+  reads that as one category (`docs/classification-shape-fix-2026-11.md`); most of its suggestions
+  are wrong on obvious titles, so they will need your correction. The measurement of the removed
+  Describe-it hint is kept in `docs/classification-hint-measurement-2026-11.md`, the record of an experiment that showed the
   Describe-it line these examples and was then removed; its statements about what the code does
   describe the code before the removal
 - **Dismissal learning** — what you dismiss or approve from the suggestion stream is logged

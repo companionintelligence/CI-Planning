@@ -45,6 +45,29 @@ export interface QuickVocab {
 }
 
 /**
+ * What the model answered for `"categories"`, as the list `constrainToVocabulary` reads. The prompt
+ * asks for a list, and the built-in fast model (qwen2.5:0.5b) answers one bare name instead
+ * (`"categories": "leisure"`); gemma3:1b does on four calls in five. Measured 2026-11-02
+ * (docs/classification-shape-fix-2026-11.md). `constrainToVocabulary` returns [] for a non-array,
+ * so those installs got no category pick, no preview claim and nothing to learn from. A bare string
+ * is read as ONE name and matched whole against the owner's categories: it is not split on commas
+ * (a category name may contain one), so "health, leisure" still names nothing. It then goes through
+ * the same never-invent rule as any list element. Anything else is handed on as it came.
+ *
+ * Why a parse and not a reworded prompt line: asking for a JSON array did make both models answer
+ * arrays, and cost gemma3:1b keys (all nine on 93% of its calls, 57% and 71% with the two wordings
+ * tried), where the parse changes nothing the model is shown. The prompt
+ * is therefore unchanged, byte for byte, for every owner.
+ *
+ * Local to quick-add on purpose: the memory fill-in, the Monday scorer, the tag suggester and the
+ * claim check still call `constrainToVocabulary` directly and still accept lists only, and a bare
+ * string there is still no pick. They were not measured with this reading.
+ */
+function categoryAnswer(raw: unknown): unknown {
+  return typeof raw === 'string' ? [raw] : raw;
+}
+
+/**
  * Pure merge of the model's suggestion onto the deterministic parse — exported
  * for unit tests. Constrained: `direction` must name an existing direction tag
  * (case-insensitive) and is skipped when the entry already carries one; `tags`
@@ -84,11 +107,12 @@ export function mergeEnrichment(parsed: ParsedQuick, out: EnrichOut, vocab: Quic
 
   // Categories (Phase B): 1–3 of the owner's category names — its OWN axis, never
   // mixed into `tags` (a model pick of "finance" must become a category, not an
-  // intention). Same constrained-vocabulary rule, same function. A parse that already
-  // carries categories (future syntax) wins.
+  // intention). Same constrained-vocabulary rule, same function, with a bare string read
+  // as one name first (categoryAnswer). A parse that already carries categories (future
+  // syntax) wins.
   let categories = parsed.categories;
   if (!categories?.length) {
-    const picked = constrainToVocabulary(out.categories, vocab.categories ?? [], 3);
+    const picked = constrainToVocabulary(categoryAnswer(out.categories), vocab.categories ?? [], 3);
     if (picked.length) categories = picked;
   }
 

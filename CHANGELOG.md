@@ -28,6 +28,19 @@ version at `GET /api/health` (`release`).
   needs at least 2 corrections first. The examples built from corrections reach a prompt only where they
   already did: Companion Memory's fill-in (off unless `MEMORY_MODE` is set) and the Monday run's own
   scoring. The Describe-it line does not read them.
+- **Describe-it reads a one-word category answer.** The smallest default AI model, `qwen2.5:0.5b`,
+  answers the category question with one word (`"leisure"`) where the prompt asks for a list, and
+  `gemma3:1b` does on about 4 calls in 5. Describe-it kept lists only, so on those models it never
+  suggested a category, the Add dialog had no pick to record, and no correction could be learned. It now
+  takes a single word as one category when it is exactly one of your categories, ignoring case; several
+  words written as one string still name nothing. The prompt is unchanged. In a test with an invented
+  owner and 42 titles, the share of answers that name one of the owner's categories went from 0% to 80%
+  on `qwen2.5:0.5b` and from 21% to 91% on `gemma3:1b`, and `gemma3n:e4b`'s answers did not change. That
+  counts answers, not good answers: on the 12 titles with an obvious category, `qwen2.5:0.5b` named it
+  in 20 of 60 answers (it said `leisure` for 6 in 10 of all of them), `gemma3:1b` in 49 of 60 and
+  `gemma3n:e4b` in 60 of 60, so on the smallest model most suggestions will need your correction.
+  Learning is still weekly: the Monday `calibrate_classification` run folds corrections in, and a field
+  needs at least 2 first. See `docs/classification-shape-fix-2026-11.md`.
 - **AI works through your CI Hub when the Hub is not running Ollama.** On a Hub whose AI runs on vLLM or
   Lemonade, Planning uses the Hub's OpenAI-compatible endpoint for chat, and for embeddings when one is named.
   An Ollama address always wins when one is set.
