@@ -25,6 +25,8 @@ applyTheme(theme());
 
 const root = document.getElementById('root');
 if (!root) throw new Error('Root element not found');
+// Drop the static boot screen from index.html; the app renders in its place.
+root.replaceChildren();
 render(() => <App />, root);
 
 // Additive: register the service worker (Web Push, Phase H). Never throws; the app

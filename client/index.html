@@ -16,7 +16,12 @@
     <link rel="manifest" href="/manifest.webmanifest" />
   </head>
   <body class="antialiased">
-    <div id="root"></div>
+    <div id="root">
+      <!-- The boot screen: shown until the app mounts. main.tsx clears it before rendering. -->
+      <div class="boot-screen" aria-hidden="true">
+        <img class="boot-mark" src="/icon-192.png" alt="" width="96" height="96" />
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

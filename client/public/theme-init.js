@@ -17,4 +17,6 @@
   var el = document.documentElement;
   el.classList.toggle('dark', dark);
   el.classList.toggle('light', !dark);
+  // Before the stylesheet arrives, the page shows the brand background rather than white.
+  if (dark) el.style.backgroundColor = '#041620';
 })();
