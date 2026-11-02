@@ -37,6 +37,11 @@ version at `GET /api/health` (`release`).
   app yet.
 
 ### Changed
+- **`AUTH_RATE_MAX` is gone.** It was parsed but nothing read it, and there was never a global
+  per-IP request limit; only `AUTH_RATE_WINDOW_MS` and `AUTH_RATE_ISSUE_MAX` (sign-in, sign-up,
+  password reset and the Portal start) have any effect. Setting `AUTH_RATE_MAX` is now ignored, as
+  it was before. `server/.env.example` also no longer calls `CP_MCP_COMMAND` required: unset, it
+  runs the bundled Calendar server.
 - **App shells: live updates by polling.** An `EventSource` in the app cannot carry the session
   cookie and the server allows no foreign origin, so in every shipped configuration the stream
   failed and retried forever. The shells now poll `GET /api/sync/changes` (every 15s while on

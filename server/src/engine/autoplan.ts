@@ -1392,10 +1392,11 @@ export interface TrustPolicy {
  * the safe 'balanced' when prefs are absent (auto-block off — today's behavior).
  *
  * AF-3 retired the dial's auto-PROMOTE facet (the old `autoPromote`/`promoteThreshold`
- * fields): every possible_task is now promoted unconditionally at ingestion
- * (services/possibles.ts promoteAllPending) and by the nightly sweeper (agents/groom.ts).
- * trust_mode governs ONLY auto-blocking/planning — 'cautious'/'balanced' leave placement
- * to the user; 'hands_off' auto-blocks (and agents/plan.ts maps hands_off → smart).
+ * fields): every possible_task except review-gated email (services/review-gate.ts) is now
+ * promoted unconditionally at ingestion (services/possibles.ts promoteAllPending) and by the
+ * nightly sweeper (agents/groom.ts). trust_mode governs auto-blocking and which ordering
+ * bands apply (agents/plan.ts), not planning_mode (0171) — 'cautious'/'balanced' leave
+ * placement to the user; 'hands_off' auto-blocks.
  */
 export async function resolveTrustPolicy(owner: string = currentOwnerId()): Promise<TrustPolicy> {
   const row = await store().prepare(`SELECT trust_mode FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as
