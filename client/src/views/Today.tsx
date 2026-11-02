@@ -151,6 +151,16 @@ export function Today() {
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
+  // A new owner has no tasks or blocks yet. The open-time windows come from the day type, not from
+  // anything they made, so on that first day they add noise above the connect prompt. The day
+  // header and the prompt are the whole story until something exists. Nothing is hidden while
+  // either list is still loading, so a returning owner does not see the card flicker in.
+  const firstRun = () => {
+    const t = tasks();
+    const b = blocks();
+    return t !== undefined && b !== undefined && t.length === 0 && b.length === 0;
+  };
+
   return (
     <div class="flex flex-col gap-4 p-4 md:p-6 page-enter min-h-full">
       {/* The one-line NL quick entry moved into the FAB's Add modal (T14 #350 /
@@ -233,7 +243,7 @@ export function Today() {
         </div>
 
         {/* Capacity bar — directly below the date (AC follow-up). */}
-        <Show when={capacity() && capacity()!.workday_minutes > 0}>
+        <Show when={!firstRun() && capacity() && capacity()!.workday_minutes > 0}>
           <div class="mt-2 flex items-center gap-2">
             <span class={`text-[10px] tabular-nums ${capacityPct() >= 90 ? 'text-destructive' : capacityPct() >= 70 ? 'text-amber-400' : 'text-primary'}`}>
               {durationLabel(capacity()!.scheduled_minutes)} / {durationLabel(capacity()!.workday_minutes)}
@@ -252,9 +262,11 @@ export function Today() {
             schedule is subtracted. Replaces re-listing the blocks here: the Planner
             drawer tab and the Calendar already show those, and the question this
             header answers is where something new could go. */}
-        <div class="mt-3">
-          <OpenTimeSummary date={selectedDay()} />
-        </div>
+        <Show when={!firstRun()}>
+          <div class="mt-3">
+            <OpenTimeSummary date={selectedDay()} />
+          </div>
+        </Show>
 
         {/* Phase O · O1 — inline day-note editor (matches the card inline-edit idiom) */}
         <Show when={editingNote()}>

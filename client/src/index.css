@@ -1001,10 +1001,9 @@
   justify-content: flex-end;
 }
 .open-window-tag {
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 600;
-  letter-spacing: .06em;
-  text-transform: uppercase;
+  text-transform: capitalize;
   padding: 2px 7px;
   border-radius: 999px;
   white-space: nowrap;
@@ -1064,6 +1063,35 @@
 .view-tab[aria-selected="true"] { color: var(--primary); border-bottom-color: var(--primary); }
 .view-tab:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
 .view-tab .count { font-size: .6875rem; margin-left: .375rem; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+
+/* Phone: the tabs scroll sideways on one line. Wrapping put the second row over the content. */
+@media (max-width: 639px) {
+  .view-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .view-tabs::-webkit-scrollbar { display: none; }
+  .view-tab { flex: 0 0 auto; white-space: nowrap; margin-bottom: 0; }
+}
+
+/* Placeholders for content that is still loading. The caller sizes each bar, so the layout keeps
+   its shape; reduced motion holds them still. */
+.skeleton {
+  border-radius: 6px;
+  background: var(--muted);
+  animation: skeleton-pulse 1.6s ease-in-out infinite;
+}
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: .55; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+}
+
+/* Desktop only: the drawer is a docked side panel here, so its collapse button folds it away and keeps
+   the selection. On a phone the drawer is a sheet, and it keeps its close button. */
+.details-collapse { display: none; }
+@media (min-width: 768px) {
+  .details-collapse { display: inline-flex; }
+}
 
 /* Touch devices: no text-entry control under 16px.
    iOS zooms the page in whenever a field smaller than that takes focus, and does not zoom

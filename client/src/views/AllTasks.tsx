@@ -19,6 +19,7 @@ import { setActiveTask } from '../stores/selection.js';
 import { setDetailsOpen } from '../stores/ui.js';
 import { partitionTaskSections, headerOpenCount } from '../lib/task-sections.js';
 import { SuggestionsSection } from '../components/SuggestionsSection.js';
+import { Skeleton } from '../components/Skeleton.js';
 
 export function AllTasks() {
   const [showFilters, setShowFilters] = createSignal(false);
@@ -420,7 +421,11 @@ function ArchiveSection(props: {
       <Show when={props.open}>
         <div class="flex flex-col gap-2 mt-3">
           <Show when={props.loading}>
-            <div class="text-xs text-muted-foreground animate-pulse2 py-2">Loading…</div>
+            <div role="status" class="flex flex-col gap-2">
+              <span class="sr-only">Loading</span>
+              <Skeleton class="h-12" />
+              <Skeleton class="h-12" />
+            </div>
           </Show>
           <For each={props.items}>
             {(task) => <TaskCard task={task} />}

@@ -1453,6 +1453,19 @@ export function DetailsDrawer() {
             <div class="drawer-kind">{kind()}</div>
             <div class="drawer-title">{title()}</div>
           </div>
+          {/* Desktop only (see .details-collapse): folds the drawer away and keeps the selection,
+              so reopening brings the same item back. The close button below also clears it. */}
+          <span class="details-collapse">
+            <button
+              type="button"
+              class="btn-icon flex-shrink-0"
+              aria-label="Collapse details"
+              title="Collapse details"
+              onClick={() => setDetailsOpen(false)}
+            >
+              <ChevronRight size={14} />
+            </button>
+          </span>
           <button
             type="button"
             class="btn-icon flex-shrink-0"
