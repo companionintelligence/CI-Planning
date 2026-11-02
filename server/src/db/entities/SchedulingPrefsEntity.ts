@@ -10,6 +10,8 @@ export class SchedulingPrefsEntity {
   @Column({ name: 'owner_id', type: 'text', nullable: true })
   ownerId!: string | null;
 
+  // workday_start / workday_end: baseline columns the app stopped reading and writing in
+  // 0156 (SQLite keeps them in place too); kept so the entity matches the baseline table.
   @Column({ name: 'workday_start', type: 'text', nullable: true })
   workdayStart!: string | null;
 

@@ -21,8 +21,9 @@ import { writePidFile, removePidFile } from './lib/pidfile.js';
 // shutdown-side handles. Inert (and instant) when error reporting is off.
 import { flushTelemetry, isTelemetryEnabled } from './lib/telemetry/index.js';
 
-// Postgres (schema port). Opt-in via DATABASE_URL while the 386 SQLite call sites move
-// file by file — with it unset this is inert and the SQLite path above is unchanged.
+// Postgres (schema port). Opt-in via DATABASE_URL, and not a supported deployment: the
+// Postgres baseline stops at SQLite migration 0147 (server/db/postgres/README.md). With it
+// unset this is inert and the SQLite path above is unchanged.
 //
 // Migrating at boot mirrors what the SQLite build did (db/index.ts runs its migrations
 // on import), so a container still comes up migrated with no separate deploy step. The

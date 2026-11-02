@@ -229,7 +229,7 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   maxFocusBlockMinutes: integer('max_focus_block_minutes').default(90),
   minBreakMinutes: integer('min_break_minutes').default(10),
   dayTheme: text('day_theme', { mode: 'json' }).$type<Record<string, string>>(),
-  planningMode: text('planning_mode').default('basic'), // 'basic' (deterministic deadline→priority sort) | 'smart' (§A0 LLM loop). Also activated implicitly when trustMode='hands_off'.
+  planningMode: text('planning_mode').default('basic'), // 'basic' (deterministic deadline→priority sort) | 'smart' (§A0 LLM loop). Set by the owner in Settings, independent of trustMode (0171).
   timezone: text('timezone'), // IANA zone (e.g. America/Los_Angeles); workday hours are wall-clock here
   planningHorizonDays: integer('planning_horizon_days').default(7), // "today set" lookahead for auto-scheduling
   // Phase P (0091): how many days ahead (from today, inclusive) the lazy recurrence
@@ -251,10 +251,11 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   // Trust dial (0070) — the 3-state automation Setting that replaced the 0052
   // auto_mode toggle (column dropped in 0123; the top-bar Suggest/Schedule toggle
   // now writes this dial: Schedule ⇔ 'hands_off', Suggest ⇔ 'balanced').
-  // AF-3 retired its auto-PROMOTE facet (all possibles now promote unconditionally at
-  // ingestion); the dial governs ONLY auto-blocking/planning:
+  // AF-3 retired its auto-PROMOTE facet (possibles now promote at ingestion, except email,
+  // which waits for the owner: services/review-gate.ts); the dial governs ONLY
+  // auto-blocking and which ordering bands apply (agents/plan.ts), not planning_mode (0171):
   // 'cautious' | 'balanced' (no auto-block; the default) | 'hands_off' (auto-block
-  // estimate-bearing promoted tasks; agents/plan.ts maps hands_off → smart).
+  // estimate-bearing promoted tasks).
   // Read via resolveTrustPolicy() in engine/autoplan.ts, never raw.
   trustMode: text('trust_mode').notNull().default('balanced'),
   // Leftover-fill ordering (0055): 'priority' (P1 first) | 'overdue' (due_at ASC first).

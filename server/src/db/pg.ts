@@ -7,7 +7,8 @@ const { Pool } = pkg;
 /**
  * Postgres access layer, shaped to match the better-sqlite3 handle it replaces.
  *
- * The app calls `sqlite.prepare(sql).get/all/run(...)` in 386 places across 74 files.
+ * The app was written against `sqlite.prepare(sql).get/all/run(...)`; those call sites now go
+ * through `store.ts`, which uses this module when STORE_BACKEND=postgres.
  * Postgres is async and speaks `$1` placeholders, so a naive swap would mean rewriting
  * every one of those statements AND every function that transitively calls them. This
  * module removes the first half of that: same `prepare().get/all/run()` shape, same `?`
@@ -18,7 +19,7 @@ const { Pool } = pkg;
  * TRANSACTIONS use AsyncLocalStorage rather than a threaded handle, for the same reason:
  * `pg.transaction(async () => { … })` makes every `pg.prepare` inside the callback —
  * including ones several calls deep — run on that transaction's client automatically,
- * so the 43 existing `sqlite.transaction(...)` sites keep their bodies unchanged. The
+ * so the existing transaction sites keep their bodies unchanged. The
  * repo already uses this pattern for owner scoping (`runWithOwner` / `currentOwnerId`),
  * so it is an established idiom here, not a new concept.
  *

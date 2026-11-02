@@ -8,18 +8,20 @@ import { prepare as pgPrepare, transaction as pgTransaction, execRaw as pgExec }
  * Why this exists rather than porting call sites straight to `pg`:
  *
  * The expensive, risky half of this migration is not SQL, it is that better-sqlite3 is
- * SYNCHRONOUS and `pg` is not. Roughly 1,536 call sites (386 in src, 1,150 in the test
- * suite) become `await`, and every enclosing function becomes async. Porting those
- * directly to Postgres means the test suite proves nothing until the very last edit
- * lands — 257 files changed blind, with a red suite the whole way.
+ * SYNCHRONOUS and `pg` is not: every call site becomes an `await` and every enclosing
+ * function becomes async. Porting those directly to Postgres means the test suite proves
+ * nothing until the very last edit lands, with a red suite the whole way.
  *
  * With this facade the same work is done in two independently-verifiable passes:
  *
- *   1. Migrate the 1,536 call sites to `await store.prepare(...)`, with the SQLite
- *      backend underneath. The suite stays GREEN at every commit, because the data
- *      store has not changed — only the shape of the calls.
- *   2. Flip `STORE_BACKEND` to Postgres. One change, and 2,600 tests immediately say
- *      what is wrong (dialect differences: INSERT OR IGNORE, strftime, and so on).
+ *   1. DONE — move the call sites to `await store().prepare(...)`, with the SQLite
+ *      backend underneath. The suite stayed GREEN at every commit, because the data store
+ *      did not change — only the shape of the calls. The raw `sqlite.*` left in
+ *      `server/src` is the sqlite-vec dedupe in `agents/groom.ts` and this seam.
+ *   2. NOT DONE — flip `STORE_BACKEND` to Postgres. That is the cutover. It also needs the
+ *      Postgres baseline brought up to SQLite first: it stops at migration 0147 (see
+ *      server/db/postgres/README.md). Then the suite says what is wrong (dialect
+ *      differences: INSERT OR IGNORE, strftime, and so on).
  *
  * Each pass is reviewable and revertible on its own, and neither has a window where the
  * suite is meaningless. That is the whole justification for the indirection — it is not

@@ -103,7 +103,7 @@ export type AuthSignupPolicy = 'open' | 'invite' | 'off';
 export interface AuthConfig {
   mode: AuthMode;
   autoProvision: boolean;  // first unknown SSO `sub` → provision owner row vs 403
-  rateLimit: { windowMs: number; max: number; issueMax: number };
+  rateLimit: { windowMs: number; issueMax: number };
   // U2 — local username/password mode (only when mode === 'sso' && disableOidc):
   disableOidc: boolean;    // true ⇒ local login instead of JWKS Bearer verification
   defaultUsername?: string; // seeds the first local owner on boot if none exist
@@ -235,13 +235,14 @@ export interface Config {
    *  from CSP_EXTRA_CONNECT_SRC (space/comma-separated). Empty by default. */
   security: { extraConnectSrc: string[] };
   dbPath: string;
-  /** Postgres connection string (schema port). Absent ⇒ the SQLite store is used —
-   *  both backends coexist while the 386 raw-SQL call sites migrate file by file. */
+  /** Postgres connection string (schema port). Absent ⇒ the SQLite store is used.
+   *  Both backends coexist; the port is not a supported deployment yet
+   *  (server/db/postgres/README.md). */
   databaseUrl?: string;
   /** Which backend db/store.ts serves. Default 'sqlite'. Flipping this to 'postgres'
-   *  IS the cutover — it is only correct once every call site uses the facade, so it
-   *  stays opt-in. Requires databaseUrl; boot fails closed otherwise rather than
-   *  silently serving a store the data is not in. */
+   *  IS the cutover. The call sites already use the facade; what keeps it opt-in is the
+   *  Postgres baseline, which stops at migration 0147. Requires databaseUrl; boot fails
+   *  closed otherwise rather than silently serving a store the data is not in. */
   storeBackend: 'sqlite' | 'postgres';
   ollamaUrl: string;
   ollamaFastModel: string;
@@ -439,7 +440,6 @@ export const config: Config = {
     autoProvision: process.env.AUTH_AUTO_PROVISION === 'true',
     rateLimit: {
       windowMs: Number(process.env.AUTH_RATE_WINDOW_MS ?? 60_000),
-      max: Number(process.env.AUTH_RATE_MAX ?? 60),
       issueMax: Number(process.env.AUTH_RATE_ISSUE_MAX ?? 5),
     },
     disableOidc: process.env.DISABLE_OIDC === 'true',
