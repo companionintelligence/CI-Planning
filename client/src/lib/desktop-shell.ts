@@ -99,12 +99,21 @@ export function createShellFetch(network: ShellNetwork): FetchFn {
 }
 
 /**
- * Route the page's fetch through the native plugin. Called once, before the app makes its first
- * request (see main.tsx). Does nothing outside the Tauri shell.
+ * The native plugin, loaded by the first request rather than at install, so installing the shell
+ * does no I/O and is finished before the app runs anything.
  */
-export async function installTauriShell(): Promise<void> {
+const nativeFetch: FetchFn = async (input, init) => {
+  const plugin = await import('@tauri-apps/plugin-http');
+  return plugin.fetch(input, init);
+};
+
+/**
+ * Route the page's fetch through the native plugin. It has to be synchronous: the stores start
+ * their requests as their modules load, so this runs before any of them (see shell-boot.ts).
+ * Does nothing outside the Tauri shell.
+ */
+export function installTauriShell(): void {
   if (!isTauriShell()) return;
-  const { fetch: nativeFetch } = await import('@tauri-apps/plugin-http');
   const webFetch = globalThis.fetch.bind(globalThis);
   globalThis.fetch = createShellFetch({
     nativeFetch,

@@ -6,7 +6,7 @@ The desktop app for Companion Planning, built with Tauri 2. It is the web client
 
 - **The client is bundled.** The window loads `client/dist`, the same build the phone shells use (`pnpm --filter client build:mobile`). Nothing is loaded from the network to start.
 - **Requests go through the native HTTP plugin.** The app's own pages are served from inside the app, so a request to the user's server is cross-origin, and a self-hosted server allows no foreign origin by default. `client/src/lib/desktop-shell.ts` sends every http(s) request through `@tauri-apps/plugin-http`, which is not subject to CORS and keeps the session cookie in its own jar, persisted between launches. The phone shells use Capacitor's native HTTP for the same reason. No server change is needed for it.
-- **Offline reads.** Reads are kept in a local SQLite database, `offline-cache.sqlite` in the app's data folder (`src-tauri/src/cache.rs`). When a read cannot reach the server, the last answer is returned, marked with the response header `x-offline-cache: 1`. The sync cursor and the session are never kept.
+- **Offline reads.** Reads are kept in a local SQLite database, `offline-cache.sqlite` in the app's data folder (`src-tauri/src/cache.rs`). When a read cannot reach the server, the last answer is returned, marked with the response header `x-offline-cache: 1`. The sync cursor and the session are never kept. If the cache file cannot be opened (damaged, or its folder is not writable), the app keeps the cache in memory for that session instead of failing to start.
 - **Offline writes.** Writes are not cached. They go through the client's existing offline op-log (`client/src/lib/oplog.ts`), which holds them until the server answers.
 - **The cache is cleared** on a successful sign-in or sign-out, and when the server changes, so one person's data is never shown to the next.
 - **Live updates** use polling, as in the phone shells.
@@ -51,6 +51,7 @@ The bundles are not code-signed or notarised, so a bundle copied to another Mac 
 
 - `client/src/lib/desktop-shell.ts`: the routing and the cache rules (tests in `desktop-shell.test.ts`).
 - `client/src/lib/desktop-cache.ts` and `client/src/lib/tauri-shell.ts`: the cache calls and shell detection.
+- `client/src/shell-boot.ts`: installs the shell's fetch before the app loads. `main.tsx` imports it first, because the stores start their requests as their modules load.
 - `src-tauri/src/main.rs`: the window, the menu (Reload), the three cache commands, and the HTTP plugin.
 - `src-tauri/src/cache.rs`: the SQLite cache, with tests.
 - `src-tauri/capabilities/default.json`: the main window's permissions, including the HTTP scope (any http or https URL).

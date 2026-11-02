@@ -1,5 +1,10 @@
-import { describe, it, expect, vi } from 'vitest';
-import { createShellFetch, type ShellNetwork } from './desktop-shell.js';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import * as plugin from '@tauri-apps/plugin-http';
+import { createShellFetch, installTauriShell, type ShellNetwork } from './desktop-shell.js';
+
+vi.mock('@tauri-apps/plugin-http', () => ({
+  fetch: vi.fn(async () => new Response('[]', { headers: { 'content-type': 'application/json' } })),
+}));
 
 /**
  * The desktop shell's fetch routing. The native plugin, the web view's fetch and the cache are
@@ -124,5 +129,35 @@ describe("the app's own files", () => {
     await h.fetch('/theme-init.js');
     expect(h.webFetch).toHaveBeenCalledTimes(2);
     expect(h.nativeFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('installing the shell', () => {
+  const tauri = globalThis as { __TAURI_INTERNALS__?: unknown };
+  const original = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = original;
+    delete tauri.__TAURI_INTERNALS__;
+  });
+
+  it('is in place as soon as it returns, so the first request already goes through it', () => {
+    tauri.__TAURI_INTERNALS__ = {};
+    installTauriShell();
+    expect(globalThis.fetch).not.toBe(original);
+  });
+
+  it('sends the first request to the server through the native plugin', async () => {
+    tauri.__TAURI_INTERNALS__ = {};
+    vi.mocked(plugin.fetch).mockClear();
+    installTauriShell();
+    const response = await globalThis.fetch(`${SERVER}/api/tasks`);
+    expect(response.status).toBe(200);
+    expect(plugin.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('does nothing outside the Tauri shell', () => {
+    installTauriShell();
+    expect(globalThis.fetch).toBe(original);
   });
 });

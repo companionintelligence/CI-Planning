@@ -18,18 +18,20 @@ use tauri::{App, AppHandle, Manager, State, WebviewWindow};
 const CACHE_FILE: &str = "offline-cache.sqlite";
 const RELOAD: &str = "reload";
 
+// Async commands run off the main thread, so SQLite work never stalls the window. A sync command
+// would run on the main thread.
 #[tauri::command]
-fn cache_put(cache: State<'_, Cache>, key: String, body: String) -> Result<(), String> {
+async fn cache_put(cache: State<'_, Cache>, key: String, body: String) -> Result<(), String> {
     cache.put(&key, &body)
 }
 
 #[tauri::command]
-fn cache_get(cache: State<'_, Cache>, key: String) -> Result<Option<String>, String> {
+async fn cache_get(cache: State<'_, Cache>, key: String) -> Result<Option<String>, String> {
     cache.get(&key)
 }
 
 #[tauri::command]
-fn cache_clear(cache: State<'_, Cache>) -> Result<(), String> {
+async fn cache_clear(cache: State<'_, Cache>) -> Result<(), String> {
     cache.clear()
 }
 
@@ -90,7 +92,13 @@ fn main() {
         .plugin(tauri_plugin_http::init())
         .setup(|app| {
             let path: PathBuf = app.path().app_data_dir()?.join(CACHE_FILE);
-            app.manage(Cache::open(&path)?);
+            // A cache file that cannot be opened (damaged, or its folder is not writable) must not
+            // stop the app from starting. The app keeps its cache in memory for this session instead.
+            let cache = Cache::open(&path).or_else(|error| {
+                eprintln!("offline cache file unavailable, keeping the cache in memory: {error}");
+                Cache::in_memory()
+            })?;
+            app.manage(cache);
             app.handle().set_menu(build_menu(app)?)?;
             Ok(())
         })
