@@ -1,6 +1,6 @@
 # App Review notes: Companion Planning for iOS (DRAFT)
 
-> For the reviewer. Fill in the bracketed items. The position on account deletion is a proposal for the owner to decide.
+> For the reviewer. Fill in the bracketed items. The position on account deletion is the owner's decision, recorded on 2026-11-02.
 
 ## What the app is
 
@@ -26,8 +26,8 @@ The app uses https for addresses on the internet. It allows plain http only for 
 
 - The app does not create accounts. The "New account" control is hidden in the app, and accounts are created on the server by its operator.
 - The app offers username and password sign-in only. Companion Portal sign-in is not available in the app yet.
-- [Proposed position, for the owner to decide: the app creates no accounts and has no sign-up, so guideline 5.1.1(v) does not require an in-app deletion path. The server's operator manages accounts.]
-- Risk: if App Review treats the server's account creation as part of the app, the app would need an in-app deletion path, and the product does not have one yet.
+- Position, decided by the owner on 2026-11-02: the app creates no accounts and has no sign-up, so guideline 5.1.1(v) does not require an in-app deletion path. The server's operator manages accounts. An operator can delete other accounts from the app's Settings. A user cannot delete their own account from the app.
+- Risk, accepted by the owner: if App Review treats the server's account creation as part of the app, the app would need an in-app deletion path, and the product does not have one yet.
 
 ## Export compliance
 
