@@ -7,8 +7,13 @@ import type { Block, Task } from './api.js';
  * BEFORE the allocated end, and the allocated end once the sheet opens after it. In other
  * words `end = min(now, block.end_at)` — finishing early credits only the time you used,
  * and finishing late credits only the time you were given. Neither direction inflates the
- * number, which is the point: this figure feeds estimate-bias calibration, so a default
- * that drifts high would teach the scheduler to over-allocate.
+ * number, which is the point: a default that drifts high would mislead the owner who accepts
+ * it by glancing.
+ *
+ * It is a SUGGESTION, not a measurement: the block was sized from the estimate, so the span is
+ * mostly the estimate again. The ritual therefore sends it to the server only when the owner
+ * edits it (CloseRitual.save); estimate calibration then learns from typed or timed minutes
+ * and not from the schedule's own plan.
  *
  * Pure and block-agnostic about where `now` comes from so it can be tested without a clock.
  */

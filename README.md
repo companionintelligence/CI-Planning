@@ -1215,7 +1215,9 @@ below are current.
   so every stored value is a point on one ordered scale. The duration is **pre-filled from
   the block the work was allocated** — `min(now, block end)`, so finishing early credits
   only the time used and finishing late credits only the time given; with no block it falls
-  back to the timer, then the estimate. Entirely skippable, and a skip is *recorded* (a
+  back to the timer, then the estimate. That number is a suggestion: it is recorded only if
+  you change it, so estimate calibration learns from minutes you typed or timed, never from
+  the schedule's own plan. Entirely skippable, and a skip is *recorded* (a
   `declined` count, never a fabricated neutral 3) so a nagging prompt is measurable rather
   than invisible. Completing several at once queues them — **“1 of 3”**, with one tap to
   skip the rest. The reflection is stamped with its own `reaction_at`, deliberately **not**

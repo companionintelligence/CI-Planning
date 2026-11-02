@@ -18,7 +18,10 @@ import { FACE_KEYS, scoreOf, toggleFace, type FaceKey } from '../lib/close-ritua
  *    ordered score that can be averaged and trended (the old four moods could not be:
  *    "frustrated" and "stressed" are both bad in different directions).
  *  - The duration field is pre-filled from the block the work was allocated, so the common
- *    case is "confirm", not "compute".
+ *    case is "glance", not "compute". The pre-fill is a SUGGESTION: it is derived from the
+ *    schedule (the block was sized from the estimate), so it is only sent when the owner
+ *    edits the field. Recording an untouched pre-fill would feed the estimate back into
+ *    estimate calibration as if it were a measured actual, and the ratio would sit at 1.0.
  *
  * `reaction_at` is stamped server-side at submit — deliberately NOT `completed_at`. The
  * gap between them is real signal: a reflection written now reads the work more accurately
@@ -92,6 +95,11 @@ export function CloseRitual(props: {
    * that is supposed to tell you whether the prompt has become a nag. 0 stays what the
    * migration says it is: exclusively a skip artifact. No score at all leaves the column
    * NULL, which already means "no rating given".
+   *
+   * Sends `actual_minutes` ONLY when the owner edited the field. The server leaves the
+   * column alone when it is omitted, so a timed run (0161 'timer' basis) keeps its measured
+   * value, and a task nobody timed or typed a number for stays at 0, which calibration
+   * excludes, instead of carrying the schedule's own guess.
    */
   async function save() {
     const s = score();
@@ -100,7 +108,7 @@ export function CloseRitual(props: {
       await send({
         ...(s !== null ? { score: s } : {}),
         ...(note().trim() ? { note: note().trim() } : {}),
-        actual_minutes: shownMinutes(),
+        ...(touched() ? { actual_minutes: minutes() } : {}),
       });
       refetchTasks();
       showToast('Logged', 'success');
@@ -204,7 +212,13 @@ export function CloseRitual(props: {
                 step="5"
                 class="input text-sm w-24"
                 value={shownMinutes()}
-                onInput={(e) => { setTouched(true); setMinutes(Math.max(0, Number(e.currentTarget.value) || 0)); }}
+                onInput={(e) => {
+                  // Store the number BEFORE flipping `touched`: flipping it first re-runs the
+                  // `value` binding, which writes the old pre-fill over what was just typed, and
+                  // the first edit would be read back as the pre-fill.
+                  setMinutes(Math.max(0, Number(e.currentTarget.value) || 0));
+                  setTouched(true);
+                }}
               />
               <span class="text-xs text-muted-foreground">minutes</span>
               <Show when={props.task.estimated_minutes}>
@@ -214,7 +228,9 @@ export function CloseRitual(props: {
               </Show>
             </div>
             <Show when={!touched()}>
-              <div class="text-[10px] text-muted-foreground mt-1">{derived().explain}</div>
+              <div class="text-[10px] text-muted-foreground mt-1">
+                {derived().explain}{derived().basis === 'timer' ? '' : ' · recorded only if you change it'}
+              </div>
             </Show>
           </div>
         </div>

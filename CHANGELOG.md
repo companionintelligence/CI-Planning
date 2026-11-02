@@ -19,6 +19,13 @@ version at `GET /api/health` (`release`).
   return you there. Before, every sign-in landed on the home page.
 
 ### Fixed
+- **Estimate calibration no longer learns from the schedule's own plan.** The close ritual sent its
+  pre-filled duration (the block span, capped at the block end, or else the estimate) as the actual
+  minutes even when you never touched the field, so the estimate-bias ratio sat near 1.0 and a block
+  that overran was invisible. The ritual now sends minutes only when you edit the field, and says so
+  under it. A timed run keeps its measured value. Tasks closed earlier may still carry a pre-filled
+  figure. The same change fixes the duration field swallowing your first edit: the pre-fill was written
+  back over the number you typed, so a single edit read as the pre-fill.
 - **No stack trace in the server log each time a live-update stream closes.** Koa reports a
   response stream that closes before it ends (`ERR_STREAM_PREMATURE_CLOSE`) as an error, and
   with no listener prints the stack to stderr. For `/api/events` that is the normal ending (a

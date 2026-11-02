@@ -76,10 +76,12 @@ interface TaskSample {
 
 /**
  * Every calibration-eligible task for the owner (done, both minute fields > 0)
- * with its scope memberships. actual_minutes only ever comes from summed
- * time_entries (services/timer.ts), so a nonzero value is a measured actual —
- * timer-less completions stay at 0 and are excluded here (N L169: imputed
- * values never enter calibration).
+ * with its scope memberships. actual_minutes comes from summed time_entries
+ * (services/timer.ts) or from a duration the owner typed into the close ritual
+ * (services/task-close.ts); the ritual does not send its schedule-derived pre-fill, so a
+ * nonzero value is a measured or deliberately entered actual. Completions nobody timed or
+ * typed a number for stay at 0 and are excluded here (N L169: imputed values never enter
+ * calibration). Rows closed before that change may still hold the pre-filled span.
  */
 async function gatherSamples(ownerId: string): Promise<TaskSample[]> {
   const tasks = await store()

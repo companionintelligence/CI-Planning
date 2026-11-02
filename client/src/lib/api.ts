@@ -98,7 +98,8 @@ export interface Task {
   defer_until?: string;
   task_time?: string;
   estimated_minutes?: number;
-  /** Timer truth: the summed minutes of finished time_entries (0 when never timed).
+  /** Measured or entered minutes: the summed minutes of finished time_entries, or the number the
+   *  owner typed into the close ritual (0 when neither; the ritual's pre-fill is never stored).
    *  Always serialized (taskToApi spreads the row) — it was simply never declared here. */
   actual_minutes?: number;
   priority: number;
