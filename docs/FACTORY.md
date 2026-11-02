@@ -84,10 +84,11 @@ shell script has no way to know it, so the model must pass it in.
    Then link it to the repo so issues show up on it:
 
    ```bash
-   gh project link <number> --owner companionintelligence --repo companionintelligence/Companion-Planning
+   gh project link <number> --owner companionintelligence --repo companionintelligence/CI-Planning
    ```
 
-3. **Make the helper executable:**
+3. **Make sure the helper is executable.** It is committed with the executable bit; if
+   your checkout lost it (a zip download, some Windows setups):
 
    ```bash
    chmod +x scripts/factory/factory.sh
@@ -98,7 +99,7 @@ shell script has no way to know it, so the model must pass it in.
 In Claude Code, from the repo root:
 
 ```
-/factory add a bulk-tagging action to the People view
+/factory add a bulk-tagging action to the Tags view
 ```
 
 The command interviews you, proposes a ticket breakdown for your approval, drafts each

@@ -1,5 +1,7 @@
 # companion.db — Data Dictionary
 
+> **Superseded.** This is a snapshot of an old database (migrations through `0047`, 25 tables). For the current schema (migration head `0172`, 75 tables) see [companion_db_data_dictionary_v2.md](companion_db_data_dictionary_v2.md).
+
 Generated from live database. 25 tables.
 
 

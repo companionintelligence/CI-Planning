@@ -213,3 +213,95 @@ describe('Login — already signed in', () => {
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith('/', { replace: true }));
   });
 });
+
+describe('Login — Capacitor mobile shell', () => {
+  // The shell reaches this screen right after choosing a server. If that server is the wrong
+  // one there must be a way back to the connect screen from here, because Settings (where the
+  // server card also lives) sits behind this very login.
+  it('offers "Change server…" with the connected address — in the shell only', async () => {
+    vi.stubGlobal('Capacitor', { isNativePlatform: () => true });
+    localStorage.setItem('ci-planning.server-url', 'http://192.168.1.20:3848');
+    try {
+      const { getByTestId, getByRole } = await renderLogin(cfg({ portal: false, local: true, signup: 'off' }));
+      expect(getByTestId('server-url')).toHaveTextContent('http://192.168.1.20:3848');
+      expect(getByRole('button', { name: /change server/i })).toBeInTheDocument();
+    } finally {
+      localStorage.removeItem('ci-planning.server-url');
+    }
+  });
+
+  it('shows no server card in a browser', async () => {
+    const { queryByTestId, queryByRole } = await renderLogin(cfg({ portal: false, local: true, signup: 'off' }));
+    expect(queryByTestId('server-url')).toBeNull();
+    expect(queryByRole('button', { name: /change server/i })).toBeNull();
+  });
+});
+
+describe('Login — Capacitor mobile shell: username and password only', () => {
+  // Capacitor hands any top-level navigation off the app's own origin to the system browser,
+  // so a sign-in that redirects out and back finishes in Safari with the cookie, and the app
+  // never sees the session. The shell therefore offers the one sign-in it can complete.
+  beforeEach(() => {
+    vi.stubGlobal('Capacitor', { isNativePlatform: () => true });
+    localStorage.setItem('ci-planning.server-url', 'http://192.168.1.20:3848');
+  });
+  afterEach(() => {
+    localStorage.removeItem('ci-planning.server-url');
+  });
+
+  it('on a server with Portal and username sign-in, shows the username form alone: no Portal button, no toggle, no sign-up', async () => {
+    const { container, getByText, queryByText } = await renderLogin(cfg({ portal: true, local: true, signup: 'portal' }));
+
+    expect(usernameInput(container)).toBeTruthy(); // not folded behind "Sign in with username instead"
+    expect(passwordInput(container)).toBeTruthy();
+    expect(getByText('Enter your username and password.')).toBeInTheDocument();
+    expect(portalButton(container)).toBeNull();
+    expect(queryByText('Continue with Companion Portal')).toBeNull();
+    expect(queryByText('Sign in with username instead')).toBeNull();
+    expect(createWithPortal(container)).toBeUndefined();
+    expect(queryByText(/Don't have an account\?/)).toBeNull();
+    expect(container.querySelector(`a[href="${START}"]`)).toBeNull(); // no way out at all
+  });
+
+  it.each(['invite', 'open'] as const)('offers no /signup link where the server allows sign-up (%s)', async (signup) => {
+    const { container, queryByText } = await renderLogin(cfg({ portal: false, local: true, signup }));
+
+    expect(usernameInput(container)).toBeTruthy();
+    expect(signupLink(container)).toBeNull();
+    expect(queryByText(/Don't have an account\?/)).toBeNull();
+  });
+
+  it('on a server that only offers Portal sign-in, says so instead of showing a button that cannot work', async () => {
+    const { container, getByText, queryByText } = await renderLogin(cfg({ portal: true, local: false, signup: 'portal' }));
+
+    expect(getByText(/only offers Companion Portal sign-in, which the app can't do yet/)).toBeInTheDocument();
+    expect(getByText(/Sign in from a browser, or ask whoever runs this server/)).toBeInTheDocument();
+    expect(portalButton(container)).toBeNull();
+    expect(usernameInput(container)).toBeNull();
+    expect(queryByText('Sign-in is not enabled on this deployment.')).toBeNull();
+    // The way back to the connect screen is still there: the wrong server is the likeliest cause.
+    expect(container.querySelector('[data-testid="server-url"]')).toBeTruthy();
+  });
+
+  it('still signs in with the username form', async () => {
+    const assign = vi.fn();
+    vi.stubGlobal('location', { ...window.location, assign });
+    const { container } = await renderLogin(cfg({ portal: true, local: true }));
+
+    fireEvent.input(usernameInput(container)!, { target: { value: '  ada  ' } });
+    fireEvent.input(passwordInput(container)!, { target: { value: 'pw' } });
+    fireEvent.submit(container.querySelector('form')!);
+
+    await waitFor(() => expect(loginMock).toHaveBeenCalledWith('ada', 'pw'));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('/'));
+  });
+
+  it('a browser keeps every option the server offers', async () => {
+    vi.unstubAllGlobals(); // not the shell
+    const { container, getByText } = await renderLogin(cfg({ portal: true, local: true, signup: 'portal' }));
+
+    expect(portalButton(container)).toBeTruthy();
+    expect(getByText('Sign in with username instead')).toBeInTheDocument();
+    expect(createWithPortal(container)).toBeTruthy();
+  });
+});

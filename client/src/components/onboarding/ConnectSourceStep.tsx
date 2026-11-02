@@ -3,6 +3,7 @@ import { api } from '../../lib/api.js';
 import { integrations, onboardingSampleDataAllowed, refetchBlocks, refetchTasks, showToast } from '../../stores/index.js';
 import { FTUE_RESUME_KEY } from '../../lib/onboarding.js';
 import { GOOGLE_CONNECT_ENABLED } from '../../lib/flags.js';
+import { supportsRedirectFlows } from '../../lib/server-config.js';
 
 /**
  * FTUE · T12 (#348) — onboarding wizard Step 3: connect a real Google account, or
@@ -10,6 +11,10 @@ import { GOOGLE_CONNECT_ENABLED } from '../../lib/flags.js';
  * verbatim (`GET /api/oauth/google/start` → top-level navigation to Google) — no new
  * OAuth logic here. The resume marker lets the wizard (not Settings.tsx) claim the
  * `?google=` param when the browser lands back after the consent screen.
+ *
+ * Not offered in the Capacitor app shell: the consent screen is a redirect the shell cannot
+ * return from (see `supportsRedirectFlows`). The step says where to connect instead, and the
+ * sample-data path and Skip / Next work as ever.
  */
 export function ConnectSourceStep(props: { onNext: () => void; onBack: () => void; onSkip: () => void }) {
   const [connecting, setConnecting] = createSignal(false);
@@ -31,6 +36,8 @@ export function ConnectSourceStep(props: { onNext: () => void; onBack: () => voi
   // moved to; a Skip mid-"Try with sample data" would unmount the wizard while that
   // request kept running unobserved. Steps 1/2/4 already gate their own nav on `busy`.
   const busy = () => connecting() || tryingSample();
+  /** Google is connectable here at all: switched on, and the page can make the round trip. */
+  const canConnectGoogle = () => GOOGLE_CONNECT_ENABLED && supportsRedirectFlows();
 
   async function connectGoogle() {
     if (!liveEnabled() || connecting()) return;
@@ -80,11 +87,22 @@ export function ConnectSourceStep(props: { onNext: () => void; onBack: () => voi
       <div>
         <h2 class="text-base font-semibold text-foreground">Connect a source</h2>
         <Show
-          when={GOOGLE_CONNECT_ENABLED}
+          when={canConnectGoogle()}
           fallback={
             <p class="text-xs text-muted-foreground mt-0.5">
-              Google isn't connectable yet — for now, connect your Companion Memory from
-              Settings → Connections once you're in.
+              <Show
+                when={GOOGLE_CONNECT_ENABLED}
+                fallback={
+                  <>
+                    Google isn't connectable yet — for now, connect your Companion Memory from
+                    Settings → Connections once you're in.
+                  </>
+                }
+              >
+                Google is connected from a browser, not from this app. It is a connection on your
+                server, so once it is made it shows up here too.
+                <Show when={onboardingSampleDataAllowed()}> You can also explore with sample data.</Show>
+              </Show>
             </p>
           }
         >
@@ -94,7 +112,7 @@ export function ConnectSourceStep(props: { onNext: () => void; onBack: () => voi
         </Show>
       </div>
 
-      <Show when={GOOGLE_CONNECT_ENABLED}>
+      <Show when={canConnectGoogle()}>
         <button
           type="button"
           class="btn-primary text-sm"

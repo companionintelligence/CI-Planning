@@ -17,6 +17,9 @@ server/dist/
 !.env.example
 config.local.json
 *.plist
+# ...except the iOS shell's own: Info.plist and the Xcode workspace files are source, and the
+# app does not build without them (mobile/ios).
+!mobile/ios/**/*.plist
 .codex/
 # The local data dir. `.data/` below has never matched anything — the app's actual
 # default is `data/`: local dev points DB_PATH at ./data/companion.db, and the container

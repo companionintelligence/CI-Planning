@@ -88,9 +88,13 @@ describe('CON-4 recurring Time Blocks', () => {
     const blocks = await getBlocks(srv, at(T0, '00:00'), at(T2, '23:59'));
     const insts = blocks.filter((b) => b.recurrence_parent_id === tpl.id);
     expect(insts.length).toBeGreaterThanOrEqual(2);
-    // 09:00 America/New_York is 13:00 or 14:00 UTC depending on DST — but it's the
-    // SAME offset for adjacent days, so all instances share one UTC wall time.
-    const times = new Set(insts.map((b) => b.start_at.slice(11, 16)));
+    // Compare the wall clock in the rule's zone. New York's DST change moves the UTC
+    // hour inside a window that crosses it, while the local time must stay put, so a
+    // UTC comparison only holds for windows that do not cross the change.
+    const newYorkClock = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    });
+    const times = new Set(insts.map((b) => newYorkClock.format(new Date(b.start_at))));
     expect(times.size).toBe(1);
   });
 

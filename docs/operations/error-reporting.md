@@ -78,7 +78,7 @@ operator can turn it off without a rebuild:
 | Variable | Effect |
 |---|---|
 | `CI_TELEMETRY=off` | Explicit opt-out (also `false`, `0`, `no`, `disabled` — case-insensitive). |
-| `CI_LOCAL_ONLY=true` | Local-only mode means zero phone-home (also `1`, `yes`, `on`). |
+| `CI_LOCAL_ONLY=true` | Local-only mode means zero phone-home (also `1`, `yes`, `on`, `enabled`; case-insensitive). |
 
 `CI_LOCAL_ONLY` takes precedence over `CI_TELEMETRY`, which takes precedence over the
 DSN. The losing reasons are still resolved and exposed as `disabledReason`
@@ -122,10 +122,12 @@ same rules:
 - Home directories (`/Users/<name>`, `/home/<name>`, `C:\Users\<name>`) → `~`, since
   they leak the account name
 - Object keys matching
-  `password|secret|token|authorization|cookie|jwt|api[-_ ]?key|dsn|pepper|private[-_ ]?key`
+  `password|secret|token|authorization|cookie|jwt|api[-_ ]?key|dsn|pepper|private[-_ ]?key|signature|hub[-_]user`
   → `[Filtered]`, at any depth. Note `api[-_ ]?key` rather than a bare `api_key`: the
   header this app authenticates with is `x-api-key`, which the hyphen-less spelling
-  misses entirely
+  misses entirely. `signature` and `hub[-_]user` cover the CI-Hub Traefik forward-auth
+  triple (`X-CI-Hub-User`, `-Timestamp`, `-Signature`), which arrives on every request:
+  the end-anchored person-key rule below catches only the bare `x-ci-hub-user`
 - Object keys naming a **person** —
   `(?:^|[-_])user$|(?:^|[-_])owner$|username|email|forwarded|^remote-` → `[Filtered]`.
   These carry no credential, so no *value* pattern would ever match them: the key is the
@@ -196,7 +198,7 @@ posture switches off.
 # .env — every one of these is optional; unset means no reporting at all
 SENTRY_DSN=https://<key>@o<org>.ingest.us.sentry.io/<id>
 SENTRY_ENV=production          # else CI_PLANNING_ENVIRONMENT, else NODE_ENV, else "development"
-CI_PLANNING_VERSION=0.3.0      # release becomes ci-planning-server@0.3.0
+CI_PLANNING_VERSION=4.2.2      # release becomes ci-planning-server@4.2.2
 ```
 
 The browser DSN is a **build-time** value — Vite inlines `import.meta.env.*` into the
@@ -205,10 +207,21 @@ start. In Docker it is a build arg:
 
 ```bash
 docker build \
+  --secret id=NODE_AUTH_TOKEN,env=NODE_AUTH_TOKEN \
   --build-arg VITE_SENTRY_DSN=https://<key>@o<org>.ingest.us.sentry.io/<id> \
-  --build-arg VITE_SENTRY_RELEASE=ci-planning-client@0.3.0 \
+  --build-arg VITE_SENTRY_RELEASE=ci-planning-client@4.2.2 \
   -t ci-planning .
 ```
+
+(The `--secret` is not about Sentry: the Dockerfile's install step needs a GitHub Packages
+token for the private `@companionintelligence/*` packages, and fails without one.)
+
+The Dockerfile also takes the server half as build args — `SENTRY_DSN`, `SENTRY_RELEASE` and
+`CI_PLANNING_VERSION` — and bakes them into the image as `ENV`. Released images are built
+that way, so a marketplace install reports without the operator setting anything; the kill
+switches [above](#turning-it-off) still win. A value baked in this way can no longer be
+overridden from `/data/.env`, because Node's `--env-file-if-exists` only fills keys the
+process does not already define.
 
 Once a DSN is configured, reporting is on without any further step. See
 [Turning it off](#turning-it-off) for how a user or operator switches it back off —
@@ -221,7 +234,7 @@ no rebuild required, and it covers both halves.
 | `SENTRY_DSN` | server, runtime | (unset) | Enables server reporting. Unset ⇒ nothing initialises. |
 | `VITE_SENTRY_DSN` | client, **build** | (unset) | Enables browser reporting. Baked into the bundle by `vite build`. |
 | `CI_TELEMETRY` | server, runtime | (unset) | `off`/`false`/`0`/`no`/`disabled` ⇒ reporting off regardless of the DSN. |
-| `CI_LOCAL_ONLY` | server, runtime | (unset) | `true`/`1`/`yes`/`on` ⇒ zero phone-home, beats everything. |
+| `CI_LOCAL_ONLY` | server, runtime | (unset) | `true`/`1`/`yes`/`on`/`enabled` ⇒ zero phone-home, beats everything. |
 | `SENTRY_ENV` | server, runtime | (unset) | Sentry `environment`. Falls back to `CI_PLANNING_ENVIRONMENT`, then `NODE_ENV`, then `development`. |
 | `CI_PLANNING_ENVIRONMENT` | server, runtime | (unset) | Second choice for `environment`. |
 | `CI_PLANNING_VERSION` | server, runtime | (unset) | Derives `release` as `ci-planning-server@<version>` when `SENTRY_RELEASE` is unset. |
@@ -303,10 +316,13 @@ well-intentioned:
 
 ## Not wired up yet
 
-- **No source maps are uploaded.** `docker-publish.yml` now supplies both DSNs from the
-  repository `SENTRY_DSN` secret — the server's as a runtime `ENV`, the client's as a
-  `VITE_SENTRY_DSN` build arg — so a published image reports and the opt-out default
-  documented above finally has something to act on. It still runs no
+- **No source maps are uploaded.** `docker-publish.yml` (dispatched by hand — see
+  [docs/CI.md](../CI.md)) supplies both DSNs from the repository `SENTRY_DSN` secret — the
+  server's as a runtime `ENV`, the client's as a `VITE_SENTRY_DSN` build arg — and sets
+  the releases to `ci-planning-server@<commit sha>` and `ci-planning-client@<commit sha>`,
+  so a published image reports and the opt-out default documented above has something to
+  act on. Its app smoke-test containers set `CI_TELEMETRY=off` so they do not file events
+  into the production project. It still runs no
   `sentry sourcemaps upload`, so browser stack traces arrive minified and are hard to
   read. CI-Hub's `desktop-release.yml` has the pattern; it needs a `SENTRY_AUTH_TOKEN`
   secret, which this repo does not have yet.

@@ -1064,3 +1064,35 @@
 .view-tab[aria-selected="true"] { color: var(--primary); border-bottom-color: var(--primary); }
 .view-tab:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
 .view-tab .count { font-size: .6875rem; margin-left: .375rem; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+
+/* Touch devices: no text-entry control under 16px.
+   iOS zooms the page in whenever a field smaller than that takes focus, and does not zoom
+   back out. The app shell used to hide it by locking pinch-zoom through the viewport tag;
+   zoom is on now (WCAG 1.4.4), so the fields have to be big enough themselves. Most inputs are sized
+   by `text-sm` / `text-xs` on the element, utilities that would win over a base-layer rule,
+   so this one is deliberately unlayered. `(pointer: coarse)` is the phone and the tablet; a
+   mouse keeps the denser 14px fields. */
+@media (pointer: coarse) {
+  input:not(
+      [type="checkbox"], [type="radio"], [type="range"], [type="button"], [type="submit"],
+      [type="reset"], [type="file"], [type="color"], [type="hidden"], [type="image"]
+    ),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
+  /* iOS draws a date or time input as its own native control, with a minimum width that
+     `width: 100%` does not override, so two of them side by side overflow a phone. The
+     onboarding wizard's wake and bed times did, and still do at 14px: the second input runs
+     off the card and over the first. Without the native appearance they obey the column.
+     The picker still opens on tap and the value is unchanged. */
+  input[type="date"],
+  input[type="time"],
+  input[type="datetime-local"],
+  input[type="month"],
+  input[type="week"] {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+}

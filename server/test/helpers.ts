@@ -17,6 +17,10 @@ export interface TestServer {
 
 /** Start the Koa app on an ephemeral port. */
 export async function startTestServer(): Promise<TestServer> {
+  // app_config outlives resetDb(), and boot leaves push dormant (it will not regenerate) when
+  // the stored VAPID pair cannot be opened. A pair an earlier file sealed under its own KEK
+  // would do that here, so each server boots with a pair of its own.
+  sqlite.exec(`DELETE FROM app_config WHERE key LIKE 'vapid_%'`);
   const app = await buildApp();
   const server: Server = await new Promise((resolve) => {
     const s = app.listen(0, () => resolve(s));

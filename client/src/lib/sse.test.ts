@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { SERVER_URL_KEY } from './server-config.js';
 
 /**
  * lib/sse.ts's `onReconnect` signal — what stores/updateAvailable.ts hooks to notice
@@ -189,5 +190,199 @@ describe('sse.ts — reconnect stacking + backoff', () => {
     expect(FakeEventSource.instances).toHaveLength(3);
     await vi.advanceTimersByTimeAsync(1);
     expect(FakeEventSource.instances).toHaveLength(4);
+  });
+});
+
+/**
+ * The app shell cannot hold an EventSource (its page is on another origin, so the stream
+ * carries no session cookie and the server allows no foreign origin), so the same `on()`
+ * is served by polling `GET /api/sync/changes` there. The poll loop itself is pinned in
+ * live-poll.test.ts; what is pinned here is the wiring: which transport each environment
+ * gets, where the cursor lives, and that a subscriber cannot tell the difference.
+ */
+describe('sse.ts — in the app shell', () => {
+  const SERVER = 'http://192.168.1.20:3848';
+
+  function memoryStorage(): Storage {
+    const map = new Map<string, string>();
+    return {
+      get length() { return map.size; },
+      key: (i: number) => [...map.keys()][i] ?? null,
+      getItem: (k: string) => map.get(k) ?? null,
+      setItem: (k: string, v: string) => void map.set(k, String(v)),
+      removeItem: (k: string) => void map.delete(k),
+      clear: () => map.clear(),
+    } as Storage;
+  }
+
+  const changes = (cursor: number, events: { seq: number; event: string; data: unknown }[] = [], resync = false) => ({
+    events, cursor, resync,
+  });
+
+  let answers: unknown[];
+  let fetchMock: ReturnType<typeof vi.fn>;
+  const urls = () => fetchMock.mock.calls.map((c) => c[0] as string);
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.useFakeTimers();
+    FakeEventSource.instances = [];
+    vi.stubGlobal('EventSource', FakeEventSource);
+    vi.stubGlobal('Capacitor', { isNativePlatform: () => true });
+    vi.stubGlobal('localStorage', memoryStorage());
+    localStorage.setItem(SERVER_URL_KEY, SERVER);
+    answers = [];
+    fetchMock = vi.fn(async () => {
+      const next = answers.shift() ?? changes(0);
+      if (next instanceof Error) throw next;
+      if (typeof next === 'number') return { ok: false, status: next, statusText: 'x', json: async () => ({ error: 'x' }) };
+      return { ok: true, status: 200, json: async () => next };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('polls the server instead of opening an EventSource, asking for "now" first and then from the cursor', async () => {
+    answers.push(changes(40), changes(40));
+    const { on } = await import('./sse.js');
+    on('task:updated', () => {});
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(FakeEventSource.instances).toHaveLength(0);
+    expect(urls()).toEqual([`${SERVER}/api/sync/changes`]);
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(urls()).toEqual([`${SERVER}/api/sync/changes`, `${SERVER}/api/sync/changes?since=40`]);
+  });
+
+  it('hands polled events to the subscribers of that event, and keeps the cursor where the stream did', async () => {
+    answers.push(
+      changes(40),
+      changes(43, [
+        { seq: 41, event: 'task:updated', data: { id: 'a' } },
+        { seq: 42, event: 'block:created', data: { id: 'b' } },
+        { seq: 43, event: 'task:updated', data: { id: 'c' } },
+      ]),
+    );
+    const { on } = await import('./sse.js');
+    const tasks = vi.fn();
+    const blocks = vi.fn();
+    on('task:updated', tasks);
+    on('block:created', blocks);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    expect(tasks.mock.calls).toEqual([[{ id: 'a' }], [{ id: 'c' }]]);
+    expect(blocks.mock.calls).toEqual([[{ id: 'b' }]]);
+    expect(localStorage.getItem('sse-cursor')).toBe('43'); // the key lib/server-config.ts clears on a server change
+  });
+
+  it('a resync reaches whoever subscribed to sync:resync, as it does from the stream', async () => {
+    answers.push(changes(5), changes(9, [], true));
+    const { on } = await import('./sse.js');
+    const resync = vi.fn();
+    on('sync:resync', resync);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    expect(resync).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem('sse-cursor')).toBe('9');
+  });
+
+  it('carries on from the cursor a previous session left, and treats anything that is not a cursor as none', async () => {
+    localStorage.setItem('sse-cursor', '12');
+    answers.push(changes(12));
+    const { on } = await import('./sse.js');
+    on('task:updated', () => {});
+    await vi.advanceTimersByTimeAsync(0);
+    expect(urls()).toEqual([`${SERVER}/api/sync/changes?since=12`]);
+
+    vi.resetModules();
+    fetchMock.mockClear();
+    localStorage.setItem('sse-cursor', 'not-a-cursor');
+    const again = await import('./sse.js');
+    again.on('task:updated', () => {});
+    await vi.advanceTimersByTimeAsync(0);
+    expect(urls()).toEqual([`${SERVER}/api/sync/changes`]);
+  });
+
+  it('runs the registered flush hook before each poll, as it does before a (re)connect', async () => {
+    const order: string[] = [];
+    fetchMock.mockImplementation(async () => {
+      order.push('poll');
+      return { ok: true, status: 200, json: async () => changes(1) };
+    });
+    const { on, registerFlushHook } = await import('./sse.js');
+    registerFlushHook(() => void order.push('flush'));
+    on('task:updated', () => {});
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    expect(order).toEqual(['flush', 'poll', 'flush', 'poll']);
+  });
+
+  it('onReconnect fires when a poll works again after failing, never for the first poll', async () => {
+    answers.push(changes(1), new Error('offline'), changes(1), changes(1));
+    const { on, onReconnect } = await import('./sse.js');
+    const reconnected = vi.fn();
+    onReconnect(reconnected);
+    on('task:updated', () => {});
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reconnected).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(15_000); // fails
+    await vi.advanceTimersByTimeAsync(15_000); // works again
+    expect(reconnected).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(reconnected).toHaveBeenCalledTimes(1);
+  });
+
+  it('a write this client made brings the next poll forward', async () => {
+    const { on } = await import('./sse.js');
+    const { noteWrite } = await import('./write-signal.js');
+    on('task:updated', () => {});
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    noteWrite();
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('an older server (404) ends the polling quietly, and the subscribers stay registered', async () => {
+    answers.push(404);
+    const { on } = await import('./sse.js');
+    const handler = vi.fn();
+    on('task:updated', handler);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(FakeEventSource.instances).toHaveLength(0);
+  });
+
+  it('before a server is chosen there is nothing to poll', async () => {
+    localStorage.removeItem(SERVER_URL_KEY);
+    const { on } = await import('./sse.js');
+    on('task:updated', () => {});
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(FakeEventSource.instances).toHaveLength(0);
+  });
+
+  it('in a browser it is still the EventSource and never a poll', async () => {
+    vi.stubGlobal('Capacitor', undefined);
+    const { on } = await import('./sse.js');
+    on('task:updated', () => {});
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(FakeEventSource.instances).toHaveLength(1);
+    expect(FakeEventSource.instances[0].url).toBe('/api/events');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

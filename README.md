@@ -10,7 +10,7 @@ and stays there. Sign in with your Companion Portal account on a CI Hub, or with
 local username and password on a self-hosted install; neither sends your data anywhere.
 
 [![tag](https://img.shields.io/github/v/tag/companionintelligence/CI-Planning?style=flat-square&color=0a6358&label=tag)](https://github.com/companionintelligence/CI-Planning/tags)
-[![platform](https://img.shields.io/badge/platform-Web%20%C2%B7%20Node.js%20%C2%B7%20Deno-0a6358?style=flat-square)](https://github.com/companionintelligence/CI-Planning)
+[![platform](https://img.shields.io/badge/platform-Web%20%C2%B7%20Node.js-0a6358?style=flat-square)](https://github.com/companionintelligence/CI-Planning)
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue?style=flat-square)](LICENSE)
 [![Discord](https://img.shields.io/badge/chat-Discord-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.com/invite/yQp9hwpzAa)
 
@@ -29,7 +29,7 @@ calendar and reflections are never sent. Turn it off without a rebuild with
 any build made without a DSN initialises no Sentry at all** and opens no outbound
 connection. Full posture: [docs/operations/error-reporting.md](docs/operations/error-reporting.md).
 
-Companion Planning is currently in **v0.3 active development**. The core app is
+Companion Planning is currently at **v4.2** (latest release tag `v4.2.2`; see [CHANGELOG.md](CHANGELOG.md)). The core app is
 fully local and usable today. A **standalone Google OAuth 2.1 flow** (Authorization
 Code + PKCE/S256, implemented in the app — not the macOS Keychain) and **two-way
 Google Calendar sync** are built in. Enable them either **in-app** (an admin pastes a
@@ -46,6 +46,7 @@ client.
 
 - **Server** — Koa + TypeScript (`server/`), SQLite via better-sqlite3 + Drizzle, cron jobs via croner
 - **Client** — SolidJS + Tailwind PWA (`client/`), built by Vite into `server/public/`
+- **Mobile** — iOS and Android shells (`mobile/`) that wrap the same client and connect to a server you run — see [Mobile app](#mobile-app-ios-and-android)
 - **One process, one port** — the server serves both the API and the UI on **3848**
 
 **Source of truth for docs:** this README describes the running app;
@@ -113,9 +114,12 @@ The one sidebar toggle flips the whole app between the two canonical CI themes:
 
 ### Today
 
-The day overview: a QuickAdd bar, the day header with live counts (overdue · due
-today · scheduled · open), day-type + day-stars, the FOCUS card, the planner
-instruct bar, and the PLANNER grid for placing blocks.
+The day overview: the five-star day tally, the day header (previous / next day, date
+picker) with a capacity bar (scheduled vs. workday hours) and buttons for Due, the
+day's Brief, Focus and a day note, the OPEN TIME windows left in the day, and the
+PLANNER grid (day-type picker, Schedule, Undo, Clear, Update) for placing blocks. The
+Flight Plan staging list lives in the details drawer, and the floating **Add** button
+opens the wizard that hosts the one-line natural-language quick entry.
 
 | Light | Dark |
 |-------|------|
@@ -123,8 +127,8 @@ instruct bar, and the PLANNER grid for placing blocks.
 
 ### Calendar
 
-Day / week / month grid with the current week in view, plus Export, Review, and
-Schedule Day controls and the overlays filter.
+Day / week / month grid with the current week in view, plus Export, Review, Plan my
+week and Schedule Day controls, an All blocks / Events only toggle, and the overlays filter.
 
 | Light | Dark |
 |-------|------|
@@ -133,12 +137,13 @@ Schedule Day controls and the overlays filter.
 ### Tasks
 
 The full backlog — priority chips (P1–P3 · Later), tags, direction filter, and the
-Tasks / Habits / Routines / Time Blocks tabs. Rendered against ~40 seeded tasks plus the
+Tasks / Objectives / Habits / Routines / Timeblock tabs. Rendered against ~40 seeded tasks plus the
 sample-data set.
 Every task created today — manual, quick-add, or auto-promoted suggestion — sits
 in a **New Today** section at the top and flows into the normal sections at the
 owner-local midnight rollover (the standalone Inbox view was retired in Phase AF:
-suggestions now auto-promote, so there is nothing left to triage).
+calendar, memory and text suggestions now auto-promote, and email suggestions wait for
+your approval in a **Suggested from email** section at the top of the tab).
 
 Section precedence is **Routine › Scheduled › New Today › Open**, so scheduling a task
 the same day it arrived moves its card to **Scheduled** immediately rather than leaving
@@ -171,39 +176,39 @@ roll-up reads 33 %); **New Objective** opens the editor.
 > (`PATCH /api/tags/:id`), and complete one objective step. Then screenshot each route
 > (`/`, `/calendar`, `/tasks`, `/tasks?tab=objectives`) at 1440×900, device scale 2, in
 > both themes (`localStorage['vite-ui-theme']`) into `docs/ui/planning-<screen>-<theme>.png`,
-> and the [Screenshots](#screenshots) tour below at 1280×800 dark. The **Routines**,
-> **Tags**, **Jobs**, and **Settings** screens live in that tour.
+> and the [Screenshots](#screenshots) tour below at 1280×800 dark. The **Tags**, **Jobs**,
+> and **Settings** screens live in that tour; **Routines** has no screenshot yet.
 
 ## Architecture
 
 ```mermaid
 graph TB
     subgraph Browser["Browser (SolidJS PWA)"]
-        UI[Nine Views<br/>Today · Focus · Calendar · Tasks incl. Objectives + Routines tabs<br/>Tags · Priorities · Balance · Jobs · Settings]
+        UI[Nine Views<br/>Today · Focus · Calendar · Tasks incl. Objectives · Habits · Routines · Timeblock tabs<br/>Tags · Priorities · Balance · Jobs · Settings]
         Store[Reactive Stores<br/>createResource / createSignal]
         SW[Service Worker<br/>Web Push + installable PWA]
         BN[Reminders<br/>in-app toast + Web Push]
     end
 
     subgraph Server["Koa Server — port 3848"]
-        API[REST API<br/>20+ route modules]
+        API[REST API<br/>48 route modules]
         GQL[GraphQL /api/graphql<br/>Apollo, alongside REST — Phase W]
-        SSE[SSE /api/events<br/>real-time push]
+        SSE["SSE /api/events<br/>real-time push<br/>(app shells poll /api/sync/changes)"]
         Engine[Auto-scheduler<br/>engine/autoplan · review · reflow]
-        Cron[Croner Jobs<br/>20 cron jobs · 21 kinds]
+        Cron[Croner Jobs<br/>25 cron jobs · 26 kinds]
         Migrate[Migration runner<br/>0001 → head on boot]
     end
 
     subgraph Data["Data Layer"]
         DB[(SQLite<br/>companion.db)]
-        Drizzle[Drizzle ORM<br/>+ raw better-sqlite3]
+        Drizzle["store() facade + Drizzle ORM<br/>over better-sqlite3"]
     end
 
     subgraph AI["AI — optional"]
         Ollama[Ollama<br/>local LLM]
-        Small["qwen2.5:0.5b<br/>extraction / triage"]
-        Medium["gemma3n:e4b<br/>briefings"]
-        Embed["nomic-embed-text<br/>dedupe embeddings"]
+        Small["Fast tier — default qwen2.5:0.5b<br/>extraction / triage"]
+        Medium["Quality tier — default gemma3n:e4b<br/>briefings"]
+        Embed["Embedding tier — default nomic-embed-text<br/>dedupe embeddings"]
     end
 
     subgraph Sources["External Sources — off until connected"]
@@ -239,8 +244,15 @@ The class diagrams below are the **domain model as the code actually declares it
 ([`server/src/db/schema.ts`](server/src/db/schema.ts) plus the raw-SQL tables created by
 [the migrations](server/src/db/migrations/index.ts)). Every entity is owner-scoped —
 `owner_id` is the tenant boundary, and it is omitted from the field lists below only to
-keep them readable. Identifiers are **UUIDv7 TEXT** (CON-1), timestamps are ISO-8601 TEXT
-(UTC unless a field name says local), and booleans are SQLite integers.
+keep them readable. The exceptions are the join and entity-spanning stores (task
+dependencies, pattern and objective membership, tag groupings, `entity_tags`,
+`entity_categories`, `entity_people`, …), which are scoped through the rows they point
+at; `possible_tasks`, whose tenant column is `proposed_owner_id`; and the server-global
+tables (`scheduled_jobs`, `job_runs`, `app_config`, `auth_states`, `signup_codes`).
+Identifiers are **UUIDv7 TEXT** (CON-1; the one exception is `sync_events.seq`, an
+autoincrementing integer), timestamps are TEXT — ISO-8601, UTC unless a field name says
+local (columns defaulted from SQLite's `CURRENT_TIMESTAMP` use its `YYYY-MM-DD HH:MM:SS`
+form) — and booleans are SQLite integers.
 
 **1. Core planning domain** — the entities you touch on Today, Calendar, and Tasks:
 
@@ -251,6 +263,7 @@ classDiagram
     class Owner {
         +string id
         +string name
+        +string email
         +string role  operator|member|viewer
         +string externalSubject  OIDC sub
         +string username
@@ -259,19 +272,22 @@ classDiagram
 
     class SchedulingPrefs {
         +string timezone  IANA
-        +string workdayStart  HH:MM
-        +string workdayEnd  HH:MM
         +int maxFocusBlockMinutes
         +int minBreakMinutes
         +int planningHorizonDays
         +int recurrenceHorizonDays
-        +string planningMode  basic|smart
+        +string planningMode  basic|smart, independent of trustMode
         +string trustMode  cautious|balanced|hands_off
         +string fillOrder  priority|overdue|new_today
         +int memoryWindowDays  1-30, reads AHEAD
         +int emailLookbackDays  1-90, reads BACK
+        +int capacityHoursPerWeek  default 56
+        +int sleepHoursPerWeek  default 63, unschedulable
         +bool autoFillWorkday
         +bool autoDefenseEnabled
+        +bool balanceBiasEnabled
+        +bool trialityEnabled
+        +string onboardedAt  null = wizard not done
     }
 
     class Task {
@@ -282,14 +298,19 @@ classDiagram
         +string dueAt  deadline
         +string scheduledFor  local YYYY-MM-DD START intent
         +string taskTime  HH:MM START intent
+        +string deferUntil  hidden from Today until then
         +int estimatedMinutes
         +int actualMinutes
         +string subtype  standard|habit|quick
         +string parentId  subtask link
         +string recurrenceRule  RRULE
         +string motivation  me|us|them|null
-        +string completionMood
+        +string motivationSource  user|llm
+        +int completionScore  1-5, 0 = declined, null = never asked
+        +string completionNote  closing reflection
         +string reactionAt
+        +bool textureEnabled  striped-texture override
+        +string textureColorToken
         +int version
     }
 
@@ -300,12 +321,18 @@ classDiagram
         +string blockType  scheduled|someday
         +string startAt
         +string endAt
+        +bool allDay  header lane, off the minute axis
         +bool isLocked  user pin, or always-on for inbound-synced blocks
         +bool isAuto  engine-chosen slot
         +string status  planned|completed|skipped|overrun
         +string parentBlockId  container
+        +string recurrenceRule  RRULE
         +string autoRunId  placement run
         +string lastMovedAt  anti-thrash
+        +bool responsiblePinned  own people-set wins even if empty
+        +bool beneficiariesPinned  same, for beneficiaries
+        +bool textureEnabled  striped-texture override
+        +string textureColorToken
         +int version
     }
 
@@ -332,7 +359,7 @@ classDiagram
         +int position
         +string rationale  why now
         +string source  llm|deterministic
-        +string outcome
+        +string outcome  deferred|missed, write-once
         +string blockId
     }
 
@@ -363,6 +390,7 @@ classDiagram
         +bool autoFill
         +int[] reminderOffsets
         +string iconShape
+        +bool showOpenTime  direction-only, Open Time card
     }
 
     class Pattern {
@@ -373,8 +401,9 @@ classDiagram
     }
 
     class PatternType {
-        +string name  Habit|Routine|Ritual
+        +string name  Habit|Routine|Ritual|Community|custom
         +string iconShape
+        +bool isBuiltin
         +bool catchAll
     }
 
@@ -384,16 +413,51 @@ classDiagram
         +string endTime  HH:MM
     }
 
+    class PatternDayOptout {
+        +string date  local day the pattern was removed
+    }
+
     class DayType {
         +string key  workday|weekend|custom
         +string name
         +bool isBuiltin
     }
 
+    class DayOfWeekMap {
+        +int dow  0 = Sun to 6 = Sat
+        +string dayTypeKey
+    }
+
+    class DayAssignment {
+        +string date  YYYY-MM-DD
+        +string dayTypeKey
+    }
+
     class BlockTemplate {
         +string name
         +string tag
         +int defaultMinutes
+        +json tasks  saved with the Plan
+    }
+
+    class Person {
+        +string displayName
+        +string accountId  the login this person is, if any
+        +bool confirmed  false = provisional, from ingest
+        +string source  manual|account|gcal|gmail|llm
+        +string notes
+    }
+
+    class PersonEmail {
+        +string email  lowercased, unique per owner
+    }
+
+    class EntityPerson {
+        +string entityKind  task|time_block
+        +string entityId
+        +string role  responsible|beneficiary
+        +string source  user|llm|calendar|email
+        +int position  0 = the lead
     }
 
     Owner "1" --> "1" SchedulingPrefs : configures
@@ -401,10 +465,14 @@ classDiagram
     Owner "1" --> "*" TimeBlock : owns
     Owner "1" --> "*" Tag : owns
     Owner "1" --> "*" DayType : defines
+    Owner "1" --> "*" DayOfWeekMap : weekly default
+    Owner "1" --> "*" DayAssignment : per-date override
     Owner "1" --> "*" BlockTemplate : saves
+    Owner "1" --> "*" Person : directory
 
     Task "1" --> "*" TimeBlock : placed as
     Task "1" --> "*" TimeEntry : timed by
+    TimeEntry "*" --> "0..1" TimeBlock : started from
     Task "1" --> "*" Task : subtask of
     Task "1" --> "*" TaskDependency : blocked by
     Task "1" --> "0..1" FlightPlanEntry : staged in
@@ -415,14 +483,26 @@ classDiagram
     Tag "1" --> "*" EntityCategory : categorizes
     Tag "1" --> "0..1" TagPref : configured by
     Tag "1" --> "*" PatternBlock : scopes
+    Tag "*" --> "*" Tag : intention under a direction, tag_directions
+    Tag "*" --> "*" Tag : intention under a category, tag_categories
+    Tag ..> Tag : category opts out of a direction
     Task ..> EntityTag : polymorphic, app-enforced
     TimeBlock ..> EntityTag : polymorphic, app-enforced
     Task ..> EntityCategory : 1..3 per entity
     TimeBlock ..> EntityCategory : 1..3, else inherits task
 
+    Person "*" --> "0..1" Owner : accountId, self row when it equals the tenant
+    Person "1" --> "*" PersonEmail : matched by
+    Person "1" --> "*" EntityPerson : named on
+    Task ..> EntityPerson : polymorphic, app-enforced
+    TimeBlock ..> EntityPerson : polymorphic, inherits the task set unless pinned
+
     PatternType "1" --> "*" Pattern : types
-    Pattern "1" --> "*" Task : collects
+    Pattern "*" --> "*" Task : collects, pattern_tasks
+    Pattern "1" --> "*" PatternDayOptout : removed on this day
     DayType "1" --> "*" PatternBlock : selects windows
+    DayType "1" --> "*" DayOfWeekMap : weekly default, by key
+    DayType "1" --> "*" DayAssignment : per-date override, by key
 ```
 
 **2. Life planning, reflection, and learning** — the layer above the day:
@@ -434,9 +514,11 @@ classDiagram
     class Objective {
         +string id
         +string title
-        +string parentId  Goal-Project-Objective by height
+        +string level  goal|project|objective, by height
+        +string parentId
         +real progressCache  null = nothing to measure
         +string sourceTaskId  auto-promoted
+        +string colorToken
         +string archivedAt  soft delete
         +string archiveRootId  cascade unit
         +string purgeAfter  48h reap deadline
@@ -444,14 +526,15 @@ classDiagram
     }
 
     class ObjectiveTask {
-        +bool linked
+        +bool linked  false = unlink tombstone
     }
 
     class Reflection {
-        +string kind  today_goal|weekly_goal|day_note
+        +string kind  today_goal|weekly_goal|day_note|evening
+        +string periodKey  YYYY-MM-DD or YYYY-Www
         +int position  0..2 for weekly
-        +string text
-        +string sourceKind  task|objective
+        +string body
+        +string sourceKind  manual|task|objective
         +string sourceRef
         +string doneAt
     }
@@ -460,11 +543,11 @@ classDiagram
         +string date
         +string prose  briefing cache
         +string inputsHash
-        +bool starIntention
+        +bool starObjective  today goal done
         +bool starHabits
         +bool starTasks
         +bool starBonus
-        +bool starReflection
+        +bool starNote  task done and a day note
         +int total  0..5
         +string frozenAt  permanent once set
     }
@@ -477,28 +560,34 @@ classDiagram
     }
 
     class EstimateCalibration {
-        +string scope
+        +string scopeKind  global|subtype|tag|tag_combo|category|objective
+        +string scopeRef
         +real biasRatio  median actual/estimated
         +real p25
         +real p75
         +int sampleCount
     }
 
+    class CalibrationComboPin {
+        +string scopeRef  sorted tag-id tuple
+    }
+
     class CalibrationHistory {
-        +string scope
-        +string day
+        +string scopeKind
+        +string scopeRef
+        +string computedDate
         +real biasRatio
         +int sampleCount
     }
 
     class TrialityLog {
         +string slot  habitual|contextual|novel
-        +string actionKind
+        +string actionKind  task|routine|flight|template
         +string actionRef
         +string scores  per-component JSON
         +string confidence
         +string shownAt
-        +string outcome  opened|staged|dismissed
+        +string outcome  shown|opened|staged|dismissed
     }
 
     class TrialityWeights {
@@ -598,11 +687,57 @@ classDiagram
         +int timedMinutes  finished time_entries
     }
 
+    class PlacementLog {
+        +string slotKey  direction tag name, or none
+        +string blockId  no FK, evidence outlives the block
+        +string taskId  no FK
+        +string chosenStartAt
+        +int chosenHour  owner-local, 0-23
+        +bool fit  false = forced, truncated gap
+        +string candidates  JSON menu of free gaps weighed
+        +string movedStartAt  null until the owner moves it
+        +int movedHour
+        +string placedAt
+        +string movedAt
+        +string localDate
+    }
+
+    class PlacementPreferences {
+        +string slotKey
+        +real p25Hour  band where corrections landed
+        +real p75Hour
+        +int corrections
+        +int sampleCount
+        +string computedDate
+    }
+
+    class PlacementSurvival {
+        +string computedDate
+        +int periodDays
+        +int decided
+        +int accepted
+        +int corrected
+        +real survivalRate  null when decided = 0, never 0
+        +int keysLearned
+        +bool biased
+    }
+
+    class PlanningSession {
+        +string startedAt
+        +string endedAt
+        +string entryBranch  fill_week|schedule_tasks|review|onboarding
+        +string status  open|completed|abandoned
+        +bool llmUsed
+        +string transcript  JSON array, whole conversation
+        +string summary
+    }
+
     Owner "1" --> "*" Objective : owns
     Owner "1" --> "*" Reflection : writes
     Owner "1" --> "*" DailyRecap : one per day
     Owner "1" --> "*" LifePriority : one per category
     Owner "1" --> "*" EstimateCalibration : regenerable rollup
+    Owner "1" --> "*" CalibrationComboPin : confirmed tag combos
     Owner "1" --> "*" CalibrationHistory : append-only trend
     Owner "1" --> "*" TrialityLog : append-only evidence
     Owner "1" --> "*" TrialityWeights : learned, resettable
@@ -616,18 +751,25 @@ classDiagram
     Owner "1" --> "*" PlanRevisionLog : append-only evidence
     Owner "1" --> "*" PlanLoopStats : measured trend
     Owner "1" --> "*" BalanceWeekLog : frozen weekly history
+    Owner "1" --> "*" PlacementLog : append-only evidence
+    Owner "1" --> "*" PlacementPreferences : learned, resettable
+    Owner "1" --> "*" PlacementSurvival : measured trend
+    Owner "1" --> "*" PlanningSession : one per Plan my week
 
     Objective "1" --> "*" Objective : parent of
     Objective "1" --> "*" ObjectiveTask : progressed by
     Task "1" --> "*" ObjectiveTask : rolls up into
     Reflection ..> Task : optional source link
     Reflection ..> Objective : optional source link
+    CalibrationComboPin ..> EstimateCalibration : only pinned combos get a tag_combo row
     TrialityLog ..> TrialityWeights : weekly calibration
     ClassificationLog ..> ClassificationExemplars : weekly calibration
     PossibleOutcomeLog ..> PossibleDismissalExemplars : weekly calibration
     PlanRevisionLog ..> PlanLoopRun : run_id, no FK
     PlanLoopRun ..> PlanLoopStats : weekly calibration
     BalanceWeekLog ..> LifePriority : category name match, no FK
+    PlacementLog ..> PlacementPreferences : weekly calibration
+    PlacementLog ..> TimeBlock : block_id, no FK
 ```
 
 **3. Automation, integrations, and sync** — everything that runs without you:
@@ -665,6 +807,12 @@ classDiagram
         +string proposedTaskTime
     }
 
+    class PossibleTaskPerson {
+        +string role  responsible|beneficiary
+        +string source  llm|calendar|email
+        +real confidence  per row
+    }
+
     class Reminder {
         +string fireAt
         +string status  pending|fired|snoozed|cancelled
@@ -683,6 +831,14 @@ classDiagram
         +string ciphertext  AES-256-GCM
         +int keyVersion
         +string status  active|revoked|error
+    }
+
+    class OAuthState {
+        +string provider  google|ci_memory
+        +string state  CSRF nonce
+        +string codeVerifier  PKCE secret
+        +string redirectUri
+        +string expiresAt
     }
 
     class ConnectionPref {
@@ -729,6 +885,17 @@ classDiagram
         +string at
     }
 
+    class CopyHistory {
+        +string surface
+        +string signature  JSON phrasing fingerprint
+    }
+
+    class AppConfig {
+        +string key  google_* and vapid_* rows
+        +string value  secrets sealed with CP_KEK_B64 when set
+        +string updatedAt
+    }
+
     class ReplanSuggestion {
         +string date
         +string reason
@@ -746,25 +913,92 @@ classDiagram
     ScheduledJob "1" --> "*" JobRun : logs
     ScheduledJob ..> PossibleTask : ingest creates
     PossibleTask "1" --> "0..1" Task : auto-promotes into
+    PossibleTask "*" --> "*" Tag : proposed tags
+    PossibleTask "1" --> "*" PossibleTaskPerson : detected people
+    PossibleTaskPerson ..> Person : carried onto the task at promote
     Owner "1" --> "*" Reminder : scheduled for
     Owner "1" --> "*" PushSubscription : devices
     Owner "1" --> "*" ConnectionToken : sealed creds
     ConnectionToken ..> ConnectionPref : same provider+account key
     ConnectionToken ..> SyncState : per-resource cursor
-    ExternalEvent "1" --> "1" TimeBlock : mirrors
+    Owner "1" --> "*" OAuthState : in-flight authorize
+    OAuthState ..> ConnectionToken : callback stores sealed creds
+    ExternalEvent "*" --> "0..1" TimeBlock : mirrors
     TimeBlock "1" --> "*" OutboundQueue : pending push
     Owner "1" --> "*" SyncEvent : SSE replay log
     Owner "1" --> "*" AuditLog : append-only
+    Owner "1" --> "*" CopyHistory : voice anti-repetition window
     Owner "1" --> "0..1" ReplanSuggestion : one nudge
     Owner "1" --> "*" PlanHint : NL day windows
     Reminder ..> Task : task XOR block target
     Reminder ..> TimeBlock : task XOR block target
 ```
 
-> Two relationships are **app-enforced, not FK-enforced**, because their `entity_id`
-> spans several tables: `entity_tags` (task · time block · routine) and
-> `entity_categories` (task · time block). `services/tags.ts` owns every entity-delete
-> path, and the orphan-free tests are the gate.
+**4. Identity and sign-up** — who can sign in. An owner's auth mode is inferred from
+which columns are set: `external_subject` means Companion Portal (OIDC) login,
+`username` plus `password_hash` means local login, and all NULL is the system-owner
+sentinel. The session itself is a stateless signed cookie carrying the owner id and
+`session_epoch`, so there is no session table:
+
+```mermaid
+classDiagram
+    direction LR
+
+    class Owner {
+        +string email
+        +string role  operator|member|viewer
+        +string externalSubject  set = Companion Portal login
+        +string username  with passwordHash = local login
+        +string passwordHash  argon2id
+        +string backupEmail  reset fallback
+        +int sessionEpoch  bump to revoke every cookie
+    }
+
+    class ApiKey {
+        +string prefix  first 5 chars, lookup and display
+        +string keyHash  SHA-256, raw key shown once
+        +string scopes  JSON array
+        +string expiresAt  null = non-expiring
+        +string lastUsedAt
+        +string revokedAt
+    }
+
+    class AuthState {
+        +string state  CSRF nonce
+        +string codeVerifier  PKCE secret
+        +string nonce
+        +string redirectUri
+        +string expiresAt
+    }
+
+    class PasswordResetToken {
+        +string tokenHash  sha256, raw only in the emailed link
+        +string expiresAt
+        +string usedAt  single use
+    }
+
+    class SignupCode {
+        +string codeHash  sha256, raw shown once at mint
+        +string note  operator label
+        +string createdBy
+        +string expiresAt  7-day TTL
+        +string usedAt  single use
+        +string usedBy  the account it created
+        +string revokedAt
+    }
+
+    Owner "1" --> "*" ApiKey : standalone clients
+    Owner "1" --> "*" PasswordResetToken : resets and account invites
+    Owner "1" --> "*" SignupCode : mints, SET NULL on delete
+    SignupCode "*" --> "0..1" Owner : used by
+    AuthState ..> Owner : callback finds or provisions by externalSubject
+```
+
+> Three relationships are **app-enforced, not FK-enforced**, because their `entity_id`
+> spans several tables: `entity_tags` (task · time block · routine), `entity_categories`
+> (task · time block) and `entity_people` (task · time block). `services/tags.ts` owns
+> every entity-delete path (`removeEntityTags` cleans all three stores), and the
+> orphan-free tests are the gate.
 
 ### How the server finds and connects to the database
 
@@ -776,29 +1010,41 @@ classDiagram
 3. `mkdirSync(..., { recursive: true })` creates the containing directory before the
    file is opened — so a fresh install with no prior DB just works.
 
-`server/src/db/index.ts` then opens and configures the connection:
+`server/src/db/index.ts` then opens and configures the connection (through `openDb` in
+`server/src/db/open.ts`):
 
 ```
 BetterSqlite3(config.dbPath)        // synchronous open — SQLite single-writer, no pool
   .pragma('foreign_keys = ON')      // enforced at the connection level
+  .pragma('busy_timeout = 5000')    // wait up to 5 s on a locked database before failing
   .function('uuid7', () => newId()) // UDF for raw-SQL inserts (CON-1 UUIDv7 identity)
 
-runMigrations(sqlite)               // sequential, idempotent — applies any unapplied
-                                    // migrations from the ordered MIGRATIONS list
-drizzle(sqlite, { schema })         // exports `db` used by all route handlers
+sqliteVec.load(sqlite)              // best-effort sqlite-vec extension (possible-task dedupe);
+                                    // on failure dedupe falls back to a plain cosine loop
+runMigrations(sqlite)               // sequential, idempotent — switches the file to WAL and
+                                    // applies any unapplied migrations from the MIGRATIONS list
+setStore(createSqliteStore(sqlite)) // the async data facade (db/store.ts) most call sites use
+drizzle(sqlite, { schema })         // exports `db` (Drizzle) and `sqlite` (the raw handle)
 ```
 
-The migration runner (`server/src/db/migrate.ts`) keeps a `_migrations` table. On
+The migration runner (`server/src/db/migrate.ts`) keeps a `schema_migrations` table. On
 every server start it compares the ordered `MIGRATIONS` array against that table and
-runs any missing ones inside a transaction. Migrations are plain TypeScript functions —
-no `.sql` files, no external tool.
+runs any missing ones inside a transaction (the few `manual` migrations that rebuild a
+table manage their own transaction so they can toggle `foreign_keys`). Migrations are
+plain TypeScript functions — no `.sql` files, no external tool.
+
+Most queries go through `store()` (`server/src/db/store.ts`), an async facade over this
+handle; the Drizzle `db` is used by a handful of routes. The facade exists for the
+in-progress Postgres port (`DATABASE_URL` / `STORE_BACKEND`), which is not a supported
+deployment option yet — see [Environment variables](#environment-variables).
 
 ### Schema overview
 
 Migrations produce the tables below. The authoritative, ordered migration list — and
 therefore the current head — is
 [`server/src/db/migrations/index.ts`](server/src/db/migrations/index.ts); at the time
-of writing (2026-08-15) `main` is at `0150_calibrate_classification_job`.
+of writing (2026-11-01) `main` is at `0172_signup_codes`, the 168th migration (the
+numbering skips 0009, 0119, 0159 and 0160).
 
 | Table | Purpose |
 |---|---|
@@ -808,20 +1054,27 @@ of writing (2026-08-15) `main` is at `0150_calibrate_classification_job`.
 | `time_blocks` | Named time spans — `scheduled` / `someday` / `saved` states; recurrence support; same `texture_enabled`/`texture_color_token` override (0135); legacy `category_id`/`color_token` (0069) are read-only now — writes go through `entity_categories` |
 | `block_templates` | Reusable Time-Block templates with saved task lists |
 | `time_entries` | Actual work logged per task; running timer = `ended_at IS NULL` |
-| `possible_tasks` | Staged AI-proposed items — auto-promoted into tasks at the end of each ingestion run (kept as the audit/dedup trail, Phase AF) |
+| `possible_tasks` | Staged AI-proposed items — calendar, memory and text suggestions are auto-promoted into tasks at the end of each ingestion run; Gmail suggestions stay pending until you approve them (`services/review-gate.ts`). Rows are kept as the audit/dedup trail (Phase AF) |
 | `tags` | Cross-cutting labels; `kind`: `direction` (Home / Work / Community), `intention`, or `category` (base: the six Balance dimensions — health/career/relationships/growth/leisure/finance — re-seeded in mig 0134, superseding the old Personal/Professional/Social set) |
 | `tag_directions` | Many-to-many: intention tags grouped under direction tags (0043 briefly renamed this to `tag_patterns`; reverted in 0105) |
+| `tag_categories` | Many-to-many: intention tags filed under category tags — the membership the Tags → Time Block Categories tab edits (0069) |
+| `category_direction_optouts` | Sparse per-category opt-out of directions (`category_tag_id`, `direction_tag_id`) — no rows means every direction is on (0069) |
 | `entity_tags` | Polymorphic tag store for tasks, blocks, and routines (CON-3); carries `created_at` (`NOT NULL DEFAULT CURRENT_TIMESTAMP`, table rebuilt in 0110) backing GraphQL `EntityTagType.taggedAt` |
 | `entity_categories` | Polymorphic **category** store for tasks/time_blocks — 1–3 per entity (`entity_kind, entity_id, category_tag_id, position`); `position` orders the striped-texture stripes (0134) |
+| `people` | Per-owner directory of the people named as Responsible / Beneficiary on tasks and time blocks — `owner_id` is tenancy, `account_id` (nullable) is the login account the person *is*; `confirmed = 0` marks people ingest created provisionally; each owner has a "me" row (`account_id = owner_id`) (0151; [docs/people-on-work.md](docs/people-on-work.md)) |
+| `person_emails` | Lowercased email → person index, unique per `(owner_id, email)` — the deterministic key for matching people detected in calendar invites and mail headers (0151) |
+| `entity_people` | Polymorphic people store for tasks and time blocks — `(entity_kind, entity_id, person_id, role)` with `role` `responsible` / `beneficiary` and `position` 0 = the lead; no FK on `entity_id` because it spans tables. A block with no rows of its own inherits its task's people unless its `responsible_pinned` / `beneficiaries_pinned` flag is set (0151, 0153–0154) |
 | `possible_task_tags` | Tags proposed alongside a staged suggestion |
+| `possible_task_people` | People detected on a staged suggestion — `(possible_task_id, person_id, role)` with `source` and a per-row `confidence`; copied into `entity_people` when the suggestion is promoted (0152) |
 | `patterns` | Routines — typed, reusable task collections with optional recurrence |
 | `pattern_types` | Routine taxonomy: Habit ◯ · Routine ▢ · Ritual △ — **load-bearing, do not rename** |
 | `pattern_tasks` | Routine membership (pattern ↔ task many-to-many) |
-| `pattern_blocks` | Direction-scoped scheduling windows (`workday` / `weekend` time ranges) |
+| `pattern_blocks` | Direction-scoped scheduling windows, one set per `day_type` (the built-in `workday` / `weekend`, or a custom day type) |
+| `pattern_day_optouts` | Per-(owner, routine, local day) opt-out — records "removed that day" so the lazy placement on `GET /api/blocks` does not re-create a deleted block (0074) |
 | `day_types` · `day_of_week_map` · `day_assignments` | Which day-type a date is (0068): a per-date assignment beats the weekly map, which beats the weekend heuristic. The resolved key selects the `pattern_blocks` windows Auto places into |
-| `tag_prefs` | Per-owner × per-tag config, partitioned by `kind` (`direction` \| `category`): shared `color_token`/`default_minutes`, plus direction-only `auto_fill`/`reminder_offsets`/`icon_shape`; merged from `pattern_prefs` + `category_prefs` (0097). `category` rows are the six Balance-dimension hues (0134) |
+| `tag_prefs` | Per-owner × per-tag config, partitioned by `kind` (`direction` \| `category`): shared `color_token`/`default_minutes`, plus direction-only `auto_fill`/`reminder_offsets`/`icon_shape`/`show_open_time` (whether a direction's windows count in Today's OPEN TIME summary, default on; 0170); merged from `pattern_prefs` + `category_prefs` (0097). `category` rows are the six Balance-dimension hues (0134) |
 | `flight_plan` | Staged task list for the two-step Auto (select → schedule); composite PK `(owner_id, task_id)` with `owner_id` `TEXT NOT NULL` (0093) |
-| `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (materialization ceiling, default 7; 0091), `sleep_hours_per_week` (default 63 — reserved as unschedulable; 0128), and the **ingestion windows** `memory_window_days` / `email_lookback_days` (0147) |
+| `scheduling_prefs` | Focus/break bounds, `capacity_hours_per_week` (default 56; replaces the retired `workday_start`/`workday_end` window — per-direction windows live in `pattern_blocks`; 0156), model overrides, feature flags (including `llm_thinking_enabled`, 0155, and `balance_bias_enabled`, default on, 0164), `recurrence_horizon_days` (materialization ceiling, default 7; 0091), `sleep_hours_per_week` (default 63 — reserved as unschedulable; 0128), and the **ingestion windows** `memory_window_days` / `email_lookback_days` (0147) |
 | `app_config` | Server-owned singleton config set in-app rather than via env — Google connection setup + the auto-provisioned Web Push VAPID keypair (0124) |
 | `life_priorities` | Life-priorities self-audit per (owner, category) — satisfaction · importance · target hours/week; backs `/priorities` + `/balance` (0127). `/balance` also joins tasks by their `entity_categories` to show each dimension's related open tasks (0134) |
 | `scheduled_jobs` | Croner job registry (name, cron expression, enabled) |
@@ -832,6 +1085,7 @@ of writing (2026-08-15) `main` is at `0150_calibrate_classification_job`.
 | `api_keys` | Hashed `x-api-key` credentials for `AUTH_MODE=standalone` (0049) |
 | `auth_states` | Single-use pre-login Companion Portal OIDC PKCE/state rows, consumed at the callback (Phase U, 0102) |
 | `password_reset_tokens` | Single-use local-login password-reset tokens (Phase V, 0104) |
+| `signup_codes` | Single-use invite codes an operator mints (Settings → Profile → Team, `AUTH_SIGNUP=invite`) so someone can create their own local account at `/signup` — `code_hash` is the `sha256` of a code that is shown once and never stored; 7-day `expires_at`, `used_at` / `used_by`, `revoked_at` (0172) |
 | `connection_tokens` | Encrypted OAuth tokens per `(owner, provider, account)` — AES-256-GCM sealed with `CP_KEK_B64`; `status` ∈ `active`/`revoked`/`error` (Phase J 0050; `status` 0058) |
 | `external_events` | Sync identity map linking provider events ↔ local `time_blocks` by `(provider, account, external_id)` + etag/direction (Phase J 0051) |
 | `outbound_queue` | Local blocks pending push to a provider — one row per `(block, provider, account)`, drained by the sync agent when `CP_SYNC_WRITEBACK` is on (Phase J 0057) |
@@ -843,7 +1097,7 @@ of writing (2026-08-15) `main` is at `0150_calibrate_classification_job`.
 | `replan_suggestions` | Pending "re-plan with AI?" nudges surfaced on big-disruption reflows (0067) |
 | `planning_sessions` | One row per "Plan my week" onboarding session — the whole conversation as a single JSON `transcript`, no per-turn child table; read by the Settings → Logs tab, exportable/deletable there (FTUE, 0131) |
 | `daily_recap` | One row per `(owner, date)` — the day-briefing cache (`prose`/`stats`/`focus`, keyed by `inputs_hash`) **and** the frozen five-star score (`star_*`/`total`/`frozen_at`); merged from `daily_summaries` + `day_stars` (0096) |
-| `sync_events` | Append-only SSE event log for `Last-Event-ID` catch-up replay (Phase L, 0077) |
+| `sync_events` | Append-only SSE event log for `Last-Event-ID` catch-up replay (Phase L, 0077); `GET /api/sync/changes` serves the same rows as JSON to clients that cannot hold an `EventSource` |
 | `reflections` | FOCUS card slots — today focus + up to 3 weekly goals per ISO week, with optional category, done-at stamp, and an optional source link to a Task/Objective (`source_kind`/`source_ref`, 0088); also holds the one-per-day `kind='day_note'` row — no migration, reuses the same table + the PK's existing uniqueness (Phase N, 0080; linked focus 0088) |
 | `objectives` | Hierarchical life goals — Goal › Project › Objective (by tree height); progress derived from task completion; `source_task_id` marks auto-promoted nodes; `version`/`field_ts` for multi-device sync (Phase N, 0081; 0085–0086; sync versioning 0087). **Archive (0129):** `archived_at` soft-delete + `archive_root_id` (cascade unit) + `purge_after` (48h reap deadline) |
 | `objective_tasks` | Links objectives to Tasks; enables progress roll-up (Phase N, 0081) |
@@ -855,12 +1109,25 @@ of writing (2026-08-15) `main` is at `0150_calibrate_classification_job`.
 | `classification_log` | Append-only evidence for the parse/classify LLM's `category`/`motivation` picks — what the model said, what the owner ultimately settled on (`NULL` until corrected), and the text judged; never recomputed, never pruned (Phase 8, 0149) |
 | `classification_exemplars` | Regenerable few-shot retrieval index the classify prompt reads, rebuilt wholesale per owner by the weekly `calibrate_classification` job; deleting an owner's rows resets the adaptation without losing the log above (0149) |
 | `classification_accuracy` | One held-out accuracy score per field per calibration run — `NULL` (not `0`) when a run measured nothing, so a trend chart draws a gap rather than a false dip (0149) |
+| `possible_outcome_log` | Append-only evidence for dismissal learning — one row per decided suggestion (`dismissed` / `promoted`) with the text the extractor proposed and when it was decided; deliberately no FK to `possible_tasks`, so pruning a suggestion never deletes what it taught (0157) |
+| `possible_dismissal_exemplars` | Regenerable retrieval index the extraction prompt reads, rebuilt wholesale per owner by the weekly `calibrate_dismissals` job (0157) |
+| `possible_dismissal_rate` | One noise-rate reading per owner per calibration run, so "is the loop working" is a number (0157) |
+| `plan_loop_runs` | One row per AI plan-ordering loop run (generate → judge → revise): `stage`, `passed` / `escaped` (+ `escape_reason`), best `score`, `iterations` (0162) |
+| `plan_revision_log` | Append-only evidence — one row per candidate the loop scored (`iter`, `score`, `reason`, JSON `defects`, `critique`); `run_id` is deliberately not an FK, so the evidence survives a crash mid-run (0162) |
+| `plan_loop_stats` | Measurement — one row per (owner, stage, `computed_date`) written by the weekly `calibrate_plan_loop` job; `avg_iterations` / `pass_rate` are `NULL` for a week with no runs (0162) |
+| `placement_log` | Append-only evidence — one row per engine placement with the free gaps `pickGap` weighed (`candidates`) and, once the owner drags it, where it was moved; no FKs to blocks or tasks (0166) |
+| `placement_preferences` | Regenerable rollup — the learned hour band (`p25_hour`–`p75_hour`) per owner × direction slot that biases gap choice, rebuilt by the weekly `calibrate_placement` job (0166, 0167) |
+| `placement_survival` | One reading per owner per calibration run — placements accepted vs. corrected; `survival_rate` is `NULL` when nothing was decided (0166) |
+| `balance_week_log` | Append-only weekly history — each completed week's target / scheduled / timed minutes per life dimension, frozen by the Monday `snapshot_balance` job; first freeze wins, never recomputed (0165) |
 | `copy_history` | Time-Sense voice-loop anti-repetition log — not included in owner export (0109) |
+| `schema_migrations` | The migration runner's ledger — one row per applied migration id (`applied_at`, optional `checksum`), compared with the `MIGRATIONS` list on every start |
 
 ## See it in action
 
 From an empty day to a planned one: capture a task, pick a priority, and let the
-planner place it on your calendar — no cloud round-trip, all on-device.
+planner place it on your calendar — no cloud round-trip, all on-device. The recording
+predates the current layout (it still shows the retired Inbox view); the screenshots
+below are current.
 
 ![Companion Planning — first-run walkthrough: create a task and auto-schedule it](docs/ftue.gif)
 
@@ -873,41 +1140,41 @@ planner place it on your calendar — no cloud round-trip, all on-device.
   or release to get a hosted URL, then replace this block with the rendered link,
   e.g.:
 
-  https://github.com/companionintelligence/Companion-Planning/assets/<id>/walkthrough.mp4
+  https://github.com/companionintelligence/CI-Planning/assets/<id>/walkthrough.mp4
 -->
 
 ## Screenshots
 
-| Today (with FOCUS + day stars) | Calendar (with the star heatmap + Weekly Review) |
+| Today (with day stars + the Flight Plan drawer) | Calendar (week view) |
 |---|---|
 | [![Today view](docs/screenshots/today.png)](docs/screenshots/today.png) | [![Calendar view](docs/screenshots/calendar.png)](docs/screenshots/calendar.png) |
-| Day header with the five-star tally · OPEN TIME windows per direction · PLANNER grid with the day's placed blocks · the Flight Plan staging list in the details drawer | Day / week / month grid · Review panel (capacity · calibration · objectives) · Plan my week · Schedule Day |
+| Day header with the five-star tally · OPEN TIME windows per direction · PLANNER grid with the day's placed blocks · the Flight Plan staging list in the details drawer | Day / week / month grid (the five-star heatmap shows on the month view) · Review toggle on the week view (done · still open · blocks · weekly intentions · objectives needing a next action · estimate calibration) · Plan my week · Schedule Day |
 
 | Tasks |
 |---|
 | [![Tasks view](docs/screenshots/tasks.png)](docs/screenshots/tasks.png) |
 | The full backlog with priorities, tags, and notes — filter by status, tag, or text; email suggestions fold into a **Suggested from email** section and today's arrivals (including auto-promoted suggestions) sit in **New Today** on top (Phase AF); the details drawer shows the selected task |
 
-| Routines | Objectives (Tasks tab) |
+| Routines (Tasks tab) | Objectives (Tasks tab) |
 |---|---|
 | *(screenshot pending)* | [![Objectives tab](docs/ui/planning-objectives-dark.png)](docs/ui/planning-objectives-dark.png) |
-| Habit ◯ and Routine ▢ collections with per-pattern fill + reminder config | Hierarchical life goals — Goal → Project → Objective — with task linkage and progress roll-up; lives at `/tasks?tab=objectives` since Phase AF |
+| Routines — bundles of habits that go together (e.g. Prep for work), made from a task or by dropping a Habit or Time Block on the section; Rituals appear when enabled | Hierarchical life goals — Goal → Project → Objective — with task linkage and progress roll-up; lives at `/tasks?tab=objectives` since Phase AF |
 
 > 📸 Routines screenshot coming soon.
 
 | Tags | Jobs |
 |---|---|
 | [![Tags view](docs/screenshots/tags.png)](docs/screenshots/tags.png) | [![Jobs view](docs/screenshots/jobs.png)](docs/screenshots/jobs.png) |
-| Direction + Intention taxonomy — group, mute, or delete | Background automations with their cron schedules — run any one on demand |
+| Direction + Intention taxonomy — group, mute, or delete; a second tab covers Time Block Categories | Background automations with their cron schedules — run any one on demand |
 
 | Settings |
 |---|
 | [![Settings view](docs/screenshots/settings.png)](docs/screenshots/settings.png) |
-| Work hours, per-pattern fill + reminder offsets, pattern block shape/color, time-block labels, concept tags, model overrides, memory sync, recurrence duration, Clear Date Range |
+| Four tabs (Profile shown). **Profile**: your profile, team and invite codes (operators), backup & export, replay of the first-time experience · **Preferences**: schedule patterns and day types, planner display, pattern tags, time block categories, people, time-block and routine settings, reminders, recurrence duration, Clear Date Range · **Connections**: models, Companion Memory, email suggestions, Google · **Logs**: planning-session logs |
 
 ## What you get
 
-- **Nine routed views** — Today · **Focus** · Calendar · Tasks (hosts the Objectives + Routines tabs and a New Today section) · Tags · **Priorities** · **Balance** · Jobs · Settings, plus the unauthenticated `/login` and `/reset-password`. The Inbox surface was retired in Phase AF (`possible_tasks` auto-promote); `/inbox`, `/objectives`, `/patterns` redirect into their host. (`/routines` is **not** a route — it 404s.)
+- **Nine routed views** — Today · **Focus** · Calendar · Tasks (hosts the Objectives + Routines tabs and a New Today section) · Tags · **Priorities** · **Balance** · Jobs · Settings, plus the unauthenticated `/login`, `/signup` and `/reset-password`. The Inbox surface was retired in Phase AF (`possible_tasks` auto-promote); `/inbox`, `/objectives`, `/patterns` redirect into their host. (`/routines` is **not** a route — it 404s.)
 - **Full task CRUD** — priorities P1–P5, due date + time, estimates, notes, tags, and subtasks
 - **Objectives you can undo** — hierarchical life goals (Goal → Project → Objective) with task
   linkage and progress roll-up. **Deleting an objective archives it rather than destroying it:**
@@ -930,6 +1197,14 @@ planner place it on your calendar — no cloud round-trip, all on-device.
   toggle it off or override the colour per element. Adding/removing which six categories
   exist is deliberately locked for now (a feature flag, off); renaming and recolouring stay
   open
+- **People on work** — every task and time block carries two peer people-sets,
+  **Responsible** (who does the work) and **Beneficiaries** (who it is for), picked from a
+  per-owner directory of people (every account is a person, but most people have no login).
+  A suggestion carries the people ingest recognised (calendar attendees and mail headers for
+  Responsible, the local model for Beneficiaries) onto the task when it is promoted, and a
+  block with no people of its own inherits its task's. The me · us · them **motivation** label
+  is derived from the Beneficiaries set once you set one. Design:
+  [docs/people-on-work.md](docs/people-on-work.md)
 - **Close ritual** — finish *anything* — task, habit, recurring instance, subtask, a
   Planner chip, the end of a Focus block — and an optional sheet asks how it went: **three
   faces** (Bad · Fine · Good), a closing note, and how long it really took. Tapping one
@@ -1004,6 +1279,23 @@ planner place it on your calendar — no cloud round-trip, all on-device.
   better" is a measured number rather than a claim, and `DELETE /api/classification/exemplars`
   resets the adaptation without touching the correction log underneath it. No feature flag —
   an owner who has never corrected anything simply sees an empty trend
+- **Dismissal learning** — what you dismiss or approve from the suggestion stream is logged
+  (`possible_outcome_log`); once you have 5 settled dismissals a weekly `calibrate_dismissals`
+  job keeps a per-owner rollup of them, and up to 3 relevant ones are shown to the extraction
+  prompt as history. It influences what is proposed and never suppresses a suggestion. One
+  noise-rate reading per run makes "fewer junk suggestions" a number
+  (`GET /api/dismissal-learning/trend`); `DELETE /api/dismissal-learning/exemplars` resets the
+  rollup and leaves the log alone
+- **Placement learning** — Auto records which gap it chose and the gaps it passed over, and
+  logs it as a correction when you move an auto-placed block. A weekly `calibrate_placement`
+  job turns 5 or more corrections for a direction into a preferred hour band (never one wider
+  than 6 hours), and gap choice leans toward that band by at most an hour of extra
+  fragmentation. `GET /api/placement/survival` shows whether placements are surviving the day
+  untouched; `DELETE /api/placement/preferences` resets the bands
+- **Balance targets in planning** — with `balance_bias_enabled` (default on), a life dimension
+  that is at least 2 hours behind its weekly target leads the Fill candidates and the day's
+  order (the two furthest behind at most); a weekly `snapshot_balance` job freezes each
+  closed week into `balance_week_log`, read back by `GET /api/priorities/history`
 - **Memory enrichment** — a per-task ✨ button (and a nightly `enrich_tasks` job) fills in a
   thin task from your Companion Memory: description, direction, categories. It only ever
   **fills blanks** — it never rewrites your own description or overrides a direction you
@@ -1013,10 +1305,14 @@ planner place it on your calendar — no cloud round-trip, all on-device.
   actually on today's plate (scheduled for today, or already placed in a time block today)
 - **Accounts + auth** — Companion Portal OIDC (OAuth 2.1 + PKCE) and/or local username/password, with
   role-based scopes: **operator** (read/write/admin) · **member** (read/write) · **viewer**
-  (read-only). An unrecognized role degrades to read-only rather than escalating
-- **Deterministic auto-scheduler** — packs open tasks into time blocks around your work
-  hours, pattern-block windows, locked meetings, and break preferences. Placement is always
-  deterministic and reproducible
+  (read-only). An unrecognized role degrades to read-only rather than escalating. Local
+  self-serve sign-up at `/signup` is invite-only by default: an operator mints single-use
+  codes (valid 7 days) in Settings → Accounts; `AUTH_SIGNUP=open` drops the code and `off`
+  removes sign-up
+- **Deterministic auto-scheduler** — packs open tasks into time blocks inside your
+  pattern-block windows (Work, Community, Home), around locked meetings, with your break and
+  focus-block preferences. A task that has a matching Time Block goes into it before any bare
+  window. Placement is always deterministic and reproducible
 - **Reactive reflow** — when the day shifts (a task edited, a meeting synced, a block missed),
   the schedule re-packs automatically around what's fixed: in-progress and recently-moved
   blocks are protected, churn is bounded, and a debounce collapses bursts into one pass. A
@@ -1030,7 +1326,8 @@ planner place it on your calendar — no cloud round-trip, all on-device.
 - **Pattern blocks** — named availability windows (Home / Work / Community) that shade
   the Planner and constrain auto-placement; per-pattern fill toggle and reminder offsets
 - **Routines** — typed task collections (Routine ▢ / Habit ◯) placed via a flight-plan
-  staging area; Ritual △ is feature-flagged
+  staging area; Routine placement (`enable_routines`) and Ritual △ (`enable_rituals`) are
+  per-owner feature flags, both off by default (Habits are not flagged)
 - **Flight-plan staging** — two-step Auto: build a staged list, then schedule; lets you
   curate before committing
 - **Plan my week** — a guided onboarding assistant: a self-contained modal off a fixed
@@ -1039,11 +1336,13 @@ planner place it on your calendar — no cloud round-trip, all on-device.
   deterministic copy when it isn't — the fallback is authored first and the model only ever
   rephrases it, never invents a fourth option. Every session is logged (`planning_sessions`)
   and the Settings → Logs tab lets you read, export, or delete your own sessions
-- **Auto-promoted suggestions** — ingestion jobs propose "possible tasks" from email and
-  calendar; each carries its source and a confidence score. Suggestions are deduplicated
-  inline (embedding-based when available) and **auto-promoted into real tasks** at the
-  end of each run (Phase AF); they land in the **New Today** section at the top of the
-  Tasks view, and the staging rows are kept as an audit/dedup trail
+- **Auto-promoted suggestions** — ingestion jobs propose "possible tasks" from calendar,
+  Companion Memory and text; each carries its source and a confidence score. Suggestions are
+  deduplicated inline (embedding-based when available) and **auto-promoted into real tasks**
+  at the end of each run (Phase AF); they land in the **New Today** section at the top of the
+  Tasks view, and the staging rows are kept as an audit/dedup trail. **Email is the
+  exception:** a Gmail suggestion is never auto-promoted. It waits in a review queue at the
+  top of the Tasks view until you approve or dismiss it
 - **Ingestion windows** — two
   per-owner settings bounding how much of each source a pull reads: **Look ahead**
   (`memory_window_days`, 1–30, default 2) for the Companion Memory pull, and **Look back**
@@ -1052,10 +1351,11 @@ planner place it on your calendar — no cloud round-trip, all on-device.
   ever read backwards — and the email one is a real floor: before it, a first ingest read
   as far back as Gmail would return
 - **Background jobs** — Gmail / Calendar ingest, nightly grooming (embedding-based
-  dedupe), auto-schedule, memory enrichment, and the hourly `purge_objectives` reaper;
-  all visible and manually runnable from the Jobs view. (Possible-task promotion no
-  longer has a scheduled row — Phase AF made ingestion auto-promote; `nightly_grooming`
-  subsumes the sweep. The kind stays runnable programmatically.)
+  dedupe), auto-schedule, memory enrichment, the weekly learning batches (`calibrate_*`,
+  `snapshot_balance`) and the hourly `purge_objectives` reaper; all visible and manually
+  runnable from the Jobs view. (Possible-task promotion no longer has a scheduled row —
+  Phase AF made ingestion auto-promote; `nightly_grooming` subsumes the sweep. The kind
+  stays runnable programmatically.)
 - **AI day briefing** — Ollama-authored when available, deterministic template
   otherwise; the UI labels it honestly ("AI Briefing" vs. "Day Overview")
 - **Reminders & Web Push** — per-pattern reminder offsets generate reminders that a
@@ -1063,8 +1363,11 @@ planner place it on your calendar — no cloud round-trip, all on-device.
   to subscribed devices (service worker + VAPID; keys auto-provisioned on first boot). Opt in
   from Settings; snooze reschedules; completed / cancelled tasks never fire
 - **Live updates** — Server-Sent Events push task / block / job changes to every open
-  client, so the UI stays in sync without polling
-- **Installable PWA** — manifest + standalone display; usable from a phone over your tailnet
+  client, so the UI stays in sync without polling; the iOS / Android app shells, which
+  cannot hold the stream, poll `GET /api/sync/changes` instead
+- **Installable PWA** — manifest + standalone display; usable from a phone over your tailnet.
+  There are also native iOS and Android shells that connect to your server (see
+  [Mobile app](#mobile-app-ios-and-android))
 - **Objectives hierarchy** — a life-planning tree of Goals → Projects → Objectives; each leaf Objective links to Tasks whose completion rolls up into progress; height-derived level (no manual selection); a task that gains a subtask auto-promotes into its own Objective; progress is `NULL` when there's nothing to measure — a rot signal, not a zero
 - **FOCUS card** (formerly "Goals") — a single today focus and up to three weekly goals in the Today cockpit, toggled by a `Today | This week` switch. Each slot can **link** to a Task (today) or an Objective (weekly) via a typeahead, or hold freeform text; completing a linked task auto-checks its focus (two-way completion). A **Today's Brief** pop-up (replacing the old standalone Morning Briefing section) shows the AI prose, capacity, and top tasks (habits + routines excluded). Each slot optionally carries a category color stripe and a done stamp.
 - **Day note** — one free-text note per day (enforced structurally, not by convention — reuses the FOCUS card's `reflections` table with a dedicated `kind`); a header affordance and a calendar dot open/indicate it
@@ -1082,19 +1385,22 @@ Companion Planning is a small pipeline that turns raw inputs into a planned day,
 with a full audit trail at every step — you steer by dismissing what you don't
 want and by deciding when the plan runs.
 
-1. **Ingest** — scheduled jobs read your sources (Gmail + Calendar; fixtures by
-   default). Unstructured email/event text is mined by a local LLM for action items,
+1. **Ingest** — scheduled jobs read your sources (Gmail + Calendar, once Google is
+   connected; a fixture mode exists for demos). Unstructured email/event text is mined by a
+   local LLM for action items,
    with a deterministic fallback if Ollama is down. Calendar **meeting blocks** are
    mirrored by the dedicated calendar sync path (one canonical inbound reconciler keyed
    on event identity + etag), not by ingest — `ingest_gcal` now only extracts tasks.
 2. **Review** — extracted items are staged as *possible tasks*, each tagged with
-   its source and a confidence score, deduplicated inline, and **auto-promoted
-   into real tasks** at the end of the run (Phase AF). Everything a run creates
-   surfaces in the **New Today** section at the top of the Tasks view, so you
-   see exactly what arrived today; the staging rows remain as an audit trail.
+   its source and a confidence score, deduplicated inline, and, for calendar, memory
+   and text sources, **auto-promoted into real tasks** at the end of the run
+   (Phase AF). Everything a run promotes surfaces in the **New Today** section at the
+   top of the Tasks view, so you see exactly what arrived today; the staging rows
+   remain as an audit trail. **Email suggestions are the exception:** they wait in a
+   review queue above that list until you approve or dismiss them.
 3. **Plan** — build a **flight-plan** staging list, then run **Auto** to pack open
-   tasks into the open gaps of your workday, honoring work hours, pattern-block
-   windows, locked meetings, focus-block limits, and minimum breaks. Deterministic —
+   tasks into the open gaps of your workday, honoring pattern-block windows,
+   locked meetings, focus-block limits, and minimum breaks. Deterministic —
    same inputs, same plan — and re-runnable any time. With **AI day ordering** on, a
    local LLM decides the *order* once (frozen into a durable day plan); the packing
    stays deterministic. Two clocks: the LLM is slow/async and only orders or re-triages;
@@ -1105,8 +1411,9 @@ want and by deciding when the plan runs.
    nudge instead, and re-authors only if you accept.
 5. **Brief** — the **Today** view opens with an AI briefing that summarizes what's
    overdue, what's scheduled, and where to focus, generated on-device.
-6. **Groom** — a nightly job dedupes near-identical tasks using text embeddings
-   (`sqlite-vec` KNN when available, an exact cosine pass otherwise) and tidies the backlog.
+6. **Groom** — a nightly job dedupes near-identical suggestions using text embeddings
+   (`sqlite-vec` KNN when available, an exact cosine pass otherwise), bumps the priority of
+   overdue tasks, and promotes any suggestion that was left behind.
 
 Every step runs locally. The single SQLite file is the whole system of record.
 **[Lifecycle of a to-do item](#lifecycle-of-a-to-do-item)** traces one task through that
@@ -1116,9 +1423,10 @@ detail. See **[Backup and restore](#backup-and-restore)** for safe copy and reco
 ## Lifecycle of a to-do item
 
 The Task is the app's core work atom, and every surface — quick-add, the wizard, an
-auto-promoted email suggestion, an agent over GraphQL — funnels through the **same
-owner-scoped service layer** (`server/src/services/tasks.ts`). The routes are transport;
-the service is where the rules live, which is why REST and GraphQL cannot drift.
+agent over GraphQL — funnels through the **same owner-scoped service layer**
+(`server/src/services/tasks.ts`). The routes are transport; the service is where the rules
+live, which is why REST and GraphQL cannot drift. A promoted suggestion takes the one other
+way in (`services/possibles.ts`) and joins the lifecycle below as an `open` task.
 
 ### Status lifecycle
 
@@ -1149,7 +1457,9 @@ stateDiagram-v2
     scheduled --> cancelled : DELETE — active blocks cancelled too
     done --> cancelled : DELETE
 
-    missed --> open : nightly review revives<br/>with a +1/3/7 day backoff
+    open --> missed : generate_recurrences flags a habit<br/>instance whose day passed unfinished
+    missed --> open : nightly review revives a stuck one-off<br/>with a +1/3/7 day backoff
+    open --> skipped : skip a recurring instance<br/>its day joins the template EXDATE
 
     cancelled --> [*] : terminal — the row, its tags,<br/>and its audit trail are all kept
 
@@ -1165,11 +1475,12 @@ stateDiagram-v2
     note right of scheduled
         Placement status parity: every engine path
         flips open to scheduled, and reverts it when
-        the last active block goes away. deferred and
-        missed remain in the status vocabulary and in
-        the Tasks filter, but no server path writes
-        them any more — the nightly review sweeps
-        anything still stuck there back to open.
+        the last active block goes away. deferred stays
+        in the status vocabulary and the Tasks filter,
+        but no server path writes it. missed is written
+        only for a habit instance whose day passed
+        unfinished; the nightly review sweeps any
+        other task stuck there back to open.
     end note
 ```
 
@@ -1197,10 +1508,11 @@ sequenceDiagram
     Svc->>DB: INSERT tasks — UUIDv7 id, status open
     Svc->>DB: entity_tags L1 direction plus L2 intentions
     Svc->>DB: entity_categories, 1 to 3 of the six dimensions
+    Svc->>DB: entity_people — responsible and beneficiary sets, when sent
     Svc->>DB: task_dependencies — a cycle is a 409, task row already written
     Svc->>DB: derive reminders from the Reminder Defaults
     Svc->>DB: audit_log create
-    opt auto_place, or Hands-off trust mode
+    opt auto_place true and scheduled_for set
         API->>Eng: placeStartAnchoredTask
         Eng->>DB: INSERT time_blocks at scheduled_for plus task_time
         Eng->>DB: status open becomes scheduled
@@ -1254,7 +1566,7 @@ sequenceDiagram
     UI->>API: DELETE /api/tasks/:id, scope instance or following
     API->>Svc: deleteTask
     Svc->>DB: status cancelled — the row is kept
-    Svc->>DB: active blocks cancelled, auto reminders dropped
+    Svc->>DB: active blocks cancelled, auto reminders dropped, flight-plan entry removed
     Svc->>DB: objectives upkeep, then audit_log delete
     API->>SSE: task:updated plus block:updated
     API->>Eng: requestReplan task:deleted — the freed slot re-packs
@@ -1300,6 +1612,15 @@ The split is the whole design: a slow, fallible model can take 25 seconds to thi
 sequence, while the thing that defends your calendar has to answer in milliseconds and be
 reproducible.
 
+Three settings are independent of one another. The **trust dial** (`trust_mode`: Cautious ·
+Balanced · Hands-off, default Balanced) decides how much the planner does unasked: only
+Hands-off places on its own (after a promotion, an email ingest or a calendar sync) and
+plans a multi-day horizon. It also decides how much inference may reorder the day's list:
+Cautious none, Balanced the balance nudge, Hands-off the balance nudge plus the day theme
+and Companion Memory. **`planning_mode`** (`basic` · `smart`) decides whether the LLM loop
+or the deterministic sort authors that order; since migration 0171 Hands-off no longer
+forces it. `fill_order` (below) is the explicit sort and applies in every tier.
+
 ### The three taps
 
 Auto is deliberately staged — you build a list, then commit it — so nothing lands on your
@@ -1310,12 +1631,18 @@ run in one click (each run stamps its blocks with an `auto_run_id`).
 |---|---|---|
 | **1 · Fill** | `POST /api/auto/fill` | Proposes up to 20 candidates into the **flight plan** staging area — `open`, top-level, not a habit, not a recurrence instance, and either undated or already dated for the target day without a live block. They arrive selected (deselect to exclude). Schedules nothing. |
 | **2 · Schedule** | `POST /api/auto/run` | Authors the day's order (once), then **places** the selected staged tasks through the pass ladder below. Placed tasks leave the staging area. |
-| **3 · Priority top-up** | `POST /api/auto/priority` | Optional, never automatic: fills leftover workday capacity with the highest-priority still-unplaced tasks, flowing around everything already placed. |
+| **3 · Priority top-up** | `POST /api/auto/priority` | Optional, never automatic: fills leftover workday capacity with the highest-priority still-unplaced tasks, flowing around everything already placed. A no-op when `auto_fill_workday` is off. |
 
 In the **Hands-off** trust mode, tap 2 spans `planning_horizon_days` (default 7, clamped
 1–60) instead of one day — leftovers fan onto the next day — and only day 0 may use the
 LLM, so a week's plan never fires seven model calls. (A caller can pass `smart: true` to
 re-author every day in the horizon; nothing does by default.)
+
+**Balance bias.** With `balance_bias_enabled` (default on), a life dimension that is at least
+2 hours behind its weekly target from the Priorities wizard leads, up to the two furthest
+behind. Tap 1 then reads a pool of up to 60 open tasks instead of 20 and takes those
+dimensions' tasks first. The same dimensions lead the day's authored order ahead of the plain
+deadline/priority sort, in Balanced and Hands-off but not Cautious.
 
 ### How a day gets packed
 
@@ -1332,9 +1659,10 @@ flowchart TD
     C --> P1["Pass 1 · Tag-matched Plan containers<br/>tag-matched Plans first, catch-all Plans last<br/>placed tasks become the Plan's members"]
     P1 --> P15["Pass 1.5 · Category Plans<br/>filled by their position-0 category"]
     P15 --> P175["Pass 1.75 · Natural-language hint windows<br/>a same-day instruction outranks a recurring window<br/>HARD: a full window leaves the task unplaced"]
-    P175 --> P2A["Pass 2a · Direction windows for the day-type<br/>pattern_blocks, union, earliest first<br/>honours the per-direction auto_fill gate"]
+    P175 --> P19["Pass 1.9 · Matching Time Block<br/>direction + category match, with room<br/>a full Time Block never auto-extends"]
+    P19 --> P2A["Pass 2a · Direction windows for the day-type<br/>pattern_blocks, union, earliest first<br/>honours the per-direction auto_fill gate"]
     P2A --> P2B{auto_fill_workday on?}
-    P2B -->|yes| P2BB["Pass 2b · Workday fallback<br/>ordered by daily_plan, else by fill_order<br/>priority-first · overdue-first · new-today-first"]
+    P2B -->|yes| P2BB["Pass 2b · Workday fallback<br/>union of the Work + Community windows<br/>ordered by daily_plan, else by fill_order<br/>priority-first · overdue-first · new-today-first"]
     P2B -->|no| U
     P2BB --> U[Anything still unplaced<br/>reverts to the open backlog]
 
@@ -1353,7 +1681,7 @@ flight plan. It only applies to Pass 2b, and only when the day has *no* authored
 
 | Value | Toggle label | Order |
 |---|---|---|
-| `priority` | Priority | P1 first, then due date |
+| `priority` | Priority | P1 first, then tasks that share tags (related work stays together), then due date |
 | `overdue` | Due Date | Soonest-due first, then priority |
 | `new_today` | New Today | Today's arrivals take the earliest slots; each half stays deadline-first |
 
@@ -1367,16 +1695,20 @@ flight plan. It only applies to Pass 2b, and only when the day has *no* authored
 3. **Pick** a gap **best-fit** — the one leaving the least leftover, which reduces
    fragmentation. If nothing fits, fall back to the largest remaining gap and truncate,
    but never carve a sliver under **15 minutes**. All gaps are scanned, so a small task
-   backfills a hole a bigger one skipped.
+   backfills a hole a bigger one skipped. Once an owner has a learned hour band for the
+   task's direction (placement learning), a gap inside the band may win over the tightest
+   fit, at a cost of at most an hour of extra leftover.
 4. **Clamp** — on the owner-local *current* day, no engine-chosen slot may start before
    now. A late-afternoon re-pack fills the remaining day instead of shoving work into
    past morning gaps that the missed sweep would immediately recycle.
 
-Windows come from your own configuration: `workday_start`/`workday_end` are wall-clock in
-your `timezone`, **pattern blocks** are direction-scoped availability windows
-(Home / Work / Community) selected by the day's **day type**, and a day type is resolved
-per-date first, then from the weekly map, then from a weekend heuristic. All day maths is
-DST-aware — day bounds are computed in your zone, never as `start + 24h`.
+Windows come from your own configuration: **pattern blocks** are direction-scoped
+availability windows (Home / Work / Community), wall-clock in your `timezone` and selected
+by the day's **day type**, and a day type is resolved per-date first, then from the weekly
+map, then from a weekend heuristic. The workday fallback (Pass 2b) fills the union of the
+Work and Community windows; the old `workday_start`/`workday_end` setting is no longer read
+(0156), so a day type with no Work or Community window gives that pass nothing to fill. All
+day maths is DST-aware — day bounds are computed in your zone, never as `start + 24h`.
 
 ### Reactive reflow, and why it doesn't thrash
 
@@ -1433,7 +1765,7 @@ touching the underlying rule.
 
 ### Background jobs
 
-**22 cron rows across 23 executable kinds.** Owner-scoped kinds fan out once per owner
+**25 cron rows across 26 executable kinds.** Owner-scoped kinds fan out once per owner
 (enumerated at run time, so a fresh account is picked up on the next tick); a kind still
 running is never started again by the next tick. Every run writes a `job_runs` row, and
 all of them are listed and manually runnable from the **Jobs** view.
@@ -1441,8 +1773,8 @@ all of them are listed and manually runnable from the **Jobs** view.
 | Job | Cron | What it does |
 |---|---|---|
 | `fire_reminders` | `* * * * *` | Claim-by-UPDATE dispatcher — fires each due reminder **exactly once**, in-app via SSE and via Web Push |
-| `ingest_gmail` | `*/15 * * * *` | Mine email for action items into `possible_tasks`. Reads from the `(owner, google, account)` watermark, floored at `now − email_lookback_days` so a first run, or the first run after an outage, can't replay months of mail |
-| `sync_calendar` | `*/15 * * * *` | Two-way calendar reconcile keyed on event identity + etag; requests a reflow when anything changed |
+| `ingest_gmail` | `*/15 * * * *` | Mine email for action items into `possible_tasks`. Reads from the `(owner, google, account)` watermark, floored at `now − email_lookback_days` so a first run, or the first run after an outage, can't replay months of mail. Email suggestions are not auto-promoted; they wait for your approval |
+| `sync_calendar` | `*/15 * * * *` | Calendar reconcile keyed on event identity + etag, inbound only unless `CP_SYNC_WRITEBACK` is on; requests a reflow when anything changed |
 | `ingest_gcal` | `*/30 * * * *` | Extract **tasks** from calendar text (meeting blocks are mirrored by `sync_calendar`, not here) |
 | `memory_suggest` | `0 */6 * * *` | Stage upcoming Companion Memory events as suggestions (needs `memory_pull_enabled`). Looks ahead by the configurable `memory_window_days` (default 2), which the daily brief reads too |
 | `tag_tasks` | `0 * * * *` | Tag untagged top-level open tasks |
@@ -1462,12 +1794,14 @@ all of them are listed and manually runnable from the **Jobs** view.
 | `calibrate_classification` | `10 4 * * 1` | Weekly re-tune of the classify/parse LLM's few-shot exemplars from the owner's own corrections; runs after `calibrate_triality` so the two weekly learning passes don't compete for one GPU |
 | `calibrate_dismissals` | `20 4 * * 1` | Weekly rebuild of the dismissal-evidence exemplar rollup + one noise-rate reading, from settled `possible_outcome_log` evidence; runs after `calibrate_classification` for the same single-GPU reason |
 | `calibrate_plan_loop` | `30 4 * * 1` | Weekly batch over `plan_loop_runs` — the §A0 authoring loop's pass rate, first-try pass rate, escapes and average iterations per stage; pure SQL, no model calls, but stays inside the weekly learning block so the schedule reads as one unit |
-| `snapshot_balance` | `40 4 * * 1` | Weekly freeze of each life dimension's target/scheduled/timed hours for the week just closed into `balance_week_log` — history for a future learning surface, not read by anything yet; `INSERT OR IGNORE`, first-freeze-wins |
+| `snapshot_balance` | `40 4 * * 1` | Weekly freeze of each life dimension's target/scheduled/timed hours for the week just closed into `balance_week_log` — read back by `GET /api/priorities/history`; `INSERT OR IGNORE`, first-freeze-wins |
+| `calibrate_placement` | `50 4 * * 1` | Weekly rebuild of each owner's learned hour band per direction (`placement_preferences`) from the moves they made to auto-placed blocks in `placement_log`, plus one survival reading (`placement_survival`); needs 5 or more corrections for a direction, makes no model calls, and runs last in the Monday learning block |
 | `advance_objectives` | `0 5 * * 1` | Stage the next action for each active objective into the flight plan |
 | `promote_possibles` | *(no cron row)* | Runnable on demand only — ingestion auto-promotes, and `nightly_grooming` sweeps stragglers |
 
-Set **`TZ`** to your IANA zone: cron fires on the container clock, and it decides what
-counts as "today" for every nightly job.
+Set **`TZ`** to your IANA zone: cron fires on the container clock, so it decides when each
+nightly job runs. What counts as "today" inside a job comes from each owner's `timezone`
+preference, and falls back to that same server zone when none is set.
 
 ## Backup and restore
 
@@ -1489,7 +1823,9 @@ To restore from a snapshot (server must be stopped first):
 pnpm --filter server restore -- /data/backups/companion-2026-06-22T02-00-00-000Z.db
 ```
 
-The restore script validates the source file, detects a running server, copies it to
+The restore script validates the source file, refuses to run while the server is up (a
+pidfile check plus a write-lock probe), moves the current database and its `-wal`/`-shm`
+aside into `<DB_DIR>/pre-restore/` instead of overwriting it, copies the snapshot to
 `DB_PATH`, and runs any forward migrations if the snapshot is from an older version.
 
 ### Option 2 — Litestream (streaming replication)
@@ -1509,20 +1845,32 @@ litestream restore -config ops/litestream.yml \
   -timestamp 2026-06-22T14:00:00Z /data/companion.db
 ```
 
+### Option 3 — export / import (one account)
+
+**Settings → Backup & Export** downloads the signed-in account's data as one JSON file
+(`GET /api/export`) and restores it (`POST /api/import`). Import replaces that account's data
+in a single transaction, refuses a file exported by a different account, and reads the
+current export format and earlier ones back to version 6. It leaves out connection tokens
+(Google and Companion Memory links are re-made on the new host), API keys and the audit log,
+and it covers one account only, so it is a portable copy rather than a whole-server backup.
+
 ### ⚠ Syncthing / rsync warning
 
 **Do not sync the live `.db` file with a generic file-sync tool.** SQLite's WAL mode
 writes across multiple files (`.db`, `.db-wal`, `.db-shm`). A file-sync tool copies
 them at different moments and can produce a corrupt or inconsistent database. Use
-`pnpm snapshot` or Litestream — both open a proper SQLite connection and export a
+`pnpm --filter server snapshot` or Litestream — both open a proper SQLite connection and export a
 consistent snapshot.
 
-## Latest change set — migrations 0148–0150
+## Change set — August 2026 (migrations 0148–0150)
 
 Everything above describes the app **as it runs on `main`**, which is at migration head
-`0150_calibrate_classification_job`. This section is the single narrative description of
-that change set: closing a locking gap on synced calendar blocks, plus a new learning loop
-that lets the parse/classify LLM improve from the owner's own corrections.
+`0172_signup_codes` (v4.2, checked 2026-11-01). This section is the narrative description of
+the change set that took the head from 0147 to 0150 on 2026-08-14: closing a locking gap on
+synced calendar blocks, plus a new learning loop that lets the parse/classify LLM improve
+from the owner's own corrections. Everything in it is still true of `main`. What shipped
+after it is listed at the end of this section, and release notes are in
+[CHANGELOG.md](CHANGELOG.md).
 
 ### Synced blocks are locked, always — not just going forward
 
@@ -1631,23 +1979,79 @@ disagree about the set: `sqliteUtcToISO()` folded into `localDateInTZ` server-si
 the same normalization in `isCreatedOnDay` client-side. A no-op for the proper ISO strings
 every other caller passes.
 
-## Project status (v0.3, 2026-07)
+### Since then — migrations 0151–0172 and what else shipped
+
+Migrations 0151–0171 landed between 2026-08-16 and 2026-08-30, and 0172 on 2026-10-21.
+Numbers 0159 and 0160 were never used.
+
+- **0151–0154 · People on work.** A per-owner `people` directory (`person_emails` for
+  matching) and two peer sets on tasks and time blocks, Responsible and Beneficiaries
+  (`entity_people`). Ingest carries the people it recognised on a suggestion onto the task at
+  promote (`possible_task_people`, 0152); a block inherits its task's people unless it pins its
+  own, per role (0153, split per role in 0154). The me · us · them motivation label is projected
+  from the Beneficiaries set. See [docs/people-on-work.md](docs/people-on-work.md)
+- **0155 · Ollama thinking mode.** `llm_thinking_enabled`, per owner, off by default
+- **0156 · Capacity hours; the workday window is gone.** `capacity_hours_per_week` (default 56)
+  feeds the AI-authoring capacity hint, and Auto's workday fallback fills the Work + Community
+  pattern-block windows. `workday_start`/`workday_end` are no longer read
+- **0157–0158 · Dismissal learning.** `possible_outcome_log`, `possible_dismissal_exemplars`,
+  `possible_dismissal_rate`; weekly `calibrate_dismissals` (Monday 04:20);
+  `GET /api/dismissal-learning/trend`, `DELETE /api/dismissal-learning/exemplars`
+- **0161 · Close-ritual rating.** `tasks.completion_score` (1–5, 0 = declined) replaces
+  `completion_mood`: three faces, with an optional adjacent second pick
+- **0162–0163 · Plan-loop evidence.** `plan_loop_runs`, `plan_revision_log`, `plan_loop_stats`;
+  weekly `calibrate_plan_loop` (Monday 04:30); `GET /api/plan-loop/trend`
+- **0164, 0165, 0168 · Balance targets reach the scheduler.** `balance_bias_enabled` (default
+  on); `balance_week_log` and the weekly `snapshot_balance` (Monday 04:40);
+  `GET /api/priorities/history`; an index for the interval-overlap query
+- **0166, 0167, 0169 · Placement learning.** `placement_log`, `placement_preferences`,
+  `placement_survival`; weekly `calibrate_placement` (Monday 04:50); gap choice leans toward the
+  learned hour band; `GET /api/placement/survival`, `DELETE /api/placement/preferences`;
+  0169 indexes `scheduling_prefs(owner_id)`
+- **0170 · Open Time per direction.** `tag_prefs.show_open_time`, on by default for every
+  direction (Home windows used to be left out)
+- **0171 · The trust dial is an ordering policy.** `planning_mode` no longer follows
+  `trust_mode`; owners who relied on Hands-off implying Smart were pinned to `smart`
+- **0172 · Invite-code sign-up.** `signup_codes`; with `AUTH_SIGNUP=invite` (the default) an
+  operator mints single-use codes in Settings → Accounts for `/signup`
+- **No migration.** Auto fills a matching Time Block before any bare window (Pass 1.9). A
+  scheduled task can be given up on from the details drawer and is counted as
+  scheduled-and-cancelled in Balance → Metrics. The iOS and Android shells
+  ([Mobile app](#mobile-app-ios-and-android)) and `GET /api/sync/changes` are on `main` but not
+  yet in a tagged release. Companion Portal sign-in against the real Portal, security headers
+  and the license change are in 4.2.0
+
+Release notes from 4.2.0 on are in [CHANGELOG.md](CHANGELOG.md); earlier changes are in
+`git log`.
+
+## Project status (v4.2, 2026-11-01)
+
+The latest git tag is `v4.2.2` (2026-10-29). The root `package.json` still reads `4.2.0`,
+and the container image reports the version it was built with (`CI_PLANNING_VERSION`, set
+from the tag) in `GET /api/health`. The migration head is `0172_signup_codes`: 168
+migrations, 0001–0172, with no files for 0009, 0119, 0159 or 0160; the ordered list in
+`server/src/db/migrations/index.ts` is authoritative. `main` is four commits past `v4.2.2`
+(the iOS and Android shells, the polling endpoint they use, and a test fix). Release notes
+are in [CHANGELOG.md](CHANGELOG.md).
 
 **Working today:**
 
 - Koa + TypeScript backend serving both the API and the built client on port 3848
-- SQLite schema (migrations 0001 → current head — the ordered list in
+- SQLite schema (migrations 0001 → 0172 — the ordered list in
   `server/src/db/migrations/index.ts` is authoritative): tasks, subtasks, time
   blocks, tags, entity_tags, tag_directions, patterns, pattern_blocks, tag_prefs,
   flight_plan, daily_plan, daily_recap, possible_tasks, scheduling_prefs,
   time_entries, block_templates, scheduled_jobs, reminders, push_subscriptions,
   replan_suggestions, audit_log, sync_events, reflections, objectives,
   objective_tasks, estimate_calibration, calibration_history, connection_tokens,
-  external_events, copy_history
+  external_events, copy_history, life_priorities, planning_sessions, people,
+  entity_people, signup_codes, plus the learning tables (triality_log,
+  triality_weights, classification_*, possible_outcome_log, plan_loop_*,
+  placement_*, balance_week_log)
 - All nine routed SolidJS views, with full task CRUD (tags, notes, priorities, due
   date/time, subtasks)
-- Deterministic auto-scheduler honoring work hours, pattern blocks, locked meetings,
-  and break preferences; per-pattern auto-fill gating
+- Deterministic auto-scheduler honoring pattern-block windows, locked meetings, Time
+  Blocks and break preferences; per-pattern auto-fill gating
 - Reactive reflow (`POST /api/schedule/run`) — re-packs the day deterministically
   around protected (in-progress / recently-moved) blocks; debounced reactive triggers
   on task / calendar / missed-block changes, gated by `auto_defense_enabled`
@@ -1662,11 +2066,13 @@ every other caller passes.
 - Notifications: a `reminders` store + 1-minute `fire_reminders` dispatcher (exactly-once),
   delivered in-app via SSE and via Web Push (VAPID) to subscribed devices; reminders are
   auto-derived from per-pattern reminder offsets, with a Settings opt-in toggle and snooze
-- Croner jobs: 21 cron-scheduled rows out of 22 executable kinds — Gmail ingest (every
+- Croner jobs: 25 cron-scheduled rows out of 26 executable kinds — Gmail ingest (every
   15m since 0146), Calendar ingest, nightly grooming/dedupe, auto-schedule,
-  `enrich_tasks`, the weekly `calibrate_triality` (Monday 03:50) and `calibrate_classification`
-  (Monday 04:10), fire_reminders, purge_objectives, and the rest. Owner-scoped kinds fan out
-  once per owner; a kind still running is never re-started by the next tick. Full table in
+  `enrich_tasks`, fire_reminders, purge_objectives, the Monday learning block
+  (`calibrate_triality` 03:50, `calibrate_classification` 04:10, `calibrate_dismissals`
+  04:20, `calibrate_plan_loop` 04:30, `snapshot_balance` 04:40, `calibrate_placement`
+  04:50), and the rest. Owner-scoped kinds fan out once per owner; a kind still running
+  is never re-started by the next tick. Full table in
   [Scheduling system → Background jobs](#background-jobs). `promote_possibles` is the kind
   with no cron row (runnable on demand only); `place_patterns` was retired by 0026
 - Ollama-backed extraction/summarization with deterministic fallbacks
@@ -1680,20 +2086,26 @@ every other caller passes.
 - **Close ritual + Balance Metrics** (0137/0138, rescored 0161) — an optional post-completion sheet (three faces → a 1–5 rating · note · real duration, stamped with its own `reaction_at`) offered on **every** completion path and queued when several land at once, feeding a measured **Metrics** tab on `/balance`: counts, timed minutes, rating mix, and estimate bias per direction and per category over 7/30/90 days — **tasks and habits in separate sections** — served by `GET /api/metrics/tasks` + `/api/metrics/calibration`
 - **Memory enrichment** (0136) — `POST /api/tasks/:id/enrich` (the task-card ✨ button) and the nightly `enrich_tasks` job fill blank description/direction/categories from Companion Memory; fill-blanks-only, and it reports an honest reason when it can't help
 - **Recurrence horizon + Clear Date Range** (Phase P) — `recurrence_horizon_days` bounds materialization in both recurrence engines (patterns + blocks); lowering it auto-prunes via a shared `clearPlannerRange` engine, which also backs `POST /api/planner/clear` (dry-run preview, DB snapshot on apply) and the original `clear-planner-from.ts` CLI script
-- **Multi-device sync** — field-level merge, `sync_events` append-only log, `Last-Event-ID` SSE catch-up; `POST /api/sync` applies offline op-log entries
+- **Multi-device sync** — field-level merge, `sync_events` append-only log, `Last-Event-ID` SSE catch-up (and `GET /api/sync/changes?since=` for clients that poll instead of streaming); `POST /api/sync` applies offline op-log entries
 - **GraphQL CRUD layer** (Phase W) — a complete Apollo Server 5 surface at `POST /api/graphql` alongside REST (REST authoritative/untouched); Relay-style connections, `Node`/`DateTime`/`JSON` conventions, shared owner-scoped service layer, flag-gated GraphiQL sandbox
 - **Natural scheduling** (Phase AB) — `scheduled_for` + `task_time` are START intent that drives placement (a 2pm task lands at 2pm), with `due_at` a deadline only; a shared `placeStartAnchoredTask` honors stated day/time across create, quick-add, and promote
 - **Calendar reliability** (Phase AD) — `task_time` honored uniformly (quick-add places on save; flight-plan pins timed tasks and packs flexible work around them); tasks inherit their container's direction tag; Alt-drag drops a block anywhere (overlap allowed)
 - **Reflow correctness** (Phase AE) — the reactive reflow is snapshot-based (clear set == re-place set), so editing one placed task can never wipe the other auto-placed blocks; placement status parity (`open`↔`scheduled`), a not-before-now clamp, and locked-block guards across reschedule/review/sweep
 - **Today + Tasks UI** (Phase AC) — Today's single header row (Brief · Focus · Note popovers + FAB, collapsible DUE); Tasks task-chip redesign, Routine grouping with end-of-day archive and a midnight `reset_routines` job
-- **Memory integration** (Phase AA, opt-in) — a pull-first, read-only link to the CI-Server `companion-memory` graph behind `memory_pull_enabled`: the `memory_suggest` job stages upcoming events as task suggestions (auto-promoted since Phase AF), the Daily Brief folds in a memory excerpt, autoplan ordering favors memory-related tasks, and memory-drafted tasks get a history-based default estimate; a one-way `push_memory` job (behind `memory_sync_enabled`) mirrors completions/habits/reflections back
+- **Memory integration** (Phase AA, opt-in) — a pull-first, read-only link to the CI-Server `companion-memory` graph behind `memory_pull_enabled`: the `memory_suggest` job stages upcoming events as task suggestions (auto-promoted since Phase AF), the Daily Brief folds in a memory excerpt, the Hands-off trust tier's day ordering favors memory-related tasks, and memory-drafted tasks get a history-based default estimate; a one-way `push_memory` job (behind `memory_sync_enabled`) mirrors completions/habits/reflections back
+- **People on work** (0151–0154) — Responsible and Beneficiaries sets on tasks and time blocks, a per-owner people directory, and people detected on suggestions; see [docs/people-on-work.md](docs/people-on-work.md)
+- **Learning from what you do** — weekly, batch-only passes over per-owner evidence logs, never run mid-request: `calibrate_classification` (category and motivation picks), `calibrate_dismissals` (suggestion noise), `calibrate_placement` (preferred hours for auto-placed blocks), `calibrate_plan_loop` (authoring-loop stats) and the flagged `calibrate_triality`. All but the plan-loop stats have a reset endpoint
+- **Balance targets in planning** (0164–0165, 0168) — `balance_bias_enabled` (default on) puts life dimensions that are behind their weekly target first in Fill and in the day's order; `snapshot_balance` freezes each closed week into `balance_week_log`
+- **Accounts** — Companion Portal sign-in and local username/password; invite-code self-serve sign-up (0172, `AUTH_SIGNUP`); operator / member / viewer roles
+- **Mobile** — Capacitor iOS and Android shells in `mobile/` that connect to a server you run (see [Mobile app](#mobile-app-ios-and-android)); on `main`, not yet in a tagged release
 
 **Intentionally partial:**
 
-- Google `live` mode (standalone OAuth + two-way calendar sync) is implemented but
-  **opt-in**: it stays dormant until you set `GOOGLE_MODE=live`, `CP_GOOGLE_CLIENT_ID` /
-  `CP_GOOGLE_CLIENT_SECRET`, and `CP_KEK_B64`. With `GOOGLE_MODE` unset (the default)
-  Google integration is off entirely; `GOOGLE_MODE=fixture` is an explicit dev/demo
+- Google `live` mode (standalone OAuth + calendar sync) is implemented but **opt-in**: it
+  stays dormant until an admin saves a Google OAuth client in Settings → Connections (needs
+  `CP_KEK_B64`) or you set `GOOGLE_MODE=live` with `CP_GOOGLE_CLIENT_ID` /
+  `CP_GOOGLE_CLIENT_SECRET`, which pins the mode and makes the in-app setup read-only. With
+  neither, Google integration is off entirely; `GOOGLE_MODE=fixture` is an explicit dev/demo
   opt-in that runs on committed sample data with no network calls. See
   [docs/google-cloud-setup.md](docs/google-cloud-setup.md).
 - Calendar write-back (pushing local blocks to Google) is behind `CP_SYNC_WRITEBACK`,
@@ -1715,13 +2127,24 @@ every other caller passes.
   `/api/metrics/triality` all 404. The `calibrate_triality` cron row exists either way and has
   nothing to do for an owner who never turned the flag on — no suggestions were shown, so there
   is no feedback to learn from
-- Later phases in [docs/ROADMAP.md](docs/ROADMAP.md) — auth and multi-device sync have since **shipped** (see *Working today*)
+- **Routine** placement (`enable_routines`) and **Ritual** (`enable_rituals`) are per-owner
+  flags, both off by default. Ollama "thinking" mode (`llm_thinking_enabled`) is also off
+  by default
+- The iOS and Android shells are not store-ready, and Companion Portal sign-in is not
+  available in them yet; see [Mobile app](#mobile-app-ios-and-android)
+- Deferred or not started, per [docs/ROADMAP.md](docs/ROADMAP.md): multi-user shared events
+  (M1–M5), the `patterns` → `routines` table rename, and timing intelligence (G-INT). The
+  roadmap's phase map covers the phases up to AG and the tracks after it
 
 ## Run with Docker (CI Hub)
 
 The published image is public and multi-arch (amd64 + arm64). The image bakes
 `NODE_ENV=production`, and production **refuses the credential-free `test` auth mode at
 boot** — so you must pick a real auth mode or the container exits immediately.
+
+Publishing is manual: [`docker-publish.yml`](.github/workflows/docker-publish.yml) is
+`workflow_dispatch`-only. Dispatched on a release tag it pushes `:latest`, `:sha-<short>` and
+`:<tag>`; dispatched on any other ref it pushes `:latest` and `:sha-<short>`.
 
 There are three ways to sign in. A CI Hub install uses the first two together; a
 self-hoster without a Companion Portal uses the third.
@@ -1813,6 +2236,13 @@ First-run notes:
   `docker exec ci-planning node_modules/.bin/tsx src/cli/issue-key.ts` (or
   `pnpm key:issue` from `server/` in a source checkout) — note the **browser UI does not
   attach API keys**, so this mode is for REST/GraphQL clients and agents, not the PWA.
+- **Operator overrides can live on the data volume.** The container starts Node with
+  `--env-file-if-exists=/data/.env`, so a `/data/.env` file supplies any variable the
+  container's own environment does not already set (real `-e` values win). `SENTRY_DSN` is
+  baked into the image environment, so that file cannot override it — use `CI_TELEMETRY=off`
+  or `CI_LOCAL_ONLY=true` to switch crash reporting off.
+- **Health check.** The image declares a Docker `HEALTHCHECK` that polls the public
+  `GET /api/health` every 30 seconds (20-second start period, for first-boot migrations).
 
 ### Run with Docker Compose (standalone + bundled Ollama)
 
@@ -1837,27 +2267,32 @@ runs fine and simply hides the AI features. This file is for the self-host path 
 **CI-Hub marketplace install ignores it** (the Hub provides its own Ollama and the
 Companion Portal sign-in described above).
 
+The file also defines a `postgres` service behind `--profile postgres`, for people working on
+the in-progress Postgres port (see `DATABASE_URL` below). A plain `docker compose up` never
+starts it, and it is not a supported deployment option yet.
+
 ### Environment variables
 
 | Var | Default | Purpose |
 |---|---|---|
 | `PORT` | `3848` | HTTP port (API + UI) |
 | `DB_PATH` | `/data/companion.db` in Docker; `~/Library/Application Support/CompanionPlanning/companion.db` on macOS; **set explicitly on Linux / Windows** | SQLite file path. The containing directory is created automatically. |
-| `DATABASE_URL` / `STORE_BACKEND` | (unset) / `sqlite` | **Internal, in-progress Postgres cutover — not a supported deployment option yet.** Both backends coexist behind `db/store.ts` while ~386 raw-SQL call sites migrate file by file; flipping `STORE_BACKEND=postgres` is the cutover itself and is only correct once every call site uses the facade, so boot fails closed without a `DATABASE_URL` rather than silently serving from a store the data isn't in. SQLite remains the single source of truth described elsewhere in this README until that migration finishes. |
+| `DATABASE_URL` / `STORE_BACKEND` | (unset) / `sqlite` | **Internal, in-progress Postgres cutover — not a supported deployment option yet.** Both backends coexist behind `db/store.ts`. Nearly every call site now goes through that facade (the sqlite-vec dedupe path is the exception), but flipping `STORE_BACKEND=postgres` is the cutover itself and it is not finished, so boot fails closed without a `DATABASE_URL` rather than silently serving from a store the data isn't in. SQLite remains the single source of truth described elsewhere in this README until that migration lands. |
 | `NODE_ENV` | (unset) | `production` enables fail-closed boot guards (e.g. forbids `AUTH_MODE=test`). |
 | `TRUST_PROXY` | `false` | Set when behind a trusted TLS-terminating reverse proxy (e.g. CI-Hub's tunnel): honors `X-Forwarded-Proto` (⇒ Secure session cookies over HTTPS) and `X-Forwarded-For` (⇒ real client IP for login rate-limiting). |
+| `CORS_ALLOWED_ORIGINS` | (unset) | Comma-separated browser origins allowed to call `/api` cross-origin, echoed back exactly (never `*`). Empty by default: the web app is same-origin, and the [mobile app](#mobile-app-ios-and-android) needs no CORS setting either (it calls the server through the native HTTP stack and polls `GET /api/sync/changes` instead of holding the SSE stream). |
 | `CSP_EXTRA_CONNECT_SRC` | (unset) | Extra origins the browser may call, added to the Content-Security-Policy `connect-src` (space/comma-separated). The app's own origin and the Sentry DSN origin are always allowed. Every response carries security headers (CSP, `nosniff`, `Referrer-Policy`, `X-Frame-Options`, `Permissions-Policy`; HSTS over HTTPS). |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama endpoint. Unreachable ⇒ AI features degrade gracefully (template briefings, dedupe off). |
-| `OLLAMA_FAST` | `qwen2.5:0.5b` | Fast model for extraction/triage. Must be pulled (`ollama pull`) or set to an installed model. Legacy alias: `OLLAMA_SMALL` (still accepted; `OLLAMA_FAST` wins when both are set). |
-| `OLLAMA_QUALITY` | `gemma3n:e4b` | Quality model for briefings. Must be pulled (`ollama pull`) or set to an installed model. Legacy alias: `OLLAMA_MEDIUM` (still accepted; `OLLAMA_QUALITY` wins when both are set). |
-| `OLLAMA_EMBED` | `nomic-embed-text` | Embedding model for dedupe |
-| `TZ` | UTC | Container timezone — set it so "today" and cron schedules match your day. Safety net: if the stored scheduling timezone is still the un-chosen UTC default, the web app adopts the browser's timezone on first load (once per browser). |
-| `AUTH_MODE` | `test` | Auth mode: `test` (dev/CI — system owner injected, **forbidden in production**), `standalone` (hashed `x-api-key` stored in the `api_keys` table; API clients only), `sso` (the browser login — **Companion Portal** sign-in and/or local username/password; both end in a signed httpOnly session cookie). The Docker image and the CI-Hub install run `sso`. |
+| `OLLAMA_FAST` | `qwen2.5:0.5b` | Fast model for extraction/triage. A last-resort default: used when it is installed, otherwise the app auto-selects an installed model (see *5. Ollama* under Local development). Setting it **pins** the tier verbatim, and an unpulled pin fails with an `ollama pull …` error. Legacy alias: `OLLAMA_SMALL` (still accepted; `OLLAMA_FAST` wins when both are set). |
+| `OLLAMA_QUALITY` | `gemma3n:e4b` | Quality model for briefings. Same rule as `OLLAMA_FAST`: used when installed, otherwise auto-selected; setting it pins the tier. Legacy alias: `OLLAMA_MEDIUM` (still accepted; `OLLAMA_QUALITY` wins when both are set). |
+| `OLLAMA_EMBED` | `nomic-embed-text` | Embedding model for dedupe. Same rule: used when installed, otherwise an installed embedding model is auto-selected; setting it pins the tier. |
+| `TZ` | UTC | Container timezone — set it so "today" and cron schedules match your day (the Compose file defaults it to `America/Los_Angeles`; set `TZ` in `.env`). Safety net: if the stored scheduling timezone is still the un-chosen UTC default, the web app adopts the browser's timezone on first load (once per browser). |
+| `AUTH_MODE` | `test` | Auth mode: `test` (dev/CI — system owner injected, **forbidden in production**), `standalone` (hashed `x-api-key` stored in the `api_keys` table; API clients only), `sso` (the browser login — **Companion Portal** sign-in and/or local username/password; both end in a signed httpOnly session cookie). The CI-Hub install and the Compose file run `sso`; the Docker image itself sets no default, so a plain `docker run` exits at boot unless you choose a mode. |
 | `AUTH_AUTO_PROVISION` | `false` | When `true`, an unknown Companion Portal `sub` provisions a new owner row instead of returning 403. The **first** such owner on an instance with no operator becomes the operator; later ones are members. The CI-Hub marketplace install sets it to `true` (the portal already limits sign-in to members of the Hub's organization). |
-| `AUTH_RATE_WINDOW_MS` | `60000` | Rate-limit sliding window in milliseconds. |
-| `AUTH_RATE_MAX` | `60` | Max requests per window per IP across all endpoints. |
-| `AUTH_RATE_ISSUE_MAX` | `5` | Max token-issue operations (login / key exchange) per window per IP. |
-| `SESSION_SECRET` | (unset) | Signs the httpOnly session cookie both `AUTH_MODE=sso` login paths issue. **Required whenever `AUTH_MODE=sso`** — fail-closed if unset. Generate with `openssl rand -hex 32`. Never commit it. |
+| `AUTH_RATE_WINDOW_MS` | `60000` | Sliding window, in milliseconds, for the login rate limit (`AUTH_RATE_ISSUE_MAX`). |
+| `AUTH_RATE_MAX` | `60` | **Parsed but not enforced** — no code reads it, and there is no global per-IP request limit. Only the attempts counted by `AUTH_RATE_ISSUE_MAX` are rate-limited. |
+| `AUTH_RATE_ISSUE_MAX` | `5` | Max attempts per window per IP (one shared bucket) on local login, sign-up, password-reset request and completion, and the Companion Portal sign-in start. Reset requests are also limited per account. Held in memory, so it resets on restart. |
+| `SESSION_SECRET` | (auto-generated) | Signs the httpOnly session cookie both `AUTH_MODE=sso` login paths issue. Unset ⇒ the server generates one on first boot and keeps it in `.session-secret` beside the database (mode 0600), reusing it on every boot; boot fails closed only if that file cannot be created (a read-only data directory). **Set it explicitly when you run more than one replica** (they must share one secret) or want it outside the data volume. Changing it signs everyone out. Generate with `openssl rand -hex 32`. Never commit it. |
 | `DISABLE_OIDC` | `false` | Meaningful only with `AUTH_MODE=sso`. `true` turns the Companion Portal login **off**, leaving username/password as the only login — the password-only self-host install. With it unset the login screen offers the portal *and* the local form (local login is served in both sub-modes). `test`/`standalone` modes ignore it. |
 | `AUTH_DEFAULT_USERNAME` | `admin` | Username of the first local owner (the operator) seeded on boot when no local owners exist yet — in both `sso` sub-modes. On a CI Hub this is the admin login you set at install time. |
 | `AUTH_DEFAULT_PASSWORD` | (unset) | Password for that seeded owner. **Required** under `DISABLE_OIDC=true` with zero local owners — fail-closed if unset. Optional under Companion Portal login, where it seeds the **break-glass** local operator that can still sign in when the portal is unreachable; leave it unset and the first portal sign-in claims the operator role instead. Never commit it. |
@@ -1870,10 +2305,10 @@ Companion Portal sign-in described above).
 | `CIPORTAL_SCOPES` | `openid profile email` | Scopes requested at authorize. |
 | `CIPORTAL_AUTHORIZE_URI` / `CIPORTAL_TOKEN_URI` / `CIPORTAL_JWKS_URI` | (unset) | Advanced: set **all three** to bypass discovery (air-gapped / no discovery doc). When overriding, `CIPORTAL_ISSUER` must equal the token's actual `iss`. |
 | `GOOGLE_MODE` | (unset ⇒ off / in-app) | `live` (real Google OAuth + Calendar sync; each user connects their own account in Settings → Connections) or `fixture` (committed sample data, fully offline — dev/demo opt-in, refused in production unless `CP_ALLOW_FIXTURE=true`). Unset ⇒ off, **unless an admin saves a Google OAuth client in Settings → Connections (in-app setup, needs `CP_KEK_B64`) — that flips live mode on at runtime with no env vars and no restart.** An explicit env value pins the mode and makes the in-app setup read-only. Env `live` is hard-required to also supply `CP_GOOGLE_CLIENT_ID` and a redirect URI, or the server refuses to boot. |
-| `CP_ALLOW_FIXTURE` | (unset) | Escape hatch: allows `GOOGLE_MODE=fixture` under `NODE_ENV=production` (demo appliances only — fixture data looks like real tasks). |
+| `CP_ALLOW_FIXTURE` | (unset) | Escape hatch: allows `GOOGLE_MODE=fixture` and `MEMORY_MODE=fixture` under `NODE_ENV=production` (demo appliances only — fixture data looks like real tasks). |
 | `CP_GOOGLE_CLIENT_ID` | (unset) | Google OAuth client ID. Required when `GOOGLE_MODE=live`. See [docs/google-cloud-setup.md](docs/google-cloud-setup.md). |
 | `CP_GOOGLE_CLIENT_SECRET` | (unset) | Google OAuth client secret. Needed for a **Web** client (ts.net HTTPS deploy); a **Desktop/installed** client with a loopback redirect can run without one. Never commit it. |
-| `PUBLIC_BASE_URL` | `http://localhost:3848` | Externally reachable base URL. Used to derive the default OAuth redirect URI. |
+| `PUBLIC_BASE_URL` | `http://localhost:3848` | Externally reachable base URL. Used to derive the default redirect URIs (Google, Companion Portal login, Companion Memory callback) and the default `APP_BASE_URL`. |
 | `CP_OAUTH_REDIRECT_URI` | `${PUBLIC_BASE_URL}/api/oauth/google/callback` | Exact redirect URI; **must match** what you register in the Google client. |
 | `CP_GOOGLE_AUTH_URI` | `https://accounts.google.com/o/oauth2/v2/auth` | Authorization endpoint (override only to point tests at a stub). |
 | `CP_GOOGLE_TOKEN_URI` | `https://oauth2.googleapis.com/token` | Token endpoint (override only for tests). |
@@ -1896,7 +2331,7 @@ Companion Portal sign-in described above).
 | `CI_SERVER_API_KEY` | (unset) | Shared API key paired with `CI_SERVER_URL` for the single-tenant fallback creds. **This is what's ignored under multi-tenant SSO** (a shared key would map every owner to one CI-Server identity); per-owner creds then come from `connection_tokens`, connected in Settings. |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | auto-generated | Web Push keys. **Auto-generated on first boot and persisted** to `app_config` (sealed with `CP_KEK_B64` when set, else stored unsealed), so push works out of the box. Set **both** to pin an explicit keypair; a lone half keeps push dormant. Never commit them. |
-| `VAPID_SUBJECT` | `mailto:admin@companion.local` | VAPID contact (`mailto:` or URL) sent with each push |
+| `VAPID_SUBJECT` | `mailto:admin@companion.local` | VAPID contact (`mailto:` or URL) sent with each push. Left unset, the first operator account's email is used when it has one (`mailto:<email>`); the default is the fallback. |
 | `SMTP_HOST` | (unset) | Outbound SMTP host for local-login password-reset email (meaningful whenever `AUTH_MODE=sso` — every local username/password account, including the break-glass operator, resets this way; portal users reset their password in Companion Portal). **Unset ⇒ a console transport logs the message instead of sending**, so dev/CI/offline need no SMTP; a production local-login deploy without it boots with a warning (links only logged). |
 | `SMTP_PORT` | `587` | `587` (STARTTLS) or `465` (implicit TLS). |
 | `SMTP_SECURE` | `false` | `true` for port 465 (implicit TLS); `false` for 587/25 (STARTTLS). |
@@ -1914,17 +2349,164 @@ Companion Portal sign-in described above).
 | `SENTRY_ENV` / `CI_PLANNING_ENVIRONMENT` | (unset) | Sentry `environment`. Resolution order: `SENTRY_ENV` → `CI_PLANNING_ENVIRONMENT` → `NODE_ENV` → `development`. |
 | `SENTRY_RELEASE` / `CI_PLANNING_VERSION` | (unset) | Sentry `release`. Explicit `SENTRY_RELEASE` wins; otherwise it is derived as `ci-planning-server@${CI_PLANNING_VERSION}`. |
 | `VITE_SENTRY_DSN` / `VITE_SENTRY_RELEASE` / `VITE_CI_PLANNING_ENVIRONMENT` | (unset) | The browser half of the above. **Build-time only** — Vite inlines them into the bundle, so in Docker they are `--build-arg`s, not runtime variables. A build-time DSN is not sufficient on its own: the bundle must also be told at runtime that reporting is permitted. |
+| `TYPEORM_LOGGING` | `false` | `true` logs every statement the TypeORM datasource issues. Only meaningful with the in-progress Postgres port (`DATABASE_URL`). |
+| `POSTGRES_PASSWORD` / `POSTGRES_USER` / `POSTGRES_DB` | (unset) / `planning` / `planning` | Compose only — read by `docker-compose.yml`'s opt-in `postgres` service (`--profile postgres`), never by the server. The password is required when you start that profile. |
+| `CP_FIXTURES_DIR` / `CP_MEMORY_FIXTURES_DIR` | `server/test/fixtures` / `server/fixtures/memory` | Dev/tests only — where `GOOGLE_MODE=fixture` and `MEMORY_MODE=fixture` read their committed sample data. |
+| `CP_FIXED_NOW` | (unset) | Dev/demo only — an ISO instant that pins the "now" the natural-language quick-add parser resolves dates against; an unparseable value is ignored with a warning. |
 
 **Persistence**: everything lives in the single SQLite file at `DB_PATH`. Mount a
 volume at `/data` (as above) and your tasks survive container recreation.
+
+## Mobile app (iOS and Android)
+
+`mobile/` holds two [Capacitor](https://capacitorjs.com) shells, `mobile/ios` and `mobile/android`
+(app id `com.companionintelligence.planning`, name *Companion Planning*). Each wraps the same
+`client/` bundle in a native app and talks to **a CI-Planning server that you run**. There is no
+hosted backend and no separate mobile codebase: the app is a window onto your own instance, so it is
+only useful with one the phone can reach.
+
+| | iOS | Android |
+|---|---|---|
+| Path | `mobile/ios` | `mobile/android` |
+| Toolchain | macOS, Xcode 26+ (Swift Package Manager; no CocoaPods) | JDK 21, Android SDK 36 (the Gradle wrapper pins Gradle 8.14 / AGP 8.13) |
+| Minimum OS | iOS 16.4 | Android 7 (API 24), target API 36, with Android System WebView 111 or newer |
+
+### How it connects
+
+- **First run asks for your server.** The app opens on *Connect to your server*: type the address you
+  would open in a browser (`http://192.168.1.20:3848`, `https://planning.example.com`, a Tailscale
+  address). It checks the public `GET /api/health` and `GET /api/auth/config` and saves the address
+  only if they look like a Companion Planning server. Change it later under **Settings → Profile →
+  Server**, or from the sign-in screen. Switching servers discards edits made offline that had not
+  synced yet, because the queued edits are addressed to the old server.
+- **The address is configuration, not a secret, and is never built into the bundle.** It lives in the
+  app's local storage on the device. Credentials are not stored by the app at all: you sign in through
+  the server's own login screen, and the session cookie sits in the operating system's cookie jar.
+- **Pinch-to-zoom works** in both shells (Capacitor's `zoomEnabled`, which is off by default and is
+  independent of the page's viewport tag), and text fields are at least 16px on touch devices so that
+  focusing one does not zoom the page. `client/src/mobile-zoom.test.ts` fails if either is switched off
+  again.
+- **The web app does not change.** `client/src/lib/server-config.ts` is the one place that knows the
+  difference. In a browser (no `window.Capacitor`) the API base is `/api` as ever; in the shell it is
+  `<your server>/api`. Everything else Capacitor-specific is guarded the same way, so the Docker image
+  and `pnpm dev` behave exactly as before.
+- **Requests use the native HTTP stack** (`CapacitorHttp`). The app is served from
+  `capacitor://localhost` (iOS) or `https://localhost` (Android), so a call to your server is
+  cross-origin; going through native HTTP means the server needs no CORS configuration for them.
+
+### What your server needs
+
+- **Reachability.** The phone must reach the server: same Wi-Fi, Tailscale, or a public `https://`
+  address. Android allows plain `http://` to any host. iOS allows it only for IP addresses, `.local`
+  names and single-label host names (App Transport Security's local-networking exemption); anything
+  else, such as a MagicDNS name, must be `https://`. In the iOS Simulator your machine is
+  `localhost`; in the Android emulator it is `10.0.2.2`.
+- **Sign-in.** The app is built for username and password sign-in (`AUTH_MODE=sso` with
+  `DISABLE_OIDC=true`, the Docker Compose default) and for the open dev mode (`AUTH_MODE=test`).
+  Its sign-in screen shows the username form and nothing else: no Companion Portal button, no
+  sign-up link (and `/signup` sends you to sign-in). **Companion Portal sign-in is not available in
+  the app yet.** It is a redirect out to another site and back with a cookie, and Capacitor opens any
+  navigation off the app's own origin in the system browser, so the session would land in Safari or
+  Chrome and never in the app. A server that only offers Portal sign-in therefore cannot be used from
+  the app until the native handoff is built, and the app says so instead of showing a button that
+  cannot work. Settings has the same limit in two places: *Connect Google* and *Sign in with Companion
+  Portal* (for Companion Memory) are redirects too, so they are not offered in the app. Make those
+  connections from a browser; they live on your server and appear in the app once made.
+- **Live updates are polled.** A browser tab holds a server-sent event stream (`/api/events`); the
+  app cannot, because the stream would be opened by the web view rather than the native HTTP stack,
+  so it would carry no session cookie and the server allows no foreign origin. The app asks instead:
+  `GET /api/sync/changes?since=` returns the same `sync_events` the stream replays, and the app calls
+  it every 15 seconds while it is on screen, when it comes back to the foreground or the network
+  returns, and a moment after a change of its own (whose server-side effects, such as blocks being
+  placed, then show up promptly). Nothing is polled while the app is in the background. The endpoint
+  needs a server newer than v4.2.2; an older one answers 404 and the app simply has no live updates, as
+  before: it still shows changes after its own actions and on reload. Browsers are unchanged and keep
+  the stream. No CORS setting is needed.
+
+Also not available in the app yet: browser reminders and Web Push (there is no service worker in the
+shell), and the *Export JSON* / calendar `.ics` links, which open in the system browser outside the
+app's session. Native push and a share-sheet export are separate pieces of work.
+
+### Build and run
+
+The shells are **not** members of the pnpm workspace (`pnpm-workspace.yaml` lists only `server` and
+`client`). Capacitor's CLI, SwiftPM and Gradle need a conventional `node_modules`, and the root install
+must not change because a native project exists. Each shell is its own pnpm project, with its own
+lockfile, and a `pnpm-workspace.yaml` that stops pnpm walking up into the root workspace. The shells
+consume the client only as a build artifact (`webDir: ../../client/dist`).
+
+```bash
+# once, at the repo root (the client's dependencies come from GitHub Packages, as for any install)
+pnpm install
+
+# build the client for the shells → client/dist. Not `pnpm build`, which writes server/public for the container.
+pnpm --filter client build:mobile
+
+# Android
+cd mobile/android
+pnpm install                                  # the shell's own dependencies
+pnpm exec cap sync android                    # copies client/dist into the project
+cd android && ./gradlew assembleDebug         # → app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+
+# iOS (macOS, Xcode 26+)
+cd mobile/ios
+pnpm install
+pnpm exec cap sync ios
+pnpm exec cap open ios                        # run from Xcode, or build for the Simulator unsigned:
+xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug \
+  -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+  -derivedDataPath ios/DerivedData CODE_SIGNING_ALLOWED=NO build
+```
+
+Inside either shell directory, `pnpm build` is `build:web` (the client build above) followed by
+`cap sync`. The generated `ios/` and `android/` projects are committed; the copies of the web bundle
+and `capacitor.config.json` that `cap sync` writes into them are git-ignored.
+
+The manual workflow [`.github/workflows/mobile-build.yml`](.github/workflows/mobile-build.yml) builds
+both on clean runners and uploads a debug APK and a zipped Simulator `.app` as artifacts. Like every
+workflow here it is `workflow_dispatch` only (`gh workflow run mobile-build.yml --ref <branch>`), and
+it is independent of the Docker publish workflow and release tags.
+
+### What a store submission would still need
+
+The artifacts above are for development and QA: the APK is signed with Gradle's throwaway debug key
+and the Simulator `.app` is unsigned. Nothing here is store-ready.
+
+- **Accounts and signing.** An Apple Developer Program membership (register the bundle id; a
+  distribution certificate and provisioning profile; set the team in the Xcode project) and a Google
+  Play Console developer account. Android needs an upload keystore and a signed AAB
+  (`bundleRelease`); the Gradle project has no release signing configured, and `versionCode` /
+  `versionName` and the iOS `MARKETING_VERSION` / build number are still the placeholders `1` / `1.0`.
+  Release lanes in CI need the signing secrets and version stamping.
+- **Artwork and listings.** The app icon and launch screen are Capacitor's placeholders; both stores
+  need the real icon set (iOS 1024 px without alpha; Android adaptive icon), screenshots, descriptions,
+  a support URL, a **privacy policy URL**, content ratings, and the privacy disclosures (Apple's App
+  Privacy answers and Google's Data safety form). `Info.plist` declares `ITSAppUsesNonExemptEncryption`
+  as `false` (the app's only cryptography is the operating system's TLS) and the app target carries a
+  `PrivacyInfo.xcprivacy` that declares nothing collected and no required-reason APIs, checked by
+  scanning the built binaries; both are the owner's to confirm before the first upload, and the
+  manifest needs a new entry whenever a plugin brings one of those APIs.
+- **App Review.** Apple will not accept a client that cannot be exercised, so submission needs a
+  reachable **demo server with review credentials**, and a position on guideline 4.2 (a web-technology
+  app must feel like an app). The app offers no way to create an account (the sign-up links and
+  `/signup` are hidden in it), so Apple's in-app account-deletion rule (5.1.1(v)) does not apply to it
+  as it stands. Play will ask why `usesCleartextTraffic` is on (people's own LAN servers).
+- **Product gaps listed above.** Companion Portal sign-in (system browser with a custom-scheme or
+  universal-link return, PKCE), native push or local notifications for reminders, and downloads through
+  the share sheet.
+- **Real devices.** Everything here was exercised in the iOS Simulator and an Android emulator only.
 
 ## Local development
 
 ### Prerequisites
 
-- **Node.js `>=22`** (developed on 26; the Docker image ships Node 26)
+- **Node.js `>=22`** (developed on 26 — `.nvmrc` pins 26.3.0 — and the Docker image ships
+  Node 26; `ci.yml` runs Node 22)
 - **pnpm `>=11 <12`** — easiest via Corepack: `corepack enable` activates the exact
-  version pinned in `package.json`, no global install
+  version pinned in `package.json`, no global install. Node 26 no longer bundles Corepack,
+  so run `npm install -g corepack` first (the Dockerfile does the same) or install pnpm 11
+  another way
 - **Ollama** (optional) — only for the AI features; everything else runs without it
 
 The repo is a two-package pnpm workspace: `server/` (Koa + TypeScript API) and
@@ -1938,6 +2520,11 @@ cd CI-Planning
 corepack enable
 pnpm install
 ```
+
+`pnpm install` also needs a GitHub Packages token for the private `@companionintelligence/*`
+packages: the repo `.npmrc` points that scope at `npm.pkg.github.com`, and pnpm 11 does not
+expand `${NODE_AUTH_TOKEN}` there, so put the token in a user-level npmrc once per machine —
+see [Fresh clone install](CONTRIBUTING.md#fresh-clone-install).
 
 ### 2. Configure (optional — dev runs with zero config)
 
@@ -1995,8 +2582,10 @@ pnpm --filter server dev
 pnpm --filter client dev
 ```
 
-The client respects `VITE_PORT` (dev-server port) and `VITE_API_TARGET` (proxy
-target) when you need a second instance or a non-local API.
+The client respects `VITE_PORT` (dev-server port), `VITE_API_TARGET` (proxy target) and
+`VITE_ALLOWED_HOSTS` (comma-separated host names Vite answers to, for reaching the dev
+server by name, e.g. a Tailscale MagicDNS host; bare IPs always work) when you need a
+second instance, a non-local API or named access.
 
 ### Launching from VS Code
 
@@ -2022,6 +2611,11 @@ Want a populated app to explore? Seed ~100 tasks from the bundled fixtures:
 ```bash
 pnpm seed         # uses Ollama extraction when available, deterministic otherwise
 ```
+
+Seeding only adds. The script's `--reset` flag deletes every owner's tasks, possible tasks,
+blocks and non-base tags first, and `--no-llm` skips Ollama. The seeded rows belong to the
+dev system owner, so this is for the default `AUTH_MODE=test` setup
+(`server/src/scripts/seed-test-data.ts`).
 
 ### 5. Ollama (optional — enables the AI features)
 
@@ -2079,7 +2673,7 @@ All from the repo root:
 | `pnpm dev` | Server (`:3848`) + client (`:5173`) concurrently |
 | `pnpm build` | Build the client into `server/public/` |
 | `pnpm start` | Build, then serve API + UI on `:3848` |
-| `pnpm test` | Server **and** client vitest suites, in sequence (`test:server && test:client`) |
+| `pnpm test` | Server **and** client vitest suites, in sequence (`pnpm --filter server test && pnpm --filter client test`) |
 | `pnpm test:server` / `pnpm test:client` | Just one side — the client suite has `unit` + `dom` (jsdom) projects |
 | `pnpm typecheck` | Server **and** client `tsc --noEmit`, in sequence |
 | `pnpm typecheck:server` / `pnpm typecheck:client` | Just one side |
@@ -2088,9 +2682,15 @@ All from the repo root:
 | `pnpm db:generate` / `pnpm db:migrate` | Root-level convenience wrappers around the server's Drizzle schema-generate / migrate scripts |
 | `pnpm --filter server snapshot` | Point-in-time DB backup into `<DB_DIR>/backups/` |
 | `pnpm --filter server restore -- <file>` | Restore a snapshot (server stopped) |
-| `pnpm --filter server db:check-drift` | Diff `schema.ts` against what the migrations actually produce |
+| `pnpm --filter server db:check-drift` | Diff `schema.ts` against what the migrations actually produce (exits non-zero on drift) |
+| `pnpm --filter server key:issue` | Mint a standalone API key for `AUTH_MODE=standalone` (`--scopes read\|write`, `--ttl-days N`, `--owner <uuid>`); the raw key is printed once |
+| `pnpm --filter client build:mobile` | Build the client into `client/dist` for the [mobile shells](#mobile-app-ios-and-android), not `server/public` |
+| `pnpm lint:canon` | Lint the design canon (`ci-lint-canon` from `@companionintelligence/config`): `--primary` must be the CI canon value |
 
 ## HTTP API
+
+This table lists the notable endpoints, not every route; the routers are in
+`server/src/routes/` and are mounted by its `index.ts`.
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -2098,11 +2698,18 @@ All from the repo root:
 | POST | `/api/tasks` | Create a task (`title` required) |
 | PATCH | `/api/tasks/:id` | Update fields; `{"completed": true}` marks done |
 | DELETE | `/api/tasks/:id` | Soft delete (status → `cancelled`) |
-| POST | `/api/tasks/:id/close` | Record the close ritual on an already-completed task (`score` 1–5, or 0 = declined · note · actual minutes); stamps `reaction_at` server-side for a real rating or a note. **400** on a present-but-invalid score |
+| POST | `/api/tasks/:id/close` | The close ritual: completes the task if it is still open (an already-completed task is accepted too, for reflecting later). Records `score` 1–5, or 0 = declined · note · actual minutes; stamps `reaction_at` server-side for a real rating or a note. **400** on a present-but-invalid score |
 | POST | `/api/tasks/:id/enrich` | Fill blank description / direction / categories from Companion Memory; always resolves — `enriched:false` carries the reason |
 | GET | `/api/tasks/:id/subtasks` | List subtasks |
+| POST | `/api/tasks/quick/parse` \| `/api/tasks/quick` | Natural-language quick add: `/quick/parse` previews the parse and writes nothing (deterministic, with an Ollama overlay when it is up); `/quick` creates the task |
+| POST · GET | `/api/tasks/:id/timer/start` \| `/api/tasks/:id/timer/stop` · `/api/timer` | The single running timer: start (stops any other first), stop (**409** when none is running), and `GET /api/timer` for the current entry or `null` |
+| POST · GET | `/api/tasks/:id/skip` \| `/reschedule` \| `/promote-habit` \| `/promote-objective` · `/api/tasks/:id/streak` | Per-task actions: skip a recurring instance, bump a missed task out by `days`, make a task a habit, surface it in the Objectives tree, and read a habit's streak |
+| POST | `/api/tasks/suggest-tags` \| `/api/tasks/suggest-subtasks` \| `/api/tasks/auto-tag` | Best-effort Ollama helpers: tags for a title, a subtask brainstorm, and auto-tagging for the Tasks view |
 | GET/POST/PATCH/DELETE | `/api/blocks` | Time blocks for a date range |
-| GET/POST/DELETE | `/api/block-templates` | Reusable Time-Block templates |
+| GET | `/api/blocks/export.ics?from=&to=` | Download the range's dated blocks as an iCalendar file (defaults to today) |
+| POST | `/api/blocks/:id/move-group` \| `/promote` \| `/add-tasks` · `/api/days/:date/clear` | Shift a Plan and its members by `delta_minutes`; turn a Concept into a scheduled Plan; attach existing tasks to a Time-Block; clear the day's auto-placed task blocks only (manual, locked and calendar blocks stay) |
+| POST/DELETE/GET | `/api/blocks/:id/extend` \| `/reschedule` \| `/focus-reminders` \| `/whats-next` | Time-Sense (Focus Ritual): extend a block (two-phase, `confirm`), re-stage its task, arm / clear its background cues, and the "what's next" line. 404 while `time_sense_enabled` is off |
+| GET/POST/PATCH/DELETE | `/api/block-templates` · POST `/api/block-templates/:id/instantiate` \| `/apply-to-block` | Reusable Time-Block templates (a saved Plan container, optionally with its tasks), and putting one onto a day or an existing block |
 | GET/POST | `/api/tags` | Tags with usage counts |
 | PATCH/DELETE | `/api/tags/:id` | Update or delete a tag |
 | GET | `/api/possible-tasks` | Staged suggestions (audit trail; auto-promoted since Phase AF) |
@@ -2110,8 +2717,8 @@ All from the repo root:
 | GET | `/api/summary?date=YYYY-MM-DD` | Day briefing (LLM or deterministic) |
 | GET | `/api/summary/top-tasks?date=YYYY-MM-DD` | Today's Brief top tasks (excludes habits + routines; 422 on a malformed date) |
 | POST | `/api/schedule/run` | Run the auto-scheduler for a date |
-| GET/POST/PATCH/DELETE | `/api/patterns` | Routines CRUD |
-| GET/PUT/DELETE | `/api/flight-plan` | Flight-plan staging area |
+| GET/POST/PATCH/DELETE | `/api/patterns` · `/api/pattern-types` | Routines CRUD, and the pattern types (Routine / Habit / Ritual + your own) they belong to; also member tasks (`/api/patterns/:id/tasks`, `/fast-tasks`), `promote-from-*` and `POST /api/patterns/:id/place-today` |
+| GET/POST/PATCH/DELETE | `/api/flight-plan` · `/api/flight-plan/:taskId` · POST `/api/flight-plan/reset` | Flight-plan staging area: add tasks (or a pattern's members), edit or remove one, reset all; the GET also carries `can_undo` |
 | POST | `/api/auto/fill` | Tap 1 — propose up to 20 candidates into the flight plan (schedules nothing) |
 | POST | `/api/auto/run` | Tap 2 — author the day's order once, then place the selected staged tasks |
 | POST | `/api/auto/priority` | Tap 3 — optional priority top-up into leftover workday capacity |
@@ -2128,7 +2735,7 @@ All from the repo root:
 | POST | `/api/plan-week/parse` | Parse a free-text answer within a Plan-my-week session |
 | GET/POST/PATCH/DELETE | `/api/plan-week/sessions` | Plan-my-week session log CRUD — backs the Settings → Logs tab (read/export/delete your own sessions) |
 | POST | `/api/plan-week/sessions/consolidate` | Merge/close stale sessions |
-| GET/POST/PATCH/DELETE | `/api/pattern-blocks` | Direction-scoped scheduling windows |
+| GET · PUT | `/api/pattern-blocks` · `/api/pattern-blocks/:dayType` · PUT `/api/pattern-blocks/:dirTagId/:dayType` | Direction-scoped scheduling windows per day type; a PUT atomically replaces that direction's ranges |
 | GET | `/api/pattern-prefs` | Per-pattern preferences (fill, reminders, shape, color) |
 | PUT | `/api/pattern-prefs/:patternTagId` | Update a single pattern's preferences |
 | GET | `/api/push/vapid-key` | Web Push public key (empty when VAPID unconfigured) |
@@ -2158,8 +2765,9 @@ All from the repo root:
 | DELETE | `/api/connections/:provider/:account` | Provider-agnostic disconnect (Google also revokes); `404 connection_not_found` when the owner holds none. |
 | GET | `/api/connection-prefs` | Per-`(provider, account)` display config — color token + stripe texture the calendar paints that source's mirrored events with |
 | PUT | `/api/connection-prefs/:provider/:account` | Update a connection's color/texture prefs |
-| GET/PUT/DELETE | `/api/reflections` · `/api/reflections/today` · `/api/reflections/weekly/:pos` | Today goal + weekly goals (Phase N) |
+| GET · PUT · DELETE | `/api/reflections` · `/api/reflections/today` · `/api/reflections/weekly/:pos` · `/api/reflections/:kind/:pos` | Today goal + weekly goals (Phase N): read both, upsert one, delete one |
 | POST | `/api/reflections/:kind/:pos/done` | Mark a goal done / undone (`today_goal`/`weekly_goal` only — `day_note` is 422'd here) |
+| GET · POST · PUT | `/api/reflections/evening` · `/api/reflections/evening/open` | Time-Sense evening reflection: the live day payload plus the stored narrative (GET), generate-and-save on open (POST; idempotent unless `refresh: true`), and your edits over it (PUT; an empty body deletes). 404 while `time_sense_enabled` is off |
 | PUT | `/api/reflections/note` | Upsert the day's note; empty body deletes (Phase O) |
 | GET | `/api/reflections/notes?from&to` | Dates in range with a non-empty day note — backs the calendar's note dots (Phase O) |
 | GET | `/api/stars?from&to` | Five-star day score per date in range; frozen row if present, else computed live (Phase O) |
@@ -2167,22 +2775,24 @@ All from the repo root:
 | DELETE | `/api/objectives/:id` | **Archives** — a soft delete, not a removal. Cascades over the live subtree; restorable indefinitely |
 | POST | `/api/objectives/:id/restore` | Un-archive (root-only — a cascaded member restores from its root) |
 | POST/DELETE | `/api/objectives/:id/purge` | Request / cancel permanent deletion. 48h window, reaped hourly by `purge_objectives` |
+| POST/DELETE · POST | `/api/objectives/:id/tasks` · `/api/objectives/:id/tasks/:taskId` · `/api/objectives/:id/recompute` | Link a task to a leaf objective (`task_id`) / unlink it; refresh the cached roll-up on demand (the nightly job does it for all) |
 | GET/POST | `/api/priorities` | Life-priorities self-audit — backs `/priorities` + `/balance` |
 | GET | `/api/priorities/history` | Per-dimension `balance_week_log` history — newest-first, capped to the last 12 weeks per category: how many weeks the target was met vs. counted, and a `met` flag per week. `target_hours`/`scheduled_minutes` are frozen at snapshot time, so past rows never redraw when today's target changes. Pure read; ungated |
 | POST | `/api/review/sweep` | Manually run the same missed-task review + backoff the `review_day` job runs nightly — backs the top-bar sweep button |
-| GET | `/api/review/week?period=YYYY-MM-DD` | Weekly review stats — scheduled/focus minutes, capacity, completion %, calibration (Phase N) |
+| GET | `/api/review/week?anchor=YYYY-MM-DD` | Weekly review stats for the ISO week containing `anchor` (today's week when omitted) — scheduled/focus minutes, capacity, completion %, calibration (Phase N) |
 | GET | `/api/calibration` | Personal estimate bias stats (bias ratio, quartiles, sample count) (Phase N) |
 | GET | `/api/calibration/scopes` | Time-Sense: all scoped calibration rows plus current unpinned tag-combo suggestions. 404 while `time_sense_enabled` is off |
 | GET | `/api/calibration/suggest/:taskId` | Time-Sense: a suggest-only estimate nudge for one task, or `{suggestion: null}`. 404 while the flag is off |
 | POST | `/api/calibration/pins` | Time-Sense: confirm a tag-combo suggestion (`{tag_ids: string[]}`, 2+); recomputes immediately |
 | DELETE | `/api/calibration/pins/:scopeRef` | Time-Sense: unpin a combo — its calibration row is dropped immediately, not at the next nightly run |
-| GET | `/api/metrics/tasks` · `/api/metrics/calibration` | Balance → Metrics: measured counts, timed minutes, mood mix, and estimate bias per direction / category over a 7 / 30 / 90-day window |
+| GET | `/api/metrics/tasks?days=` · `/api/metrics/calibration?scope_kind=&scope_ref=&limit=` | Balance → Metrics: measured counts, timed minutes, mood mix, and estimate bias per direction / category over a window (`days` clamped to 1–365, default 30; the UI offers 7 / 30 / 90); and the dated estimate-calibration readings, oldest first (`limit` default 90, max 365) |
 | GET | `/api/triality/next` | The three candidate next actions (Habitual · Contextual · Novel) with every component score, the situation vector actually used, and a labeled "why now" line. Too little history is a typed refusal, not an error. **404 while `triality_enabled` is off** — a disabled feature's surface looks absent, not broken |
 | POST | `/api/triality/feedback` | `{log_id, outcome}` — stamp `opened` / `staged` / `dismissed` on a shown suggestion, at most once (this is the learning evidence). 404 while the flag is off |
 | DELETE | `/api/triality/weights` | Reset learning — drops this owner's learned slot weights, so scoring returns to the shipped defaults. The outcome log is untouched, and the next weekly pass re-derives weights from it: this is a recompute, not a permanent opt-out. 404 while the flag is off |
 | GET | `/api/metrics/triality?days=` | Balance → Metrics: acceptance per slot (a suggestion undecided for **less than 24h** is pending and excluded from the denominator; once it is 24h old and still untouched it counts as *ignored* — a decision, and a weak negative), the Novel uptake trend against the prior window, how under-served categories responded, and the learned weights with their sample counts (`null` until learning has run). 404 while the flag is off |
 | GET | `/api/classification/accuracy?limit=` | The classify/parse LLM's held-out accuracy trend, newest run first, per field (`category`/`motivation`). `accuracy: null` on a run that measured nothing — never a `0`. No feature flag |
 | DELETE | `/api/classification/exemplars` | Reset classification learning — drops this owner's learned few-shot index; the correction log survives and the next weekly `calibrate_classification` pass re-earns it |
+| GET · DELETE | `/api/placement/survival?limit=` · `/api/placement/preferences` | Placement learning: the weekly trend of whether auto-placed blocks survive the day untouched, newest run first (`survival_rate: null` = nothing was decided that period; `limit` defaults to 12, max 100); and reset this owner's learned hour bands (the placement log survives). No feature flag |
 | GET | `/api/plan-loop/trend?limit=` | The §A0 authoring loop's measured trend per stage — pass rate, first-try pass rate, escapes and average iterations — newest run first. `limit` defaults to 26, clamped to 1–365. `avg_iterations` / `pass_rate` are `null` when a period had no runs — never a `0`. No feature flag, and no reset endpoint: nothing in this wave influences the loop's behavior |
 | GET | `/api/dismissal-learning/trend?limit=` | The `possible_dismissal_rate` noise-rate trend, oldest → newest, defaulting to 90 rows — answers "is the review queue actually getting quieter?" `rate: null` on a period with `decided = 0` — never a `0` |
 | DELETE | `/api/dismissal-learning/exemplars` | Reset dismissal learning — drops this owner's learned exemplar rollup only (`{ok: true, cleared: <n>}`); `possible_outcome_log` survives and the next weekly `calibrate_dismissals` pass re-earns it from that evidence |
@@ -2191,21 +2801,26 @@ All from the repo root:
 | POST | `/api/import` | Restore owner data from an export JSON body |
 | GET/POST/PATCH/DELETE | `/api/accounts` · POST `/api/accounts/:id/invite` | Multi-tenant account management — **operator-only** (Phase AG); invite creates a password-less owner + reset-token link |
 | PATCH | `/api/owner/profile` · `/api/owner/backup-email` | Edit the signed-in owner's display name / backup email (Phase ship-readiness) |
+| GET/POST/PATCH/DELETE | `/api/people` · `/api/people/:id` · POST `/api/people/:id/merge` | The person directory (see [docs/people-on-work.md](docs/people-on-work.md)): CRUD, and fold a duplicate into a keeper (`merge_id`). Owner-scoped; a cross-tenant id reads as 404 |
+| GET · POST | `/api/people/accounts` \| `/api/people/accounts/:id` | The roster of this instance's accounts for picking (no contact details or privileges), and find-or-create the directory row for the account you picked |
 | GET/PUT | `/api/google-config` | Read/save the in-app Google OAuth client (admin; flips connector to live at runtime, mig 0124) |
 | GET/POST/PATCH/DELETE | `/api/day-types` · `/resolve/:date` · `/week-map` · `/assignments/:date` | Day-type CRUD + per-date resolution |
 | GET/PUT | `/api/category-prefs` | Base **category** tag prefs — the six Balance dimensions (health/career/relationships/growth/leisure/finance, mig 0134) |
 | GET | `/api/health` | Liveness probe (`{"ok":true,"release":string\|null}`) — `release` backs the client's update-available banner |
 | GET | `/api/config/telemetry` | Whether crash reporting is active; the browser bundle checks this before initialising Sentry |
 | GET | `/api/events` | SSE stream (task / block / job / possible / reminder events) |
-| POST | `/api/graphql` | GraphQL endpoint (Apollo, alongside REST; introspection on); gated by the same `requireAuth` as REST (session cookie in `sso` mode, `x-api-key` in `standalone`) (Phase W, done) |
+| GET | `/api/sync/changes?since=` | The same `sync_events` as the SSE stream, polled, for a client that cannot hold an `EventSource` (the iOS and Android app). No `since` → `{events: [], cursor, resync: false}`, the owner's latest cursor; `since=N` → `{events: [{seq, event, data}], cursor, resync: false}`, the events after N (at most 500); a longer gap, or a cursor ahead of everything this owner has (the database was restored or recreated) → `{events: [], cursor, resync: true}`, meaning refetch everything and carry on from `cursor`. `since` must be a non-negative integer (400 otherwise). Needs `planning:read`; never cached |
+| POST | `/api/graphql` | GraphQL endpoint (Apollo, alongside REST; introspection on); gated by the same `requireAuth` as REST (session cookie in `sso` mode, `x-api-key` in `standalone`) (Phase W, done). The self-hosted GraphiQL IDE is `GET /api/graphql/sandbox` (see `GRAPHQL_SANDBOX`) |
 
 ## Tests
 
 ```bash
-pnpm test                      # server vitest suite (Ollama-dependent tests degrade/skip)
+pnpm test                      # server suite, then client suite (Ollama-dependent tests degrade/skip)
+pnpm test:server               # server vitest only (test/**/*.test.ts, files run sequentially against one throwaway SQLite file)
 pnpm --filter client test      # client vitest — two projects: `unit` (pure logic, node) +
                                 # `dom` (SolidJS component rendering, jsdom + vite-plugin-solid)
-cd tests/container && npm i && APP_URL=http://localhost:3848 npx playwright test   # container smoke
+cd tests/container && npm i && npx playwright install chromium && APP_URL=http://localhost:3848 npx playwright test   # container smoke against a running instance
+tests/container/run-local.sh   # the same container smoke gate (standalone, password login, Companion Portal login) from this checkout, no Docker; needs `pnpm install` and `pnpm --filter client build` first
 ```
 
 <!-- companion-hub-readme-deep-review -->
@@ -2220,14 +2835,18 @@ flowchart LR
   Update --> Complete[Complete, defer, or reschedule]
 ```
 
-The detailed architecture, domain model, and scheduling sections below explain the underlying data and two-clock behavior. Use this lifecycle as the user-facing entry point when deciding where a task belongs; the Today, Calendar, Tasks, and Objectives sections describe the corresponding views.
+The detailed architecture, domain model, and scheduling sections above explain the underlying data and two-clock behavior. Use this lifecycle as the user-facing entry point when deciding where a task belongs; the Today, Calendar, Tasks, and Objectives sections describe the corresponding views.
 
 ## Contributing
 
 **Green CI is required before merging into `main`** — the *Typecheck + Unit +
-Integration* and *Build, screenshot-test, publish* checks must pass on a PR's latest
-commit (including any bot autofix/suggestion commits, which re-run the checks). See
-[CONTRIBUTING.md](CONTRIBUTING.md) for the full merge policy.
+Integration* and *Build, smoke-test, publish* checks must pass on a PR's latest
+commit (including any bot autofix/suggestion commits, which re-run the checks). Both
+workflows are currently `workflow_dispatch`-only (#618), so nothing runs on a PR by itself:
+run `ci.yml` by hand (`gh workflow run ci.yml --ref <branch>`), or run the same gate locally —
+`pnpm typecheck && pnpm build && pnpm test`, then `tests/container/run-local.sh` for the
+container smoke. Dispatching `docker-publish.yml` also **publishes** the image, so it is not a
+dry run. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full merge policy.
 
 ## License
 

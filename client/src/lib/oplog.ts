@@ -147,3 +147,27 @@ export async function requeueInflight(): Promise<void> {
     }
   }
 }
+
+/**
+ * Throw away every queued op, acked or not, by deleting the whole database.
+ *
+ * Only the mobile shell's "change server" path calls this (lib/server-config.ts):
+ * queued ops are addressed to the server they were made against, so they must not
+ * survive a switch to another one. The cached handle is closed first — an open
+ * connection would otherwise block the delete.
+ */
+export async function discardAll(): Promise<void> {
+  if (_testStore) {
+    for (const op of await _testStore.getAll()) await _testStore.delete(op.opId);
+    return;
+  }
+  _idb?.close();
+  _idb = null;
+  _idbStore = null;
+  await new Promise<void>((resolve) => {
+    const req = indexedDB.deleteDatabase(DB_NAME);
+    req.onsuccess = () => resolve();
+    req.onerror   = () => resolve();
+    req.onblocked = () => resolve(); // another tab holds it open; the delete completes when it closes
+  });
+}

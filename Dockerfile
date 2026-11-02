@@ -19,7 +19,22 @@ WORKDIR /app
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY client/package.json ./client/
 COPY server/package.json ./server/
-RUN pnpm install --frozen-lockfile
+# The @companionintelligence/{config,content,tokens} packages live on GitHub Packages
+# (npm.pkg.github.com), and the lockfile pins their tarball URLs there. Without the
+# scope registry + a token, pnpm fails with ERR_PNPM_TARBALL_URL_MISMATCH. The repo
+# .npmrc is (deliberately) .dockerignore'd, so the user-level npmrc is written inside
+# this RUN from a BuildKit secret: the token exists only in the secret mount and in a
+# throwaway file removed in the same layer, never in an ARG/ENV or the image history.
+#   docker build --secret id=NODE_AUTH_TOKEN,env=NODE_AUTH_TOKEN .
+RUN --mount=type=secret,id=NODE_AUTH_TOKEN \
+    set -eu; \
+    if [ -s /run/secrets/NODE_AUTH_TOKEN ]; then \
+      printf '%s\n' '@companionintelligence:registry=https://npm.pkg.github.com' \
+        "//npm.pkg.github.com/:_authToken=$(cat /run/secrets/NODE_AUTH_TOKEN)" > /tmp/npmrc; \
+      export NPM_CONFIG_USERCONFIG=/tmp/npmrc; \
+    fi; \
+    pnpm install --frozen-lockfile; \
+    rm -f /tmp/npmrc
 
 # Browser error reporting — opt-OUT: a bundle built WITH this DSN reports by default,
 # subject to the server's runtime verdict at GET /api/config/telemetry. Vite INLINES

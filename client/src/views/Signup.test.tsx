@@ -180,3 +180,18 @@ describe('Signup — already signed in', () => {
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith('/', { replace: true }));
   });
 });
+
+describe('Signup — Capacitor mobile shell', () => {
+  // The shell has no sign-up (see Login.tsx): a stale link or a typed route lands here and
+  // is sent to sign-in without the page asking the server anything.
+  it('sends the person to sign-in and shows nothing', async () => {
+    vi.stubGlobal('Capacitor', { isNativePlatform: () => true });
+    const r = render(() => <Signup />);
+
+    await waitFor(() => expect(navigateMock).toHaveBeenCalledWith('/login', { replace: true }));
+    expect(r.container.querySelector('h1')).toBeNull();
+    expect(r.container.querySelector('form')).toBeNull();
+    expect(configMock).not.toHaveBeenCalled();
+    expect(reqMock).not.toHaveBeenCalled();
+  });
+});

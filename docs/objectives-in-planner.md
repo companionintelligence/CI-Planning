@@ -1,10 +1,18 @@
 # How Objectives render as block groupings in the Planner
 
-> **Status:** decision record · **Spike:** [#361](https://github.com/companionintelligence/Companion-Planning/issues/361) ·
+> **Status:** decision record · **Spike:** [#361](https://github.com/companionintelligence/CI-Planning/issues/361) ·
 > **Date:** 2026-07-16 · **Branch:** `spike/objectives-in-planner` · **Production diff:** none
 >
 > **Decision: (c) — a non-geometric objective accent on member blocks, plus an opt-in
 > single-objective rail. Reject (b) the derived spanning band.** Reasoning and evidence below.
+>
+> **Follow-up status (2026-11-01):** step 1, the always-on accent and the shared objectives
+> store, shipped as #386 (re-merged in #401): `client/src/lib/objective-accent.ts`,
+> `objectiveAccentByBlock` in `client/src/stores/index.ts:120`, and the left-border recolour in
+> `Planner.tsx:468-471` and `:538`. Step 2, the opt-in focused-objective rail, is not built.
+> The rest of this record is the 2026-07-16 analysis and is left as written, so its
+> measurements and "today" statements describe the code at head 0131; the citations are
+> updated to the current files where they still exist.
 
 The owner asked: *"Objectives happen across multiple sessions. They are similar to timeblocks.
 Represent Objectives in the same way as a Time Block"* — and chose rendering an Objective as a
@@ -26,14 +34,15 @@ because the follow-up ticket must not inherit them.
 | # | Claim | Verdict | Correct citation |
 |---|---|---|---|
 | 1 | Objectives have no time columns | **TRUE** | ⚠️ **not** `server/src/db/schema.ts:648-669` — `objectives` **is not in `schema.ts` at all**. It is raw DDL in [`0081_objectives.ts:19`](../server/src/db/migrations/0081_objectives.ts). |
-| 2 | The Planner has never heard of objectives | **TRUE** | `grep -ic objective client/src/components/Planner.tsx` → **0**. No objectives store in `client/src/stores/index.ts`. |
-| 3 | The tree API returns no block linkage | **TRUE** | [`api.ts:1105`](../client/src/lib/api.ts#L1105) (ticket said 1066-1075). |
+| 2 | The Planner has never heard of objectives | **TRUE** at head 0131 | `grep -ic objective client/src/components/Planner.tsx` → **0**. No objectives store in `client/src/stores/index.ts`. *(Changed since: #386 added both; see the follow-up status above.)* |
+| 3 | The tree API returns no block linkage | **TRUE** | [`api.ts:903`](../client/src/lib/api.ts#L903) (`api.objectives.list`; the ticket said 1066-1075). |
 | 4 | "Container" is already a real block | **TRUE** | `block_kind === 'timeblock'`; children via `parent_block_id`; [`group-move.ts`](../client/src/lib/group-move.ts). |
 
 **Blocker 1 in full.** `objectives` columns as of head 0131 (0081 + 0086 + 0087 + 0129):
 `id, owner_id, parent_id, level, horizon, title, description, target_date, status, category_id,
 progress_cache, cadence, last_advanced_at, priority, created_at, updated_at, completed_at,
-source_task_id, version, field_ts, archived_at, archive_root_id, purge_after`.
+source_task_id, version, field_ts, archived_at, archive_root_id, purge_after` (a later
+migration, `0133_item_colors`, added `color_token`).
 `target_date` is a **date**, not a clock time. There is no `start_at`/`end_at`. Confirmed.
 
 ### 4a. A fifth blocker the ticket did not have: the time axis is vertical
@@ -44,14 +53,14 @@ tasks' blocks ticked along it."* **That cannot work as written.** In the Planner
 handles are `cursor-ns-resize`. A horizontal row above the grid has **no time alignment**; its
 ticks could not line up with anything.
 
-There *is* a header lane above the grid ([`Planner.tsx:983`](../client/src/components/Planner.tsx#L983)),
+There *is* a header lane above the grid ([`Planner.tsx:1139`](../client/src/components/Planner.tsx#L1139)),
 but it is explicitly **off the minute axis** — it holds all-day Plans and Concepts precisely
 because they have no position in time.
 
 The correct analogue of option (a) on a vertical axis is a **vertical rail**: a narrow column
 beside the grid, ticked at each member block's Y. This already exists as a pattern —
 `DirectionColumn` is a 1.75rem rail in the Planner's own grid template
-([`Planner.tsx:994`](../client/src/components/Planner.tsx#L994)):
+([`Planner.tsx:1151`](../client/src/components/Planner.tsx#L1151)):
 
 ```
 grid-template-columns: 3.5rem 1.75rem 1fr    /* TimeGutter | DirectionColumn | grid */
@@ -234,7 +243,7 @@ is why the prototype filters on it. Under (b) an objective whose only blocks are
 06:30 would have a span that **cannot be drawn at all**. Under (c) the member chip is already
 hidden with its region, so the accent disappears with it — no special case needed.
 
-**An archived objective.** Per [#366](https://github.com/companionintelligence/Companion-Planning/pull/366)
+**An archived objective.** Per [#366](https://github.com/companionintelligence/CI-Planning/pull/366)
 the archive is an `archived_at` **column**, and `GET /objectives` returns the live tree only, so
 archived objectives never reach the join. No extra filter needed — but the follow-up must not
 introduce one that assumes `status='archived'`.
@@ -244,7 +253,7 @@ introduce one that assumes `status='archived'`.
 ## 7. Incidental findings
 
 - **`POST /api/blocks` silently ignored `parent_block_id`** — ✅ **since fixed and merged**
-  ([#376](https://github.com/companionintelligence/Companion-Planning/pull/376)). Found here while
+  ([#376](https://github.com/companionintelligence/CI-Planning/pull/376)). Found here while
   seeding the scenario: a create-time attach was accepted and dropped on the floor, no 4xx, while
   the client's own typed `create` signature advertised the field. Containment was establishable
   only via `PATCH`. Chasing it also surfaced a **cross-owner grafting hole on the shipped PATCH

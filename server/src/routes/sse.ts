@@ -38,6 +38,51 @@ export function isMissingTableError(err: unknown): boolean {
   return /no such table/i.test((err as Error)?.message ?? '');
 }
 
+/** One `sync_events` row as stored: what a client that missed it needs to replay it. */
+export interface SyncEventRow {
+  seq: number;
+  event: string;
+  payload: string;
+}
+
+/** What a client whose cursor is `lastSeq` has missed. */
+export type SyncGap =
+  | { resync: false; rows: SyncEventRow[] }
+  | { resync: true; maxSeq: number };
+
+/** The owner's highest `sync_events.seq`, or 0 when it has none. */
+export async function maxSyncSeq(ownerId: string): Promise<number> {
+  const row = await store()
+    .prepare(`SELECT MAX(seq) AS seq FROM sync_events WHERE owner_id = ?`)
+    .get<{ seq: number | null }>(ownerId);
+  return Number(row?.seq ?? 0);
+}
+
+/**
+ * The owner's `sync_events` after `lastSeq`, in order, capped at {@link REPLAY_LIMIT}.
+ * Past the cap the gap is not replayed: the caller tells the client to refetch everything
+ * and hands it `maxSeq`, so its cursor moves past the overflow instead of tripping the same
+ * cap on every reconnect.
+ *
+ * The one reader behind both catch-up transports, the replay on SSE connect and
+ * `GET /api/sync/changes`, so the window, the cap and the overflow rule cannot drift apart.
+ * Throws when the read fails; each caller decides how to degrade.
+ */
+export async function readSyncGap(ownerId: string, lastSeq: number): Promise<SyncGap> {
+  const missed = await store()
+    .prepare(
+      `SELECT seq, event, payload
+         FROM sync_events
+        WHERE owner_id = ? AND seq > ?
+        ORDER BY seq
+        LIMIT ?`,
+    )
+    .all<SyncEventRow>(ownerId, lastSeq, REPLAY_LIMIT + 1);
+
+  if (missed.length > REPLAY_LIMIT) return { resync: true, maxSeq: await maxSyncSeq(ownerId) };
+  return { resync: false, rows: missed };
+}
+
 /** Register an SSE client for an owner. Returns an unregister function. */
 export function registerClient(stream: PassThrough, ownerId: string): () => void {
   clients.set(stream, ownerId);
@@ -48,6 +93,12 @@ export function registerClient(stream: PassThrough, ownerId: string): () => void
  *  disconnection without reaching into the module-private `clients` map directly. */
 export function __isRegistered(stream: PassThrough): boolean {
   return clients.has(stream);
+}
+
+/** Test-only: how many streams are registered. For a test that opens a real connection and
+ *  has no handle on the server-side stream, to wait for the route to see it come and go. */
+export function __clientCount(): number {
+  return clients.size;
 }
 
 /**
@@ -186,29 +237,17 @@ export function sseRouter() {
 
     if (!isNaN(lastSeq) && lastSeq > 0) {
       try {
-        const missed = await store()
-          .prepare(
-            `SELECT seq, event, payload
-               FROM sync_events
-              WHERE owner_id = ? AND seq > ?
-              ORDER BY seq
-              LIMIT ?`,
-          )
-          .all<{ seq: number; event: string; payload: string }>(ownerId, lastSeq, REPLAY_LIMIT + 1);
+        const gap = await readSyncGap(ownerId, lastSeq);
 
-        if (missed.length > REPLAY_LIMIT) {
+        if (gap.resync) {
           // Client has been offline long enough that replaying the full gap would
           // be unbounded — tell it to refetch all resources instead.
           // Include id: <maxSeq> so the client cursor advances past the overflow
           // point; without it persistCursor is a no-op and every reconnect loops.
-          const maxRow = await store()
-            .prepare(`SELECT MAX(seq) AS seq FROM sync_events WHERE owner_id = ?`)
-            .get<{ seq: number | null }>(ownerId);
-          const maxSeq = maxRow?.seq ?? 0;
-          const idLine = maxSeq > 0 ? `id: ${maxSeq}\n` : '';
+          const idLine = gap.maxSeq > 0 ? `id: ${gap.maxSeq}\n` : '';
           stream.write(`${idLine}event: sync:resync\ndata: {}\n\n`);
         } else {
-          for (const row of missed) {
+          for (const row of gap.rows) {
             stream.write(`id: ${row.seq}\nevent: ${row.event}\ndata: ${row.payload}\n\n`);
           }
         }

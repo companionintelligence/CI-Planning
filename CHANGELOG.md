@@ -1,10 +1,89 @@
 # Changelog
 
 All notable changes to Companion Planning. Releases are git tags (`v4.1.0` was the last
-cut before this file existed); the container image publishes on each tag and reports the
+cut before this file existed). The container image is published by dispatching
+`docker-publish.yml` on the tag's ref (see [docs/CI.md](docs/CI.md)) and reports the
 version at `GET /api/health` (`release`).
 
-## [Unreleased] — 4.2.0
+## [Unreleased]
+
+### Fixed
+- **No stack trace in the server log each time a live-update stream closes.** Koa reports a
+  response stream that closes before it ends (`ERR_STREAM_PREMATURE_CLOSE`) as an error, and
+  with no listener prints the stack to stderr. For `/api/events` that is the normal ending (a
+  reload, a closed tab, a locked phone), so every disconnect logged a failure that was not one.
+  The app now owns the `error` listener: it drops that one code and logs the rest through the
+  server's logger.
+- **Two server tests no longer depend on when or in what order they run (#632).** The
+  recurrence test compares the New York wall clock across a DST change (it compared UTC
+  hours, so it failed whenever its window crossed one), and `startTestServer` clears the
+  stored VAPID pair so a pair sealed by an earlier test file cannot leave push dormant.
+
+### Added
+- **`GET /api/sync/changes?since=<seq>`.** The `sync_events` log the SSE stream replays from,
+  answered as JSON for a client that cannot hold an `EventSource`: the same rows, the same
+  500-event window and the same overflow rule (`resync: true` means refetch everything, and is
+  also the answer to a cursor ahead of anything the owner has, as after a restored backup). No
+  `since` returns the latest cursor and no events. The mobile app shell polls it, since an
+  `EventSource` there cannot carry the session cookie. SSE is unchanged for browsers.
+- **iOS and Android app shells (Capacitor).** `mobile/ios` and `mobile/android` wrap the
+  `client/` bundle in a native app that connects to a server you run. First run asks for the
+  server's address (checked against `/api/health` and `/api/auth/config`, kept on the device,
+  never built into the bundle); it can be changed under Settings → Profile → Server. All of it
+  is guarded behind the `window.Capacitor` global, so the web app and the container image are
+  unchanged. `pnpm --filter client build:mobile` builds the bundle into `client/dist`, and the
+  manual `mobile-build.yml` workflow builds a debug APK and an unsigned Simulator `.app`. Not
+  store-ready: see "Mobile app" in the README. Companion Portal sign-in is not available in the
+  app yet.
+
+### Changed
+- **App shells: live updates by polling.** An `EventSource` in the app cannot carry the session
+  cookie and the server allows no foreign origin, so in every shipped configuration the stream
+  failed and retried forever. The shells now poll `GET /api/sync/changes` (every 15s while on
+  screen, on resume or reconnect, and shortly after the app's own writes); browsers keep the
+  stream. Needs a server newer than v4.2.2; an older one answers 404 and the app has no live
+  updates, as before. Android `allowMixedContent` is gone, as it existed only for the stream.
+- **App shells: password sign-in only.** The sign-in screen shows the username form and nothing
+  else, `/signup` sends you to sign-in, and Settings no longer offers "Connect Google" or "Sign in
+  with Companion Portal" (Companion Memory) in the app, nor does the onboarding wizard. All of them
+  are redirects out and back with a cookie, which Capacitor sends to the system browser, so they
+  could not finish in the app. A server that offers Portal sign-in alone gets an explanation
+  instead of a button that cannot work. Browsers are unchanged.
+- **App shells: pinch-to-zoom is on** for iOS and Android (`zoomEnabled`), the runtime
+  `maximum-scale=1` the shell used to add is gone, and text fields are 16px or larger on touch
+  devices so focusing one no longer zooms the page (WCAG 1.4.4). A test fails if any of it
+  comes undone. On touch devices date and time inputs also drop iOS's native appearance, which
+  ignored `width: 100%` and made the onboarding wizard's wake and bed times overflow a phone.
+- **App shells: minimum OS raised to what the bundle needs.** iOS 16.4 (was 15) and Android
+  System WebView 111 (was Capacitor's 60), the floor of Vite 8's default target and Tailwind 4.
+  Below it the Android app shows a page saying to update WebView instead of opening unstyled.
+- **The details sheet starts closed on phones.** At phone width it is a sheet over up to 62% of
+  the screen; it now opens when something is selected and is not remembered. Desktop is
+  unchanged.
+- **iOS: privacy manifest and export-compliance key.** The app target has a
+  `PrivacyInfo.xcprivacy` (no tracking, nothing collected, no required-reason APIs, checked by
+  scanning the built binaries) and `Info.plist` declares `ITSAppUsesNonExemptEncryption` as
+  `false`. Both are for the owner to confirm before a first upload.
+
+## [4.2.2] — 2026-10-29
+
+### Fixed
+- **The Companion Portal button on the login and sign-up screens does a real navigation
+  (#628).** Solid Router intercepts plain same-origin anchors, so the button resolved
+  client-side to an unknown route and never reached `/api/auth/ciportal/start`. The links
+  are marked `rel="external"`. This is what failed the publish workflow's Portal login
+  smoke test.
+
+## [4.2.1] — 2026-10-29
+
+### Fixed
+- **The container image builds again (#627).** The `@companionintelligence/*` packages
+  resolve to `npm.pkg.github.com` and `.npmrc` is dockerignored, so `pnpm install` in the
+  Dockerfile failed with `ERR_PNPM_TARBALL_URL_MISMATCH`. The install step now writes a
+  throwaway user npmrc from a BuildKit secret (`--secret id=NODE_AUTH_TOKEN`) that never
+  reaches a layer, and `docker-publish.yml` passes `GITHUB_TOKEN` as that secret.
+
+## [4.2.0] — 2026-10-29
 
 ### Changed
 - **License changed from CI-Commercial-1.0 to the PolyForm Noncommercial License 1.0.0.** Companion Planning is now free for noncommercial use and the source is public. the license file is now `LICENSE`; package manifests declare `PolyForm-Noncommercial-1.0.0`. See [docs/License-FAQ.md](docs/License-FAQ.md).

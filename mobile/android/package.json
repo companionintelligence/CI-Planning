@@ -1,0 +1,21 @@
+{
+  "name": "planning-android",
+  "version": "0.0.0",
+  "private": true,
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "description": "Native Android shell (Capacitor) wrapping the client/ build as a thin client of a user-run CI-Planning server. Standalone project, NOT a pnpm workspace member, so the root install is untouched; it consumes the client build via webDir, never as a dependency.",
+  "scripts": {
+    "build:web": "pnpm --dir ../.. --filter client build:mobile",
+    "sync": "cap sync android",
+    "build": "pnpm build:web && pnpm sync",
+    "open": "cap open android"
+  },
+  "dependencies": {
+    "@capacitor/core": "^8.6.0",
+    "@capacitor/android": "^8.6.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.6.0",
+    "typescript": "^5.8.3"
+  }
+}

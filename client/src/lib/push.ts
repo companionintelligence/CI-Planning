@@ -1,4 +1,5 @@
 import { api } from './api.js';
+import { isNativeShell } from './server-config.js';
 
 /** base64url VAPID public key → ArrayBuffer for `applicationServerKey` (a BufferSource). */
 function urlBase64ToBuffer(base64: string): ArrayBuffer {
@@ -14,6 +15,9 @@ function urlBase64ToBuffer(base64: string): ArrayBuffer {
 export type PushState = 'unsupported' | 'unconfigured' | 'denied' | 'subscribed' | 'unsubscribed';
 
 function supported(): boolean {
+  // Web Push needs the service worker, which the Capacitor shell does not register
+  // (sw/register.ts). Native push (APNs/FCM) is a separate, unbuilt path.
+  if (isNativeShell()) return false;
   return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 }
 

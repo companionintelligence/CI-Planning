@@ -104,7 +104,7 @@ Client: one `createResource` keyed on the visible day set → `resolve-many` →
 
 ### F2-4 — Time-Block containers: 10px handle + outline
 
-This is the unbuilt "F′-4" half from [F-calendar-grid.md](archive/F-calendar-grid.md#f′-4—time-block-outlines--pattern-textures-in-the-grid) concerning container outlines (the pattern-texture half is now F2-3, generalized to every day rather than just "today"). Both `block_kind` and `parent_block_id` already exist on `timeBlocks` — no schema work.
+This is the unbuilt "F′-4" half from [F-calendar-grid.md](archive/F-calendar-grid.md#f-4--time-block-outlines--pattern-textures-in-the-grid) concerning container outlines (the pattern-texture half is now F2-3, generalized to every day rather than just "today"). Both `block_kind` and `parent_block_id` already exist on `timeBlocks` — no schema work.
 
 ```ts
 // CalendarGrid.tsx — group placed blocks per day

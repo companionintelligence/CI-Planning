@@ -1,0 +1,7 @@
+# This directory is its own pnpm project root, on purpose. Without this file pnpm walks up
+# to the repo's pnpm-workspace.yaml and installs THAT workspace instead of this package.
+# The native shells are not members of the root workspace (server/, client/): Capacitor's
+# CLI, CocoaPods/SwiftPM and Gradle all need a conventional node_modules tree here, and the
+# root install must not change because a native project exists.
+packages:
+  - '.'

@@ -37,6 +37,23 @@ export async function buildApp(): Promise<Koa> {
   // harmless (unset) in every other mode, which never sets a signed cookie.
   if (config.auth.sessionSecret) app.keys = [config.auth.sessionSecret];
 
+  // Koa hands a response stream that closes before it ends (pipeline's
+  // ERR_STREAM_PREMATURE_CLOSE) to `app.emit('error')`, and with no listener its default
+  // prints the stack to stderr. For the SSE stream that is not a fault but how every stream
+  // ends: a reload, a closed tab, a phone that locked. Each one wrote a stack trace to the
+  // logs people read when something is wrong. Owning the listener drops that one code and
+  // keeps everything else, through the same logger as the rest of the server. `expose` and
+  // 404 stay quiet, as in Koa's own default.
+  app.on('error', (err: NodeJS.ErrnoException & { status?: number; expose?: boolean }, ctx?: Context) => {
+    if (err?.code === 'ERR_STREAM_PREMATURE_CLOSE') return;
+    if (err?.status === 404 || err?.expose) return;
+    logger.error('unhandled koa error', {
+      method: ctx?.method,
+      path: ctx?.path,
+      err: err?.stack ?? String(err),
+    });
+  });
+
   app.use(async (ctx, next) => {
     try {
       await next();

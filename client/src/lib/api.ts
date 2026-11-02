@@ -1,4 +1,9 @@
-const BASE = '/api';
+import { apiBase, needsServerSetup } from './server-config.js';
+import { noteWrite } from './write-signal.js';
+
+// '/api' on the web (same-origin, unchanged); '<server>/api' inside the Capacitor shell.
+// See lib/server-config.ts.
+const BASE = apiBase();
 
 /**
  * A non-OK HTTP response, carrying the status alongside the server's message.
@@ -19,6 +24,10 @@ export class ApiError extends Error {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  // Mobile shell, first run, before the user has chosen a server: BASE is a bare '/api',
+  // which would hit the app's own bundle and come back as HTML. Fail as "never reached
+  // a server" instead (status 0), which is what the callers already treat as offline.
+  if (needsServerSetup()) throw new ApiError('No server selected', 0);
   let res: Response;
   try {
     res = await fetch(`${BASE}${path}`, {
@@ -34,6 +43,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     const err = await res.json().catch(() => ({}));
     throw new ApiError((err as any).error ?? res.statusText, res.status);
   }
+  // The server accepted a change from this client: let lib/sse.ts poll for its effects
+  // sooner than the next tick (a no-op everywhere but the app shell).
+  if (method !== 'GET') noteWrite();
   return res.json() as Promise<T>;
 }
 
@@ -844,6 +856,10 @@ export const api = {
     apply: (ops: SyncOp[]) =>
       request<{ results: (SyncResult | SyncError)[] }>('POST', '/sync', { ops })
         .then((r) => r.results),
+    // The polling twin of the SSE stream, for the app shell (lib/live-poll.ts). Leave
+    // `since` out to ask where "now" is; an old server answers 404.
+    changes: (since?: number) =>
+      request<SyncChanges>('GET', `/sync/changes${since === undefined ? '' : `?since=${since}`}`),
   },
 
   // ── Phase N0: daily + weekly goals (reflections table) ───────────────────────
@@ -1695,6 +1711,15 @@ export interface SyncResult {
 export interface SyncError {
   opId: string;
   error: string;
+}
+
+/** `GET /api/sync/changes` (server routes/sync.ts): the `sync_events` after a cursor. */
+export interface SyncChanges {
+  events: { seq: number; event: string; data: unknown }[];
+  /** Send this back as `since`. */
+  cursor: number;
+  /** The gap was too long to replay: refetch everything, then carry on from `cursor`. */
+  resync: boolean;
 }
 
 // ── Pattern-blocks (noun 8) ────────────────────────────────────────────────────
