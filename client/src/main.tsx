@@ -3,6 +3,7 @@ import { App } from './App.js';
 import { applyTheme, theme } from './lib/theme.js';
 import { registerSW } from './sw/register.js';
 import { initTelemetry } from './lib/telemetry.js';
+import './fonts.css';
 import './index.css';
 
 // Error reporting — opt-out, on by default once configured: reports when

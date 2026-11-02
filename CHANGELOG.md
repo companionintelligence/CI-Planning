@@ -37,6 +37,11 @@ version at `GET /api/health` (`release`).
   app yet.
 
 ### Changed
+- **Manrope is bundled, not loaded from Google Fonts.** The client now carries the variable
+  Manrope (`wght` 200-800) as six script-subset woff2 files in `client/src/fonts`, with the SIL OFL
+  1.1 licence beside them, instead of a stylesheet from `fonts.googleapis.com`. Opening the app, on
+  the web or in the iOS and Android shells, no longer contacts a third party, and the app works with
+  the font offline. The Content-Security-Policy drops `fonts.googleapis.com` and `fonts.gstatic.com`.
 - **App shells: live updates by polling.** An `EventSource` in the app cannot carry the session
   cookie and the server allows no foreign origin, so in every shipped configuration the stream
   failed and retried forever. The shells now poll `GET /api/sync/changes` (every 15s while on
