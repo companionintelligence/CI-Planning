@@ -272,9 +272,7 @@ The LLM that turns user input into a task with variables should select the
 motivation better — and improve from the owner's corrections over time.
 
 Grounding — all of the machinery exists, none of it currently learns
-classification (written before Phase 8 shipped; since 2 Nov 2026 quick add and the Describe-it
-preview learn too, by frequency and with no embedding, see
-`docs/classification-hint-measurement-2026-11.md`):
+classification:
 
 | Piece | Where |
 |---|---|

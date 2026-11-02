@@ -1,8 +1,8 @@
 # Quick add on the small models: making the category pick usable (2 Nov 2026)
 
 Follow-up to the classification hint measurement (PR #652, merged as `96009f91`; its write-up is
-`docs/classification-hint-measurement-2026-11.md` on that commit, section "Answer shape", and on the
-local branch `park/classification-hint-half`). That measurement found that the built-in fast model,
+`docs/classification-hint-measurement-2026-11.md`, section "Answer shape", kept as a record after the
+hint half was removed in #659). That measurement found that the built-in fast model,
 `qwen2.5:0.5b`, answers `"categories": "leisure"` (a bare string) where quick add kept only arrays, so a
 default install got no category pick, no `classification_claim`, nothing to correct and nothing to
 learn from. It named two remedies and did neither. This document measures them and records which one
@@ -59,7 +59,7 @@ The gates and the decision rule were written into the harness header and committ
 (`server/test/classification-shape-live.test.ts`, which carries the registered text verbatim) is the
 authority. A first run was made from `59e12b0e`, inside `classification-hint-live.test.ts` as
 `LIVE_HINT_SHAPE=1`; the measurement then moved to its own file with its readings, arms, gates and rule
-unchanged, because the hint half that file measures is being dropped. The recorded run was replayed
+unchanged, because the hint half that file measures was dropped in #659. The recorded run was replayed
 through the new file (`LIVE_SHAPE_REPLAY`): it recomputes every reading from the raw completions, they
 equal what the run recorded on all 2,520 calls, and it prints the same rule lines the run printed.
 
@@ -204,17 +204,17 @@ effect are corrected too).
 ## What was not done
 
 - **The hint experiment's G1 to G6 were not re-run.** The registered plan (D4) asked for it. Three
-  reasons it was not: the hint half they gate is being dropped by a separate decision, so the instrument
-  and what it measures are leaving `main`; this change shows every model exactly the prompt it was shown
-  before (the stock-prompt pins in `quickadd-hint-prompt.test.ts` pass unchanged, and G4 was never at
-  risk); and that harness reads a pick with `constrainToVocabulary` on the array only, so run on the
+  reasons it was not: the hint half they gate was dropped by a separate decision (#659), so the instrument
+  and what it measures are gone from `main`; this change shows every model exactly the prompt it was shown
+  before (the stock-prompt pins in `quickadd-hint-prompt.test.ts` passed unchanged before #659 removed that
+  file, and G4 was never at risk); and that harness reads a pick with `constrainToVocabulary` on the array only, so run on the
   default tier now it would score bare strings as misses unless it were edited to the new reading, in a
-  file that is going away. What stands in for it: S2 on `gemma3n:e4b` (no title's modal pick moved, noise
+  file that has since been removed. What stands in for it: S2 on `gemma3n:e4b` (no title's modal pick moved, noise
   floor 0), the capture check (`gemma3n:e4b` identical before and after), and the unchanged prompt. That
   is a weaker statement than "G1 to G6 still hold", and it is the whole of it.
 - **Whether the loop helps a default install.** Capture and the weekly index now work on the default
-  tier. Whether anything reads the index back is the apply half, which is the hint, and the hint is being
-  dropped; memory enrichment, the other reader, is off by default. This change makes the corrections
+  tier. Whether anything reads the index back is the apply half, which is the hint, and the hint was
+  removed in #659; memory enrichment, the other reader, is off by default. This change makes the corrections
   appear; it does not show or claim that they improve quick add. The loop stays weekly: the Monday
   `calibrate_classification` run folds corrections in, and a field needs at least 2 first.
 - **A pick that is mostly wrong on the default model.** Not fixed, and not a parse problem: see "Usable

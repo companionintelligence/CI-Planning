@@ -25,22 +25,9 @@ version at `GET /api/health` (`release`).
   edits. Two related changes: an edit that does not change a task's categories no longer counts as an
   answer, and a category you clear is kept in the log but not learned from. Learning is still weekly: a
   correction you make changes no prompt until the next Monday `calibrate_classification` run, and a field
-  needs at least 2 corrections first.
-- **The Describe-it line shows the AI your most common category and who-it's-for corrections.** The
-  prompt now carries up to 3 of the corrections you make most often for each, category and me, us or
-  them, just before your text. `POST /api/tasks/quick` gets the same prompt; no screen in the app calls
-  it today. The corrections come from what the Monday `calibrate_classification` run built, so a
-  correction you make changes no prompt until the next Monday run, and a field needs at least 2
-  corrections first; with fewer, the prompt is exactly what it was. The category part needs the AI
-  model to name one of your categories. The smallest default model, `qwen2.5:0.5b`, answers with a
-  bare word instead of a list; Describe-it did not read that, and the next entry says it now does.
-  The who-it's-for part was not measured, and the Add dialog does not record
-  those picks, so on a default install it stays empty. In a test with an invented owner, `gemma3n:e4b`
-  (set as the fast model for the test; the default fast model is `qwen2.5:0.5b`) filed 7 of 12
-  held-out titles the owner's way, up from 3. It learned two of the owner's three rules and none of the
-  exercise titles. `gemma3:1b` answers a list on about 1 call in 5, so the test could not measure it.
-  The Settings → Learning card for categories now says the examples also reach the Describe-it line.
-  See `docs/classification-hint-measurement-2026-11.md`.
+  needs at least 2 corrections first. The examples built from corrections reach a prompt only where they
+  already did: Companion Memory's fill-in (off unless `MEMORY_MODE` is set) and the Monday run's own
+  scoring. The Describe-it line does not read them.
 - **Describe-it reads a one-word category answer.** The smallest default AI model, `qwen2.5:0.5b`,
   answers the category question with one word (`"leisure"`) where the prompt asks for a list, and
   `gemma3:1b` does on about 4 calls in 5. Describe-it kept lists only, so on those models it never

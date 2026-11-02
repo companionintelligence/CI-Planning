@@ -31,20 +31,6 @@ import { constrainToVocabulary, constrainOne, type EnrichOut } from './constrain
  *  - `isComplex`: gates the separate suggest-only subtask call (agents/subtasks.ts).
  * All three remain preview-only: /api/tasks/quick/parse writes nothing, so the wizard
  * shows them for approval before anything is created.
- *
- * 2026-11-02: the overlay is also handed the owner's OWN past corrections for the two
- * fields they correct, `categories` and `motivation` (`hints`, rendered by
- * services/classification-learning.ts; the caller fetches them, so this agent stays free of
- * services). The blocks sit LAST, after the "never invent" rule and just before the entry
- * (motivation's, then categories'), and not beside the fields they teach: next to their
- * fields they made a small model (gemma3:1b) mostly stop its JSON after three keys, keeping
- * direction, categories and tags and dropping the other six (isComplex, priority,
- * estimatedMinutes, timeOfDay, timeOfDayReason, motivation), while with the same blocks last
- * it answered every key. Measured 2026-11-02 with the live
- * harness, server/test/classification-hint-live.test.ts (the dated note under its gates has
- * the figures). An owner with no corrections gets today's prompt byte for byte. The
- * direction retry gets no hint, because direction is not something the owner's corrections
- * teach.
  */
 
 export interface QuickVocab {
@@ -170,26 +156,10 @@ export function mergeEnrichment(parsed: ParsedQuick, out: EnrichOut, vocab: Quic
 // and the memory pass classify the axis identically — three copies of "what Home means"
 // is exactly how a classifier starts contradicting itself between surfaces.
 
-/**
- * The owner's own past corrections, one rendered block per field
- * (`exemplarPrompt` output, which opens and closes with a newline). The caller fetches them
- * (routes/tasks.ts `enrichEntry`); this agent only places them, last: after the "never
- * invent" rule, just before the entry, motivation's block first. Not beside their fields,
- * see the header.
- */
-export interface QuickHints {
-  /** For `categories`. '' or absent adds nothing. Ignored when the owner has no
-   *  categories: that line is not asked then, and a lesson about it would have no field. */
-  category?: string;
-  /** For `motivation`. '' or absent adds nothing. */
-  motivation?: string;
-}
-
 export async function enrichQuick(
   text: string,
   parsed: ParsedQuick,
   vocab: QuickVocab = { directions: [], others: [] },
-  hints: QuickHints = {},
 ): Promise<ParsedQuick> {
   const hasCats = (vocab.categories?.length ?? 0) > 0;
   // Layout matters as much as wording here. Measured 2026-07-27 against llama3.2: with
@@ -198,15 +168,6 @@ export async function enrichQuick(
   // isComplex:false, while the same rule in a short prompt answered true. So each rule
   // now sits IMMEDIATELY AFTER the field it governs. A 3B model follows adjacent
   // instructions far better than a rulebook it has to cross-reference.
-  //
-  // The owner's corrections are the exception: they go LAST, directly before the entry, as
-  // the memory pass puts them last too (services/task-enrich.ts). Beside their fields they
-  // cost gemma3:1b most of its JSON (header). Each block brings its own newline at both
-  // ends, so one blank line precedes the block and the entry follows it directly; nothing
-  // is added here. '' or absent adds no bytes, so an owner with no corrections gets the
-  // stock prompt byte for byte. The categories block goes with its line when that is not
-  // asked.
-  const lessons = (hints.motivation || '') + (hasCats ? hints.category || '' : '');
   const out = await generateJson<EnrichOut>(
     `Classify this quick task entry. Reply with JSON with exactly these keys.\n` +
       `"direction": REQUIRED — exactly one of ${JSON.stringify(vocab.directions)}. ` +
@@ -220,7 +181,6 @@ export async function enrichQuick(
       (hasCats ? `"categories": 1-3 life areas from ${JSON.stringify(vocab.categories)}, best fit first.\n` : '') +
       `"tags": up to 2 from ${JSON.stringify(vocab.others.slice(0, 60))}, else [].\n` +
       `Choose direction/categories/tags ONLY from the given lists — never invent.\n` +
-      lessons +
       `Entry: "${text}"`,
     { purpose: 'classify' }
   );

@@ -29,7 +29,7 @@
  * server/test/classification-hint-live.test.ts as `LIVE_HINT_SHAPE=1` (commit 59e12b0e, which holds the
  * registered text below byte for byte; the first live run's artifact records that commit and the hash of that
  * file). It moved here, with its readings, arms, gates and rule unchanged, because the hint half of
- * #652 that file measures is being dropped and this experiment does not use it. What changed in the
+ * #652 that file measures was dropped (#659) and this experiment does not use it. What changed in the
  * move: the file, the env names (LIVE_HINT_* became LIVE_SHAPE_*), and one added mode (the capture check).
  * The registered text below still says LIVE_HINT_SHAPE where it was written; nothing in it was edited.
  * LIVE_SHAPE_REPLAY re-reads the recorded run with this file's code and must print the rule's reading
