@@ -131,6 +131,22 @@ describe('in the Capacitor shell', () => {
   });
 });
 
+describe('in the Tauri desktop shell', () => {
+  beforeEach(() => vi.stubGlobal('__TAURI_INTERNALS__', {}));
+
+  it('is a native shell: it asks for a server until one is saved, and redirect sign-in is off', () => {
+    expect(isNativeShell()).toBe(true);
+    expect(needsServerSetup()).toBe(true);
+    expect(supportsRedirectFlows()).toBe(false);
+  });
+
+  it('points the API base at the saved server, as the phone shells do', () => {
+    localStorage.setItem(SERVER_URL_KEY, 'http://192.168.1.20:3848');
+    expect(needsServerSetup()).toBe(false);
+    expect(apiBase()).toBe('http://192.168.1.20:3848/api');
+  });
+});
+
 describe('normalizeServerUrl', () => {
   it.each([
     // explicit scheme is respected
