@@ -2516,23 +2516,26 @@ and the Simulator `.app` is unsigned. Nothing here is store-ready.
   and `-PappVersionName=<name>`. The iOS `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` are set per
   build with `xcodebuild MARKETING_VERSION=<name> CURRENT_PROJECT_VERSION=<n>`. Release lanes in CI need
   the signing secrets and must pass those values.
-- **Artwork and listings.** The app icon and launch screen are Capacitor's placeholders; both stores
-  need the real icon set (iOS 1024 px without alpha; Android adaptive icon), screenshots, descriptions,
-  a support URL, a **privacy policy URL**, content ratings, and the privacy disclosures (Apple's App
-  Privacy answers and Google's Data safety form). `Info.plist` declares `ITSAppUsesNonExemptEncryption`
+- **Artwork and listings.** The app icon and launch screen were replaced in companionintelligence/CI-Planning#644 and
+  companionintelligence/CI-Planning#651. Both stores still need screenshots, descriptions, a support
+  URL, a **privacy policy URL**, content ratings, and the privacy disclosures (Apple's App Privacy
+  answers and Google's Data safety form). The drafts are in `docs/mobile-store/`. `Info.plist` declares `ITSAppUsesNonExemptEncryption`
   as `false` (the app's only cryptography is the operating system's TLS) and the app target carries a
   `PrivacyInfo.xcprivacy` that declares nothing collected and no required-reason APIs, checked by
   scanning the built binaries; both are the owner's to confirm before the first upload, and the
   manifest needs a new entry whenever a plugin brings one of those APIs.
-- **Legal pages.** The repo has no privacy policy, terms of use, support page or data-deletion statement
-  yet, and both stores need public URLs. The policy must cover the crash reports from released images
-  (Sentry, on by default in released builds) and any demo server run for review.
+- **Legal pages.** The privacy policy is a draft in `docs/mobile-store/` and is not published. The repo has no
+  terms of use, support page or data-deletion statement yet, and both stores need public URLs. The
+  policy must cover crash reports from the released server images (Sentry, when the CI secret is set);
+  the mobile builds send none. It must also cover any demo server run for review.
 - **App Review.** Apple will not accept a client that cannot be exercised, so submission needs a
   reachable **demo server with review credentials**, and a position on guideline 4.2 (a web-technology
   app must feel like an app). The shell offers no way to create an account: New account, invite codes
   and the sign-up links are hidden, and `/signup` sends you to sign-in. Apple's in-app account-deletion
-  rule (5.1.1(v)) still needs a position: an operator can delete other accounts from the app, but no one
-  can delete their own. Play will ask why `usesCleartextTraffic` is on (people's own LAN servers).
+  rule (5.1.1(v)) has a proposed position in `docs/mobile-store/app-review-notes.md` for the owner to confirm: an
+  operator can delete other accounts from the app, but no one can delete their own. Play will ask why
+  `usesCleartextTraffic` is on. On Android it applies to the whole app; on iOS, App Transport Security
+  limits plain http to local-network names.
 - **Product gaps listed above.** Companion Portal sign-in (system browser with a custom-scheme or
   universal-link return, PKCE), native push or local notifications for reminders, and downloads through
   the share sheet.
