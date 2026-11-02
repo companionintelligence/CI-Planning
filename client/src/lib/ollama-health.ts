@@ -39,7 +39,9 @@ export function ollamaHealthDescription(integrations: Integrations | undefined):
   const o = integrations?.ollama;
   switch (ollamaHealth(integrations)) {
     case 'down':
-      return 'Unavailable — start Ollama on localhost:11434';
+      return o?.provider === 'openai'
+        ? 'Unavailable — the AI endpoint is not answering'
+        : 'Unavailable — start Ollama on localhost:11434';
     case 'unusable': {
       const missing = o?.missingModels ?? [];
       return missing.length

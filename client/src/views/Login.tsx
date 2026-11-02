@@ -1,6 +1,7 @@
 import { createSignal, createResource, createEffect, Show } from 'solid-js';
 import { useLocation, useNavigate, useSearchParams } from '@solidjs/router';
-import { Cpu, LogIn, Loader2, UserRound } from 'lucide-solid';
+import { LogIn, Loader2, UserRound } from 'lucide-solid';
+import { BrandMark } from '../components/BrandMark.js';
 import { api, CIPORTAL_START } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
 import { ForgotPassword } from '../components/ForgotPassword.js';
@@ -41,6 +42,12 @@ import { isNativeShell, supportsRedirectFlows } from '../lib/server-config.js';
  * the generic "cancelled or failed" copy.
  */
 const PORTAL_MEMBERSHIP_ERRORS = new Set(['invalid_redirect_uri', 'access_denied', 'unauthorized_client']);
+
+/**
+ * The Portal signed the person in, but this server has no account for them and creates none on
+ * sign-in (auto-provision is off). The operator has to create the account first.
+ */
+const ACCOUNT_MISSING_ERROR = 'unknown_account';
 
 /**
  * The page the person was trying to reach when SessionGate sent them to this screen. It travels
@@ -104,6 +111,7 @@ export function Login() {
   // A provider error bounced back from the Companion Portal callback (?sso_error=…).
   const ssoError = () => (typeof params.sso_error === 'string' && params.sso_error ? params.sso_error : null);
   const membershipRefusal = () => PORTAL_MEMBERSHIP_ERRORS.has(ssoError() ?? '');
+  const accountMissing = () => ssoError() === ACCOUNT_MISSING_ERROR;
 
   async function submitLocal(e: Event) {
     e.preventDefault();
@@ -136,12 +144,7 @@ export function Login() {
       <div class="w-full max-w-sm">
         {/* Brand */}
         <div class="flex flex-col items-center gap-3 mb-8">
-          <div
-            class="w-12 h-12 rounded-2xl flex items-center justify-center text-surface-950"
-            style={{ background: 'linear-gradient(135deg, #58ebbf, #409b9b)' }}
-          >
-            <Cpu size={22} />
-          </div>
+          <BrandMark size={48} />
           <div class="text-center">
             <div class="text-[10px] font-medium tracking-[0.2em] uppercase" style={{ color: '#409b9b' }}>
               Companion
@@ -155,7 +158,15 @@ export function Login() {
             <div class="mb-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive" role="alert">
               <Show
                 when={membershipRefusal()}
-                fallback={<>Companion Portal sign-in was cancelled or failed ({ssoError()}). Please try again.</>}
+                fallback={
+                  <Show
+                    when={accountMissing()}
+                    fallback={<>Companion Portal sign-in was cancelled or failed ({ssoError()}). Please try again.</>}
+                  >
+                    Companion Portal signed you in, but this server has no account for you yet ({ssoError()}). Ask the
+                    server's operator to create one, then try again.
+                  </Show>
+                }
               >
                 Companion Portal couldn't sign you in ({ssoError()}). Ask your Hub's owner to invite you to the
                 organization, then try again.

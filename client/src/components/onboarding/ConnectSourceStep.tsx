@@ -4,6 +4,7 @@ import { integrations, onboardingSampleDataAllowed, refetchBlocks, refetchTasks,
 import { FTUE_RESUME_KEY } from '../../lib/onboarding.js';
 import { GOOGLE_CONNECT_ENABLED } from '../../lib/flags.js';
 import { supportsRedirectFlows } from '../../lib/server-config.js';
+import { MemoryAndAiPanel } from './MemoryAndAiPanel.js';
 
 /**
  * FTUE · T12 (#348) — onboarding wizard Step 3: connect a real Google account, or
@@ -163,6 +164,10 @@ export function ConnectSourceStep(props: { onNext: () => void; onBack: () => voi
       <Show when={onboardingSampleDataAllowed() && gcfg() === null}>
         <p class="text-[11px] text-muted-foreground">Sample data is available to an operator account.</p>
       </Show>
+
+      {/* The memory and AI this server already has, so the owner sees what is in place before
+          Settings. Read-only; connecting stays in Settings. */}
+      <MemoryAndAiPanel />
 
       <div class="flex justify-between items-center pt-1">
         <button type="button" class="btn-ghost text-xs" disabled={busy()} onClick={props.onSkip}>Skip</button>

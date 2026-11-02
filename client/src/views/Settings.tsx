@@ -18,8 +18,11 @@ import { ServerConnection } from '../components/ServerConnection.js';
 import { on } from '../lib/sse.js';
 import { GOOGLE_CONNECT_ENABLED } from '../lib/flags.js';
 import { ollamaHealth, ollamaHealthDescription } from '../lib/ollama-health.js';
+import { editableOwnerName } from '../lib/owner-name.js';
 import { ConnectionAppearance } from '../components/ConnectionAppearance.js';
 import { FOCUS_STYLES, type FocusStyle } from '../lib/focus-appearance.js';
+import { LearningPanel } from '../components/learning/LearningPanel.js';
+import { learningCanReset } from '../lib/learning-access.js';
 
 const BROWSER_TZ = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
@@ -97,7 +100,7 @@ function fmtHourLabel(min: number): string {
 }
 
 export function Settings() {
-  const [activeTab, setActiveTab] = createSignal<'profile' | 'preferences' | 'connections' | 'logs'>('profile');
+  const [activeTab, setActiveTab] = createSignal<'profile' | 'preferences' | 'connections' | 'learning' | 'logs'>('profile');
   const [form, setForm] = createSignal<SettingsForm>({ ...DEFAULTS });
 
   // V8 — account (local sign-in only): the backup reset-email. Fetch auth config + the
@@ -128,14 +131,14 @@ export function Settings() {
   const [profileSaving, setProfileSaving] = createSignal(false);
   createEffect(() => {
     if (me()) {
-      setProfileName(me()!.name ?? '');
+      setProfileName(editableOwnerName(me()!.name));
       setProfileEmail(me()!.email ?? '');
       setProfileUsername(me()!.username ?? '');
     }
   });
   const hasUsername = () => me()?.username != null;
   const profileDirty = () =>
-    profileName().trim() !== (me()?.name ?? '')
+    profileName().trim() !== editableOwnerName(me()?.name)
     || profileEmail().trim() !== (me()?.email ?? '')
     || (hasUsername() && profileUsername().trim() !== (me()?.username ?? ''));
   async function saveProfile() {
@@ -146,7 +149,8 @@ export function Settings() {
       // uniqueness check.
       const changedUsername = hasUsername() && profileUsername().trim() !== (me()?.username ?? '');
       await api.owner.updateProfile({
-        name: profileName().trim(),
+        // A blank name is not sent: the server rejects an empty one, and the owner may be saving only an email.
+        ...(profileName().trim() ? { name: profileName().trim() } : {}),
         email: profileEmail().trim() || null,
         ...(changedUsername ? { username: profileUsername().trim() } : {}),
       });
@@ -688,6 +692,8 @@ export function Settings() {
 
   const ollamaModels = () => integrations()?.ollama.models ?? [];
   const ollamaUp = () => integrations()?.ollama.available ?? false;
+  /** What this card calls the backend: Ollama, or the AI endpoint the CI-Hub set up. */
+  const aiName = () => (integrations()?.ollama.provider === 'openai' ? 'AI endpoint' : 'Ollama');
   // The three-state decision lives in lib/ollama-health.ts, not in this markup: the same
   // choice drives an icon colour, a status glyph and a description string, and as three
   // inline ternaries a change could update one and not the others. Unit-tested there.
@@ -802,6 +808,14 @@ export function Settings() {
           aria-selected={activeTab() === 'connections'}
         >
           Connections
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('learning')}
+          role="tab" class="view-tab"
+          aria-selected={activeTab() === 'learning'}
+        >
+          Learning
         </button>
         <button
           type="button"
@@ -1609,7 +1623,9 @@ export function Settings() {
               when={aiAvailable()}
               fallback={
                 <div class="text-[11px] text-muted-foreground">
-                  AI day ordering needs Ollama — start it, then re-check under Connections → Integrations.
+                  {integrations()?.ollama.provider === 'openai'
+                    ? 'AI day ordering needs the AI endpoint to answer — check it, then re-check under Connections → Integrations.'
+                    : 'AI day ordering needs Ollama — start it, then re-check under Connections → Integrations.'}
                 </div>
               }
             >
@@ -1711,7 +1727,7 @@ export function Settings() {
                 <button type="button" onClick={doSave} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
               </div>
             </div>
-            <Show when={integrations()} fallback={<div class="text-xs text-muted-foreground animate-pulse2">Checking Ollama…</div>}>
+            <Show when={integrations()} fallback={<div class="text-xs text-muted-foreground animate-pulse2">Checking {aiName()}…</div>}>
               <div class="flex flex-col gap-4">
                 {/* Three states, not two. "Reachable" and "usable" are different: Ollama
                     answering while the selected model isn't pulled used to render a plain
@@ -1724,7 +1740,7 @@ export function Settings() {
                   }} />
                   <div class="flex-1">
                     <div class="text-sm text-slate-200 font-medium flex items-center gap-2">
-                      Ollama
+                      {aiName()}
                       <Show when={health() !== 'down'} fallback={<XCircle size={13} class="text-red-400" />}>
                         <Show when={health() === 'ready'} fallback={<AlertTriangle size={13} class="text-amber-400" />}>
                           <CheckCircle2 size={13} class="text-green-400" />
@@ -2315,6 +2331,17 @@ export function Settings() {
         </Show>
 
       </form>
+
+      {/* ── LEARNING TAB ── Outside the <form> on purpose: its buttons act at once
+          (clear learned examples), and nothing here feeds `form()` or Save Settings.
+          `learningCanReset` (lib/learning-access.ts) is null while `me` loads, false for a viewer,
+          true otherwise; the server stays the authority and answers 403 to a clear it will not
+          do. `owner` keys the panel's memory of clears to this account. */}
+      <Show when={activeTab() === 'learning'}>
+        <div class="flex flex-col gap-5">
+          <LearningPanel canReset={learningCanReset(me.loading, me())} owner={me()?.ownerId ?? null} />
+        </div>
+      </Show>
 
       {/* Review modal (T6) — a LOCAL signal, not the global elementModal (reserved
           for the ElementWizard). Closes on backdrop click or the X. */}

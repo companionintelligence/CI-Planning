@@ -76,15 +76,16 @@ writePidFile(config.dbPath);
 // come up after us — until this resolves, resolution falls back to the configured names,
 // and every later status() call refreshes the cache anyway. status() never throws.
 void ollamaStatus().then((s) => {
+  const label = s.provider === 'openai' ? 'AI endpoint' : 'Ollama';
   if (!s.available) {
-    logger.info(`Ollama not reachable at ${s.url} — AI features degrade to their deterministic paths.`);
+    logger.info(`${label} not reachable at ${s.url} — AI features degrade to their deterministic paths.`);
   } else if (!s.ready) {
     logger.warn(
-      `Ollama is running but ${s.missingModels.join(', ')} is not installed — ` +
-        `AI features stay off. Pull it (\`ollama pull …\`) or pick an installed model in Settings → Models.`,
+      `${label} is running but ${s.missingModels.join(', ')} is not available — ` +
+        `AI features stay off. ${s.provider === 'openai' ? 'Check the endpoint and its model in Settings → Models.' : 'Pull it (`ollama pull …`) or pick an installed model in Settings → Models.'}`,
     );
   } else {
-    logger.info(`Ollama ready — fast=${s.fastModel} quality=${s.qualityModel} embed=${s.embedModel}`);
+    logger.info(`${label} ready — fast=${s.fastModel} quality=${s.qualityModel} embed=${s.embedModel}`);
   }
 });
 

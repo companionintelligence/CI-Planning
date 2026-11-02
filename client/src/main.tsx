@@ -29,6 +29,9 @@ applyTheme(theme());
 const root = document.getElementById('root');
 if (!root) throw new Error('Root element not found');
 
+// The static boot screen from index.html comes out here. BootScreen renders in the same place
+// with the same markup, so the handover is invisible.
+root.replaceChildren();
 render(() => <App />, root);
 
 // Additive: register the service worker (Web Push, Phase H). Never throws; the app

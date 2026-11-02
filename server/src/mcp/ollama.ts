@@ -1,4 +1,4 @@
-import { config } from '../lib/config.js';
+import { config, type LlmBackend } from '../lib/config.js';
 import { logger } from '../lib/logger.js';
 import { ConnectorUnavailable } from '../lib/connector-error.js';
 import {
@@ -12,6 +12,7 @@ import {
   generationSelectionWarnings,
   setInstalledModels,
   isInstalled,
+  findModel,
   parseParamB,
   type InstalledModel,
   type ModelSource,
@@ -160,6 +161,38 @@ async function ollamaError(op: string, res: Response, model: string): Promise<Ol
   );
 }
 
+/** The name a user or a log line sees for whichever backend answers. */
+function aiLabel(): string {
+  return config.llmBackend === 'openai' ? 'AI endpoint' : 'Ollama';
+}
+
+/** The base URL of whichever backend answers. */
+function activeUrl(): string {
+  return config.llmBackend === 'openai' ? config.openAiCompat.baseUrl : config.ollamaUrl;
+}
+
+/** Headers for the OpenAI-compatible routes. The key goes in this header only, never in an error. */
+function openAiHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (config.openAiCompat.apiKey) headers.Authorization = `Bearer ${config.openAiCompat.apiKey}`;
+  return headers;
+}
+
+/**
+ * An OpenAI-compatible route answered with a non-OK status. As {@link ollamaError}, a 404 names
+ * the model only when the body does, because a 404 can equally be a wrong base path.
+ */
+async function endpointError(op: string, res: Response, model: string): Promise<OllamaUnavailable> {
+  const bodyTrimmed = (await res.text().catch(() => '')).trim();
+  const bodySnippet = bodyTrimmed.length > 500 ? `${bodyTrimmed.slice(0, 500)}…` : bodyTrimmed;
+  if (res.status === 404 && /model/i.test(bodyTrimmed)) {
+    return new OllamaUnavailable(
+      `Model '${model}' is not available on the AI endpoint at ${activeUrl()}. Check the chat and embedding models in Settings.`,
+    );
+  }
+  return new OllamaUnavailable(`AI endpoint ${op} failed at ${activeUrl()}: ${res.status}${bodySnippet ? ` ${bodySnippet}` : ''}`);
+}
+
 /**
  * `timeoutMs` is this request's own ceiling. `callerSignal` is an OUTER deadline the
  * caller owns — a whole-stage budget that has run out, say — and the two are combined so
@@ -190,11 +223,11 @@ async function fetchWithTimeout(
         // Still OllamaUnavailable, deliberately: it is the retryable half of the degrade
         // contract (see llmAttempt), and "we gave up early" is exactly retryable. A new
         // error class here would escape that contract and surface as a 500.
-        throw new OllamaUnavailable('Ollama request cancelled — the caller\'s budget ran out');
+        throw new OllamaUnavailable(`${aiLabel()} request cancelled — the caller's budget ran out`);
       }
-      throw new OllamaUnavailable(`Ollama request timed out after ${timeoutMs}ms`);
+      throw new OllamaUnavailable(`${aiLabel()} request timed out after ${timeoutMs}ms`);
     }
-    throw new OllamaUnavailable(`Ollama unreachable at ${config.ollamaUrl}: ${(err as Error).message}`);
+    throw new OllamaUnavailable(`${aiLabel()} unreachable at ${activeUrl()}: ${(err as Error).message}`);
   } finally {
     clearTimeout(timer);
   }
@@ -204,6 +237,7 @@ async function fetchWithTimeout(
 export async function generate(prompt: string, opts: GenerateOpts = {}): Promise<string> {
   const call = resolveCall(opts);
   const model = opts.model ?? (await modelFor(call.tier));
+  if (config.llmBackend === 'openai') return generateOpenAi(prompt, opts, call, model);
   const thinking = opts.think ?? (await resolveThinking());
   const body = {
     model,
@@ -239,6 +273,29 @@ export async function generate(prompt: string, opts: GenerateOpts = {}): Promise
 }
 
 /**
+ * One chat completion on the OpenAI-compatible endpoint: the CI-Hub's `/api/inference/v1`, or an
+ * operator's vLLM, Lemonade or Ollama `/v1`. Its failures are OllamaUnavailable, as the native
+ * path's are, so every caller that degrades still degrades.
+ */
+async function generateOpenAi(prompt: string, opts: GenerateOpts, call: CallPolicy, model: string): Promise<string> {
+  const body = {
+    model,
+    messages: [...(opts.system ? [{ role: 'system', content: opts.system }] : []), { role: 'user', content: prompt }],
+    temperature: call.temperature,
+    stream: false,
+    ...(opts.json ? { response_format: { type: 'json_object' } } : {}),
+  };
+  const res = await fetchWithTimeout(
+    `${config.openAiCompat.baseUrl}/chat/completions`,
+    { method: 'POST', headers: openAiHeaders(), body: JSON.stringify(body) },
+    call.timeoutMs,
+  );
+  if (!res.ok) throw await endpointError('chat', res, model);
+  const data = await decodeJson<{ choices?: { message?: { content?: string | null } }[] }>(res, 'chat');
+  return data.choices?.[0]?.message?.content ?? '';
+}
+
+/**
  * Decode a 200 response body as JSON, as OllamaUnavailable when it isn't.
  *
  * A 200 whose body is not JSON means whatever answered is not speaking Ollama's protocol —
@@ -257,7 +314,7 @@ async function decodeJson<T>(res: Response, op: string): Promise<T> {
     return (await res.json()) as T;
   } catch (err) {
     throw new OllamaUnavailable(
-      `Ollama ${op} returned a non-JSON body from ${config.ollamaUrl} — check OLLAMA_URL and any proxy in front of it: ${(err as Error).message}`,
+      `${aiLabel()} ${op} returned a non-JSON body from ${activeUrl()} — check ${config.llmBackend === 'openai' ? 'APP_OPENAI_BASE_URL' : 'OLLAMA_URL'} and any proxy in front of it: ${(err as Error).message}`,
     );
   }
 }
@@ -378,6 +435,7 @@ export async function embed(
   signal?: AbortSignal,
 ): Promise<number[]> {
   const model = await resolveEmbedModel();
+  if (config.llmBackend === 'openai') return embedOpenAi(text, model, timeoutMs, signal);
   const res = await fetchWithTimeout(
     `${config.ollamaUrl}/api/embeddings`,
     {
@@ -394,6 +452,21 @@ export async function embed(
   return data.embedding;
 }
 
+/** Embeddings on the OpenAI-compatible endpoint. */
+async function embedOpenAi(text: string, model: string, timeoutMs: number, signal?: AbortSignal): Promise<number[]> {
+  const res = await fetchWithTimeout(
+    `${config.openAiCompat.baseUrl}/embeddings`,
+    { method: 'POST', headers: openAiHeaders(), body: JSON.stringify({ model, input: text }) },
+    timeoutMs,
+    signal,
+  );
+  if (!res.ok) throw await endpointError('embeddings', res, model);
+  const data = await decodeJson<{ data?: { embedding?: number[] }[] }>(res, 'embeddings');
+  const vector = data.data?.[0]?.embedding;
+  if (!vector?.length) throw new OllamaUnavailable('The AI endpoint returned an empty embedding');
+  return vector;
+}
+
 export interface OllamaStatus {
   /** Ollama answered `/api/tags`. Says NOTHING about whether a usable model is pulled. */
   available: boolean;
@@ -404,6 +477,8 @@ export interface OllamaStatus {
    * aren't pulled on most machines.
    */
   ready: boolean;
+  /** Which API answered: Ollama's native one, or an OpenAI-compatible endpoint (the CI-Hub's). */
+  provider: LlmBackend;
   url: string;
   models: string[];
   /** The EFFECTIVE models for this owner (Settings override → env pin → auto-selected),
@@ -473,8 +548,42 @@ function applyInstalled(probe: TagsProbe): void {
   if (process.env.NODE_ENV !== 'test') setInstalledModels(probe.rows);
 }
 
-/** One live `/api/tags` read. Never throws — a failure IS a result (`ok: false`). */
+/**
+ * The OpenAI-compatible endpoint's model list, in the shape the native `/api/tags` read produces.
+ * The CI-Hub lists its whole catalog and marks each row with a `state`. A row in state
+ * `available` is a model it could fetch, not one it can answer with, so it is left out. Servers
+ * that send no `state` (vLLM, Lemonade) list only what they serve.
+ */
+async function fetchModels(): Promise<TagsProbe> {
+  try {
+    const res = await fetchWithTimeout(`${config.openAiCompat.baseUrl}/models`, { headers: openAiHeaders() }, 5_000);
+    if (!res.ok) return { ok: false, rows: [], error: `HTTP ${res.status}` };
+    const data = (await res.json()) as { data?: { id?: string; state?: string }[] };
+    return {
+      ok: true,
+      rows: (data.data ?? [])
+        .filter((m): m is { id: string; state?: string } => typeof m.id === 'string' && m.state !== 'available')
+        .map((m) => ({ name: m.id, capabilities: [], paramB: null })),
+    };
+  } catch (err) {
+    return { ok: false, rows: [], error: (err as Error).message };
+  }
+}
+
+/**
+ * Whether `name` can answer right now. On the OpenAI-compatible endpoint the probe is the list
+ * itself. The CI-Hub resolves `auto` to a model it holds and never lists it, so `auto` works
+ * exactly when the endpoint has any model.
+ */
+function usable(name: string, probe: TagsProbe): boolean {
+  if (config.llmBackend !== 'openai') return isInstalled(name);
+  if (name.trim() === 'auto') return probe.rows.length > 0;
+  return findModel(probe.rows, name) !== null;
+}
+
+/** One live read of what the backend has: `/api/tags`, or the OpenAI-compatible model list. Never throws — a failure IS a result (`ok: false`). */
 async function fetchTags(): Promise<TagsProbe> {
+  if (config.llmBackend === 'openai') return fetchModels();
   try {
     const res = await fetchWithTimeout(`${config.ollamaUrl}/api/tags`, {}, 5_000);
     if (!res.ok) return { ok: false, rows: [], error: `HTTP ${res.status}` };
@@ -608,17 +717,27 @@ export async function status(owner?: string, opts?: { fresh?: boolean }): Promis
   // on EVERY call, cache hit or not — this is the per-owner override read.
   const eff = await effective();
   if (!probe.ok) {
-    return { ...eff, url: config.ollamaUrl, available: false, ready: false, models: [], missingModels: [], error: probe.error };
+    return {
+      ...eff,
+      provider: config.llmBackend,
+      url: activeUrl(),
+      available: false,
+      ready: false,
+      models: [],
+      missingModels: [],
+      error: probe.error,
+    };
   }
   // The embed tier is only exercised by dedupe/memory and Triality's novelty blend, so a
   // missing embedder is reported but does not by itself make the app "not ready" for AI
   // features. The paths that do call it ask `embedReady()` instead.
-  const missingModels = [eff.fastModel, eff.qualityModel, eff.embedModel].filter((m) => !isInstalled(m));
+  const missingModels = [eff.fastModel, eff.qualityModel, eff.embedModel].filter((m) => !usable(m, probe));
   return {
     ...eff,
-    url: config.ollamaUrl,
+    provider: config.llmBackend,
+    url: activeUrl(),
     available: true,
-    ready: isInstalled(eff.fastModel) && isInstalled(eff.qualityModel),
+    ready: usable(eff.fastModel, probe) && usable(eff.qualityModel, probe),
     models: probe.rows.map((m) => m.name),
     missingModels,
   };
@@ -662,4 +781,4 @@ export async function embedReady(owner?: string): Promise<boolean> {
 }
 
 export const ollama = { generate, generateJson, llmOrNull, parseJsonLoose, embed, status, isReady, embedReady };
-logger.debug('ollama client ready', { url: config.ollamaUrl });
+logger.debug('ollama client ready', { backend: config.llmBackend, url: activeUrl() });

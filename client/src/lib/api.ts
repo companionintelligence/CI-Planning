@@ -390,6 +390,101 @@ export interface CalibrationReading {
   p75: number | null;
 }
 
+// ── Learning readouts (Settings → Learning) ──────────────────────────────────
+// Four weekly learning passes write one row per period; these are the reads over them.
+// Numbers arrive as SQLite returns them, so the 0/1 flags are numbers. A null rate means
+// "nothing was measured in that period" and must never be shown as 0 (see
+// lib/learning-stats.ts, which derives every rate from the counts instead).
+// Row ORDER differs per endpoint and `limit` counts ROWS, not weeks; both are noted on the
+// response types below because they are the two traps in this group.
+
+export type ClassifiedField = 'category' | 'motivation';
+
+export interface ClassificationAccuracyRun {
+  field: ClassifiedField;
+  computed_date: string;
+  /** Answers actually scored (a failed or empty model answer is skipped, not counted wrong). */
+  held_out: number;
+  correct: number;
+  /** correct / held_out, null when held_out is 0. */
+  accuracy: number | null;
+}
+/**
+ * NEWEST first (ORDER BY computed_date DESC, field). `limit` counts ROWS across both
+ * fields (default 12, clamped 1-100), so 12 is about six weeks. A field below the
+ * 2-correction floor writes NO row at all, which is different from a row with a null.
+ */
+export interface ClassificationAccuracyResponse {
+  fields: ClassifiedField[];
+  runs: ClassificationAccuracyRun[];
+}
+
+export interface DismissalTrendRow {
+  computed_date: string;
+  period_days: number;
+  /** Every suggestion created in the period, from every source. NOT the denominator of `rate`. */
+  created: number;
+  /** Approve or dismiss decisions the owner made by hand in the period. */
+  decided: number;
+  dismissed: number;
+  rate: number | null;
+  /** Past dismissals stored as of this run. */
+  exemplars: number;
+  /** 1 when a stored set existed before this run's rebuild. */
+  hinted: 0 | 1;
+}
+/**
+ * OLDEST first, the only one of the four that is. Default limit 90 (clamped 1-365). A row
+ * is written every Monday, even with nothing decided.
+ */
+export interface DismissalTrendResponse {
+  trend: DismissalTrendRow[];
+}
+
+export interface PlacementSurvivalRun {
+  computed_date: string;
+  period_days: number;
+  /** accepted + corrected. */
+  decided: number;
+  accepted: number;
+  corrected: number;
+  survival_rate: number | null;
+  /** Hour-preference keys stored as of this run. */
+  keys_learned: number;
+  /** 1 when preferences existed before this run's rebuild. */
+  biased: 0 | 1;
+}
+/** NEWEST first. Default limit 12 (clamped 1-100); period_days is 28. A row is written every Monday. */
+export interface PlacementSurvivalResponse {
+  runs: PlacementSurvivalRun[];
+}
+
+export interface PlanLoopTrendRun {
+  stage: string;
+  computed_date: string;
+  period_days: number;
+  runs: number;
+  passed: number;
+  /** Gave up and used the plain order. passed + escaped = runs. */
+  escaped: number;
+  first_try_pass: number;
+  avg_iterations: number | null;
+  pass_rate: number | null;
+}
+/**
+ * NEWEST first, then stage. Default limit 26 (clamped 1-365); `limit` counts ROWS across
+ * stages. A week with no runs has NO row.
+ */
+export interface PlanLoopTrendResponse {
+  runs: PlanLoopTrendRun[];
+}
+
+/** cleared 0 = nothing to clear (the server writes no audit row for that). */
+export interface LearningResetResult {
+  ok: boolean;
+  cleared: number;
+}
+
 export const api = {
   // Triality (0139, design §8) — the suggestion read + outcome write. Both 404
   // while the flag is off: gate every call on prefs().triality_enabled, never probe.
@@ -413,6 +508,25 @@ export const api = {
       request<{ scope_kind: string; scope_ref: string; readings: CalibrationReading[] }>(
         'GET', `/metrics/calibration?limit=${limit}`,
       ),
+  },
+  // Settings → Learning. Four weekly readouts and the three clears. The defaults equal
+  // LEARNING_LIMITS (lib/learning-stats.ts) and are ROWS, not weeks. Row order differs:
+  // dismissalTrend is OLDEST first, the other three NEWEST first, so never trust it (the
+  // normalisers in lib/learning-series.ts sort). A viewer credential can read all four
+  // but gets 403 on every clear. There is deliberately NO resetPlanLoop: nothing in that
+  // loop changes behaviour, so the server has no route for it.
+  learning: {
+    classificationAccuracy: (limit = 24) =>
+      request<ClassificationAccuracyResponse>('GET', `/classification/accuracy?limit=${limit}`),
+    resetClassification: () => request<LearningResetResult>('DELETE', '/classification/exemplars'),
+    dismissalTrend: (limit = 12) =>
+      request<DismissalTrendResponse>('GET', `/dismissal-learning/trend?limit=${limit}`),
+    resetDismissal: () => request<LearningResetResult>('DELETE', '/dismissal-learning/exemplars'),
+    placementSurvival: (limit = 12) =>
+      request<PlacementSurvivalResponse>('GET', `/placement/survival?limit=${limit}`),
+    resetPlacement: () => request<LearningResetResult>('DELETE', '/placement/preferences'),
+    planLoopTrend: (limit = 24) =>
+      request<PlanLoopTrendResponse>('GET', `/plan-loop/trend?limit=${limit}`),
   },
   // Review-gated suggestions (email). `?review=1` narrows to the sources that wait for
   // approval; promote/dismiss are the pre-existing explicit endpoints.
@@ -1688,6 +1802,8 @@ export interface Integrations {
   ollama: {
     available: boolean;
     ready?: boolean;
+    /** Which API answered: Ollama's native one, or the AI endpoint the CI-Hub set up. Absent on older servers, which were Ollama-only. */
+    provider?: 'ollama' | 'openai';
     models: string[];
     fastModel: string;
     qualityModel: string;

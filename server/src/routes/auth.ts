@@ -749,9 +749,12 @@ export function authRouter() {
 
     if (!owner) {
       if (!config.auth.autoProvision) {
+        // The person came from the Portal button, so send them back to the sign-in screen
+        // with the reason, the same as every other refusal here. A bare JSON 403 left them
+        // on a blank page with no way forward.
         logger.warn('CI-Portal login rejected: unknown subject and auto-provision is off');
-        ctx.status = 403;
-        ctx.body = { error: 'unknown_subject_auto_provision_disabled' };
+        clearPortalRedirect(ctx);
+        ctx.redirect('/login?sso_error=unknown_account');
         return;
       }
       // A sub the SENTINEL holds is unknown to findOwnerBySub by design; refuse it here
@@ -828,8 +831,8 @@ export function authRouter() {
     }
     if (!config.auth.autoProvision) {
       logger.warn('CI-Portal account confirmation refused: auto-provision is off');
-      ctx.status = 403;
-      ctx.body = { error: 'unknown_subject_auto_provision_disabled' };
+      clearPortalRedirect(ctx);
+      ctx.redirect('/login?sso_error=unknown_account');
       return;
     }
     const outcome = await provisionPortalOwner(intent);

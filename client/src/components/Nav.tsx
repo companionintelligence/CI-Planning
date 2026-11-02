@@ -2,12 +2,13 @@ import { A, useNavigate } from '@solidjs/router';
 import { Show, createResource } from 'solid-js';
 import {
   CheckSquare, Tag, Settings, Activity,
-  Sun, Cpu, CalendarDays, LogOut, Crosshair, Scale,
+  Sun, CalendarDays, LogOut, Crosshair, Scale,
 } from 'lucide-solid';
 import { showToast } from '../stores/index.js';
 import { api, authGateActive } from '../lib/api.js';
 import { ThemeToggle } from './ThemeToggle.js';
 import { navCollapsed } from '../stores/ui.js';
+import { BrandMark } from './BrandMark.js';
 
 const links = [
   { href: '/focus',      label: 'Focus',      Icon: Crosshair },
@@ -51,12 +52,7 @@ export function Nav() {
     >
       {/* CI logo mark */}
       <div class="flex items-center gap-2.5 px-3 mb-5" classList={{ 'justify-center px-0': navCollapsed() }}>
-        <div
-          class="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 text-surface-950 font-bold text-xs"
-          style={{ background: 'linear-gradient(135deg, #58ebbf, #409b9b)' }}
-        >
-          <Cpu size={15} />
-        </div>
+        <BrandMark size={32} />
         <Show when={!navCollapsed()}>
           <div>
             <div class="text-[10px] font-medium tracking-[0.2em] uppercase leading-none" style={{ color: '#409b9b' }}>

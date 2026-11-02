@@ -41,7 +41,11 @@ below is bound by it.
 | 6 | [noise-rate readout](loop-6-noise-rate-readout.md) | Backend | ✅ landed (`f9bf9b30`) | 3 |
 
 Strictly ordered 1 → 2 → 3 → 4 → 5. Ticket 6 forks off 3 and can land in parallel with
-4–5; it is what proves the loop actually works, so do not drop it as "just reporting".
+4–5; it is what puts a number on the loop, so do not drop it as "just reporting". The number
+is a rate over time: it can show the dismissal rate moving, and it cannot show that the stored
+dismissals caused the move.
+
+Client readout: Settings → Learning.
 
 ## Decisions of record
 

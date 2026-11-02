@@ -751,12 +751,12 @@ describe('GET /api/auth/ciportal/callback — provisioning & session', () => {
     expect((sqlite.prepare(`SELECT COUNT(*) n FROM owners WHERE external_subject = 'sub-repeat'`).get() as { n: number }).n).toBe(1);
   });
 
-  it('403s an unknown sub when auto-provision is off — and the A3 operator claim never bypasses that gate', async () => {
+  it('sends an unknown sub back to sign-in with the reason when auto-provision is off — and the A3 operator claim never bypasses that gate', async () => {
     config.auth.autoProvision = false;
     expect(await operatorCount()).toBe(0); // the most tempting instance to claim
     const res = await login('sub-unknown');
-    expect(res.status).toBe(403);
-    expect(res.body).toEqual({ error: 'unknown_subject_auto_provision_disabled' });
+    expect(res.status).toBe(302);
+    expect(res.location).toBe('/login?sso_error=unknown_account');
     expect(res.setCookies.join('')).not.toContain('cp_session=');
     expect(await operatorCount()).toBe(0);
   });
@@ -1058,13 +1058,13 @@ describe('B3 — GET/POST /api/auth/ciportal/confirm-account', () => {
     expect(ownerCount()).toBe(1);
   });
 
-  it('auto-provision switched off between the callback and the click → 403, nothing provisioned', async () => {
+  it('auto-provision switched off between the callback and the click → back to sign-in, nothing provisioned', async () => {
     const cb = await callback('b3-policy-flip');
     const { cookie, csrf } = await openConfirmPage(cb);
     config.auth.autoProvision = false;
     const res = await rawPost(CONFIRM_PATH, { csrf, decision: 'create' }, { Cookie: cookie });
-    expect(res.status).toBe(403);
-    expect(res.body).toEqual({ error: 'unknown_subject_auto_provision_disabled' });
+    expect(res.status).toBe(302);
+    expect(res.location).toBe('/login?sso_error=unknown_account');
     expect(bySub('b3-policy-flip')).toBeUndefined();
   });
 

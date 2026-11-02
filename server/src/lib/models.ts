@@ -140,11 +140,16 @@ export function parseParamB(size: string | null | undefined): number | null {
  */
 export function matchInstalled(name: string | null | undefined): InstalledModel | null {
   if (!name || !installed) return null;
-  const want = name.trim().toLowerCase();
+  return findModel(installed, name);
+}
+
+/** The entry in `models` that `name` refers to, with the same tolerance as {@link matchInstalled}. */
+export function findModel(models: InstalledModel[], name: string | null | undefined): InstalledModel | null {
+  const want = name?.trim().toLowerCase();
   if (!want) return null;
   return (
-    installed.find((m) => m.name.toLowerCase() === want) ??
-    installed.find((m) => m.name.toLowerCase().split(':')[0] === want) ??
+    models.find((m) => m.name.toLowerCase() === want) ??
+    models.find((m) => m.name.toLowerCase().split(':')[0] === want) ??
     null
   );
 }

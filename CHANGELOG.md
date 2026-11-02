@@ -40,8 +40,28 @@ version at `GET /api/health` (`release`).
   held-out titles the owner's way, up from 3. It learned two of the owner's three rules and none of the
   exercise titles. `gemma3:1b` answers a list on about 1 call in 5, so the test could not measure it.
   See `docs/classification-hint-measurement-2026-11.md`.
+- **AI works through your CI Hub when the Hub is not running Ollama.** On a Hub whose AI runs on vLLM or
+  Lemonade, Planning uses the Hub's OpenAI-compatible endpoint for chat, and for embeddings when one is named.
+  An Ollama address always wins when one is set.
+- **The first-run connect step shows your Companion Memory and AI.** It says whether Companion Memory is connected
+  or configured for this server, and whether an AI model is ready. Connecting stays in Settings.
+- **A Companion Portal sign-in by someone without an account here says so.** The sign-in screen explains that the
+  account is not set up on this server, instead of showing a bare error.
+- **The app shows its own mark everywhere.** The navigation, the mobile top bar and the sign-in screens showed a
+  generic chip icon. They now show the calendar mark from the app icon.
+- **The web app opens on the mark, not a blank page.** The app's mark on its dark background shows from the first
+  paint and while it checks your sign-in. Before, the page was blank and then a bare spinner.
+- **The iOS and Android launch screens show the app's mark** on its dark background. Before, the framework's
+  placeholder showed while the app started.
+- **The app installs with a maskable icon**, so Android can crop it to the launcher's shape without clipping the mark.
+- **The Tasks page offers Add a task when it is empty**, as well as connecting a source.
 
 ### Fixed
+- **The name field no longer opens as "System".** A new owner is seeded with that placeholder, and the first-run
+  wizard and the profile showed it as the owner's name. Both now open empty and ask for one, and Save stays off
+  until you type a name.
+- **The Hub's Ollama address is read.** The CI Hub writes `APP_OLLAMA_URL` for the app; Planning now reads it, so an
+  Ollama on the Hub is found without also setting `OLLAMA_URL`.
 - **Estimate calibration no longer learns from the schedule's own plan.** The close ritual sent its
   pre-filled duration (the block span, capped at the block end, or else the estimate) as the actual
   minutes even when you never touched the field, so the estimate-bias ratio sat near 1.0 and a block
@@ -84,6 +104,12 @@ version at `GET /api/health` (`release`).
   manual `mobile-build.yml` workflow builds a debug APK and an unsigned Simulator `.app`. Not
   store-ready: see "Mobile app" in the README. Companion Portal sign-in is not available in the
   app yet.
+- **Settings → Learning.** A new Settings tab shows what the weekly learning passes have measured: how often
+  the model's category and motivation guesses match your corrections, how many of the suggestions you decide
+  on you dismiss, how often Auto's placements are kept, and how often AI day ordering passes its own check.
+  Each figure shows how many cases are behind it, never shows a week with nothing measured as 0%, and says
+  what it does not prove. The first three have a button that clears what was learned; your history is kept
+  and Monday's pass can learn it again. The fourth only measures. No server change.
 
 ### Changed
 - **The native shells do not show controls they cannot run.** Export JSON, the calendar `.ics` export,

@@ -188,6 +188,6 @@ pnpm --filter server exec vitest run test/<file>.test.ts
 | Item | Origin | Status |
 |---|---|---|
 | Defect-rule frequency ("which rubric rules fire most") — the revisions table holds it; the batch doesn't aggregate it yet | scoped out of ticket 3 | open |
-| Jobs-view client chart over `GET /api/plan-loop/trend` | ticket 4 ends at the API, matching the close-loop-wave precedent | open |
+| Jobs-view client chart over `GET /api/plan-loop/trend` | ticket 4 ends at the API, matching the close-loop-wave precedent | done: shown in Settings → Learning (not the Jobs view, which is operator-only). Read-only with no reset, per Decisions of record |
 | Evidence retention: `plan_revision_log` is append-only with no pruning (same posture as `calibration_history`; ≤ ~4 rows/day/owner, revisit if that changes) | ticket 1 | open |
 | loop.ts header claims four stages run through `runLoop`; only A1 does | found while pinning ticket 2 | open, unrelated |
