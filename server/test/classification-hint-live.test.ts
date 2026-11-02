@@ -28,6 +28,11 @@
  *   LIVE_HINT_MODELS  comma list, default 'qwen2.5:0.5b,gemma3n:e4b'. The FIRST must be the
  *                     fast tier the app itself resolves (asserted): it is the only one that
  *                     gates, the rest are informational.
+ *   LIVE_HINT_SHAPE   1 to run the shape-fix measurement (see its section below) instead of the main experiment.
+ *                     Same env otherwise; give it the three models and let the first be the fast tier the app resolves:
+ *                       LIVE_HINT=1 LIVE_HINT_SHAPE=1 LIVE_HINT_MODELS=qwen2.5:0.5b,gemma3:1b,gemma3n:e4b LIVE_HINT_OUT=<path.json> \
+ *                         ./node_modules/.bin/vitest run test/classification-hint-live.test.ts --reporter=verbose
+ *                     About 840 model calls per model (42 titles x 5 runs x 4 arms).
  *   LIVE_HINT_OUT     path for the per-call JSON artifact (arm, model, title, run, prompt
  *                     sha256 prefix, hint present, retrieval ids, raw completion, the JSON
  *                     type of its "categories", parsed pick, correct, ms), plus the report,
@@ -277,6 +282,81 @@
  * arm, how closely P matched B's length, how many titles P ran on and how many of its blocks
  * were shorter than B's, and any empty or errored completion in a hinted arm (that is G3's
  * finding, and asserting it would abort the very verdict the gate exists to give).
+ *
+ * ──────────────────────────────────────────────────────────────────────────────────────────
+ * SHAPE-FIX MEASUREMENT (LIVE_HINT_SHAPE=1). PRE-REGISTERED 2026-11-02, written and committed
+ * BEFORE its first live run. Do not edit a gate, a threshold or a rule below after seeing a
+ * result; add a dated note under it instead. The G1 to G6 above are a different experiment and
+ * are not touched by this one.
+ *
+ * THE QUESTION. The built-in fast tier (qwen2.5:0.5b) answers "categories" as a bare string
+ * ("leisure"), where quick-add keeps only arrays (constrainToVocabulary returns [] for anything
+ * else), so a default install gets no category pick, the wizard no classification_claim, and
+ * the loop never starts. Which is the smallest change that makes the picks usable, and does it
+ * leave the one tier that answers arrays (gemma3n:e4b) alone?
+ *
+ * WHAT RUNS. LIVE_HINT_SHAPE=1 replaces the main experiment (it does not run alongside it):
+ * for each model in LIVE_HINT_MODELS, every one of the 42 fixture titles (18 training, 12
+ * target, 12 control) x RUNS completions, for an owner with no corrections (no hint block:
+ * the stock prompt every default install sends), interleaved per (title, run) in the fixed
+ * order A, W1, W2, A2. No server route is driven: enrichQuick is called as it stands (A, A2) or
+ * is handed the same stock prompt with ONE line changed (W1, W2). The model under test is
+ * injected (the same seam as above), and the first model must be the fast tier the app resolves.
+ *   A    the stock prompt, today's enrichQuick, untouched.
+ *   A2   a repeat of A: the noise floor.
+ *   W1   the stock prompt with the "categories" line worded as a JSON array:
+ *          "categories": a JSON array of 1-3 life areas from [...], best fit first.
+ *   W2   the same, with the shape shown as a placeholder (a vocabulary name would bias the pick):
+ *          "categories": 1-3 life areas from [...], best fit first, as a JSON array like ["<area>"].
+ *   Every other byte of W1 and W2 is the stock prompt's (asserted).
+ * Each completion is read four ways, from the same raw text, so candidate (b) costs no extra calls:
+ *   strict      what production did before this change: only a JSON array is kept (constrainToVocabulary).
+ *   whole       a bare string is taken as one name, matched as a WHOLE string against the owner's
+ *               categories (a name may contain a comma); an array is read exactly as in `strict`.
+ *   split       as `whole`, and when the whole string names nothing, split on ',' and keep each part
+ *               that does (what the lenient score above does).
+ *   production  the real mergeEnrichment run on the completion: the check that what is shipped is
+ *               what was measured (equal to `strict` before the change, to the chosen reading after).
+ * A completion YIELDS when its reading names at least one of the owner's categories. Yield Y is the
+ * share of an arm's completions that yield (n = 42 x RUNS per arm and model).
+ *
+ * CANDIDATES. (a) a prompt wording (W1 or W2), read `strict`; (b) a tolerant parse of the stock
+ * prompt's answer (A read `whole`, or `split`); (a+b) a wording read `whole`. Tiers: SMALL are
+ * qwen2.5:0.5b and gemma3:1b; REFERENCE is gemma3n:e4b (answers arrays on every call so far).
+ *
+ *   S1 YIELD         A candidate raises Y over A read `strict` by at least +20 points absolute on EACH
+ *                    small tier that was run. (A tier that was not run cannot pass: no verdict.)
+ *   S2 REFERENCE     On the reference tier, the candidate leaves the picks alone: the number of titles
+ *                    whose modal first pick (the most frequent first category over the runs, ties to the
+ *                    first seen, none = no pick) differs from A read `strict` is at most 2 of 42, and its
+ *                    Y is not more than 5 points below A's. If A against A2 moves more than 2 titles on
+ *                    that tier, S2 is INCONCLUSIVE: NOISE for every candidate (the noise is as large as
+ *                    the effect). By construction a pure parse (b) leaves every array answer as it was.
+ *   S3 SCHEMA SAFETY A wording (W1, W2) on EVERY tier: valid-JSON rate and the all-nine-keys rate each
+ *                    no more than 5 points below A's, and no more empty or errored completions than A.
+ *                    (b) changes no prompt, so it has nothing to fail here.
+ * Reported, never gated: array / string / missing / other shares per arm; accuracy of the first pick on
+ * the targets and on the controls, call level; the direction validity of every arm (a wording that
+ * lowers it makes more requests wait for a second model call); Y of each reading; the bare strings the
+ * `whole` reading cannot recover but `split` can.
+ *
+ * RULE (the lead decides; the harness reads it off and prints each line).
+ *   D1  (b) QUALIFIES when S1 and S2 hold for it. `split` is preferred over `whole` only when it
+ *       lifts Y over `whole` by at least 10 points on a small tier; otherwise `whole`.
+ *   D2  (a) QUALIFIES when S1 and S2 hold for it and S3 holds on every tier.
+ *   D3  Only (b) qualifies: ship (b), no prompt change for any owner. Only (a) qualifies: ship the
+ *       wording that qualifies (W1 if both do). Both qualify: ship (b) ALONE, unless (a+b) with a
+ *       wording that qualifies lifts Y over (b) by at least 15 points on a small tier (S2 and S3
+ *       holding for it as for (a)): then (a+b). Neither (a) nor (b) qualifies: ship no fix, unless an
+ *       (a+b) candidate qualifies (S1, S2 and S3 holding), then that one (W1 first); if none does, say
+ *       so and leave the defect documented.
+ *   D4  After a candidate ships, the main experiment above is re-run on the three tiers with the shipped
+ *       code. The shape fix is not judged by those G1 to G6 on the small tiers (their G1 has never been
+ *       readable); what must hold is that the reference tier's verdicts do not move, that G2 to G4 and G6
+ *       hold on every tier that runs, and that the default tier now yields claims and corrections.
+ * NOT SHOWN, whatever the result: one invented owner, 42 titles, temperature 0.1 so five runs per title
+ * are near-identical (titles, not runs, are the sample); three models; a yield is a pick the model made,
+ * not a pick the owner would have made; no real owner's data.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { createHash } from 'node:crypto';
@@ -289,8 +369,8 @@ import { sqlite } from '../src/db/index.js';
 import { config } from '../src/lib/config.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { parseQuick } from '../src/engine/quickadd.js';
-import { enrichQuick, type QuickHints } from '../src/agents/quickadd.js';
-import { constrainToVocabulary, constrainOne } from '../src/agents/constrain.js';
+import { enrichQuick, mergeEnrichment, type QuickHints, type QuickVocab } from '../src/agents/quickadd.js';
+import { constrainToVocabulary, constrainOne, type EnrichOut } from '../src/agents/constrain.js';
 import {
   MOTIVATION_VALUES, directionGuide,
   PRIORITY_RUBRIC, DURATION_RUBRIC, TIME_OF_DAY_RUBRIC, COMPLEXITY_RUBRIC, MOTIVATION_RUBRIC,
@@ -309,6 +389,8 @@ import {
 import { startTestServer, resetDb, api, createOwner, SECOND_OWNER_ID, type TestServer } from './helpers.js';
 
 const LIVE = process.env.LIVE_HINT === '1';
+/** The shape-fix measurement (see the header) replaces the main experiment; the offline checks run either way. */
+const SHAPE = process.env.LIVE_HINT_SHAPE === '1';
 function envPositiveInt(name: string, fallback: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw === '') return fallback;
@@ -806,7 +888,7 @@ function lenientPickOf(raw: string, vocabulary: string[]): string | null {
 }
 
 interface ShapeStats { n: number; array: number; string: number; missing: number; other: number; arrayPct: number }
-function shapeStats(calls: readonly CallRecord[]): ShapeStats {
+function shapeStats(calls: readonly { categoriesType: CategoriesType }[]): ShapeStats {
   const count = (t: CategoriesType): number => calls.filter((c) => c.categoriesType === t).length;
   return {
     n: calls.length, array: count('array'), string: count('string'), missing: count('missing'), other: count('other'),
@@ -826,6 +908,217 @@ function accuracyGivenShape(calls: readonly CallRecord[]): ShapeAccuracy {
     n: calls.length, correct: calls.filter((c) => c.correct).length, arrays: arrays.length,
     correctGivenArray: arrays.filter((c) => c.correct).length, lenient: calls.filter((c) => c.lenientCorrect).length,
   };
+}
+
+// ── Shape-fix measurement (LIVE_HINT_SHAPE=1; the gates are pre-registered in the header) ──────
+
+type ShapeArm = 'A' | 'W1' | 'W2' | 'A2';
+/** The fixed interleave order inside one (title, run) cell. */
+const SHAPE_ARMS: readonly ShapeArm[] = ['A', 'W1', 'W2', 'A2'];
+/** How a completion's "categories" is read; see the header. `production` is the real mergeEnrichment. */
+type Reading = 'strict' | 'whole' | 'split' | 'production';
+const READINGS: readonly Reading[] = ['strict', 'whole', 'split', 'production'];
+/**
+ * The reading the SHIPPED mergeEnrichment must equal on every completion. 'strict' = nothing shipped
+ * yet. Moved only by the change that ships a tolerant parse, with a dated note beside the gates.
+ */
+const SHIPPED_READING: 'strict' | 'whole' | 'split' = 'strict';
+
+const SHAPE_GATES = {
+  /** S1: Y over A read strict, absolute points, on each small tier that ran. */
+  s1MinPoints: 20,
+  /** S2: titles (of 42) whose modal first pick may differ from A read strict, on the reference tier. */
+  s2MaxTitleDiffs: 2,
+  /** S2: Y may be at most this many points below A's. */
+  s2MaxYieldDropPoints: 5,
+  /** S2: A against A2 moving more titles than this makes S2 INCONCLUSIVE: NOISE. */
+  s2NoiseTitleDiffs: 2,
+  /** S3: valid-JSON rate and all-keys rate, points below A. */
+  s3MaxDropPoints: 5,
+  /** D1: `split` over `whole`, points of Y on a small tier. */
+  splitMinExtraPoints: 10,
+  /** D3: (a+b) over (b), points of Y on a small tier. */
+  withBMinExtraPoints: 15,
+} as const;
+const SMALL_TIERS: readonly string[] = ['qwen2.5:0.5b', 'gemma3:1b'];
+const REFERENCE_TIER = 'gemma3n:e4b';
+
+type Wording = 'stock' | 'W1' | 'W2';
+/**
+ * The "categories" line of enrichQuick's prompt (stock) and the two pre-registered wordings. The
+ * line ends with the newline that closes it, so that replacing it moves no other byte.
+ */
+function categoriesLine(categories: readonly string[], wording: Wording): string {
+  const list = JSON.stringify(categories);
+  if (wording === 'W1') return `"categories": a JSON array of 1-3 life areas from ${list}, best fit first.\n`;
+  if (wording === 'W2') return `"categories": 1-3 life areas from ${list}, best fit first, as a JSON array like ["<area>"].\n`;
+  return `"categories": 1-3 life areas from ${list}, best fit first.\n`;
+}
+
+/** The stock prompt with its one "categories" line worded as `wording`; nothing else moves. */
+function swapCategoriesLine(stock: string, categories: readonly string[], wording: 'W1' | 'W2'): string {
+  const from = categoriesLine(categories, 'stock');
+  if (occurrences(stock, from) !== 1) throw new Error('swapCategoriesLine: the stock categories line is not in the prompt exactly once');
+  return stock.replace(from, () => categoriesLine(categories, wording));
+}
+
+/**
+ * The owner's categories a completion names, read as `reading`. `strict` is what production did before
+ * the shape fix (only an array is kept), `whole` takes a bare string as one name matched whole (a
+ * name may contain a comma), `split` falls back to the comma-separated parts when the whole names
+ * nothing. An array is read the same way in all three. Never throws.
+ */
+function readCategories(raw: string, categories: string[], reading: 'strict' | 'whole' | 'split'): string[] {
+  let obj: unknown;
+  try { obj = parseJsonLoose(raw); } catch { return []; }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return [];
+  const c = (obj as { categories?: unknown }).categories;
+  if (typeof c !== 'string' || reading === 'strict') return constrainToVocabulary(c, categories, 3);
+  const whole = constrainToVocabulary([c], categories, 3);
+  if (whole.length > 0 || reading === 'whole') return whole;
+  return constrainToVocabulary(c.split(','), categories, 3);
+}
+
+/** What the real mergeEnrichment makes of a completion for this title: the check on what ships. Never throws. */
+function productionCategories(raw: string, title: string, vocab: QuickVocab): string[] {
+  let out: EnrichOut;
+  try { out = parseJsonLoose<EnrichOut>(raw); } catch { return []; }
+  try { return mergeEnrichment(parseQuick(title), out, vocab).categories ?? []; } catch { return []; }
+}
+
+interface ShapeCall {
+  arm: ShapeArm;
+  model: string;
+  title: string;
+  kind: FixtureItem['kind'];
+  expected: string;
+  run: number;
+  promptSha: string;
+  raw: string;
+  error: string | null;
+  ms: number;
+  categoriesType: CategoriesType;
+  validJson: boolean;
+  allKeys: boolean;
+  empty: boolean;
+  direction: { valid: boolean; secondChance: boolean };
+  /** The owner's categories the completion names, by reading. */
+  picks: Record<Reading, string[]>;
+}
+
+const shapeArmCalls = (calls: readonly ShapeCall[], model: string, arm: ShapeArm): ShapeCall[] =>
+  calls.filter((c) => c.model === model && c.arm === arm);
+const yields = (c: ShapeCall, reading: Reading): boolean => c.picks[reading].length > 0;
+const firstPickOf = (c: ShapeCall, reading: Reading): string | null => c.picks[reading][0] ?? null;
+
+/** Y: the share of completions that name at least one of the owner's categories under `reading`. */
+const yieldPct = (calls: readonly ShapeCall[], reading: Reading): number =>
+  pct(calls.filter((c) => yields(c, reading)).length, calls.length);
+
+/** The most frequent first pick over a title's runs under `reading` (ties to the first seen, runs in order); null = no pick. */
+function modalFirstPick(calls: readonly ShapeCall[], model: string, arm: ShapeArm, reading: Reading, title: string): string | null {
+  return modalPick(
+    shapeArmCalls(calls, model, arm).filter((c) => c.title === title).sort((a, b) => a.run - b.run).map((c) => firstPickOf(c, reading)),
+  );
+}
+
+/** Titles whose modal first pick differs between two (arm, reading) cells. */
+function shapeTitleDiffs(
+  calls: readonly ShapeCall[], model: string, a: { arm: ShapeArm; reading: Reading }, b: { arm: ShapeArm; reading: Reading },
+  titles: readonly string[],
+): string[] {
+  return titles.filter((t) => modalFirstPick(calls, model, a.arm, a.reading, t) !== modalFirstPick(calls, model, b.arm, b.reading, t));
+}
+
+interface Candidate { id: string; label: string; arm: ShapeArm; reading: Reading; changesPrompt: boolean; wording: 'W1' | 'W2' | null }
+const CANDIDATES: readonly Candidate[] = [
+  { id: 'b', label: '(b) tolerant parse, whole string', arm: 'A', reading: 'whole', changesPrompt: false, wording: null },
+  { id: 'b-split', label: '(b) tolerant parse, whole string else split on commas', arm: 'A', reading: 'split', changesPrompt: false, wording: null },
+  { id: 'a-W1', label: '(a) wording W1, array only', arm: 'W1', reading: 'strict', changesPrompt: true, wording: 'W1' },
+  { id: 'a-W2', label: '(a) wording W2, array only', arm: 'W2', reading: 'strict', changesPrompt: true, wording: 'W2' },
+  { id: 'a+b-W1', label: '(a+b) wording W1 and the whole-string parse', arm: 'W1', reading: 'whole', changesPrompt: true, wording: 'W1' },
+  { id: 'a+b-W2', label: '(a+b) wording W2 and the whole-string parse', arm: 'W2', reading: 'whole', changesPrompt: true, wording: 'W2' },
+];
+const candidate = (id: string): Candidate => CANDIDATES.find((c) => c.id === id)!;
+
+const ranModels = (models: readonly string[], wanted: readonly string[]): string[] => models.filter((m) => wanted.includes(m));
+
+/** S1 on every small tier that ran. `pass` is null when no small tier ran: there is no verdict then. */
+function s1Yield(calls: readonly ShapeCall[], models: readonly string[], c: Candidate) {
+  const perTier = ranModels(models, SMALL_TIERS).map((model) => {
+    const base = yieldPct(shapeArmCalls(calls, model, 'A'), 'strict');
+    const cand = yieldPct(shapeArmCalls(calls, model, c.arm), c.reading);
+    return { model, base, cand, delta: cand - base, pass: cand - base >= SHAPE_GATES.s1MinPoints };
+  });
+  return { perTier, pass: perTier.length === 0 ? null : perTier.every((t) => t.pass) };
+}
+
+type S2Verdict = 'PASS' | 'FAIL' | 'INCONCLUSIVE: NOISE' | 'NOT RUN';
+/** S2 on the reference tier: the candidate leaves its picks alone, unless A against A2 says the noise is as large. */
+function s2Reference(calls: readonly ShapeCall[], models: readonly string[], c: Candidate) {
+  if (!models.includes(REFERENCE_TIER)) return { verdict: 'NOT RUN' as S2Verdict, diffs: NaN, noise: NaN, yieldDrop: NaN };
+  const titles = ITEMS.map((i) => i.title);
+  const base = { arm: 'A' as ShapeArm, reading: 'strict' as Reading };
+  const noise = shapeTitleDiffs(calls, REFERENCE_TIER, base, { arm: 'A2', reading: 'strict' }, titles).length;
+  const diffs = shapeTitleDiffs(calls, REFERENCE_TIER, base, c, titles).length;
+  const yieldDrop = yieldPct(shapeArmCalls(calls, REFERENCE_TIER, 'A'), 'strict') - yieldPct(shapeArmCalls(calls, REFERENCE_TIER, c.arm), c.reading);
+  const verdict: S2Verdict = noise > SHAPE_GATES.s2NoiseTitleDiffs ? 'INCONCLUSIVE: NOISE'
+    : diffs <= SHAPE_GATES.s2MaxTitleDiffs && yieldDrop <= SHAPE_GATES.s2MaxYieldDropPoints ? 'PASS' : 'FAIL';
+  return { verdict, diffs, noise, yieldDrop };
+}
+
+/** S3 for a wording arm on every tier that ran (a candidate that changes no prompt has nothing to fail). */
+function s3Schema(calls: readonly ShapeCall[], models: readonly string[], c: Candidate) {
+  if (!c.changesPrompt) return { pass: true, perTier: [] as { model: string; pass: boolean; valid: number[]; keys: number[]; empties: number[] }[] };
+  const perTier = models.map((model) => {
+    const a = shapeArmCalls(calls, model, 'A');
+    const w = shapeArmCalls(calls, model, c.arm);
+    const rate = (xs: readonly ShapeCall[], f: (x: ShapeCall) => boolean): number => pct(xs.filter(f).length, xs.length);
+    const valid = [rate(a, (x) => x.validJson), rate(w, (x) => x.validJson)];
+    const keys = [rate(a, (x) => x.allKeys), rate(w, (x) => x.allKeys)];
+    const empties = [a.filter((x) => x.empty || x.error).length, w.filter((x) => x.empty || x.error).length];
+    const pass = valid[0] - valid[1] <= SHAPE_GATES.s3MaxDropPoints && keys[0] - keys[1] <= SHAPE_GATES.s3MaxDropPoints && empties[1] <= empties[0];
+    return { model, pass, valid, keys, empties };
+  });
+  return { pass: perTier.length > 0 && perTier.every((t) => t.pass), perTier };
+}
+
+/** Reads the pre-registered rule (D1 to D3) off the calls. The lead decides; this prints what the rule says. */
+function shapeDecision(calls: readonly ShapeCall[], models: readonly string[]) {
+  const lines: string[] = [];
+  const evals = new Map(CANDIDATES.map((c) => [c.id, { c, s1: s1Yield(calls, models, c), s2: s2Reference(calls, models, c), s3: s3Schema(calls, models, c) }]));
+  const qualifies = (id: string): boolean => {
+    const e = evals.get(id)!;
+    return e.s1.pass === true && e.s2.verdict === 'PASS' && e.s3.pass;
+  };
+  for (const { c, s1, s2, s3 } of evals.values()) {
+    lines.push(`${c.label}: S1 ${s1.pass === null ? 'NO VERDICT (no small tier ran)' : s1.pass ? 'PASS' : 'FAIL'} `
+      + `[${s1.perTier.map((t) => `${t.model} Y ${fmt1(t.base)}% -> ${fmt1(t.cand)}% (${t.delta >= 0 ? '+' : ''}${fmt1(t.delta)})`).join('; ') || '-'}], `
+      + `S2 ${s2.verdict}${s2.verdict === 'NOT RUN' ? '' : ` [${s2.diffs} titles differ, A against A2 ${s2.noise}, Y change ${fmt1(-s2.yieldDrop)} points]`}, `
+      + `S3 ${c.changesPrompt ? (s3.pass ? 'PASS' : 'FAIL') : 'n/a (no prompt change)'}`
+      + ` => ${qualifies(c.id) ? 'QUALIFIES' : 'does not qualify'}`);
+  }
+  const extraOverWhole = ranModels(models, SMALL_TIERS).map((m) =>
+    yieldPct(shapeArmCalls(calls, m, 'A'), 'split') - yieldPct(shapeArmCalls(calls, m, 'A'), 'whole'));
+  const splitLifts = extraOverWhole.some((x) => x >= SHAPE_GATES.splitMinExtraPoints);
+  const bId = qualifies('b-split') && (splitLifts || !qualifies('b')) ? 'b-split' : qualifies('b') ? 'b' : null;
+  const wordings = (['W1', 'W2'] as const).filter((w) => qualifies(`a-${w}`));
+  const aqualifies = wordings.length > 0;
+  const liftOverB = (id: string): boolean => bId !== null && ranModels(models, SMALL_TIERS).some((m) =>
+    yieldPct(shapeArmCalls(calls, m, candidate(id).arm), candidate(id).reading) - yieldPct(shapeArmCalls(calls, m, 'A'), candidate(bId).reading)
+      >= SHAPE_GATES.withBMinExtraPoints);
+  const abWordings = (['W1', 'W2'] as const).filter((w) => qualifies(`a+b-${w}`));
+  let ship: string;
+  if (bId !== null && !aqualifies) ship = `${bId}: the tolerant parse alone, no prompt change`;
+  else if (bId === null && aqualifies) ship = `a-${wordings[0]}: the wording alone`;
+  else if (bId !== null && aqualifies) {
+    const lift = abWordings.find((w) => liftOverB(`a+b-${w}`));
+    ship = lift ? `a+b-${lift}: wording and parse (it lifts Y over (b) by ${SHAPE_GATES.withBMinExtraPoints}+ points on a small tier)` : `${bId}: the tolerant parse alone (the wording adds under ${SHAPE_GATES.withBMinExtraPoints} points over it)`;
+  } else if (abWordings.length > 0) ship = `a+b-${abWordings[0]}: neither alone qualifies, the pair does`;
+  else ship = 'NONE: no candidate qualifies; ship no fix and leave the defect documented';
+  lines.push(`D1 (b) ${bId ? `qualifies as ${bId}` : 'does not qualify'}; D2 (a) ${aqualifies ? `qualifies (${wordings.join(', ')})` : 'does not qualify'}.`);
+  lines.push(`D3 the rule says: ship ${ship}.`);
+  return { lines, ship, evals };
 }
 
 // ── Direction (added 2026-11-02, non-gating) ─────────────────────────────────
@@ -2277,6 +2570,159 @@ describe.skipIf(!LIVE)('classification hint · pure helpers', () => {
     // hint can be a complete convention table. If either number moves, the sentence there is stale.
     expect(new Set(CONVENTIONS.map((c) => c.owner)).size).toBe(RETRIEVE_K);
   });
+
+  // ── The shape-fix measurement's own pure parts ──
+
+  it('the categories line is swapped alone and once, and swapping it back gives the stock prompt', async () => {
+    const text = 'Leg day at the gym';
+    const vocab: Vocab = { directions: DIRECTIONS, categories: CATEGORIES, others: OTHERS };
+    const stock = await dryPrompt(() => enrichQuick(text, parseQuick(text), vocab));
+    expect(stock, 'enrichQuick put no prompt in front of the model').not.toBe('');
+    expect(occurrences(stock, categoriesLine(CATEGORIES, 'stock'))).toBe(1); // the stock line is the one enrichQuick sends today
+    for (const w of ['W1', 'W2'] as const) {
+      const worded = swapCategoriesLine(stock, CATEGORIES, w);
+      expect(worded).not.toBe(stock);
+      expect(worded.replace(categoriesLine(CATEGORIES, w), () => categoriesLine(CATEGORIES, 'stock'))).toBe(stock);
+      expect(worded.split('\n')).toHaveLength(stock.split('\n').length); // a line replaced, none added
+      expect(worded).toContain('JSON array');
+    }
+    expect(categoriesLine(CATEGORIES, 'W2')).toContain('["<area>"]'); // a placeholder, never one of the owner's names
+    expect(CATEGORIES.some((c) => categoriesLine(CATEGORIES, 'W2').includes(`["${c}"]`))).toBe(false);
+    expect(() => swapCategoriesLine(stock + categoriesLine(CATEGORIES, 'stock'), CATEGORIES, 'W1')).toThrow(/exactly once/);
+    const bare = await dryPrompt(() => enrichQuick(text, parseQuick(text), { ...vocab, categories: [] }));
+    expect(() => swapCategoriesLine(bare, [], 'W1')).toThrow(/exactly once/); // an owner with no categories is not asked for them
+  });
+
+  it('the readings: strict keeps arrays, whole takes a bare string as one whole name, split falls back to the commas', () => {
+    const cats = ['health', 'Health, Fitness', 'leisure'];
+    const read = (raw: string, r: 'strict' | 'whole' | 'split'): string[] => readCategories(raw, cats, r);
+    // The first line is qwen2.5:0.5b on 45 of its 60 baseline completions.
+    expect(read('{"direction":"community","categories":"leisure","tags":[]}', 'strict')).toEqual([]);
+    expect(read('{"direction":"community","categories":"leisure","tags":[]}', 'whole')).toEqual(['leisure']);
+    expect(read('{"categories":" Leisure "}', 'split')).toEqual(['leisure']);
+    expect(read('{"categories":"work"}', 'split')).toEqual([]); // a direction is not a category, in any reading
+    expect(read('{"categories":"health, leisure"}', 'whole')).toEqual([]); // not one name
+    expect(read('{"categories":"health, leisure"}', 'split')).toEqual(['health', 'leisure']);
+    expect(read('{"categories":"Health, Fitness"}', 'whole')).toEqual(['Health, Fitness']); // a comma inside a name
+    expect(read('{"categories":"Health, Fitness"}', 'split')).toEqual(['Health, Fitness']); // the whole string first
+    expect(read('{"categories":"health, leisure, health, leisure"}', 'split')).toEqual(['health', 'leisure']); // deduped by the same function
+    for (const r of ['strict', 'whole', 'split'] as const) {
+      expect(read('{"categories":["leisure","health"]}', r)).toEqual(['leisure', 'health']); // an array reads the same in all three
+      expect(read('{"categories":["Leisure","nope"]}', r)).toEqual(['leisure']);
+      for (const junk of ['{"categories":7}', '{"categories":null}', '{"categories":{"a":1}}', '{}', '', 'not json', 'null', '["leisure"]']) {
+        expect(read(junk, r), `${r} ${junk}`).toEqual([]);
+      }
+    }
+  });
+
+  it('what mergeEnrichment really keeps is what the shipped reading says, completion by completion', () => {
+    const vocab: Vocab = { directions: DIRECTIONS, categories: CATEGORIES, others: OTHERS };
+    const raws = [
+      '{"direction":"community","categories":"leisure","tags":[]}', '{"categories":"health, leisure"}', '{"categories":["leisure","health"]}',
+      '{"categories":["Leisure"]}', '{"categories":"work"}', '{"categories":7}', '{"categories":null}', '{}', '', 'not json', 'null', '[1]',
+      '```json\n{"categories":["finance","career","growth","health"]}\n```',
+    ];
+    for (const raw of raws) {
+      expect(productionCategories(raw, 'Leg day at the gym', vocab), JSON.stringify(raw))
+        .toEqual(readCategories(raw, CATEGORIES, SHIPPED_READING));
+    }
+  });
+
+  describe('the registered rule, on invented calls', () => {
+    const Q = 'qwen2.5:0.5b';
+    const G = 'gemma3:1b';
+    const R = REFERENCE_TIER;
+    const sc = (model: string, arm: ShapeArm, title: string, run: number, picks: Partial<Record<Reading, string[]>>, over: Partial<ShapeCall> = {}): ShapeCall => ({
+      arm, model, title, kind: 'target', expected: 'leisure', run, promptSha: '', raw: '{}', error: null, ms: 1,
+      categoriesType: 'array', validJson: true, allKeys: true, empty: false, direction: { valid: true, secondChance: false },
+      picks: { strict: [], whole: [], split: [], production: [], ...picks }, ...over,
+    });
+    /** `n` of the 42 titles yield (two runs each); the rest answer nothing. */
+    const fill = (model: string, arm: ShapeArm, n: number, picks: Partial<Record<Reading, string[]>>, over: Partial<ShapeCall> = {}): ShapeCall[] =>
+      ITEMS.flatMap((it, i) => [0, 1].map((run) => sc(model, arm, it.title, run, i < n ? picks : {}, over)));
+    const arrays = (v: string): Partial<Record<Reading, string[]>> => ({ strict: [v], whole: [v], split: [v], production: [v] });
+    const strings = (v: string): Partial<Record<Reading, string[]>> => ({ whole: [v], split: [v] });
+    /** The reference tier answers arrays on every title, all arms the same. */
+    const reference = (over: Partial<ShapeCall> = {}): ShapeCall[] =>
+      (['A', 'A2', 'W1', 'W2'] as const).flatMap((arm) => fill(R, arm, 42, arrays('health'), over));
+    const none = (model: string, arms: readonly ShapeArm[]): ShapeCall[] => arms.flatMap((a) => fill(model, a, 0, {}));
+
+    it('S1 needs +20 points on every small tier that ran, and has no verdict when none ran', () => {
+      const b = candidate('b');
+      const calls = [...fill(Q, 'A', 42, strings('leisure')), ...fill(G, 'A', 8, strings('leisure'))]; // Y strict 0; whole 100% and 19%
+      const out = s1Yield(calls, [Q, G], b);
+      expect(out.perTier.map((t) => [t.model, Math.round(t.cand)])).toEqual([[Q, 100], [G, 19]]);
+      expect(out.pass).toBe(false); // gemma3:1b stays under +20
+      expect(s1Yield(calls, [Q], b).pass).toBe(true);
+      expect(s1Yield(calls, [R], b).pass).toBeNull();
+    });
+
+    it('S2 counts titles whose modal first pick moved, and is inconclusive when A against A2 moved as many', () => {
+      const w1 = candidate('a-W1');
+      const base = [...fill(R, 'A', 42, arrays('health')), ...fill(R, 'A2', 42, arrays('health'))];
+      const moved = (k: number): ShapeCall[] => ITEMS.flatMap((it, i) => [0, 1].map((run) => sc(R, 'W1', it.title, run, arrays(i < k ? 'leisure' : 'health'))));
+      expect(s2Reference([...base, ...moved(2)], [R], w1).verdict).toBe('PASS');
+      expect(s2Reference([...base, ...moved(3)], [R], w1).verdict).toBe('FAIL');
+      const noisy = [...fill(R, 'A', 42, arrays('health')), ...ITEMS.flatMap((it, i) => [0, 1].map((run) => sc(R, 'A2', it.title, run, arrays(i < 3 ? 'leisure' : 'health')))), ...moved(0)];
+      expect(s2Reference(noisy, [R], w1).verdict).toBe('INCONCLUSIVE: NOISE');
+      expect(s2Reference(base, [Q], w1).verdict).toBe('NOT RUN');
+      // A pure parse leaves every array answer alone.
+      expect(s2Reference(base, [R], candidate('b')).verdict).toBe('PASS');
+      // Y more than 5 points under A's fails even when few titles moved: 3 titles of 42 stop yielding, but their modal pick stays null on both sides.
+      expect(s2Reference([...base, ...fill(R, 'W1', 38, arrays('health'))], [R], w1).verdict).toBe('FAIL');
+    });
+
+    it('S3 reads the wording arms on every tier, and a parse has nothing to fail', () => {
+      const w1 = candidate('a-W1');
+      const ok = [...fill(Q, 'A', 42, {}), ...fill(Q, 'W1', 42, {}), ...reference()];
+      expect(s3Schema(ok, [Q, R], w1).pass).toBe(true);
+      const keys = [...fill(Q, 'A', 42, {}), ...fill(Q, 'W1', 42, {}, { allKeys: false })];
+      expect(s3Schema(keys, [Q], w1).pass).toBe(false); // A's all-keys 100% against W1's 0%
+      const baseNoKeys = [...fill(Q, 'A', 42, {}, { allKeys: false }), ...fill(Q, 'W1', 42, {}, { allKeys: false })];
+      expect(s3Schema(baseNoKeys, [Q], w1).pass).toBe(true); // no worse than the baseline
+      const empties = [...fill(Q, 'A', 42, {}), ...fill(Q, 'W1', 42, {}, { empty: true })];
+      expect(s3Schema(empties, [Q], w1).pass).toBe(false);
+      expect(s3Schema(keys, [Q], candidate('b')).pass).toBe(true);
+    });
+
+    it('D3: the parse alone when only it qualifies, the wording alone when only it does, the pair only with a 15 point lift, nothing otherwise', () => {
+      const wordingsLow = (m: string): ShapeCall[] => [...fill(m, 'W1', 4, arrays('leisure')), ...fill(m, 'W2', 4, arrays('leisure'))];
+      // (b) only: both small tiers answer bare strings on 40 of 42 titles, the wordings barely move them.
+      const bOnly = [...fill(Q, 'A', 40, strings('leisure')), ...fill(G, 'A', 40, strings('leisure')), ...fill(Q, 'A2', 40, strings('leisure')), ...fill(G, 'A2', 40, strings('leisure')),
+        ...wordingsLow(Q), ...wordingsLow(G), ...none(R, []), ...reference()];
+      const d1 = shapeDecision(bOnly, [Q, G, R]);
+      expect(d1.ship).toMatch(/^b: the tolerant parse alone/);
+      expect(d1.evals.get('a-W1')!.s1.pass).toBe(false);
+      // (a) only: answers no reading can recover (a bare string naming no category) that a wording turns into arrays.
+      const aOnly = [...fill(Q, 'A', 0, {}), ...fill(G, 'A', 0, {}), ...fill(Q, 'W1', 40, arrays('leisure')), ...fill(G, 'W1', 40, arrays('leisure')),
+        ...fill(Q, 'W2', 3, arrays('leisure')), ...fill(G, 'W2', 3, arrays('leisure')), ...reference()];
+      expect(shapeDecision(aOnly, [Q, G, R]).ship).toMatch(/^a-W1: the wording alone/);
+      // Both qualify and the wording adds nothing over the parse: the parse alone.
+      const both = [...fill(Q, 'A', 38, strings('leisure')), ...fill(G, 'A', 38, strings('leisure')), ...fill(Q, 'W1', 40, arrays('leisure')), ...fill(G, 'W1', 40, arrays('leisure')),
+        ...fill(Q, 'W2', 40, arrays('leisure')), ...fill(G, 'W2', 40, arrays('leisure')), ...reference()];
+      expect(shapeDecision(both, [Q, G, R]).ship).toMatch(/^b: the tolerant parse alone \(the wording adds under 15/);
+      // Both qualify and the pair lifts Y by 15 or more on a small tier (A read whole 40%, W1 read whole 95%): the pair.
+      const lift = [...fill(Q, 'A', 17, strings('leisure')), ...fill(G, 'A', 17, strings('leisure')), ...fill(Q, 'W1', 40, arrays('leisure')), ...fill(G, 'W1', 40, arrays('leisure')),
+        ...fill(Q, 'W2', 3, arrays('leisure')), ...fill(G, 'W2', 3, arrays('leisure')), ...reference()];
+      expect(shapeDecision(lift, [Q, G, R]).ship).toMatch(/^a\+b-W1:/);
+      // Nothing qualifies: no fix.
+      const nothing = [...fill(Q, 'A', 0, {}), ...fill(G, 'A', 0, {}), ...wordingsLow(Q), ...wordingsLow(G), ...reference()];
+      expect(shapeDecision(nothing, [Q, G, R]).ship).toMatch(/^NONE/);
+      // The reference tier did not run: S2 cannot pass, so nothing qualifies, however well the small tiers did.
+      expect(shapeDecision(bOnly, [Q, G]).ship).toMatch(/^NONE/);
+    });
+
+    it('D1 prefers the comma split to the whole string only when it lifts Y by 10 points on a small tier', () => {
+      const multi: Partial<Record<Reading, string[]>> = { split: ['health', 'leisure'] };
+      // A: 25 titles one whole name, 15 titles a comma list: whole 59.5%, split 95.2% on both small tiers (35.7 points).
+      const mixed = (m: string): ShapeCall[] => ITEMS.flatMap((it, i) => [0, 1].map((run) => sc(m, 'A', it.title, run, i < 25 ? strings('leisure') : i < 40 ? multi : {})));
+      const calls = [...mixed(Q), ...mixed(G), ...fill(Q, 'W1', 3, arrays('leisure')), ...fill(G, 'W1', 3, arrays('leisure')), ...fill(Q, 'W2', 3, arrays('leisure')), ...fill(G, 'W2', 3, arrays('leisure')), ...reference()];
+      expect(shapeDecision(calls, [Q, G, R]).ship).toMatch(/^b-split:/);
+      const flat = [...fill(Q, 'A', 40, strings('leisure')), ...fill(G, 'A', 40, strings('leisure')), ...fill(Q, 'W1', 3, arrays('leisure')), ...fill(G, 'W1', 3, arrays('leisure')),
+        ...fill(Q, 'W2', 3, arrays('leisure')), ...fill(G, 'W2', 3, arrays('leisure')), ...reference()];
+      expect(shapeDecision(flat, [Q, G, R]).ship).toMatch(/^b:/); // split adds nothing here
+    });
+  });
 });
 
 // ── Live harness ──────────────────────────────────────────────────────────────
@@ -3707,70 +4153,178 @@ function verdictLine(r: ModelReport): string {
     + (notes.length ? ` || ${notes.join(' | ')}` : '');
 }
 
+// ── The shape-fix measurement, live ───────────────────────────────────────────
+
+const shapeCalls: ShapeCall[] = [];
+
+function shapeFlush(): void {
+  if (!OUT) return;
+  writeFileSync(OUT, JSON.stringify({
+    harness: 'classification-hint-live', mode: 'shape-fix', startedAt, writtenAt: new Date().toISOString(),
+    command: provenance.command ?? null,
+    env: { runs: RUNS, models: MODELS, ollamaUrl: redactUrl(config.ollamaUrl), ollamaVersion, ollamaInTestProcess: envWithPrefix(process.env, 'OLLAMA_'), liveHint: envWithPrefix(process.env, 'LIVE_HINT') },
+    provenance,
+    shapeGates: SHAPE_GATES, smallTiers: SMALL_TIERS, referenceTier: REFERENCE_TIER, shippedReading: SHIPPED_READING,
+    wordings: Object.fromEntries((['stock', 'W1', 'W2'] as const).map((w) => [w, categoriesLine(CATEGORIES, w)])),
+    fixture: { conventions: CONVENTIONS, controls: CONTROLS },
+    violations, prompts: Object.fromEntries(distinctPrompts), calls: shapeCalls,
+  }, null, 2));
+}
+
+function shapeRecord(arm: ShapeArm, model: string, item: FixtureItem, run: number, seam: SeamCall | undefined, vocab: Vocab): ShapeCall {
+  const raw = seam?.raw ?? '';
+  const prompt = seam?.prompt ?? '';
+  let strict: Record<string, unknown> | null = null;
+  try {
+    const j: unknown = JSON.parse(raw);
+    if (j && typeof j === 'object' && !Array.isArray(j)) strict = j as Record<string, unknown>;
+  } catch { /* not strict JSON */ }
+  const sha = sha12(prompt);
+  if (prompt) distinctPrompts.set(sha, prompt);
+  const call: ShapeCall = {
+    arm, model, title: item.title, kind: item.kind, expected: item.expected, run,
+    promptSha: sha, raw, error: seam?.error ?? null, ms: seam?.ms ?? NaN,
+    categoriesType: categoriesTypeOf(raw), validJson: strict !== null, allKeys: strict !== null && WIDE_KEYS.every((k) => k in strict!),
+    empty: raw.trim() === '', direction: directionOf(raw, vocab.directions),
+    picks: {
+      strict: readCategories(raw, vocab.categories, 'strict'),
+      whole: readCategories(raw, vocab.categories, 'whole'),
+      split: readCategories(raw, vocab.categories, 'split'),
+      production: productionCategories(raw, item.title, vocab),
+    },
+  };
+  shapeCalls.push(call);
+  return call;
+}
+
+/** One model: 42 titles x RUNS x the four arms, for an owner with no corrections. */
+async function runShape(model: string): Promise<void> {
+  rec.model = model;
+  say(`\n=== ${model} (shape-fix measurement${SMALL_TIERS.includes(model) ? ', small tier' : model === REFERENCE_TIER ? ', reference tier' : ''}) ===`);
+  await warm(model);
+  resetWorld();
+  const vocab = await suggestibleVocabulary(OWNER);
+  for (const item of ITEMS) {
+    const parsed = parseQuick(item.title);
+    const stock = await dryPrompt(() => enrichQuick(item.title, parsed, vocab));
+    if (!stock) { violate(model, `shape "${item.title}": enrichQuick put no prompt in front of the model`); continue; }
+    const worded = { W1: swapCategoriesLine(stock, vocab.categories, 'W1'), W2: swapCategoriesLine(stock, vocab.categories, 'W2') };
+    for (let run = 0; run < RUNS; run++) {
+      for (const arm of SHAPE_ARMS) {
+        const direct = arm === 'A' || arm === 'A2';
+        const { calls, thrown } = await seamOf(() => (direct
+          ? enrichQuick(item.title, parsed, vocab)
+          : generateJson(worded[arm as 'W1' | 'W2'], { purpose: 'classify' })));
+        const seam = calls.find((c) => !c.dry);
+        const call = shapeRecord(arm, model, item, run, seam, vocab);
+        if (thrown && !seam?.error) violate(model, `shape ${arm} "${item.title}" run ${run}: ${thrown}`);
+        if (seam && seam.prompt !== (direct ? stock : worded[arm as 'W1' | 'W2'])) violate(model, `shape ${arm} "${item.title}": the prompt sent is not the one built for the arm`);
+        if (direct && (call.empty || call.error)) violate(model, `shape ${arm} "${item.title}" run ${run}: empty or errored completion of a baseline arm ${call.error ?? ''}`);
+        if (call.picks.production.join('|') !== call.picks[SHIPPED_READING].join('|')) {
+          violate(model, `shape ${arm} "${item.title}" run ${run}: the shipped mergeEnrichment reads ${JSON.stringify(call.picks.production)}, the ${SHIPPED_READING} reading ${JSON.stringify(call.picks[SHIPPED_READING])}`);
+        }
+      }
+    }
+    shapeFlush();
+  }
+  printShape(model);
+}
+
+function printShape(model: string): void {
+  const score = (calls: readonly ShapeCall[], kind: 'target' | 'control', reading: Reading): string => {
+    const mine = calls.filter((c) => (kind === 'control' ? c.kind === 'control' : c.kind === 'target' || c.kind === 'train'));
+    return `${mine.filter((c) => (firstPickOf(c, reading) ?? '').toLowerCase() === c.expected.toLowerCase()).length}/${mine.length}`;
+  };
+  say('arm  calls  array%  string  missing  other | yield%: strict  whole  split  shipped | json%  keys%  empty | direction ok% | first pick right: titles(strict, whole)  controls(strict, whole)');
+  for (const arm of SHAPE_ARMS) {
+    const calls = shapeArmCalls(shapeCalls, model, arm);
+    if (calls.length === 0) continue;
+    const s = shapeStats(calls);
+    const dir = pct(calls.filter((c) => c.direction.valid).length, calls.length);
+    say(`${arm.padEnd(4)} ${String(s.n).padStart(5)}  ${fmt1(s.arrayPct).padStart(6)}  ${String(s.string).padStart(6)}  ${String(s.missing).padStart(7)}  ${String(s.other).padStart(5)} | `
+      + `${fmt1(yieldPct(calls, 'strict')).padStart(15)} ${fmt1(yieldPct(calls, 'whole')).padStart(6)} ${fmt1(yieldPct(calls, 'split')).padStart(6)} ${fmt1(yieldPct(calls, 'production')).padStart(8)} | `
+      + `${fmt1(pct(calls.filter((c) => c.validJson).length, calls.length)).padStart(5)} ${fmt1(pct(calls.filter((c) => c.allKeys).length, calls.length)).padStart(6)} ${String(calls.filter((c) => c.empty || c.error).length).padStart(5)} | `
+      + `${fmt1(dir).padStart(13)} | ${score(calls, 'target', 'strict')}, ${score(calls, 'target', 'whole')}   ${score(calls, 'control', 'strict')}, ${score(calls, 'control', 'whole')}`);
+  }
+  const strings = shapeArmCalls(shapeCalls, model, 'A').filter((c) => c.categoriesType === 'string');
+  const splitOnly = strings.filter((c) => c.picks.whole.length === 0 && c.picks.split.length > 0).length;
+  const neither = strings.filter((c) => c.picks.split.length === 0).length;
+  say(`A, bare strings: ${strings.length}; the whole string names a category on ${strings.filter((c) => c.picks.whole.length > 0).length}, only the comma split does on ${splitOnly}, no reading does on ${neither}.`);
+  const names = new Map<string, number>();
+  for (const c of strings) {
+    const v = ((): string => { try { return String((parseJsonLoose(c.raw) as { categories: unknown }).categories); } catch { return '?'; } })();
+    names.set(v, (names.get(v) ?? 0) + 1);
+  }
+  say(`A, the bare strings said: ${[...names].sort((a, b) => b[1] - a[1]).map(([v, n]) => `${JSON.stringify(v)} x${n}`).join(', ') || '-'}`);
+}
+
 // ── The suite ─────────────────────────────────────────────────────────────────
 
-describe.skipIf(!LIVE)('classification hint · live measurement', () => {
-  beforeAll(async () => {
-    expect(MODELS.length, 'LIVE_HINT_MODELS names no model').toBeGreaterThan(0);
-    // vitest sets NODE_ENV=test, which stops ollama.status() from filling the installed
-    // cache, so do it here: with the cache filled, resolveModel() performs the SAME
-    // auto-selection production does, and embedReady() can answer. (It is not what the
-    // production hint path uses: enrichEntry passes embedFn: null, which never asks.)
-    const res = await fetch(`${config.ollamaUrl}/api/tags`);
-    const data = (await res.json()) as {
-      models?: { name: string; capabilities?: string[]; details?: { parameter_size?: string } }[];
-    };
-    const installed = (data.models ?? []).map((m) => ({
-      name: m.name, capabilities: m.capabilities ?? [], paramB: parseParamB(m.details?.parameter_size),
-    }));
-    setInstalledModels(installed);
-    for (const m of installed) caps.set(m.name, m.capabilities);
-    try {
-      ollamaVersion = ((await (await fetch(`${config.ollamaUrl}/api/version`)).json()) as { version?: string }).version ?? '';
-    } catch { /* the version is a note, not a precondition */ }
+/** Shared by both suites: installed models, the fast-tier assertion, provenance, the fixture check, the test server. */
+async function prepareLive(): Promise<void> {
+  expect(MODELS.length, 'LIVE_HINT_MODELS names no model').toBeGreaterThan(0);
+  // vitest sets NODE_ENV=test, which stops ollama.status() from filling the installed
+  // cache, so do it here: with the cache filled, resolveModel() performs the SAME
+  // auto-selection production does, and embedReady() can answer. (It is not what the
+  // production hint path uses: enrichEntry passes embedFn: null, which never asks.)
+  const res = await fetch(`${config.ollamaUrl}/api/tags`);
+  const data = (await res.json()) as {
+    models?: { name: string; capabilities?: string[]; details?: { parameter_size?: string } }[];
+  };
+  const installed = (data.models ?? []).map((m) => ({
+    name: m.name, capabilities: m.capabilities ?? [], paramB: parseParamB(m.details?.parameter_size),
+  }));
+  setInstalledModels(installed);
+  for (const m of installed) caps.set(m.name, m.capabilities);
+  try {
+    ollamaVersion = ((await (await fetch(`${config.ollamaUrl}/api/version`)).json()) as { version?: string }).version ?? '';
+  } catch { /* the version is a note, not a precondition */ }
 
-    // The empty-response trap: no model under test may be thinking-capable. And the first
-    // is the fast tier the app resolves, because that is the only model that gates.
-    for (const model of MODELS) {
-      const picked = matchInstalled(model);
-      expect(picked, `${model} is not installed`).toBeTruthy();
-      expect(picked!.capabilities, `${model} is thinking-capable`).not.toContain('thinking');
-      say(`[live-hint] ${model} resolves to ${picked!.name} (caps: ${picked!.capabilities.join(',') || 'none listed'})`);
-    }
-    const fast = await resolveModel('fast');
-    expect(matchInstalled(fast)?.name, `LIVE_HINT_MODELS[0] must be the fast tier the app resolves (${fast}): it is the only model that gates`)
-      .toBe(matchInstalled(MODELS[0])?.name);
-    const embedModel = await resolveEmbedModel();
-    haveEmbedder = matchInstalled(embedModel) !== null;
-    say(`[live-hint] fast tier ${fast}; embedder ${embedModel} ${haveEmbedder ? 'installed' : 'NOT installed: arm S and the similarity retrieval are skipped'}; `
-      + `Ollama ${ollamaVersion || 'unknown version'}, OLLAMA_MAX_LOADED_MODELS in this process: ${process.env.OLLAMA_MAX_LOADED_MODELS ?? 'unset'} `
-      + '(the test process only: the server\'s own value is not visible from here)');
+  // The empty-response trap: no model under test may be thinking-capable. And the first
+  // is the fast tier the app resolves, because that is the only model that gates.
+  for (const model of MODELS) {
+    const picked = matchInstalled(model);
+    expect(picked, `${model} is not installed`).toBeTruthy();
+    expect(picked!.capabilities, `${model} is thinking-capable`).not.toContain('thinking');
+    say(`[live-hint] ${model} resolves to ${picked!.name} (caps: ${picked!.capabilities.join(',') || 'none listed'})`);
+  }
+  const fast = await resolveModel('fast');
+  expect(matchInstalled(fast)?.name, `LIVE_HINT_MODELS[0] must be the fast tier the app resolves (${fast}): it is the only model that gates`)
+    .toBe(matchInstalled(MODELS[0])?.name);
+  const embedModel = await resolveEmbedModel();
+  haveEmbedder = matchInstalled(embedModel) !== null;
+  say(`[live-hint] fast tier ${fast}; embedder ${embedModel} ${haveEmbedder ? 'installed' : 'NOT installed: arm S and the similarity retrieval are skipped'}; `
+    + `Ollama ${ollamaVersion || 'unknown version'}, OLLAMA_MAX_LOADED_MODELS in this process: ${process.env.OLLAMA_MAX_LOADED_MODELS ?? 'unset'} `
+    + '(the test process only: the server\'s own value is not visible from here)');
 
-    // Provenance: how the fast tier resolved, what started the run, what code it ran.
-    const fastDefault = explainModelDefault('fast');
-    let fastForOwner: ResolvedModel | null = null;
-    try { fastForOwner = await explainModel('fast'); } catch { /* a note, not a precondition */ }
-    const pinVar = fastPinVar(config.pins.ollama.fast, process.env);
-    const note = gatingTierNote({ resolved: fastForOwner ?? fastDefault, pinned: config.pins.ollama.fast, pinVar, registeredDefault: REGISTERED_FAST_DEFAULT });
-    const start = pickCommand(process.argv, readParentArgv());
-    provenance = {
-      command: start.command,
-      commandSource: start.source,
-      argv: { starter: start.argv, thisProcess: process.argv, execArgv: process.execArgv },
-      cwd: process.cwd(), node: process.version, platform: process.platform,
-      fastTier: {
-        registeredDefault: REGISTERED_FAST_DEFAULT, configuredName: config.ollamaFastModel,
-        resolvedDefault: fastDefault, resolvedForOwner: fastForOwner, pins: config.pins.ollama, pinnedBy: pinVar,
-      },
-      gatingTierNote: note,
-      ollama: { url: redactUrl(config.ollamaUrl), version: ollamaVersion, apiPsAtStart: await apiPs() },
-      harness: harnessProvenance(),
-    };
-    say(`[live-hint] ${note}`);
-    say(`[live-hint] command: ${start.command} (${start.source})`);
-    expect(fixtureProblems()).toEqual([]);
-    srv = await startTestServer();
-  });
+  // Provenance: how the fast tier resolved, what started the run, what code it ran.
+  const fastDefault = explainModelDefault('fast');
+  let fastForOwner: ResolvedModel | null = null;
+  try { fastForOwner = await explainModel('fast'); } catch { /* a note, not a precondition */ }
+  const pinVar = fastPinVar(config.pins.ollama.fast, process.env);
+  const note = gatingTierNote({ resolved: fastForOwner ?? fastDefault, pinned: config.pins.ollama.fast, pinVar, registeredDefault: REGISTERED_FAST_DEFAULT });
+  const start = pickCommand(process.argv, readParentArgv());
+  provenance = {
+    command: start.command,
+    commandSource: start.source,
+    argv: { starter: start.argv, thisProcess: process.argv, execArgv: process.execArgv },
+    cwd: process.cwd(), node: process.version, platform: process.platform,
+    fastTier: {
+      registeredDefault: REGISTERED_FAST_DEFAULT, configuredName: config.ollamaFastModel,
+      resolvedDefault: fastDefault, resolvedForOwner: fastForOwner, pins: config.pins.ollama, pinnedBy: pinVar,
+    },
+    gatingTierNote: note,
+    ollama: { url: redactUrl(config.ollamaUrl), version: ollamaVersion, apiPsAtStart: await apiPs() },
+    harness: harnessProvenance(),
+  };
+  say(`[live-hint] ${note}`);
+  say(`[live-hint] command: ${start.command} (${start.source})`);
+  expect(fixtureProblems()).toEqual([]);
+  srv = await startTestServer();
+}
+
+describe.skipIf(!LIVE || SHAPE)('classification hint · live measurement', () => {
+  beforeAll(prepareLive);
 
   afterAll(async () => {
     await srv?.close();
@@ -3792,5 +4346,27 @@ describe.skipIf(!LIVE)('classification hint · live measurement', () => {
     for (const r of reports) say(verdictLine(r));
     expect(violations, `mechanism violations:\n${violations.join('\n')}`).toEqual([]);
     expect(reports.length, 'no model ran').toBe(MODELS.length);
+  });
+});
+
+describe.skipIf(!LIVE || !SHAPE)('classification hint · shape-fix measurement', () => {
+  beforeAll(prepareLive);
+
+  afterAll(async () => {
+    await srv?.close();
+  });
+
+  for (const model of MODELS) {
+    it(`${model}: ${ITEMS.length} titles x ${RUNS} runs x arms ${SHAPE_ARMS.join(', ')}`, async () => {
+      await runShape(model);
+    }, 6 * 60 * 60_000);
+  }
+
+  it('the rule, read off the calls (the lead decides; nothing here is asserted but the mechanism)', () => {
+    shapeFlush();
+    say(`\n[live-hint] shape-fix: ${shapeCalls.length} model calls recorded${OUT ? `, artifact at ${OUT}` : ' (set LIVE_HINT_OUT to keep them)'}.`);
+    const decision = shapeDecision(shapeCalls, MODELS);
+    for (const line of decision.lines) say(line);
+    expect(violations, `mechanism violations:\n${violations.join('\n')}`).toEqual([]);
   });
 });
