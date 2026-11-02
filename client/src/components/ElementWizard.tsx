@@ -14,7 +14,7 @@ import {
 } from '../stores/index.js';
 import {
   patternTagList, patternDefaultMinutes, rankedSecondaryTags,
-  nextHalfHour, saveElement, splitBlockTag, mergeTagNames, isoAt, type ElementForm,
+  nextHalfHour, saveElement, splitBlockTag, mergeTagNames, isoAt, claimIfFaithful, type ElementForm,
 } from '../lib/element.js';
 import { sortCategories, displayTag } from '../lib/tag-tax.js';
 import { colorVar } from '../lib/pattern-meta.js';
@@ -23,7 +23,7 @@ import { buildRule, rulePreset, describeRule, WEEKDAYS, DAY_INITIAL, type Repeat
 import { proposeSlot, narrowToBand } from '../lib/propose-slot.js';
 import { findSimilarTasks } from '../lib/similar-tasks.js';
 import { inheritedBlockTag } from '../lib/planner.js';
-import { api, type Task, type Person } from '../lib/api.js';
+import { api, type Task, type Person, type ClassificationClaim } from '../lib/api.js';
 
 const TB_REPEAT: RepeatPreset[] = ['none', 'daily', 'weekly', 'custom'];
 const TASK_REPEAT: RepeatPreset[] = ['none', 'daily', 'weekly', 'custom'];
@@ -178,6 +178,9 @@ export function ElementWizard() {
   const [nlBusy, setNlBusy] = createSignal(false);
   const [nlLlm, setNlLlm] = createSignal(false);
   const [nlError, setNlError] = createSignal<string | null>(null);
+  // The model's category pick for the last parse, as the server reported it. Echoed on Add
+  // so the owner's answer to it is evidence; null whenever there is no pick to answer.
+  const [nlClaim, setNlClaim] = createSignal<ClassificationClaim | null>(null);
 
   // D5 — suggest-only subtask brainstorm. `ideas` is what the model offered; `picked` is
   // what the USER tapped. Only `picked` is ever created (saveElement → subtaskTitles), so
@@ -357,7 +360,7 @@ export function ElementWizard() {
     if (st.open && !wasOpen) {
       const pf = st.prefill ?? {};
       setTitle(''); setPrimary(''); setIntentions([]); setTagDraft(''); setLlm([]);
-      setNlText(''); setNlBusy(false); setNlLlm(false); setNlError(null);
+      setNlText(''); setNlBusy(false); setNlLlm(false); setNlError(null); setNlClaim(null);
       setSubtaskIdeas([]); setPickedSubtasks([]); setSubtaskBusy(false); setTimeHint(null);
       setDay(pf.day || localISODate());
       setStart(pf.start || nextHalfHour());
@@ -503,7 +506,7 @@ export function ElementWizard() {
     setNlBusy(true);
     const isBlock = tab() === 'timeblock';
     try {
-      const { parsed, llm } = await api.tasks.quickParse(value);
+      const { parsed, llm, classification_claim } = await api.tasks.quickParse(value);
       setNlLlm(llm);
       // Hydrate the form fields — every value below is visible in the wizard for
       // review/correction before Add.
@@ -527,6 +530,10 @@ export function ElementWizard() {
       // Phase B: the classifier's best-guess categories seed the picker (best fit
       // first = position 0 = first stripe) — reviewable chips, like every NL field.
       if (parsed.categories?.length) seedCategories(parsed.categories);
+      // Every successful parse REPLACES the claim, so one where the model abstained clears a
+      // stale one. A Time Block parse is about a block (no task row to settle against), and
+      // categoryNames() is read after the seed: the claim holds only if the picker shows it.
+      setNlClaim(isBlock ? null : claimIfFaithful(classification_claim, categoryNames()));
       // Motivation (0141): the overlay's pick seeds as SUGGESTED (source 'llm', not
       // touched) — the user's Add is approval of the task, not testimony about who
       // it's for; only tapping the control itself makes it user's.
@@ -933,6 +940,9 @@ export function ElementWizard() {
         detachBlockIds: removedMemberIds(),
         // D5 — only the chips the user tapped; an untouched suggestion never gets here.
         subtaskTitles: pickedSubtasks(),
+        // The preview's category pick, so Add records the owner's answer to it. saveElement
+        // sends it on the add-mode task/habit create only; the server decides if it counts.
+        classificationClaim: nlClaim() ?? undefined,
       };
       const msg = await saveElement(effectiveKind, m().mode, form, m().editTarget?.id);
       showToast(msg, 'success');

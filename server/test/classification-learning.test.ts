@@ -3,12 +3,13 @@ import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import {
   calibrateClassification, canonicalValue, classificationHint, classificationInput,
-  decidedRows, exemplarPrompt, logAssignment, recordCorrection, retrieveExemplars, rowOutcome,
+  decidedRows, exemplarPrompt, logAnsweredAssignment, logAssignment, recordCorrection, retrieveExemplars, rowOutcome,
   CORRECTION_FLOOR, HELD_OUT_STRIDE, LEARNING_WINDOW_DAYS, MAX_EXEMPLARS, PENDING_MS, RETRIEVE_K,
-  type ClassifiedField,
+  type ClassifiedField, type Exemplar,
 } from '../src/services/classification-learning.js';
 import { createOwner, resetDb, SECOND_OWNER_ID } from './helpers.js';
 import { ollama } from '../src/mcp/ollama.js';
+import { packVector } from '../src/lib/vector.js';
 
 /**
  * Phase 8 — the parse/classify LLM learns from the owner's corrections.
@@ -565,5 +566,348 @@ describe('embed reuse by log_id', () => {
     const after = exemplarRows().find((r) => r.input_text.includes('unique-marker'))!.embedding;
     expect(after).not.toBeNull();
     expect(Buffer.compare(before!, after!)).toBe(0);
+  });
+});
+
+// ── The accept filter (what quick-add can actually use) ───────────────────────
+//
+// Quick-add asks for a category from the owner's CURRENT list, so an exemplar whose value
+// is no longer on that list (renamed, deleted, muted, or a cleared answer) must never
+// reach its prompt as "the user chose X". Retrieval hands back at most k, so the filter
+// has to run BEFORE the cut: dropping afterwards would leave the slot empty instead of
+// giving it to the next valid lesson.
+
+describe('the accept filter', () => {
+  let exSeq = 0;
+  beforeEach(() => { exSeq = 0; });
+
+  /**
+   * Write one index row directly, so a test controls exactly how often each value was
+   * corrected and which row is newest (the frequency path picks the highest log_id of
+   * each value, and the ids here ascend with the call order).
+   */
+  async function exemplar(o: {
+    correct: string; text?: string; llm?: string; field?: ClassifiedField; owner?: string; vec?: boolean;
+  }): Promise<void> {
+    const logId = `ex-${String(exSeq++).padStart(4, '0')}`;
+    const text = o.text ?? `${o.correct} chore ${logId}`;
+    sqlite.prepare(
+      `INSERT INTO classification_exemplars (owner_id, field, log_id, input_text, llm_value, correct_value, embedding, computed_date)
+       VALUES (?, ?, ?, ?, ?, ?, ?, '2026-08-14')`,
+    ).run(
+      o.owner ?? OWNER, o.field ?? 'category', logId, text, o.llm ?? 'Leisure', o.correct,
+      o.vec ? packVector(await fakeEmbed(text)) : null,
+    );
+  }
+
+  /** Gardening 3x, Cleaning 2x, Cooking 2x, then one each of Career, Finance, Health:
+   *  without a filter the top three by frequency are Gardening, Cleaning, Cooking. */
+  async function frequencyIndex(): Promise<void> {
+    for (const c of ['Gardening', 'Gardening', 'Gardening', 'Cleaning', 'Cleaning', 'Cooking', 'Cooking', 'Health', 'Finance', 'Career']) {
+      await exemplar({ correct: c });
+    }
+  }
+
+  /** Two Gardening rows sit nearest to the query 'gym run'; three valid values trail them. */
+  async function similarityIndex(): Promise<void> {
+    await exemplar({ text: 'gym run', correct: 'Gardening', vec: true });
+    await exemplar({ text: 'gym workout monday', correct: 'Gardening', vec: true });
+    await exemplar({ text: 'gym workout tuesday', correct: 'Health', vec: true });
+    await exemplar({ text: 'invoice taxes budget', correct: 'Finance', vec: true });
+    await exemplar({ text: 'read book', correct: 'Leisure', vec: true });
+  }
+
+  const values = (xs: Exemplar[]) => xs.map((e) => e.correctValue);
+  const notGardening = (e: Exemplar) => !['Gardening', 'Cleaning', 'Cooking'].includes(e.correctValue);
+
+  it('changes nothing for a caller that passes no filter, or one that keeps everything', async () => {
+    await frequencyIndex();
+    const plain = await retrieveExemplars(OWNER, 'category', 'anything', { embedFn: null });
+    expect(values(plain)).toEqual(['Gardening', 'Cleaning', 'Cooking']);
+    expect(await retrieveExemplars(OWNER, 'category', 'anything', { embedFn: null, accept: undefined })).toEqual(plain);
+    expect(await retrieveExemplars(OWNER, 'category', 'anything', { embedFn: null, accept: () => true })).toEqual(plain);
+
+    resetIndex();
+    await similarityIndex();
+    const nearest = await retrieveExemplars(OWNER, 'category', 'gym run', { embedFn: fakeEmbed });
+    expect(nearest).toHaveLength(RETRIEVE_K);
+    expect(nearest[0].inputText).toBe('gym run');
+    expect(await retrieveExemplars(OWNER, 'category', 'gym run', { embedFn: fakeEmbed, accept: () => true })).toEqual(nearest);
+  });
+
+  it('on the frequency path, a lower-ranked valid value takes the slot of a dropped one', async () => {
+    await frequencyIndex();
+    const got = await retrieveExemplars(OWNER, 'category', 'anything', { embedFn: null, accept: notGardening });
+    // Filtering AFTER the cut would have returned nothing: all three slots belonged to
+    // the dropped values. Ties among the one-offs break by name.
+    expect(values(got)).toEqual(['Career', 'Finance', 'Health']);
+  });
+
+  it('still returns the NEWEST lesson of each value it keeps', async () => {
+    await exemplar({ correct: 'Health', text: 'old gym note' });
+    await exemplar({ correct: 'Health', text: 'new gym note' });
+    await exemplar({ correct: 'Gardening' });
+    const got = await retrieveExemplars(OWNER, 'category', 'anything', { embedFn: null, accept: notGardening });
+    expect(got.map((e) => e.inputText)).toEqual(['new gym note']);
+  });
+
+  it('on the similarity path, filters before the cut too', async () => {
+    await similarityIndex();
+    const unfiltered = await retrieveExemplars(OWNER, 'category', 'gym run', { embedFn: fakeEmbed, k: 1 });
+    expect(values(unfiltered)).toEqual(['Gardening']); // the nearest row is a value we are about to refuse
+
+    const top = await retrieveExemplars(OWNER, 'category', 'gym run', {
+      embedFn: fakeEmbed, k: 1, accept: (e) => e.correctValue !== 'Gardening',
+    });
+    expect(values(top)).toEqual(['Health']); // the nearest VALID row, not an empty answer
+
+    const three = await retrieveExemplars(OWNER, 'category', 'gym run', {
+      embedFn: fakeEmbed, accept: (e) => e.correctValue !== 'Gardening',
+    });
+    expect([...values(three)].sort()).toEqual(['Finance', 'Health', 'Leisure']);
+  });
+
+  it('says nothing when the filter refuses everything', async () => {
+    await frequencyIndex();
+    expect(await retrieveExemplars(OWNER, 'category', 'anything', { embedFn: null, accept: () => false })).toEqual([]);
+    expect(await classificationHint(OWNER, 'category', 'anything', { embedFn: null, accept: () => false })).toBe('');
+
+    resetIndex();
+    await similarityIndex();
+    expect(await retrieveExemplars(OWNER, 'category', 'gym run', { embedFn: fakeEmbed, accept: () => false })).toEqual([]);
+    expect(await classificationHint(OWNER, 'category', 'gym run', { embedFn: fakeEmbed, accept: () => false })).toBe('');
+  });
+
+  it('offers the filter each of the OWNER’s stored rows for the field, and no one else’s', async () => {
+    createOwner(SECOND_OWNER_ID);
+    await exemplar({ correct: 'Health' });
+    await exemplar({ correct: 'Finance' });
+    await exemplar({ correct: 'Zebra', owner: SECOND_OWNER_ID });
+    await exemplar({ correct: 'them', field: 'motivation' });
+
+    const offered: Exemplar[] = [];
+    await retrieveExemplars(OWNER, 'category', 'anything', {
+      embedFn: null, accept: (e) => { offered.push(e); return true; },
+    });
+    expect(offered.map((e) => e.correctValue).sort()).toEqual(['Finance', 'Health']);
+    // The filter sees the lesson itself, which is what a vocabulary check needs.
+    expect(offered[0]).toMatchObject({ llmValue: 'Leisure' });
+    expect(typeof offered[0].inputText).toBe('string');
+  });
+
+  it('is passed through by classificationHint, so the rendered text honours it', async () => {
+    await frequencyIndex();
+    const hint = await classificationHint(OWNER, 'category', 'anything', { embedFn: null, accept: notGardening });
+    expect(hint).toContain('the user chose Career.');
+    expect(hint).toContain('the user chose Finance.');
+    expect(hint).toContain('the user chose Health.');
+    for (const dropped of ['Gardening', 'Cleaning', 'Cooking']) expect(hint).not.toContain(`the user chose ${dropped}`);
+    // …and without it the same owner is shown exactly what they were shown before.
+    const before = await classificationHint(OWNER, 'category', 'anything', { embedFn: null });
+    expect(before).toContain('the user chose Gardening.');
+    expect(before).not.toContain('Career');
+  });
+
+  it('never throws when the filter does', async () => {
+    await frequencyIndex();
+    const boom = () => { throw new Error('bad predicate'); };
+    await expect(retrieveExemplars(OWNER, 'category', 'anything', { embedFn: null, accept: boom })).resolves.toEqual([]);
+    await expect(classificationHint(OWNER, 'category', 'anything', { embedFn: null, accept: boom })).resolves.toBe('');
+  });
+
+  function resetIndex() {
+    sqlite.exec('DELETE FROM classification_exemplars');
+    exSeq = 0;
+  }
+});
+
+// ── The prompt fragment, exactly ─────────────────────────────────────────────
+
+describe('the rendered lesson', () => {
+  it('renders an empty answer as (nothing), the way it already rendered an empty claim', () => {
+    // A cleared picker is a real answer now ("none of these"), and "the user chose ."
+    // reads as a broken sentence to the model.
+    const text = exemplarPrompt([{ logId: 'l1', inputText: 'gym workout monday', llmValue: 'Leisure', correctValue: '' }]);
+    expect(text).toContain('you said Leisure; the user chose (nothing).');
+    expect(text).not.toContain('the user chose .');
+    expect(exemplarPrompt([{ logId: 'l2', inputText: 'gym', llmValue: '', correctValue: 'Health' }]))
+      .toContain('you said (nothing); the user chose Health.');
+  });
+
+  it('is byte-identical for every non-empty value', () => {
+    // Pinned as a literal: this text is model-facing in memory enrichment as well as
+    // quick-add, so an edit here is a retune, never a tidy-up.
+    expect(exemplarPrompt([
+      { logId: 'l1', inputText: 'gym workout monday', llmValue: 'Leisure', correctValue: 'Health' },
+      { logId: 'l2', inputText: '  quarterly\n invoice ', llmValue: 'Career, Growth', correctValue: 'Finance, Career' },
+    ])).toBe(
+      '\nThis user has corrected you before. Follow their vocabulary, not your own:\n' +
+      '- For "gym workout monday" you said Leisure; the user chose Health.\n' +
+      '- For "quarterly invoice" you said Career, Growth; the user chose Finance, Career.\n',
+    );
+  });
+});
+
+// ── Capture with the answer already in hand ──────────────────────────────────
+
+describe('logging an answer along with the claim', () => {
+  type AnswerRow = {
+    id: string; owner_id: string; task_id: string | null; field: string; input_text: string;
+    llm_value: string; final_value: string | null; assigned_at: string; corrected_at: string | null; local_date: string;
+  };
+  const rows = (owner = OWNER) =>
+    sqlite.prepare(`SELECT * FROM classification_log WHERE owner_id = ? ORDER BY assigned_at, id`).all(owner) as AnswerRow[];
+  const WEEK_LATER = new Date(NOW.getTime() + 7 * 86_400_000);
+  const claim = { taskId: 't1', field: 'category' as const, inputText: 'gym session', llmValue: ['Leisure'] };
+
+  it('writes an OPEN row when the answer is the claim', async () => {
+    await logAnsweredAssignment(OWNER, { ...claim, finalValue: ['Leisure'] }, NOW);
+    const [row] = rows();
+    expect(rows()).toHaveLength(1);
+    expect(row).toMatchObject({
+      owner_id: OWNER, task_id: 't1', field: 'category', input_text: 'gym session',
+      llm_value: 'Leisure', final_value: null, corrected_at: null,
+      assigned_at: NOW.toISOString(), local_date: '2026-08-14',
+    });
+    // Exactly the row logAssignment writes: pending for 24h, a weak accept after.
+    expect(rowOutcome(row, NOW)).toBeNull();
+    expect(rowOutcome(row, WEEK_LATER)).toBe('accepted');
+    expect(await decidedRows(OWNER, 'category', NOW)).toEqual([]);
+    expect((await decidedRows(OWNER, 'category', WEEK_LATER)).map((r) => r.corrected)).toEqual([false]);
+  });
+
+  it('calls spelling variants of the claim agreement, not a correction', async () => {
+    await logAnsweredAssignment(OWNER, { ...claim, taskId: 't1', finalValue: 'Leisure' }, NOW);
+    await logAnsweredAssignment(OWNER, { ...claim, taskId: 't2', finalValue: [' Leisure '] }, NOW);
+    await logAnsweredAssignment(OWNER, { ...claim, taskId: 't3', llmValue: ['Leisure', 'Health'], finalValue: 'Leisure, Health' }, NOW);
+    expect(rows().map((r) => [r.final_value, r.corrected_at])).toEqual([[null, null], [null, null], [null, null]]);
+  });
+
+  it('writes a row already CLOSED when the answer differs, so it is a correction at once and for good', async () => {
+    await logAnsweredAssignment(OWNER, { ...claim, finalValue: ['Health'] }, NOW);
+    const [row] = rows();
+    expect(rows()).toHaveLength(1);
+    expect(row.llm_value).toBe('Leisure');
+    expect(row.final_value).toBe('Health');
+    // One instant for both: the owner answered at the moment the claim was made.
+    expect(row.corrected_at).toBe(NOW.toISOString());
+    expect(row.assigned_at).toBe(NOW.toISOString());
+    expect(rowOutcome(row, NOW)).toBe('corrected');
+    expect(rowOutcome(row, WEEK_LATER)).toBe('corrected');   // never ages into an accept
+    expect(await decidedRows(OWNER, 'category', NOW)).toMatchObject([{ correctValue: 'Health', corrected: true }]);
+  });
+
+  it('treats a reorder as a correction, because category sets are ordered', async () => {
+    await logAnsweredAssignment(OWNER, { ...claim, llmValue: ['Leisure', 'Health'], finalValue: ['Health', 'Leisure'] }, NOW);
+    const [row] = rows();
+    expect(row.llm_value).toBe('Leisure, Health');
+    expect(row.final_value).toBe('Health, Leisure');
+    expect(rowOutcome(row, NOW)).toBe('corrected');
+  });
+
+  it('records an emptied answer as an answer ("" and not NULL), with [] or with null', async () => {
+    await logAnsweredAssignment(OWNER, { ...claim, taskId: 't1', finalValue: [] }, NOW);
+    await logAnsweredAssignment(OWNER, { ...claim, taskId: 't2', finalValue: null }, NOW);
+    for (const row of rows()) {
+      expect(row.final_value).toBe('');
+      expect(row.corrected_at).toBe(NOW.toISOString());
+      expect(rowOutcome(row, WEEK_LATER)).toBe('corrected');
+    }
+    expect((await decidedRows(OWNER, 'category', NOW)).map((r) => [r.correctValue, r.corrected])).toEqual([['', true], ['', true]]);
+  });
+
+  it('stores an array claim in its canonical, comma-joined form', async () => {
+    await logAnsweredAssignment(OWNER, { ...claim, llmValue: [' Leisure ', 'Health'], finalValue: ['Health'] }, NOW);
+    expect(rows()[0].llm_value).toBe('Leisure, Health');
+  });
+
+  it('claims nothing when there is no claim or nothing to judge', async () => {
+    await logAnsweredAssignment(OWNER, { ...claim, llmValue: [], finalValue: ['Health'] }, NOW);
+    await logAnsweredAssignment(OWNER, { ...claim, llmValue: '', finalValue: ['Health'] }, NOW);
+    await logAnsweredAssignment(OWNER, { ...claim, llmValue: ['  '], finalValue: ['Health'] }, NOW);
+    await logAnsweredAssignment(OWNER, { ...claim, inputText: '   ', finalValue: ['Health'] }, NOW);
+    await logAnsweredAssignment(OWNER, { ...claim, inputText: '', finalValue: null }, NOW);
+    expect(rows()).toHaveLength(0);
+  });
+
+  it('writes the same row the two-step form writes, so nothing downstream can tell them apart', async () => {
+    await logAnsweredAssignment(OWNER, { ...claim, taskId: 'one-step', finalValue: ['Health'] }, NOW);
+    await logAssignment(OWNER, { ...claim, taskId: 'two-step' }, NOW);
+    await recordCorrection(OWNER, 'two-step', 'category', ['Health'], NOW);
+    const shape = (r: AnswerRow) => ({ ...r, id: '', task_id: '' });
+    const [a, b] = [rows().find((r) => r.task_id === 'one-step')!, rows().find((r) => r.task_id === 'two-step')!];
+    expect(shape(a)).toEqual(shape(b));
+  });
+
+  it('judges agreement exactly as the two-step form and rowOutcome do, case and all', async () => {
+    // One equality for the whole house: a pair the existing capture path calls a
+    // correction must be a correction here too, whatever the spelling.
+    const pairs: [string | string[], string | string[] | null][] = [
+      ['Leisure', 'Leisure'],
+      ['Leisure', 'leisure'],                    // case matters
+      [['Leisure', 'Health'], ['Health', 'Leisure']], // order matters
+      [['Leisure', 'Health'], ['Leisure']],
+      [['Leisure'], []],
+      ['Leisure', null],
+      ['Leisure, Health', ['Leisure', 'Health']], // spelling of the same set does not
+      [[' Leisure '], ['Leisure']],
+    ];
+    for (const [i, [llm, final]] of pairs.entries()) {
+      await logAnsweredAssignment(OWNER, { ...claim, taskId: `one-${i}`, llmValue: llm, finalValue: final }, NOW);
+      await logAssignment(OWNER, { ...claim, taskId: `two-${i}`, llmValue: llm }, NOW);
+      await recordCorrection(OWNER, `two-${i}`, 'category', final, NOW);
+    }
+    const all = rows();
+    for (const [i, pair] of pairs.entries()) {
+      const one = all.find((r) => r.task_id === `one-${i}`)!;
+      const two = all.find((r) => r.task_id === `two-${i}`)!;
+      expect(rowOutcome(one, WEEK_LATER), JSON.stringify(pair)).toBe(rowOutcome(two, WEEK_LATER));
+      expect(one.llm_value).toBe(two.llm_value);
+      // Settled the same way too: born closed exactly when the two-step form's answer differs.
+      expect(one.final_value === null, JSON.stringify(pair)).toBe(two.final_value === two.llm_value);
+    }
+  });
+
+  it('keeps the owner’s first answer: a closed row cannot be re-answered, an open one can', async () => {
+    await logAnsweredAssignment(OWNER, { ...claim, taskId: 'closed', finalValue: ['Health'] }, NOW);
+    await logAnsweredAssignment(OWNER, { ...claim, taskId: 'open', finalValue: ['Leisure'] }, NOW);
+
+    expect(await recordCorrection(OWNER, 'closed', 'category', ['Finance'], NOW)).toBe(false);
+    expect(rows().find((r) => r.task_id === 'closed')!.final_value).toBe('Health');
+
+    // An equal row is just an open assignment: the next edit of the task is the answer.
+    expect(await recordCorrection(OWNER, 'open', 'category', ['Finance'], NOW)).toBe(true);
+    const reopened = rows().find((r) => r.task_id === 'open')!;
+    expect(reopened.final_value).toBe('Finance');
+    expect(rowOutcome(reopened, NOW)).toBe('corrected');
+  });
+
+  it('belongs to the owner it is logged for', async () => {
+    createOwner(SECOND_OWNER_ID);
+    await logAnsweredAssignment(SECOND_OWNER_ID, { ...claim, finalValue: ['Health'] }, NOW);
+    expect(rows(OWNER)).toHaveLength(0);
+    expect(rows(SECOND_OWNER_ID).map((r) => r.owner_id)).toEqual([SECOND_OWNER_ID]);
+  });
+
+  it('never throws when the log cannot be written', async () => {
+    sqlite.exec(`ALTER TABLE classification_log RENAME TO classification_log_hidden`);
+    try {
+      await expect(logAnsweredAssignment(OWNER, { ...claim, finalValue: ['Health'] }, NOW)).resolves.toBeUndefined();
+      await expect(logAnsweredAssignment(OWNER, { ...claim, finalValue: ['Leisure'] }, NOW)).resolves.toBeUndefined();
+    } finally {
+      sqlite.exec(`ALTER TABLE classification_log_hidden RENAME TO classification_log`);
+    }
+  });
+
+  it('teaches the calibration exactly as recorded corrections do', async () => {
+    await logAnsweredAssignment(OWNER, { ...claim, taskId: 'a', inputText: 'gym session before work', finalValue: ['Health'] }, NOW);
+    await logAnsweredAssignment(OWNER, { ...claim, taskId: 'b', inputText: 'gym workout with a trainer', finalValue: ['Health'] }, NOW);
+    const r = await calibrateClassification(OWNER, NOW, { embedFn: fakeEmbed });
+    const cat = r.fields.find((f) => f.field === 'category')!;
+    expect(cat.corrections).toBe(CORRECTION_FLOOR);
+    expect(cat.indexed).toBe(CORRECTION_FLOOR);
+    expect(exemplarRows().map((e) => [e.llm_value, e.correct_value])).toEqual([['Leisure', 'Health'], ['Leisure', 'Health']]);
+    const hint = await classificationHint(OWNER, 'category', 'gym run tomorrow', { embedFn: fakeEmbed });
+    expect(hint).toContain('you said Leisure; the user chose Health.');
   });
 });

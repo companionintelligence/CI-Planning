@@ -173,6 +173,9 @@ export interface TaskInput {
    *  task lands on the Planner immediately. Server-side placeStartAnchoredTask; needs
    *  scheduled_for. Default off. */
   auto_place?: boolean;
+  /** Opaque echo of the `quickParse` claim: add-mode task or habit create only. The
+   *  server validates it and may silently ignore it; it is never sent on update. */
+  classification_claim?: ClassificationClaim;
 }
 
 export interface Streak {
@@ -321,6 +324,17 @@ export interface ParsedQuick {
 }
 
 /**
+ * "The model, not the owner, picked these categories for this text" — returned by
+ * `quickParse` only when the classifier chose some. The client never builds or edits
+ * one: it holds it while the preview is on screen and echoes it unchanged on Add, so the
+ * owner's answer to the pick can be recorded as evidence (see `claimIfFaithful`).
+ */
+export interface ClassificationClaim {
+  text: string;
+  categories: string[];
+}
+
+/**
  * The close-ritual rating, 1-5 (server: services/task-close.ts).
  *
  * Produced by the three-face picker with an optional second pick:
@@ -419,7 +433,7 @@ export const api = {
     quick: (text: string) => request<{ task: Task; parsed: ParsedQuick; llm: boolean }>('POST', '/tasks/quick', { text }),
     // T14 (#350) — parse-only twin of `quick`: zero writes; the wizard previews the
     // parse in its own fields and the user approves via the normal Add path.
-    quickParse: (text: string) => request<{ parsed: ParsedQuick; llm: boolean }>('POST', '/tasks/quick/parse', { text }),
+    quickParse: (text: string) => request<{ parsed: ParsedQuick; llm: boolean; classification_claim?: ClassificationClaim }>('POST', '/tasks/quick/parse', { text }),
     // The close ritual: complete (if still open) + record mood/note/corrected duration.
     // Accepted on an already-done task too — reflecting later is the normal case.
     close: (id: string, body: { score?: Score | typeof DECLINED_SCORE; note?: string; actual_minutes?: number }) =>

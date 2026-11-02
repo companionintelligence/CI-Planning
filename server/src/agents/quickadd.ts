@@ -31,6 +31,14 @@ import { constrainToVocabulary, constrainOne, type EnrichOut } from './constrain
  *  - `isComplex`: gates the separate suggest-only subtask call (agents/subtasks.ts).
  * All three remain preview-only: /api/tasks/quick/parse writes nothing, so the wizard
  * shows them for approval before anything is created.
+ *
+ * 2026-11-02: the overlay is also handed the owner's OWN past corrections for the two
+ * fields they correct, `categories` and `motivation` (`hints`, rendered by
+ * services/classification-learning.ts; the caller fetches them, so this agent stays free of
+ * services). Each block sits IMMEDIATELY AFTER the field it governs, on the strength of the
+ * 2026-07-27 layout finding in `enrichQuick` below: a finding about rules, not yet measured
+ * for hints. An owner with no corrections gets today's prompt byte for byte. The direction
+ * retry gets no hint, because direction is not something the owner's corrections teach.
  */
 
 export interface QuickVocab {
@@ -132,10 +140,30 @@ export function mergeEnrichment(parsed: ParsedQuick, out: EnrichOut, vocab: Quic
 // and the memory pass classify the axis identically — three copies of "what Home means"
 // is exactly how a classifier starts contradicting itself between surfaces.
 
+/**
+ * The owner's own past corrections, one rendered block per field
+ * (`exemplarPrompt` output). The caller fetches them (routes/tasks.ts `enrichEntry`);
+ * this agent only places them.
+ */
+export interface QuickHints {
+  /** For `categories`. '' or absent adds nothing. Ignored when the owner has no
+   *  categories: that line is not asked then, and a lesson about it would have no field. */
+  category?: string;
+  /** For `motivation`. '' or absent adds nothing. */
+  motivation?: string;
+}
+
+// '' (or absent) adds nothing, so an owner with no corrections gets the stock prompt byte
+// for byte. A real hint opens with a newline (exemplarPrompt) and gets one more on the end,
+// which leaves a blank line on BOTH sides of the block so it does not read as a
+// continuation of the next field.
+const withHint = (hint?: string) => (hint ? `${hint}\n` : '');
+
 export async function enrichQuick(
   text: string,
   parsed: ParsedQuick,
   vocab: QuickVocab = { directions: [], others: [] },
+  hints: QuickHints = {},
 ): Promise<ParsedQuick> {
   const hasCats = (vocab.categories?.length ?? 0) > 0;
   // Layout matters as much as wording here. Measured 2026-07-27 against llama3.2: with
@@ -154,7 +182,10 @@ export async function enrichQuick(
       `"timeOfDay": one of "morning","afternoon","evening","any". ${TIME_OF_DAY_RUBRIC}\n` +
       `"timeOfDayReason": a few words on why, or null.\n` +
       `"motivation": one of "me","us","them", or null. ${MOTIVATION_RUBRIC}\n` +
-      (hasCats ? `"categories": 1-3 life areas from ${JSON.stringify(vocab.categories)}, best fit first.\n` : '') +
+      withHint(hints.motivation) +
+      (hasCats
+        ? `"categories": 1-3 life areas from ${JSON.stringify(vocab.categories)}, best fit first.\n` + withHint(hints.category)
+        : '') +
       `"tags": up to 2 from ${JSON.stringify(vocab.others.slice(0, 60))}, else [].\n` +
       `Choose direction/categories/tags ONLY from the given lists — never invent.\n` +
       `Entry: "${text}"`,

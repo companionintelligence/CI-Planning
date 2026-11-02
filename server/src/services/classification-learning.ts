@@ -62,8 +62,11 @@ export const PENDING_MS = 24 * 3_600_000;
  * still not enough — a single edit can be a slip — but the second says it was meant.
  *
  * What keeps a low floor safe is that influence is bounded elsewhere rather than
- * here: at most `RETRIEVE_K` exemplars reach a prompt, only ones similar to the input
- * are retrieved, and they are phrased as past corrections rather than as rules.
+ * here: at most `RETRIEVE_K` exemplars reach a prompt, and they are phrased as past
+ * corrections rather than as rules. Which ones is NOT a similarity threshold: with an
+ * embedder answering they are ranked by similarity to the input, and otherwise they are
+ * the owner's most frequent corrections whatever the input is. Quick-add deliberately
+ * always takes the frequency path, so it never waits on the embedder.
  */
 export const CORRECTION_FLOOR = 2;
 
@@ -142,6 +145,14 @@ export interface ClassificationCalibrationResult {
 const INSERT_LOG = `
   INSERT INTO classification_log (id, owner_id, task_id, field, input_text, llm_value, assigned_at, local_date)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+
+/**
+ * A row born already answered: `logAssignment` and `recordCorrection` in one statement,
+ * for a caller that knows the owner's answer at the moment it records the model's claim.
+ */
+const INSERT_LOG_ANSWERED = `
+  INSERT INTO classification_log (id, owner_id, task_id, field, input_text, llm_value, final_value, assigned_at, corrected_at, local_date)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
 /**
  * The still-open assignment for a task and field, newest first. "Open" means the owner
@@ -249,6 +260,48 @@ export async function recordCorrection(
   }
 }
 
+/**
+ * Record a claim AND the owner's answer to it in one row, for a caller that already
+ * holds both: the wizard shows the model's pick, the owner may edit it, and the create
+ * carries what they left. When the answer differs from the claim the row is born closed
+ * (`final_value` and `corrected_at` set, `rowOutcome` says 'corrected' at once); when it
+ * matches, the row is born OPEN, exactly like `logAssignment`'s, so it is pending for
+ * 24h and a weak accept after unless a later edit closes it first.
+ *
+ * One statement rather than `logAssignment` then `recordCorrection`: both swallow their
+ * errors, so the two-step form can leave an open row carrying the model's value when
+ * the second write fails, and that row ages into an 'accepted' the owner never gave.
+ * The empty string is a real answer ("none of these"), stored as '' and not NULL.
+ *
+ * Never throws, for the same reason as `logAssignment`.
+ */
+export async function logAnsweredAssignment(
+  ownerId: string,
+  input: {
+    taskId: string;
+    field: ClassifiedField;
+    inputText: string;
+    llmValue: string | readonly string[];
+    finalValue: string | readonly string[] | null;
+  },
+  now: Date = new Date(),
+): Promise<void> {
+  try {
+    const llm = canonicalValue(input.llmValue);
+    if (!llm || !input.inputText.trim()) return; // nothing was claimed → nothing to learn
+    const final = canonicalValue(input.finalValue);
+    const differs = final !== llm;
+    const at = now.toISOString();
+    const tz = await ownerTimezone(ownerId);
+    await store().prepare(INSERT_LOG_ANSWERED).run(
+      newId(), ownerId, input.taskId, input.field, input.inputText, llm,
+      differs ? final : null, at, differs ? at : null, localDateInTZ(at, tz),
+    );
+  } catch (err) {
+    logger.warn('classification-learning: could not log answered assignment', { err: (err as Error).message });
+  }
+}
+
 // ── Evidence reading ──────────────────────────────────────────────────────────
 
 interface LogRow {
@@ -352,16 +405,23 @@ async function resolveEmbed(ownerId: string, embedFn: EmbedFn): Promise<((t: str
  * stored vector of the wrong length) degrades to fewer or no exemplars, because a
  * classification with no examples is exactly today's behaviour and therefore always a
  * safe answer.
+ *
+ * `accept` lets a caller drop exemplars its prompt cannot use (a value outside the list
+ * the model is allowed to answer from). It runs on the stored rows BEFORE ranking and
+ * the top-k cut, so a lesson it rejects does not cost an acceptable one its slot (a
+ * filter on the rendered hint could not give that back). Absent, nothing is filtered.
  */
 export async function retrieveExemplars(
   ownerId: string,
   field: ClassifiedField,
   text: string,
-  opts: { embedFn?: EmbedFn; k?: number } = {},
+  opts: { embedFn?: EmbedFn; k?: number; accept?: (e: Exemplar) => boolean } = {},
 ): Promise<Exemplar[]> {
   const k = opts.k ?? RETRIEVE_K;
+  const { accept } = opts;
   try {
-    const stored = await loadExemplars(ownerId, field);
+    const all = await loadExemplars(ownerId, field);
+    const stored = accept ? all.filter((e) => accept(e)) : all;
     if (stored.length === 0 || k <= 0) return [];
 
     const embed = await resolveEmbed(ownerId, opts.embedFn);
@@ -426,7 +486,7 @@ function frequentCorrections(stored: StoredExemplar[], k: number): Exemplar[] {
 export function exemplarPrompt(exemplars: readonly Exemplar[]): string {
   if (exemplars.length === 0) return '';
   const lines = exemplars
-    .map((e) => `- For "${oneLine(e.inputText)}" you said ${e.llmValue || '(nothing)'}; the user chose ${e.correctValue}.`)
+    .map((e) => `- For "${oneLine(e.inputText)}" you said ${e.llmValue || '(nothing)'}; the user chose ${e.correctValue || '(nothing)'}.`)
     .join('\n');
   return `\nThis user has corrected you before. Follow their vocabulary, not your own:\n${lines}\n`;
 }
@@ -438,7 +498,7 @@ export async function classificationHint(
   ownerId: string,
   field: ClassifiedField,
   text: string,
-  opts: { embedFn?: EmbedFn; k?: number } = {},
+  opts: { embedFn?: EmbedFn; k?: number; accept?: (e: Exemplar) => boolean } = {},
 ): Promise<string> {
   return exemplarPrompt(await retrieveExemplars(ownerId, field, text, opts));
 }

@@ -66,7 +66,7 @@ vi.mock('../stores/index.js', () => ({
   refetchPatterns: vi.fn(), refetchTags: vi.fn(),
 }));
 
-const { saveElement, splitBlockTag, mergeTagNames, timeblockTagPayload, taskTagPayload } = await import('./element.js');
+const { saveElement, splitBlockTag, mergeTagNames, timeblockTagPayload, taskTagPayload, claimIfFaithful } = await import('./element.js');
 
 const lastCreateBody = () => blocksCreate.mock.calls.at(-1)![0] as Record<string, unknown>;
 const lastUpdateBody = () => blocksUpdate.mock.calls.at(-1)![1] as Record<string, unknown>;
@@ -362,5 +362,100 @@ describe('motivation save shape (0141)', () => {
   it("'us' is a sendable positive claim, distinct from omitting the field", async () => {
     await saveElement('task', 'add', { ...taskForm, motivation: 'us' });
     expect(lastTaskCreateBody().motivation).toBe('us');
+  });
+});
+
+// ── Classification claim — the Describe-it preview's category pick ─────────────
+// The wizard holds the server's `classification_claim` and echoes it VERBATIM on the
+// add-mode task/habit create, so the owner's answer to the model's pick is recorded
+// (server: settlePreviewClaim). It must reach nothing else: an update, a subtask, a
+// block or a routine has no preview pick to answer, and a claim on a PATCH would be
+// evidence about a row the model never classified.
+describe('classification claim — only the add-mode task/habit create carries it', () => {
+  const taskForm = { title: 'Gym session before work', primary: '', intentions: [] as string[], scheduledFor: '', taskTime: '', priority: 3 };
+  const claim = { text: 'Gym session before work', categories: ['leisure'] };
+  const formWithClaim = { ...taskForm, categories: ['health'], classificationClaim: claim };
+
+  it('task add: the create body carries the claim verbatim, next to the categories the owner ended on', async () => {
+    await saveElement('task', 'add', formWithClaim);
+    const wire = JSON.parse(JSON.stringify(lastTaskCreateBody()));
+    expect(wire.classification_claim).toEqual(claim);
+    expect(wire.categories).toEqual(['health']);   // the answer: what the picker shows, not the claim
+  });
+
+  it('habit add (recurring template): carried too', async () => {
+    await saveElement('habit', 'add', { ...formWithClaim, recurrenceRule: 'FREQ=DAILY' });
+    const wire = JSON.parse(JSON.stringify(lastTaskCreateBody()));
+    expect(wire.is_habit).toBe(true);
+    expect(wire.recurrence_rule).toBe('FREQ=DAILY');
+    expect(wire.classification_claim).toEqual(claim);
+  });
+
+  it('task add without a claim: the key is absent on the wire', async () => {
+    await saveElement('task', 'add', { ...taskForm, categories: ['health'] });
+    const wire = JSON.parse(JSON.stringify(lastTaskCreateBody()));
+    expect('classification_claim' in wire).toBe(false);
+  });
+
+  it('task edit (instance and series): no update body carries it', async () => {
+    await saveElement('task', 'edit', formWithClaim, 'task-1');
+    expect('classification_claim' in JSON.parse(JSON.stringify(lastTaskUpdateBody()))).toBe(false);
+    await saveElement('habit', 'edit', { ...formWithClaim, editScope: 'series', recurrenceRule: 'FREQ=DAILY' }, 'task-2');
+    expect(tasksUpdate.mock.calls.at(-1)![2]).toBe('series');
+    expect('classification_claim' in JSON.parse(JSON.stringify(lastTaskUpdateBody()))).toBe(false);
+    expect(tasksCreate).not.toHaveBeenCalled();
+  });
+
+  it('D5 subtask creates never carry it (only the parent create does)', async () => {
+    await saveElement('task', 'add', { ...formWithClaim, subtaskTitles: ['Pack bag', 'Book class'] });
+    expect(tasksCreate).toHaveBeenCalledTimes(3);
+    const bodies = tasksCreate.mock.calls.map((c) => JSON.parse(JSON.stringify(c[0])));
+    expect(bodies[0].classification_claim).toEqual(claim);
+    expect(bodies.slice(1).map((b) => 'classification_claim' in b)).toEqual([false, false]);
+    expect(bodies.slice(1).map((b) => b.parent_id)).toEqual(['task-new', 'task-new']);
+  });
+
+  it('time-block and routine adds with a claim in the form: neither body carries it', async () => {
+    await saveElement('timeblock', 'add', { ...baseForm, primary: 'work', categories: ['health'], classificationClaim: claim });
+    expect('classification_claim' in JSON.parse(JSON.stringify(lastCreateBody()))).toBe(false);
+    await saveElement('routine', 'add', { ...baseForm, title: 'Morning', primary: '', classificationClaim: claim });
+    expect('classification_claim' in JSON.parse(JSON.stringify(patternsCreate.mock.calls.at(-1)![0]))).toBe(false);
+    expect(tasksCreate).not.toHaveBeenCalled();
+  });
+});
+
+// claimIfFaithful — the wizard keeps the claim only while the picker shows the model's pick.
+// seedCategories drops a name missing from a stale tags() store; without this check the
+// owner would "correct" a pick they were never shown.
+describe('claimIfFaithful', () => {
+  const claim = { text: 'Gym session before work', categories: ['health', 'leisure'] };
+
+  it('equal lists keep the claim (the same object, not a copy)', () => {
+    expect(claimIfFaithful(claim, ['health', 'leisure'])).toBe(claim);
+  });
+  it('case-insensitive equal keeps it', () => {
+    expect(claimIfFaithful(claim, ['Health', 'LEISURE'])).toBe(claim);
+  });
+  it('a dropped name (picker shows fewer) is null', () => {
+    expect(claimIfFaithful(claim, ['health'])).toBeNull();
+  });
+  it('reordered is null (order is the stripe order, so it is a different pick)', () => {
+    expect(claimIfFaithful(claim, ['leisure', 'health'])).toBeNull();
+  });
+  it('an extra chip is null', () => {
+    expect(claimIfFaithful(claim, ['health', 'leisure', 'career'])).toBeNull();
+  });
+  it('a different name is null', () => {
+    expect(claimIfFaithful(claim, ['health', 'career'])).toBeNull();
+  });
+  it('an undefined claim is null (the model abstained or Ollama was down)', () => {
+    expect(claimIfFaithful(undefined, ['health'])).toBeNull();
+    expect(claimIfFaithful(undefined, [])).toBeNull();
+  });
+  it('an empty picker is null', () => {
+    expect(claimIfFaithful(claim, [])).toBeNull();
+  });
+  it('a claim with no categories is null, even against an empty picker', () => {
+    expect(claimIfFaithful({ text: 'x', categories: [] }, [])).toBeNull();
   });
 });
