@@ -1,6 +1,8 @@
 import { Navigate, Route, Router, useLocation, useNavigate, useSearchParams } from '@solidjs/router';
 import { ErrorBoundary, Show, createEffect, createResource, createSignal, onCleanup, onMount } from 'solid-js';
-import { Plus, Cpu, Loader2, RefreshCw, PanelLeft } from 'lucide-solid';
+import { Plus, RefreshCw, PanelLeft } from 'lucide-solid';
+import { BootScreen } from './components/BootScreen.js';
+import { BrandMark } from './components/BrandMark.js';
 import { DetailsDrawer, DetailsToggle } from './components/DetailsDrawer.js';
 import { navCollapsed, toggleNav, detailsOpen } from './stores/ui.js';
 import { Nav }      from './components/Nav.js';
@@ -166,10 +168,7 @@ function Shell(props: { children?: any }) {
           </button>
           {/* Brand mark — hidden on desktop where the left rail shows it */}
           <div class="flex items-center gap-2 md:hidden min-w-0 flex-1">
-            <div class="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 text-surface-950"
-              style={{ background: 'linear-gradient(135deg, #58ebbf, #409b9b)' }}>
-              <Cpu size={12} />
-            </div>
+            <BrandMark size={24} />
             <span class="font-heading text-sm text-slate-100 tracking-wide truncate">Planning</span>
           </div>
           {/* Desktop-only spacer; on mobile the brand block above already takes the slack. */}
@@ -320,22 +319,8 @@ function SessionGate(props: { children?: any }) {
   });
 
   return (
-    <Show
-      when={!me.loading}
-      fallback={
-        <div class="min-h-screen flex items-center justify-center bg-surface-950 text-muted-foreground">
-          <Loader2 class="animate-spin" size={20} />
-        </div>
-      }
-    >
-      <Show
-        when={me()}
-        fallback={
-          <div class="min-h-screen flex items-center justify-center bg-surface-950 text-muted-foreground">
-            <Loader2 class="animate-spin" size={20} />
-          </div>
-        }
-      >
+    <Show when={!me.loading} fallback={<BootScreen />}>
+      <Show when={me()} fallback={<BootScreen />}>
         <Shell>{props.children}</Shell>
       </Show>
     </Show>
@@ -353,14 +338,7 @@ export function App() {
   );
 
   return (
-    <Show
-      when={!cfg.loading}
-      fallback={
-        <div class="min-h-screen flex items-center justify-center bg-surface-950 text-muted-foreground">
-          <Loader2 class="animate-spin" size={20} />
-        </div>
-      }
-    >
+    <Show when={!cfg.loading} fallback={<BootScreen />}>
       {/* Auth-gated deployments: /login is bare, everything else runs behind SessionGate.
           Ungated (test/standalone): the original Shell root, no login route — unchanged. */}
       <Show when={authGateActive(cfg()!)} fallback={<UngatedRouter />}>

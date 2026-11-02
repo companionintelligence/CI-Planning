@@ -1,6 +1,7 @@
 import { createSignal, createResource, createEffect, Show } from 'solid-js';
 import { useLocation, useNavigate, useSearchParams } from '@solidjs/router';
-import { Cpu, LogIn, Loader2, UserRound } from 'lucide-solid';
+import { LogIn, Loader2, UserRound } from 'lucide-solid';
+import { BrandMark } from '../components/BrandMark.js';
 import { api, CIPORTAL_START } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
 import { ForgotPassword } from '../components/ForgotPassword.js';
@@ -143,12 +144,7 @@ export function Login() {
       <div class="w-full max-w-sm">
         {/* Brand */}
         <div class="flex flex-col items-center gap-3 mb-8">
-          <div
-            class="w-12 h-12 rounded-2xl flex items-center justify-center text-surface-950"
-            style={{ background: 'linear-gradient(135deg, #58ebbf, #409b9b)' }}
-          >
-            <Cpu size={22} />
-          </div>
+          <BrandMark size={48} />
           <div class="text-center">
             <div class="text-[10px] font-medium tracking-[0.2em] uppercase" style={{ color: '#409b9b' }}>
               Companion
