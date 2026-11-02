@@ -4,30 +4,37 @@
   "version": "0.1.0",
   "identifier": "com.companionintelligence.planning",
   "build": {
-    "frontendDist": "../web"
+    "frontendDist": "../../client/dist",
+    "beforeDevCommand": "pnpm --filter client build:mobile",
+    "beforeBuildCommand": "pnpm --filter client build:mobile"
   },
   "app": {
-    "withGlobalTauri": true,
-    "windows": [],
+    "windows": [
+      {
+        "label": "main",
+        "title": "Companion Planning",
+        "width": 1280,
+        "height": 860,
+        "minWidth": 480,
+        "minHeight": 600
+      }
+    ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost"
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
     "category": "Productivity",
-    "shortDescription": "A native window onto your Companion Planning server",
-    "longDescription": "Companion Planning in its own window. It shows the web app of a server you run, so sign-in, live updates and everything else behave as they do in a browser.",
+    "shortDescription": "Companion Planning, a private planner that runs on your own server",
+    "longDescription": "Companion Planning in its own window. It keeps the last data it saw for when the server cannot be reached, and sends its requests to the server you choose.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ],
-    "macOS": {
-      "infoPlist": "Info.plist"
-    }
+    ]
   }
 }

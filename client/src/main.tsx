@@ -3,6 +3,8 @@ import { App } from './App.js';
 import { applyTheme, theme } from './lib/theme.js';
 import { registerSW } from './sw/register.js';
 import { initTelemetry } from './lib/telemetry.js';
+import { installTauriShell } from './lib/desktop-shell.js';
+import { isTauriShell } from './lib/tauri-shell.js';
 import './index.css';
 // Manrope is bundled, not fetched from Google Fonts, so the app makes no third-party requests.
 import '@fontsource/manrope/200.css';
@@ -25,7 +27,15 @@ applyTheme(theme());
 
 const root = document.getElementById('root');
 if (!root) throw new Error('Root element not found');
-render(() => <App />, root);
+
+// Inside the desktop shell the page's requests go through the native path, which has to be in
+// place before the app makes its first one. A browser never takes this branch, so its first
+// render stays synchronous.
+const mount = async (): Promise<void> => {
+  if (isTauriShell()) await installTauriShell();
+  render(() => <App />, root);
+};
+void mount();
 
 // Additive: register the service worker (Web Push, Phase H). Never throws; the app
 // is already mounted above, so a failure here can't affect rendering.

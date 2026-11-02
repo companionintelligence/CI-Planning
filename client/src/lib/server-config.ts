@@ -20,7 +20,9 @@
  * dependency and the module stays trivially testable.
  */
 
+import { cacheClear } from './desktop-cache.js';
 import { discardAll } from './oplog.js';
+import { isTauriShell } from './tauri-shell.js';
 
 /** localStorage key holding the user's server URL (origin plus optional path prefix). */
 export const SERVER_URL_KEY = 'ci-planning.server-url';
@@ -34,8 +36,12 @@ interface CapacitorGlobal {
   isNativePlatform?: () => boolean;
 }
 
-/** True only inside the Capacitor iOS/Android shell. False in every browser. */
+/**
+ * True only inside a native shell: the Capacitor iOS/Android apps, or the Tauri desktop app.
+ * False in every browser.
+ */
 export function isNativeShell(): boolean {
+  if (isTauriShell()) return true;
   try {
     const cap = (globalThis as { Capacitor?: CapacitorGlobal }).Capacitor;
     return cap?.isNativePlatform?.() === true;
@@ -233,6 +239,8 @@ export async function changeServer(): Promise<void> {
   } catch {
     /* no IndexedDB — nothing was queued */
   }
+  // The desktop app's offline cache holds the old server's answers; they must not show for the next one.
+  await cacheClear();
   try {
     localStorage.removeItem(SSE_CURSOR_KEY);
     localStorage.removeItem(SERVER_URL_KEY);

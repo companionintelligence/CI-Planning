@@ -1,55 +1,39 @@
-//! The desktop window onto a CI-Planning server.
+//! The Companion Planning desktop app.
 //!
-//! The window shows the server's own web app, so every request is same-origin and the session
-//! cookie and live updates behave as they do in a browser. The only page this app ships is the
-//! connect page in `web/`: it asks for the server's address the first time, and the Server menu
-//! brings it back. The address rules and the reachability check are in `server.rs`.
+//! The web client is bundled into the app (the `client/dist` build), so the window needs no
+//! server to start. The client reaches the user's server through the native HTTP plugin, and keeps
+//! the server's reads in a local SQLite cache (`cache.rs`), so the last data it saw is still there
+//! when the server is not. See `desktop/README.md`.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod server;
+mod cache;
 
+use std::path::PathBuf;
+
+use cache::Cache;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{App, AppHandle, Manager, State, WebviewWindow};
 
-const MAIN: &str = "main";
-const CHANGE_SERVER: &str = "change-server";
+const CACHE_FILE: &str = "offline-cache.sqlite";
 const RELOAD: &str = "reload";
 
-/// The connect page's own address, as the webview names it on this platform.
-struct ConnectPage(Url);
-
-fn main_window(app: &AppHandle) -> Result<WebviewWindow, String> {
-    app.get_webview_window(MAIN)
-        .ok_or_else(|| String::from("The window is no longer open."))
+#[tauri::command]
+fn cache_put(cache: State<'_, Cache>, key: String, body: String) -> Result<(), String> {
+    cache.put(&key, &body)
 }
 
 #[tauri::command]
-fn saved_server(app: AppHandle) -> Option<String> {
-    server::load_saved(&app)
+fn cache_get(cache: State<'_, Cache>, key: String) -> Result<Option<String>, String> {
+    cache.get(&key)
 }
 
 #[tauri::command]
-async fn connect_server(app: AppHandle, input: String) -> Result<(), String> {
-    let url = server::normalize(&input).ok_or_else(|| server::Problem::Invalid.message())?;
-    server::probe(&url)
-        .await
-        .map_err(|problem| problem.message())?;
-    server::save(&app, &url)?;
-    let target = Url::parse(&url).map_err(|error| error.to_string())?;
-    main_window(&app)?
-        .navigate(target)
-        .map_err(|error| error.to_string())
+fn cache_clear(cache: State<'_, Cache>) -> Result<(), String> {
+    cache.clear()
 }
 
-fn show_connect_page(app: &AppHandle) {
-    let page = app.state::<ConnectPage>().0.clone();
-    if let Ok(window) = main_window(app) {
-        let _ = window.navigate(page);
-    }
-}
-
-fn build_menu(app: &tauri::App) -> tauri::Result<Menu<tauri::Wry>> {
+fn build_menu(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
     let app_menu = Submenu::with_items(
         app,
         "Companion Planning",
@@ -60,7 +44,7 @@ fn build_menu(app: &tauri::App) -> tauri::Result<Menu<tauri::Wry>> {
             &PredefinedMenuItem::quit(app, None)?,
         ],
     )?;
-    // The Edit items carry the standard shortcuts (copy, paste, undo) into the web view.
+    // Edit carries the standard shortcuts (copy, paste, undo) into the web view.
     let edit_menu = Submenu::with_items(
         app,
         "Edit",
@@ -85,18 +69,6 @@ fn build_menu(app: &tauri::App) -> tauri::Result<Menu<tauri::Wry>> {
             &PredefinedMenuItem::fullscreen(app, None)?,
         ],
     )?;
-    let server_menu = Submenu::with_items(
-        app,
-        "Server",
-        true,
-        &[&MenuItem::with_id(
-            app,
-            CHANGE_SERVER,
-            "Change Server…",
-            true,
-            Some("CmdOrCtrl+Shift+O"),
-        )?],
-    )?;
     let window_menu = Submenu::with_items(
         app,
         "Window",
@@ -106,44 +78,30 @@ fn build_menu(app: &tauri::App) -> tauri::Result<Menu<tauri::Wry>> {
             &PredefinedMenuItem::close_window(app, None)?,
         ],
     )?;
-    Menu::with_items(
-        app,
-        &[
-            &app_menu,
-            &edit_menu,
-            &view_menu,
-            &server_menu,
-            &window_menu,
-        ],
-    )
+    Menu::with_items(app, &[&app_menu, &edit_menu, &view_menu, &window_menu])
+}
+
+fn main_window(app: &AppHandle) -> Option<WebviewWindow> {
+    app.get_webview_window("main")
 }
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_http::init())
         .setup(|app| {
-            let window = WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("index.html".into()))
-                .title("Companion Planning")
-                .inner_size(1280.0, 860.0)
-                .min_inner_size(480.0, 600.0)
-                .build()?;
-            // Read the connect page's address before anything navigates away from it.
-            app.manage(ConnectPage(window.url()?));
-            if let Some(server_url) = server::load_saved(app.handle()) {
-                window.navigate(Url::parse(&server_url)?)?;
-            }
+            let path: PathBuf = app.path().app_data_dir()?.join(CACHE_FILE);
+            app.manage(Cache::open(&path)?);
             app.handle().set_menu(build_menu(app)?)?;
             Ok(())
         })
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            CHANGE_SERVER => show_connect_page(app),
-            RELOAD => {
-                if let Ok(window) = main_window(app) {
+        .on_menu_event(|app, event| {
+            if event.id().as_ref() == RELOAD {
+                if let Some(window) = main_window(app) {
                     let _ = window.reload();
                 }
             }
-            _ => {}
         })
-        .invoke_handler(tauri::generate_handler![saved_server, connect_server])
+        .invoke_handler(tauri::generate_handler![cache_put, cache_get, cache_clear])
         .run(tauri::generate_context!())
         .expect("error while running Companion Planning");
 }
