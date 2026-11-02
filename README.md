@@ -1327,7 +1327,8 @@ below are current.
   the Planner and constrain auto-placement; per-pattern fill toggle and reminder offsets
 - **Routines** — typed task collections (Routine ▢ / Habit ◯) placed via a flight-plan
   staging area; Routine placement (`enable_routines`) and Ritual △ (`enable_rituals`) are
-  per-owner feature flags, both off by default (Habits are not flagged)
+  per-owner feature flags, both off by default, switched on in Settings → Preferences →
+  Routine Settings (Habits are not flagged)
 - **Flight-plan staging** — two-step Auto: build a staged list, then schedule; lets you
   curate before committing
 - **Plan my week** — a guided onboarding assistant: a self-contained modal off a fixed
@@ -2128,7 +2129,7 @@ are in [CHANGELOG.md](CHANGELOG.md).
   nothing to do for an owner who never turned the flag on — no suggestions were shown, so there
   is no feedback to learn from
 - **Routine** placement (`enable_routines`) and **Ritual** (`enable_rituals`) are per-owner
-  flags, both off by default. Ollama "thinking" mode (`llm_thinking_enabled`) is also off
+  flags, both off by default; Settings → Preferences → Routine Settings turns them on. Ollama "thinking" mode (`llm_thinking_enabled`) is also off
   by default
 - The iOS and Android shells are not store-ready, and Companion Portal sign-in is not
   available in them yet; see [Mobile app](#mobile-app-ios-and-android)

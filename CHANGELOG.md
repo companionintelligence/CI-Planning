@@ -7,6 +7,12 @@ version at `GET /api/health` (`release`).
 
 ## [Unreleased]
 
+### Changed
+- **Companion Portal sign-in brings you back to the page you asked for**, as Companion Memory does. When the
+  app sends you to the login screen it remembers where you were going (same-origin paths only, for ten
+  minutes), and the Portal round trip, the first-time account confirmation and the username sign-in all
+  return you there. Before, every sign-in landed on the home page.
+
 ### Fixed
 - **No stack trace in the server log each time a live-update stream closes.** Koa reports a
   response stream that closes before it ends (`ERR_STREAM_PREMATURE_CLOSE`) as an error, and
@@ -20,6 +26,11 @@ version at `GET /api/health` (`release`).
   stored VAPID pair so a pair sealed by an earlier test file cannot leave push dormant.
 
 ### Added
+- **Settings switches for Routines and Rituals.** Settings → Preferences → Routine Settings now
+  has "Routines on the Planner" (`enable_routines`: the Routine option in the Add dialog, and recurring
+  Routines placing themselves on the Planner) and "Rituals" (`enable_rituals`: the Ritual type in the
+  Routines tab). Both were per-owner flags that only an API call could set; both stay off by default.
+  Saving also refreshes the pattern types, which the server filters on `enable_rituals`.
 - **`GET /api/sync/changes?since=<seq>`.** The `sync_events` log the SSE stream replays from,
   answered as JSON for a client that cannot hold an `EventSource`: the same rows, the same
   500-event window and the same overflow rule (`resync: true` means refetch everything, and is

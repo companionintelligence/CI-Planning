@@ -1,5 +1,5 @@
 import { createSignal, createResource, createEffect, Show } from 'solid-js';
-import { useNavigate, useSearchParams } from '@solidjs/router';
+import { useLocation, useNavigate, useSearchParams } from '@solidjs/router';
 import { Cpu, LogIn, Loader2, UserRound } from 'lucide-solid';
 import { api, CIPORTAL_START } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
@@ -42,6 +42,22 @@ import { isNativeShell, supportsRedirectFlows } from '../lib/server-config.js';
  */
 const PORTAL_MEMBERSHIP_ERRORS = new Set(['invalid_redirect_uri', 'access_denied', 'unauthorized_client']);
 
+/**
+ * The page the person was trying to reach when SessionGate sent them to this screen. It travels
+ * as router state, so it survives the in-app navigation but not a reload. Only a same-origin path
+ * is used here; the server checks it again when it sends them back.
+ */
+function returnPath(state: unknown): string | null {
+  const from = (state as { from?: unknown } | null)?.from;
+  if (typeof from !== 'string' || from.length > 1024 || !from.startsWith('/') || from.startsWith('//')) return null;
+  if (from === '/login') return null;
+  for (const char of from) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x5c || code === 0x7f) return null;
+  }
+  return from;
+}
+
 export function Login() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -61,6 +77,15 @@ export function Login() {
   // A4: with both methods on, the username form starts folded behind a secondary action.
   const [localExpanded, setLocalExpanded] = createSignal(false);
   let usernameInput: HTMLInputElement | undefined;
+
+  const location = useLocation();
+  /** Where to send them once they are signed in (see returnPath). */
+  const from = () => returnPath(location.state);
+  /** The Portal sign-in, carrying that page. It is a top-level navigation, so the server reads it. */
+  const portalHref = () => {
+    const next = from();
+    return next ? `${CIPORTAL_START}?redirect=${encodeURIComponent(next)}` : CIPORTAL_START;
+  };
 
   const redirects = supportsRedirectFlows();
   const portal = () => redirects && cfg()?.portal === true;
@@ -97,7 +122,7 @@ export function Login() {
       // hangs on the SessionGate spinner until a manual refresh. Reloading re-creates the
       // resources with the cookie present. This also matches the Companion Portal branch,
       // which is a top-level navigation and so was never affected.
-      window.location.assign('/');
+      window.location.assign(from() ?? '/');
     } catch {
       // The server returns a deliberately generic 401 — mirror it (no enumeration).
       showToast('Invalid username or password', 'error');
@@ -168,7 +193,7 @@ export function Login() {
 
               {/* Companion Portal SSO — top-level navigation (NOT fetch) so the browser follows the redirect to the portal. */}
               <Show when={portal()}>
-                <a class="btn-primary w-full justify-center" href={CIPORTAL_START} rel="external">
+                <a class="btn-primary w-full justify-center" href={portalHref()} rel="external">
                   <LogIn size={16} />
                   Continue with Companion Portal
                 </a>
@@ -237,7 +262,7 @@ export function Login() {
         <Show when={signup() === 'portal'}>
           <p class="text-center text-xs text-muted-foreground mt-4">
             Don't have an account?{' '}
-            <a class="text-foreground underline underline-offset-2 hover:text-primary transition-colors" href={CIPORTAL_START} rel="external">
+            <a class="text-foreground underline underline-offset-2 hover:text-primary transition-colors" href={portalHref()} rel="external">
               Create one with Companion Portal
             </a>
           </p>
