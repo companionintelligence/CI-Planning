@@ -20,8 +20,7 @@ import { classificationHint, classificationInput, logAssignment } from './classi
  *
  * Deliberately NOT on the interactive quick-add path. Memory means a CI-Server round-trip,
  * and quick-add has to stay instant, so this runs from two entry points that share this
- * one implementation (quick-add reads the same learned corrections, without memory, through
- * enrichEntry in routes/tasks.ts):
+ * one implementation:
  *   - on demand, per task (POST /api/tasks/:id/enrich)
  *   - the nightly `enrich_tasks` cron sweep
  *

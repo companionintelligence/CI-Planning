@@ -73,35 +73,26 @@ drives an optional per-element striped background. Full session record + owner d
   ElementWizard tabs; `enrichQuick` (`agents/quickadd.ts`, handed the owner's vocabulary by
   `suggestibleVocabulary`) classifies 1–3 best-guess categories on a **separate axis from
   intentions**, so a category name can never leak into `secondary_tags`.
-- **How quick-add's category pick learns (Phase 8, apply and capture).** Two routes classify:
+- **How the wizard's category pick is captured (Phase 8, capture only).** Two routes classify:
   `POST /api/tasks/quick/parse` (the wizard's Describe-it preview, zero writes) and
-  `POST /api/tasks/quick` (creates the task; no client calls it today). Both go through
-  `enrichEntry` (`routes/tasks.ts`), which hands `enrichQuick` the owner's own corrections as
-  `classificationHint`, for `categories` and for `motivation`. The hint is **frequency-only**
-  (`embedFn: null`): one lesson per most-corrected value, at most `RETRIEVE_K` = 3, so the
-  interactive path never waits on the embedder (an embed there costs a status read plus the embed; in
-  the measurement the similarity arm's model calls ran slow on a two-model box, 109 of 120 in its last
-  run, which fits an evicted classify model but does not show one). It is a **pure read of the last
-  `calibrate_classification` run** and empty below `CORRECTION_FLOOR` = 2 corrections, in which case
-  the prompt is the stock prompt byte for byte. It sits **last** in the prompt, after the "never
-  invent" line and directly before `Entry:`, not beside its field (beside it, a small model stopped
-  its JSON early; `docs/classification-hint-measurement-2026-11.md`). The direction retry gets no
-  hint. Capture runs the other way: `/quick/parse` returns an opaque
-  `classification_claim` (`{ text, categories }`) when the model chose categories the parse did not
-  carry, the wizard echoes it on its add-mode `POST /api/tasks`, and `settlePreviewClaim` writes one
-  `classification_log` row after the create succeeds: closed at once if the saved list, in order,
-  differs from the pick, open (pending 24 h) only if the ordered list is identical. The claim is
-  unsigned and bound to the new task's own title, the caller's own category names and the saved
-  categories read back from the database, so a forged one can only affect the caller's own evidence;
-  a claim that fails any check is dropped and the create is unchanged. A preview that is never saved
-  writes nothing. The index has three readers: quick-add and the preview (frequency, last in the
-  prompt), the memory fill-in (`services/task-enrich.ts`, similarity when an embedder answers, else
-  frequency) and the Monday scorer's held-out prompts (`scoreHeldOut`, similarity; a measurement path, not a user-facing one).
+  `POST /api/tasks/quick` (creates the task; no client calls it today). Neither reads the exemplar
+  index: `enrichQuick` gets the owner's vocabulary and nothing learned. `/quick/parse` returns an
+  opaque `classification_claim` (`{ text, categories }`) when the model chose categories the parse
+  did not carry, the wizard echoes it on its add-mode `POST /api/tasks`, and `settlePreviewClaim`
+  writes one `classification_log` row after the create succeeds: closed at once if the saved list,
+  in order, differs from the pick, open (pending 24 h) only if the ordered list is identical. The
+  claim is unsigned and bound to the new task's own title, the caller's own category names and the
+  saved categories read back from the database, so a forged one can only affect the caller's own
+  evidence; a claim that fails any check is dropped and the create is unchanged. A preview that is
+  never saved writes nothing. The index has two readers: the memory fill-in
+  (`services/task-enrich.ts`, similarity when an embedder answers, else frequency) and the Monday
+  scorer's held-out prompts (`scoreHeldOut`, similarity; a measurement path, not a user-facing one).
   None of this is online learning: a correction changes no prompt before the next weekly run, short
   of an admin running the job early from the Jobs page or an owner resetting the index. The wizard
-  records the category pick only, so no in-app path logs a who-it's-for pick: that comes from
-  `POST /api/tasks/quick` and from memory enrichment (off unless `MEMORY_MODE` is set), and the
-  who-it's-for hint was not measured.
+  records the category pick only, so it logs no who-it's-for pick: those come from
+  `POST /api/tasks/quick` (no screen calls it) and from memory enrichment (off unless `MEMORY_MODE` is set). A version that
+  also put the owner's corrections into the quick-add prompt was merged and then removed;
+  `docs/classification-hint-measurement-2026-11.md` is the record of it.
 - **Derive rule (the key relationship).** A block's *effective* categories are **its own
   `entity_categories` rows if any, else its linked task's** — resolved server-side
   (`blockCategoryNames`, `services/blocks.ts`) and reused client-side (the same rule backs
@@ -507,7 +498,7 @@ Who does an item and who it is for — see `docs/people-on-work.md`.
 | `triality_log` | Append-only Triality outcome log — one row per suggestion shown (`slot`, `action_kind`/`action_ref`, the full `scores` JSON breakdown), stamped once more on `opened`/`staged`/`dismissed`. The learning corpus, not a cache: two requests log two sets of rows. Enums in code; raw SQL only (not in `schema.ts`); indexed on `(owner_id, local_date)`. `confidence` (0144) is a TEXT JSON band stamped at show time, reported and never fed back into ranking; NULL = shown before it existed, and readers exclude those rows from confidence aggregates | raw | 0140, 0144 |
 | `triality_weights` | Learned Triality weights per `(owner_id, slot)` PK — `weights` JSON, `sample_count`, `computed_date`. Regenerable rollup replaced wholesale by `calibrate_triality`; **absence means "the default weights"**, so deleting an owner's rows is the reset switch. Raw SQL only | raw | 0142 |
 | `classification_log` | Append-only evidence for the parse/classify LLM's per-owner vocabulary — one row per assignment (`field`, `input_text`, `llm_value`, `final_value` null until corrected, `assigned_at`/`corrected_at`). Written by `POST /api/tasks/quick`, by the wizard's Add settling the echoed `classification_claim` on `POST /api/tasks` (born closed when the saved category list, in order, differs from the model's pick), and by memory enrichment; closed by `updateTask` when the saved categories change, and for `motivation` whenever a `motivation` is sent. Never online, never mid-request: a bad afternoon of corrections can't bend a live answer | raw | 0149 |
-| `classification_exemplars` | Regenerable few-shot retrieval index the classify prompts read (quick-add and the wizard's preview by frequency, last in the prompt; memory enrichment and the Monday scorer by similarity), rebuilt wholesale per owner by the weekly `calibrate_classification` job; deleting an owner's rows resets the adaptation without losing the log above | raw | 0149 |
+| `classification_exemplars` | Regenerable few-shot retrieval index the classify prompt reads, rebuilt wholesale per owner by the weekly `calibrate_classification` job; deleting an owner's rows resets the adaptation without losing the log above | raw | 0149 |
 | `classification_accuracy` | Held-out measured trend per `(owner, field, computed_date)` — `heldOut`/`correct`/`accuracy`; `accuracy` NULL when nothing was measured, never 0 | raw | 0149 |
 | `possible_outcome_log` | Close-loop wave (ticket 1) — durable evidence for dismissal learning. Append-only, one row per decided `possible_tasks` suggestion: `source_kind`, `input_text`, `outcome` (`dismissed`\|`promoted`), `decided_at` (load-bearing — `possible_tasks` itself has no decision timestamp), `local_date`. `possible_task_id` deliberately NOT a foreign key: the evidence must outlive the suggestion | raw | 0157 |
 | `possible_dismissal_exemplars` | Regenerable rollup the extraction prompt reads, rebuilt wholesale per owner by the weekly `calibrate_dismissals` job from settled `possible_outcome_log` evidence; inert below `DISMISSAL_FLOOR` = 5 | raw | 0157 |
@@ -1086,7 +1077,7 @@ rubric-governed verdict, over N≥5 runs, and assert the completion is non-empty
 | `prune_sync_events` | daily 03:00 | Delete `sync_events` rows older than 30 days (all owners in one global pass), and log the `audit_log` row count, which is deliberately never pruned |
 | `enrich_tasks` | daily 03:20 | Per owner: fill blank description / direction / categories on thin tasks from Companion Memory (fill-blanks-only; no-op when memory is off) (0136) |
 | `calibrate_triality` | Mon 03:50 | Re-tune the per-slot Triality weights from 90 days of `triality_log` outcomes — batch, each weight clamped to ½×–2× of its default and then renormalized so the slot's weights still sum to the default total, and inert below 20 decided rows for a slot. **Owner-scoped** (in `OWNER_SCOPED_KINDS`): weights are per-owner by construction, and pooling one owner's feedback into another's ranking is ruled out absolutely (0143) |
-| `calibrate_classification` | Mon 04:10 | Weekly per-owner rebuild of `classification_exemplars` (the parse/classify LLM's few-shot retrieval index) from `classification_log` corrections, plus a held-out `classification_accuracy` measurement. **Owner-scoped**: corrections are per-owner by construction. The index it writes is what quick-add, the wizard's preview, memory enrichment and the job's own held-out scorer read, so a correction a person makes reaches no prompt before the next run. Runs after `calibrate_triality` so the two weekly learning passes don't compete for one GPU (0149, schedule seeded by 0150) |
+| `calibrate_classification` | Mon 04:10 | Weekly per-owner rebuild of `classification_exemplars` (the parse/classify LLM's few-shot retrieval index) from `classification_log` corrections, plus a held-out `classification_accuracy` measurement. **Owner-scoped**: corrections are per-owner by construction. The index it writes is what memory enrichment and the job's own held-out scorer read, so a correction a person makes reaches no prompt before the next run. Runs after `calibrate_triality` so the two weekly learning passes don't compete for one GPU (0149, schedule seeded by 0150) |
 | `calibrate_dismissals` | Mon 04:20 | Close-loop wave (ticket 3): rebuild `possible_dismissal_exemplars` wholesale from settled `possible_outcome_log` evidence (inert below `DISMISSAL_FLOOR` = 5 settled dismissals) and append one `possible_dismissal_rate` reading. **Owner-scoped**: dismissal evidence is per-owner by construction, never pooled. Runs after `calibrate_classification` (Mon 04:10) so the weekly per-owner learning passes don't compete for one GPU (0158) |
 | `calibrate_plan_loop` | Mon 04:30 | Revision-loop wave (ticket 3): pure-SQL weekly aggregate over `plan_loop_runs` into one `plan_loop_stats` row per `(owner, stage)` — pass rate, first-try pass rate, escapes, average iterations. Makes NO model calls, but stays inside the weekly learning block so the cron schedule reads as one unit (0163) |
 | `snapshot_balance` | Mon 04:40 | Balance-targets wave (ticket 6): freeze each life dimension's target/scheduled/timed hours for the week just closed into `balance_week_log`. `INSERT OR IGNORE`, first-freeze-wins — a missed week can never be recomputed later. Its only reader is `GET /api/priorities/history` (`balanceHistory`), which feeds the details drawer's "met target N of last M weeks" readout; the bias, prompts and the engine never see this table (0165) |
