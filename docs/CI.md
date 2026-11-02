@@ -68,11 +68,11 @@ gh workflow run mobile-build.yml --repo companionintelligence/CI-Planning --ref 
 
 **Publish container** — `docker-publish.yml`
 
-Builds the image, smoke-tests it (standalone, local login and Companion Portal login),
-then pushes it to GHCR. Dispatch it on the release tag's ref (for example `v4.2.2`): a tag
-ref publishes `:latest`, `:sha-<short>` and `:<tag>`, with `CI_PLANNING_VERSION` set to the
-tag without its `v`; any other ref publishes `:latest` and `:sha-<short>` as version
-`0.0.0+sha-<short>`.
+Builds the image, smoke-tests it (standalone, local login and Companion Portal login), then pushes
+it to GHCR. Dispatch it on the release tag's ref (for example `v4.2.2`): a tag ref publishes
+`:latest`, `:sha-<short>` and `:<tag>`, with `CI_PLANNING_VERSION` set to the tag without its `v`.
+Any other ref, `main` included, publishes an unversioned `0.0.0+sha-<short>` image and still moves
+`:latest`.
 
 ```bash
 gh workflow run docker-publish.yml --repo companionintelligence/CI-Planning --ref <tag>

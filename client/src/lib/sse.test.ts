@@ -365,6 +365,35 @@ describe('sse.ts — in the app shell', () => {
     expect(FakeEventSource.instances).toHaveLength(0);
   });
 
+  it('asks for changes at once when the app is resumed or the network comes back, not at the next tick', async () => {
+    const doc = Object.assign(new EventTarget(), { hidden: false });
+    const win = new EventTarget();
+    vi.stubGlobal('document', doc);
+    vi.stubGlobal('window', win);
+    answers.push(changes(40), changes(40), changes(40), changes(40));
+
+    const { on } = await import('./sse.js');
+    on('task:updated', () => {});
+    await vi.advanceTimersByTimeAsync(0);
+    expect(urls()).toHaveLength(1);
+
+    // Each step is well inside the 15 s poll interval, so only the resume can make a request.
+    await vi.advanceTimersByTimeAsync(3_000);
+    win.dispatchEvent(new Event('focus'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(urls()).toHaveLength(2);
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    win.dispatchEvent(new Event('online'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(urls()).toHaveLength(3);
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    doc.dispatchEvent(new Event('visibilitychange'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(urls()).toHaveLength(4);
+  });
+
   it('before a server is chosen there is nothing to poll', async () => {
     localStorage.removeItem(SERVER_URL_KEY);
     const { on } = await import('./sse.js');

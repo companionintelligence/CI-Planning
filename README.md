@@ -80,7 +80,7 @@ flowchart LR
 
 ## Quick start
 
-From a source checkout (Node ≥ 22 + pnpm):
+From a source checkout (Node ≥ 22 + pnpm). The private `@companionintelligence` packages need a GitHub token in `~/.npmrc` first; see [Fresh clone install](CONTRIBUTING.md#fresh-clone-install).
 
 ```bash
 corepack enable    # activates the pinned pnpm version
@@ -1097,7 +1097,7 @@ numbering skips 0009, 0119, 0159 and 0160).
 | `replan_suggestions` | Pending "re-plan with AI?" nudges surfaced on big-disruption reflows (0067) |
 | `planning_sessions` | One row per "Plan my week" onboarding session — the whole conversation as a single JSON `transcript`, no per-turn child table; read by the Settings → Logs tab, exportable/deletable there (FTUE, 0131) |
 | `daily_recap` | One row per `(owner, date)` — the day-briefing cache (`prose`/`stats`/`focus`, keyed by `inputs_hash`) **and** the frozen five-star score (`star_*`/`total`/`frozen_at`); merged from `daily_summaries` + `day_stars` (0096) |
-| `sync_events` | Append-only SSE event log for `Last-Event-ID` catch-up replay (Phase L, 0077); `GET /api/sync/changes` serves the same rows as JSON to clients that cannot hold an `EventSource` |
+| `sync_events` | Append-only SSE event log for `Last-Event-ID` catch-up replay (Phase L, 0077); `GET /api/sync/changes?since=` serves the same rows as JSON to clients that cannot hold an `EventSource`, such as the app shells |
 | `reflections` | FOCUS card slots — today focus + up to 3 weekly goals per ISO week, with optional category, done-at stamp, and an optional source link to a Task/Objective (`source_kind`/`source_ref`, 0088); also holds the one-per-day `kind='day_note'` row — no migration, reuses the same table + the PK's existing uniqueness (Phase N, 0080; linked focus 0088) |
 | `objectives` | Hierarchical life goals — Goal › Project › Objective (by tree height); progress derived from task completion; `source_task_id` marks auto-promoted nodes; `version`/`field_ts` for multi-device sync (Phase N, 0081; 0085–0086; sync versioning 0087). **Archive (0129):** `archived_at` soft-delete + `archive_root_id` (cascade unit) + `purge_after` (48h reap deadline) |
 | `objective_tasks` | Links objectives to Tasks; enables progress roll-up (Phase N, 0081) |
@@ -2280,7 +2280,7 @@ starts it, and it is not a supported deployment option yet.
 | `DATABASE_URL` / `STORE_BACKEND` | (unset) / `sqlite` | **Internal, in-progress Postgres cutover — not a supported deployment option yet.** Both backends coexist behind `db/store.ts`. Nearly every call site now goes through that facade (the sqlite-vec dedupe path is the exception), but flipping `STORE_BACKEND=postgres` is the cutover itself and it is not finished, so boot fails closed without a `DATABASE_URL` rather than silently serving from a store the data isn't in. SQLite remains the single source of truth described elsewhere in this README until that migration lands. |
 | `NODE_ENV` | (unset) | `production` enables fail-closed boot guards (e.g. forbids `AUTH_MODE=test`). |
 | `TRUST_PROXY` | `false` | Set when behind a trusted TLS-terminating reverse proxy (e.g. CI-Hub's tunnel): honors `X-Forwarded-Proto` (⇒ Secure session cookies over HTTPS) and `X-Forwarded-For` (⇒ real client IP for login rate-limiting). |
-| `CORS_ALLOWED_ORIGINS` | (unset) | Comma-separated browser origins allowed to call `/api` cross-origin, echoed back exactly (never `*`). Empty by default: the web app is same-origin, and the [mobile app](#mobile-app-ios-and-android) needs no CORS setting either (it calls the server through the native HTTP stack and polls `GET /api/sync/changes` instead of holding the SSE stream). |
+| `CORS_ALLOWED_ORIGINS` | (unset) | Comma-separated browser origins allowed to call `/api` cross-origin, echoed back exactly (never `*`). Empty by default: the web app is same-origin, and the [mobile app](#mobile-app-ios-and-android) needs no CORS setting either, since it calls the server through the native HTTP stack. Set it only if the web app is served from a different origin than the API. |
 | `CSP_EXTRA_CONNECT_SRC` | (unset) | Extra origins the browser may call, added to the Content-Security-Policy `connect-src` (space/comma-separated). The app's own origin and the Sentry DSN origin are always allowed. Every response carries security headers (CSP, `nosniff`, `Referrer-Policy`, `X-Frame-Options`, `Permissions-Policy`; HSTS over HTTPS). |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama endpoint. Unreachable ⇒ AI features degrade gracefully (template briefings, dedupe off). |
 | `OLLAMA_FAST` | `qwen2.5:0.5b` | Fast model for extraction/triage. A last-resort default: used when it is installed, otherwise the app auto-selects an installed model (see *5. Ollama* under Local development). Setting it **pins** the tier verbatim, and an unpulled pin fails with an `ollama pull …` error. Legacy alias: `OLLAMA_SMALL` (still accepted; `OLLAMA_FAST` wins when both are set). |
@@ -2424,8 +2424,9 @@ only useful with one the phone can reach.
   the stream. No CORS setting is needed.
 
 Also not available in the app yet: browser reminders and Web Push (there is no service worker in the
-shell), and the *Export JSON* / calendar `.ics` links, which open in the system browser outside the
-app's session. Native push and a share-sheet export are separate pieces of work.
+shell), so Settings hides the push switch. The *Export JSON* and calendar `.ics` downloads are hidden
+too, because the WebView cannot save a file. Native push and a share-sheet export are separate pieces of
+work.
 
 ### Build and run
 
@@ -2477,8 +2478,10 @@ and the Simulator `.app` is unsigned. Nothing here is store-ready.
   distribution certificate and provisioning profile; set the team in the Xcode project) and a Google
   Play Console developer account. Android needs an upload keystore and a signed AAB
   (`bundleRelease`); the Gradle project has no release signing configured, and `versionCode` /
-  `versionName` and the iOS `MARKETING_VERSION` / build number are still the placeholders `1` / `1.0`.
-  Release lanes in CI need the signing secrets and version stamping.
+  `versionName` default to the placeholders `1` / `1.0`; set them per build with `-PappVersionCode=<n>`
+  and `-PappVersionName=<name>`. The iOS `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` are set per
+  build with `xcodebuild MARKETING_VERSION=<name> CURRENT_PROJECT_VERSION=<n>`. Release lanes in CI need
+  the signing secrets and must pass those values.
 - **Artwork and listings.** The app icon and launch screen are Capacitor's placeholders; both stores
   need the real icon set (iOS 1024 px without alpha; Android adaptive icon), screenshots, descriptions,
   a support URL, a **privacy policy URL**, content ratings, and the privacy disclosures (Apple's App
@@ -2487,11 +2490,15 @@ and the Simulator `.app` is unsigned. Nothing here is store-ready.
   `PrivacyInfo.xcprivacy` that declares nothing collected and no required-reason APIs, checked by
   scanning the built binaries; both are the owner's to confirm before the first upload, and the
   manifest needs a new entry whenever a plugin brings one of those APIs.
+- **Legal pages.** The repo has no privacy policy, terms of use, support page or data-deletion statement
+  yet, and both stores need public URLs. The policy must cover the crash reports from released images
+  (Sentry, on by default in released builds) and any demo server run for review.
 - **App Review.** Apple will not accept a client that cannot be exercised, so submission needs a
   reachable **demo server with review credentials**, and a position on guideline 4.2 (a web-technology
-  app must feel like an app). The app offers no way to create an account (the sign-up links and
-  `/signup` are hidden in it), so Apple's in-app account-deletion rule (5.1.1(v)) does not apply to it
-  as it stands. Play will ask why `usesCleartextTraffic` is on (people's own LAN servers).
+  app must feel like an app). The shell offers no way to create an account: New account, invite codes
+  and the sign-up links are hidden, and `/signup` sends you to sign-in. Apple's in-app account-deletion
+  rule (5.1.1(v)) still needs a position: an operator can delete other accounts from the app, but no one
+  can delete their own. Play will ask why `usesCleartextTraffic` is on (people's own LAN servers).
 - **Product gaps listed above.** Companion Portal sign-in (system browser with a custom-scheme or
   universal-link return, PKCE), native push or local notifications for reminders, and downloads through
   the share sheet.
@@ -2841,7 +2848,7 @@ The detailed architecture, domain model, and scheduling sections above explain t
 
 **Green CI is required before merging into `main`** — the *Typecheck + Unit +
 Integration* and *Build, smoke-test, publish* checks must pass on a PR's latest
-commit (including any bot autofix/suggestion commits, which re-run the checks). Both
+commit (including any bot autofix/suggestion commits, which need the checks run again). Both
 workflows are currently `workflow_dispatch`-only (#618), so nothing runs on a PR by itself:
 run `ci.yml` by hand (`gh workflow run ci.yml --ref <branch>`), or run the same gate locally —
 `pnpm typecheck && pnpm build && pnpm test`, then `tests/container/run-local.sh` for the

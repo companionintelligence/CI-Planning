@@ -1312,6 +1312,10 @@ Full variable reference: [README.md](README.md#environment-variables) and `serve
 
 ---
 
+### Mobile apps (iOS and Android)
+
+`mobile/ios` and `mobile/android` are Capacitor shells around the `client/` build (`pnpm --filter client build:mobile`, output `client/dist`). They call a server the person runs through native HTTP, which keeps the session cookie and needs no CORS entry. Live updates poll `GET /api/sync/changes?since=` every 15 s while the app is visible, and again at once when it resumes or the network returns; the browser keeps `/api/events`. Sign-in is password-only. Settings hides the controls a WebView cannot run: Export JSON, the calendar export, the push switch, and account creation. The Android build number and name come from `-PappVersionCode` and `-PappVersionName`; the iOS ones from `xcodebuild MARKETING_VERSION=… CURRENT_PROJECT_VERSION=…`.
+
 ## 14. Backup & recovery
 
 Everything lives in the single SQLite file at `DB_PATH`.

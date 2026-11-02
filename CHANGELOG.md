@@ -37,6 +37,15 @@ version at `GET /api/health` (`release`).
   app yet.
 
 ### Changed
+- **The native shells do not show controls they cannot run.** Export JSON, the calendar `.ics` export,
+  the push switch, New account and invite codes are hidden in the iOS and Android apps.
+- **Manrope is bundled.** The font ships in the bundle instead of loading from Google Fonts, so the web
+  app makes no third-party font request, and the Content-Security-Policy no longer allows Google Fonts.
+- **The web manifest uses the app's background colour** (`#041620`), as `index.html` does.
+- **Android versions come from the build.** `versionCode` and `versionName` read `-PappVersionCode` and
+  `-PappVersionName`, with `1` and `1.0` as defaults.
+- **Android backups are off** (`allowBackup="false"`), so the sign-in session is not restored onto
+  another device.
 - **App shells: live updates by polling.** An `EventSource` in the app cannot carry the session
   cookie and the server allows no foreign origin, so in every shipped configuration the stream
   failed and retried forever. The shells now poll `GET /api/sync/changes` (every 15s while on

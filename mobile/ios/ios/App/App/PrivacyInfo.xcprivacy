@@ -19,8 +19,8 @@
   The App Store Connect "App Privacy" label is a separate artifact and the owner's to
   answer; keep the two in step. A demo server run by Lifescope for App Review would change
   this: data sent to it is developer-accessible and must then be declared here and on the
-  label. The one third-party request the bundle makes is the Manrope stylesheet from
-  fonts.googleapis.com (client/index.html), which carries no user data.
+  label. The bundle makes no third-party requests: the Manrope font ships inside it
+  (client/src/main.tsx).
 
   Tracking: none. No ads, no analytics SDK, no cross-app identifiers. The client reports
   errors only if VITE_SENTRY_DSN was baked in at build time, and the mobile build sets none.

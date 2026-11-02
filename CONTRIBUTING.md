@@ -21,9 +21,11 @@ the three app shapes `docker-publish.yml` smoke-tests and runs the Playwright sp
 each, without Docker; its header lists the one-time setup.
 
 All of it must be **green** on the PR's latest commit before you merge. A red result
-means `main` will not compile or will ship a broken build to everyone. When you want a
-second opinion from a clean runner, dispatch a workflow by hand: the commands are in
-[docs/CI.md](docs/CI.md).
+means `main` will not compile or will ship a broken build to everyone. Whether branch
+protection enforces this is set by the repository owner, so do not assume it does. For a
+second opinion from a clean runner, dispatch `ci.yml` by hand (its **Typecheck + Unit +
+Integration** job). Dispatching `docker-publish.yml` also publishes the image, so it is not a
+dry run. The commands are in [docs/CI.md](docs/CI.md).
 
 ### Watch out for autofix / suggestion commits
 
