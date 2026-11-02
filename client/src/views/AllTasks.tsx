@@ -2,7 +2,7 @@ import { createSignal, createResource, createMemo, createEffect, onCleanup, Show
 import { ViewHeader } from '../components/ViewHeader.js';
 import { useSearchParams } from '@solidjs/router';
 import { SlidersHorizontal, Search, Archive, ChevronDown, ChevronRight, X, CalendarRange } from 'lucide-solid';
-import { tasks, tags, taskFilter, setTaskFilter, refetchTasks, showToast, isRoutineTask, scheduledByTaskId, patternForTask, setPlanWeekModal } from '../stores/index.js';
+import { tasks, tags, taskFilter, setTaskFilter, refetchTasks, showToast, isRoutineTask, scheduledByTaskId, patternForTask, setPlanWeekModal, setElementModal } from '../stores/index.js';
 import { api, type Task } from '../lib/api.js';
 import { colorVar } from '../lib/pattern-meta.js';
 import { localISODate } from '../lib/dates.js';
@@ -339,6 +339,9 @@ export function AllTasks() {
               when={newTodayList().length + openList().length + scheduledList().length + routineList().length > 0}
               fallback={<div class="card text-center text-slate-500 py-12 text-sm flex flex-col items-center gap-2">
                 No tasks found.
+                <button type="button" class="btn-primary text-xs" onClick={() => setElementModal({ open: true, mode: 'add', kind: null })}>
+                  Add a task
+                </button>
                 <EmptyStateConnectCTA />
               </div>}
             >

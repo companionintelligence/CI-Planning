@@ -18,6 +18,7 @@ import { ServerConnection } from '../components/ServerConnection.js';
 import { on } from '../lib/sse.js';
 import { GOOGLE_CONNECT_ENABLED } from '../lib/flags.js';
 import { ollamaHealth, ollamaHealthDescription } from '../lib/ollama-health.js';
+import { editableOwnerName } from '../lib/owner-name.js';
 import { ConnectionAppearance } from '../components/ConnectionAppearance.js';
 import { FOCUS_STYLES, type FocusStyle } from '../lib/focus-appearance.js';
 
@@ -128,14 +129,14 @@ export function Settings() {
   const [profileSaving, setProfileSaving] = createSignal(false);
   createEffect(() => {
     if (me()) {
-      setProfileName(me()!.name ?? '');
+      setProfileName(editableOwnerName(me()!.name));
       setProfileEmail(me()!.email ?? '');
       setProfileUsername(me()!.username ?? '');
     }
   });
   const hasUsername = () => me()?.username != null;
   const profileDirty = () =>
-    profileName().trim() !== (me()?.name ?? '')
+    profileName().trim() !== editableOwnerName(me()?.name)
     || profileEmail().trim() !== (me()?.email ?? '')
     || (hasUsername() && profileUsername().trim() !== (me()?.username ?? ''));
   async function saveProfile() {
@@ -146,7 +147,8 @@ export function Settings() {
       // uniqueness check.
       const changedUsername = hasUsername() && profileUsername().trim() !== (me()?.username ?? '');
       await api.owner.updateProfile({
-        name: profileName().trim(),
+        // A blank name is not sent: the server rejects an empty one, and the owner may be saving only an email.
+        ...(profileName().trim() ? { name: profileName().trim() } : {}),
         email: profileEmail().trim() || null,
         ...(changedUsername ? { username: profileUsername().trim() } : {}),
       });
