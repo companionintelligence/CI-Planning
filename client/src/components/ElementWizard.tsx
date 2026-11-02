@@ -137,6 +137,9 @@ export function ElementWizard() {
   const [tbCustomRule, setTbCustomRule] = createSignal('');
   // Phase B (0134): 1–3 categories, tasks AND blocks; array order = stripe order.
   const [categoryIds, setCategoryIds] = createSignal<string[]>([]);
+  // True once the owner used the picker themselves; every seed (an edit's own row, a parse,
+  // a fresh open) puts it back to false. An EDIT save sends the picker only when it is true.
+  const [categoriesTouched, setCategoriesTouched] = createSignal(false);
   // Phase B (0135): per-element texture override (on by default; null colour = derive).
   const [textureEnabled, setTextureEnabled] = createSignal(true);
   const [textureColorToken, setTextureColorToken] = createSignal<string | null>(null);
@@ -179,7 +182,8 @@ export function ElementWizard() {
   const [nlLlm, setNlLlm] = createSignal(false);
   const [nlError, setNlError] = createSignal<string | null>(null);
   // The model's category pick for the last parse, as the server reported it. Echoed on Add
-  // so the owner's answer to it is evidence; null whenever there is no pick to answer.
+  // so the owner's answer to it is evidence; null whenever there is no pick to answer, and
+  // again as soon as the create lands (onCreated). A create that failed keeps it for the retry.
   const [nlClaim, setNlClaim] = createSignal<ClassificationClaim | null>(null);
 
   // D5 — suggest-only subtask brainstorm. `ideas` is what the model offered; `picked` is
@@ -233,9 +237,10 @@ export function ElementWizard() {
   const categoryOptions = () => sortCategories((tags() ?? []).filter((t) => t.kind === 'category'));
   function toggleCategory(id: string) {
     const cur = categoryIds();
-    if (cur.includes(id)) { setCategoryIds(cur.filter((x) => x !== id)); return; }
+    if (cur.includes(id)) { setCategoryIds(cur.filter((x) => x !== id)); setCategoriesTouched(true); return; }
     if (cur.length >= 3) return; // cap 3 — mirrors setEntityCategories
     setCategoryIds([...cur, id]);
+    setCategoriesTouched(true);
     // First pick prefills the block length from the category's default (0069 behavior).
     if (cur.length === 0) {
       const p = categoryPrefs()?.prefs?.[id];
@@ -374,7 +379,7 @@ export function ElementWizard() {
       setEstimate(30); setDueAt(pf.day || localISODate()); setDueEdited(false); setPriority(3);
       setTaskRepeat('none'); setTaskWeekdays([]); setTaskCustomRule('');
       setDeferUntil(''); setDependsOn([]); setDepDraft(''); setEditScope('instance'); setWasRecurring(false);
-      setNote(''); setNoteExpanded(false); setTbRepeat('none'); setTbWeekdays([]); setTbCustomRule(''); setCategoryIds([]); setMakeHabit(false);
+      setNote(''); setNoteExpanded(false); setTbRepeat('none'); setTbWeekdays([]); setTbCustomRule(''); setCategoryIds([]); setCategoriesTouched(false); setMakeHabit(false);
       setTextureEnabled(true); setTextureColorToken(null);
       setMotivation(null); setMotivationSource(null); setMotivationTouched(false);
       setLocked(false); setAllDay(false); setRoutineId(''); setInitialRoutineId('');
@@ -471,6 +476,7 @@ export function ElementWizard() {
     setCategoryIds(names
       .map((n) => all.find((t) => t.kind === 'category' && t.name.toLowerCase() === n.toLowerCase())?.id)
       .filter((id): id is string => !!id));
+    setCategoriesTouched(false); // seeded, not testimony — the same rule as motivation and people
   }
   function seedTags(names: string[], secondary: string[] = []) {
     const patternNames = new Set(patternTagList().map((p) => p.name.toLowerCase()));
@@ -906,7 +912,12 @@ export function ElementWizard() {
         // AF-9: time-block secondary tags live in `intentions` (round-tripped on
         // edit), so no separate blind-preserve set is passed.
         // Phase B: 1–3 category names (picker order = stripe order) + texture override.
-        categories: categoryNames(),
+        // An EDIT sends the picker only if the owner used it (a Time Block edit too). The form
+        // seeds it from the row, so sending it back is no answer: it would close the task's
+        // learning row as accepted, and a series save opened from a generated instance (which
+        // carries no category rows) would send that empty set, wiping the template's
+        // categories and closing its row with a correction nobody made. Add sends the picker.
+        categories: isEdit() && !categoriesTouched() ? undefined : categoryNames(),
         textureEnabled: textureEnabled(),
         textureColorToken: textureColorToken(),
         // Motivation (0141): only when the user touched the control this session.
@@ -943,6 +954,9 @@ export function ElementWizard() {
         // The preview's category pick, so Add records the owner's answer to it. saveElement
         // sends it on the add-mode task/habit create only; the server decides if it counts.
         classificationClaim: nlClaim() ?? undefined,
+        // Spent once the task exists: a later failing step (routine chip) leaves the modal
+        // open, and Add again would otherwise send the same claim for a second task.
+        onCreated: () => setNlClaim(null),
       };
       const msg = await saveElement(effectiveKind, m().mode, form, m().editTarget?.id);
       showToast(msg, 'success');

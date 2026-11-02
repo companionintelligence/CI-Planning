@@ -225,9 +225,37 @@ describe('an owner with corrections', () => {
     expect(prompt).not.toContain('gym then gardening');
   });
 
+  it('matches a lesson to a category whose own name contains a comma, whole', async () => {
+    // Settings accepts "Health, Fitness" and stores it as `health,-fitness`; a lesson that
+    // names it is stored as that string, and a lesson with a second name after it as
+    // `health,-fitness, leisure`. Neither may be cut at the comma.
+    sqlite.exec(`DELETE FROM classification_exemplars; DELETE FROM tags WHERE kind = 'category'`);
+    tag('health,-fitness', 'category');
+    tag('leisure', 'category');
+    exemplar({ field: 'category', text: 'gym then a long walk', llm: 'leisure', correct: 'health,-fitness' });
+    exemplar({ field: 'category', text: 'yoga then the park', llm: 'leisure', correct: 'Health,-Fitness, leisure' });
+    // The halves of that name are not names, so lessons about them are not choosable, and
+    // neither is one with an empty segment ("leisure,"). These four distinct values outrank
+    // the two valid lessons by frequency, so they only stay out if the list is applied
+    // before the top-3 cut.
+    for (const [correct, times] of [['health', 3], ['fitness', 3], ['health, leisure', 2], ['leisure,', 2]] as const) {
+      for (let i = 0; i < times; i++) exemplar({ field: 'category', text: `old lesson ${rowSeq}`, llm: 'leisure', correct });
+    }
+    for (const route of ROUTES) {
+      const prompt = await promptFrom(route.path);
+      expect(prompt).toContain('"categories": 1-3 life areas from ["health,-fitness","leisure"]');
+      expect(prompt).toContain('the user chose health,-fitness.');
+      expect(prompt).toContain('the user chose Health,-Fitness, leisure.');
+      expect(prompt).not.toMatch(/the user chose (health|fitness|health, leisure|leisure,)\./);
+    }
+  });
+
   it('holds the motivation lesson to me, us and them', async () => {
+    // Three distinct odd values fill the top 3 ahead of the one valid lesson, as above.
     sqlite.exec('DELETE FROM classification_exemplars');
-    for (let i = 0; i < 3; i++) exemplar({ field: 'motivation', text: `odd lesson ${i}`, llm: 'me', correct: 'zebra' });
+    for (const odd of ['zebra', 'zebra', 'zebra', 'kangaroo', 'kangaroo', '', '']) {
+      exemplar({ field: 'motivation', text: `odd lesson ${rowSeq}`, llm: 'me', correct: odd });
+    }
     exemplar({ field: 'motivation', text: 'help mum with her taxes', llm: 'me', correct: 'them' });
     for (const route of ROUTES) {
       const prompt = await promptFrom(route.path);

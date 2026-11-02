@@ -57,9 +57,12 @@ const TAGS = [
   { id: 'i2', name: 'errand', kind: 'intention', directions: ['home'] },
   { id: 'c1', name: 'meetings', kind: 'category', directions: [] },
 ];
+// One routine, for the routine-chip step that runs AFTER a task create.
+const PATTERNS = [{ id: 'pat-r1', name: 'Morning', type_id: 'pt1', task_ids: [] as string[] }];
 
 vi.mock('../stores/index.js', () => ({
   tags: () => TAGS,
+  patterns: () => PATTERNS,
   patternTypes: () => [],
   patternPrefs: () => ({ prefs: {} }),
   refetchTasks: vi.fn(), refetchBlocks: vi.fn(), refetchConcepts: vi.fn(),
@@ -421,6 +424,67 @@ describe('classification claim — only the add-mode task/habit create carries i
     await saveElement('routine', 'add', { ...baseForm, title: 'Morning', primary: '', classificationClaim: claim });
     expect('classification_claim' in JSON.parse(JSON.stringify(patternsCreate.mock.calls.at(-1)![0]))).toBe(false);
     expect(tasksCreate).not.toHaveBeenCalled();
+  });
+});
+
+// onCreated — "the task exists" signal. The wizard spends its stored claim on it: a retry
+// after a LATER step failed (routine chip) creates a second task, and must not echo the same
+// claim and record one decision twice. A create that threw never fires it, so that retry keeps
+// the claim and still records.
+describe('onCreated — fires once, right after the add-mode task/habit create lands', () => {
+  const taskForm = { title: 'Gym session before work', primary: '', intentions: [] as string[], scheduledFor: '', taskTime: '', priority: 3 };
+
+  it('task add: called once, after the create resolved and before the routine chip runs', async () => {
+    const order: string[] = [];
+    tasksCreate.mockImplementationOnce(async () => { order.push('create'); return { task: { id: 'task-new' } }; });
+    patternsUpdate.mockImplementationOnce(async () => { order.push('routine'); return {}; });
+    const onCreated = vi.fn(() => { order.push('created'); });
+
+    await saveElement('task', 'add', { ...taskForm, routineAddId: 'pat-r1', onCreated });
+
+    expect(onCreated).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['create', 'created', 'routine']);
+  });
+
+  it('habit add: called once', async () => {
+    const onCreated = vi.fn();
+    await saveElement('habit', 'add', { ...taskForm, recurrenceRule: 'FREQ=DAILY', onCreated });
+    expect(onCreated).toHaveBeenCalledTimes(1);
+  });
+
+  it('a create that rejects: never called, and the error still reaches the wizard', async () => {
+    tasksCreate.mockRejectedValueOnce(new Error('offline'));
+    const onCreated = vi.fn();
+    await expect(saveElement('task', 'add', { ...taskForm, onCreated })).rejects.toThrow('offline');
+    expect(onCreated).not.toHaveBeenCalled();
+  });
+
+  it('a step after the create rejects: it had already been called once by then', async () => {
+    patternsUpdate.mockRejectedValueOnce(new Error('routine gone'));
+    const onCreated = vi.fn();
+    await expect(saveElement('task', 'add', { ...taskForm, routineAddId: 'pat-r1', onCreated })).rejects.toThrow('routine gone');
+    expect(tasksCreate).toHaveBeenCalledTimes(1);
+    expect(onCreated).toHaveBeenCalledTimes(1);
+  });
+
+  it('a subtask create that rejects (swallowed per child) does not call it again', async () => {
+    tasksCreate
+      .mockResolvedValueOnce({ task: { id: 'task-new' } })
+      .mockRejectedValueOnce(new Error('flaky'));
+    const onCreated = vi.fn();
+    await saveElement('task', 'add', { ...taskForm, subtaskTitles: ['Pack bag'], onCreated });
+    expect(tasksCreate).toHaveBeenCalledTimes(2);
+    expect(onCreated).toHaveBeenCalledTimes(1);
+  });
+
+  it('task edit (instance and series), time block add/edit and routine add: never called', async () => {
+    const onCreated = vi.fn();
+    await saveElement('task', 'edit', { ...taskForm, onCreated }, 'task-1');
+    await saveElement('habit', 'edit', { ...taskForm, editScope: 'series', recurrenceRule: 'FREQ=DAILY', onCreated }, 'task-2');
+    await saveElement('timeblock', 'add', { ...baseForm, primary: 'work', onCreated });
+    await saveElement('timeblock', 'edit', { ...baseForm, primary: 'work', onCreated }, 'blk-1');
+    await saveElement('routine', 'add', { ...baseForm, title: 'Morning', primary: '', onCreated });
+    expect(onCreated).not.toHaveBeenCalled();
   });
 });
 

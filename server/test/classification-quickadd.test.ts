@@ -178,12 +178,15 @@ describe('quick-add hands the model the owner’s own corrections', () => {
     it(`drops a lesson the model could not act on, before the cut, on ${route.name}`, async () => {
       // 'gardening' is not one of the owner's categories, an empty answer is not a category,
       // and a half-valid pick is not choosable. Each outranks the one valid lesson by
-      // frequency, so the valid one only shows if the list is applied BEFORE the top-k cut.
+      // frequency, and three distinct values fill the top 3 (RETRIEVE_K), so the valid one
+      // is the fourth and only shows if the list is applied BEFORE the cut. Motivation
+      // needs the same shape: 'someone', '' and 'nobody' are three distinct values ahead of
+      // 'them', so a filter that ran after the cut would leave nothing.
       for (const gone of ['gardening', 'gardening', 'gardening', '', '', 'health, gardening', 'health, gardening']) {
         exemplar({ text: `old lesson ${rowSeq}`, llm: 'leisure', correct: gone });
       }
       exemplar({ text: 'gym session before work', llm: 'leisure', correct: 'health' });
-      for (const gone of ['someone', 'someone', 'someone', '', '']) {
+      for (const gone of ['someone', 'someone', 'someone', '', '', 'nobody', 'nobody']) {
         exemplar({ field: 'motivation', text: `old motive ${rowSeq}`, llm: 'me', correct: gone });
       }
       exemplar({ field: 'motivation', text: 'help mum with her taxes', llm: 'me', correct: 'them' });
@@ -194,6 +197,7 @@ describe('quick-add hands the model the owner’s own corrections', () => {
       expect(hints.category).not.toContain('(nothing)');
       expect(hints.motivation).toContain('you said me; the user chose them.');
       expect(hints.motivation).not.toContain('someone');
+      expect(hints.motivation).not.toContain('nobody');
       expect(hints.motivation).not.toContain('(nothing)');
     });
 

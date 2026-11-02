@@ -31,6 +31,10 @@ export async function ollamaScorer(owner: string): Promise<ScoreFn | undefined> 
       // No category vocabulary ⇒ there is no right answer to grade against, so decline
       // rather than score every example wrong.
       if (vocab.categories.length === 0) return null;
+      // The hint is built from the index calibrate has just written, which never holds a
+      // category answered with '' (a cleared picker is not a label), so no "the user chose
+      // (nothing)" lesson can reach this prompt. If one could, the model would follow it
+      // with [], and that is skipped below rather than counted wrong.
       const out = await llmOrNull('classification-score:category', () =>
         generateJson<{ categories?: unknown }>(
           `Classify this task into the user's life-balance categories.\n` +

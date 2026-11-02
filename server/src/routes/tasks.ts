@@ -70,17 +70,36 @@ async function peopleFor(taskId: string): Promise<{ responsible: unknown[]; bene
 
 /**
  * Keeps an exemplar only when the owner's lesson names values the model may answer with
- * NOW: every name in `correctValue` (a category pick is stored comma-joined) must be in
- * `allowed`, case-insensitive. A category since renamed, deleted or muted, or a cleared
- * value, would otherwise appear as "the user chose X" in a prompt whose list lacks X; the
- * model would pick it and `constrainToVocabulary` would drop it. Category names are stored
- * lower-kebab, so splitting on a comma cannot cut one in half.
+ * NOW: `correctValue` (a category pick is stored as its names joined by ', ', see
+ * `canonicalValue`) must be consumed whole as a sequence of `allowed` names, case-insensitive.
+ * A category since renamed, deleted or muted, or a cleared value, would otherwise appear as
+ * "the user chose X" in a prompt whose list lacks X; the model would pick it and
+ * `constrainToVocabulary` would drop it.
+ *
+ * Whole names, not a split on ',': nothing keeps a comma out of a category name
+ * (`normalizeTagName` leaves it, `createTag` only refuses an empty one, and a rename in
+ * Settings reaches it), so "Health, Fitness" is stored as `health,-fitness` and a split
+ * would cut it in two and drop every lesson that names it.
  */
 function choosable(allowed: readonly string[]): (e: Exemplar) => boolean {
-  const set = new Set(allowed.map((a) => a.toLowerCase()));
+  const names = [...new Set(allowed.map((a) => a.toLowerCase()).filter(Boolean))];
+  const SEP = ', ';
   return (e) => {
-    const names = e.correctValue.split(',').map((n) => n.trim()).filter(Boolean);
-    return names.length > 0 && names.every((n) => set.has(n.toLowerCase()));
+    const value = e.correctValue.toLowerCase();
+    // Positions already tried: one that had led to a match would have ended the walk.
+    const tried = new Set<number>();
+    // Whether `value` from `at` to its end is one name, or a name, ', ' and then more of the
+    // same. Every step eats a non-empty name, so a doubled or trailing separator cannot match.
+    const walk = (at: number): boolean => {
+      if (tried.has(at)) return false;
+      tried.add(at);
+      return names.some((n) => {
+        if (!value.startsWith(n, at)) return false;
+        const end = at + n.length;
+        return end === value.length || (value.startsWith(SEP, end) && walk(end + SEP.length));
+      });
+    };
+    return value.length > 0 && walk(0);
   };
 }
 
@@ -145,18 +164,20 @@ function modelPicks(
  * unsigned. Everything that matters is taken from the server instead: the owner is the
  * caller, the task id and title are the row just created, the names must be in the caller's
  * own suggestible vocabulary, the claimed text must equal that task's own title, and the
- * final value is READ BACK from the database rather than echoed. So a forged claim can only
- * write one row into the caller's own log, about the task the caller just created, with
- * that task's title and the caller's own category names; a real quick-add plus a PATCH
- * already gives them that. Nothing here reaches another owner. Contrast `motivation_source`,
- * which the route strips because a forged 'llm' would relabel task data other systems
- * read; a claim only ever feeds the caller's own prompt hints.
+ * final value is READ BACK from the database rather than echoed. So a forged claim only ever
+ * affects the caller's OWN evidence: at most one row in the caller's own log, about the task
+ * the caller just created, with that task's title and the caller's own category names. The
+ * caller can choose the claimed value (the model's side of the lesson), which is acceptable
+ * because they already own the corrections they could make by hand. Nothing here reaches
+ * another owner. Contrast `motivation_source`, which the route strips because a forged 'llm'
+ * would relabel task data other systems read; a claim only ever feeds the caller's own
+ * prompt hints.
  *
  * Nothing about the claim is ever an error. A claim that fails a check is dropped, the task
- * is created as it would be without one, and the reason is debug-logged so the loss can be
- * counted (log keys are reason and err only; SECRET_KEY_RE redacts any key containing
- * "iv" or "code"). The whole helper is best-effort: a broken log table must not fail the
- * create.
+ * is created as it would be without one, and the reason is debug-logged. Debug lines print
+ * only at LOG_LEVEL=debug, so counting the loss needs that level; there is no counter (log
+ * keys are reason and err only; SECRET_KEY_RE redacts any key containing "iv" or "code").
+ * The whole helper is best-effort: a broken log table must not fail the create.
  */
 async function settlePreviewClaim(
   owner: string,

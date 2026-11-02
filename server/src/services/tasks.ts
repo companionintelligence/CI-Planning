@@ -11,7 +11,7 @@ import { syncBlockFromTask, clearTaskPlacement, revertTaskPlacementStatus, mirro
 import { ensureTaskPromoted, unpromoteIfEmpty, dropSourceObjective, recomputeObjectivesForTask } from './task-promotion.js';
 import { rollupStatusFacet } from './objectives.js';
 import { ensureHabitPattern } from './patterns.js';
-import { entityTagLevels, syncLeveledEntityTags, setEntityCategories, categoryIdsForOwner } from './tags.js';
+import { entityTagLevels, syncLeveledEntityTags, setEntityCategories, categoryIdsForOwner, entityCategoryNames } from './tags.js';
 import { setEntityPeople, applyMotivationProjection } from './people.js';
 import { utcDayBounds, localDateInTZ } from '../lib/tz.js';
 import { localISODate } from '../lib/dates.js';
@@ -19,7 +19,7 @@ import { writeAudit } from '../lib/audit.js';
 import { stampRow } from '../sync/apply.js';
 import { isMotivation } from '../agents/rubric.js';
 import { classifyMotivationKeyword } from './motivation.js';
-import { recordCorrection } from './classification-learning.js';
+import { canonicalValue, recordCorrection } from './classification-learning.js';
 import { truncateSeriesFrom } from '../engine/series-scope.js';
 
 /**
@@ -538,8 +538,20 @@ export async function updateTask(
   // touched, and a no-op unless the model made a claim about this task and field.
   // Never throws — a task update must not fail because the learning log did.
   if (Array.isArray(input.categories)) {
+    // An answer is a change to the SAVED set, recorded as read back rather than as sent.
+    // The wizard's Edit re-sends its picker whether or not the owner touched it, and
+    // counting that would close an open row as 'accepted' ahead of its 24h window and
+    // discard the correction the owner makes an hour later. Reading back also means a
+    // case, unknown-name or duplicate difference in the request cannot fabricate one.
+    // Known gap: a series save from a generated instance sends the instance's picker,
+    // empty because instances carry no category rows. That clears the template's set
+    // (older behaviour), so it reads as a real change here; the caller must not send it.
+    const before = await entityCategoryNames('task', targetId);
     await setEntityCategories('task', targetId, await categoryIdsForOwner(input.categories, ownerId));
-    await recordCorrection(ownerId, targetId, 'category', input.categories);
+    const after = await entityCategoryNames('task', targetId);
+    if (canonicalValue(before) !== canonicalValue(after)) {
+      await recordCorrection(ownerId, targetId, 'category', after);
+    }
   }
   if (input.motivation !== undefined) {
     await recordCorrection(ownerId, targetId, 'motivation', input.motivation);

@@ -5,7 +5,7 @@
  * shape of docs/complexity-rubric-measurement-2026-08.md.
  *
  * OPT-IN ONLY: inert unless `LIVE_HINT=1`, because it needs a running Ollama with the
- * models named below and the embedder, and takes tens of minutes (about 1,000 model calls
+ * models named below and the embedder, and takes tens of minutes (about 1,100 model calls
  * per model, the 0.5B tier in minutes, the 4B-class tier in the better part of an hour).
  * It is committed so the numbers in the evidence doc can be reproduced rather than
  * believed. In a normal run the whole file reports as skipped.
@@ -24,9 +24,12 @@
  *                     fast tier the app itself resolves (asserted): it is the only one that
  *                     gates, the rest are informational.
  *   LIVE_HINT_OUT     path for the per-call JSON artifact (arm, model, title, run, prompt
- *                     sha256 prefix, hint present, retrieval ids, raw completion, parsed
- *                     pick, correct, ms), plus the report, the distinct prompts and the
- *                     latency and residency numbers. Rewritten as the run proceeds.
+ *                     sha256 prefix, hint present, retrieval ids, raw completion, the JSON
+ *                     type of its "categories", parsed pick, correct, ms), plus the report,
+ *                     the distinct prompts, the latency and residency numbers and the
+ *                     provenance (real argv and OLLAMA_* env, how the fast tier resolved, the
+ *                     server's /api/ps at the start, the commit and the sources it ran).
+ *                     Rewritten as the run proceeds.
  *   Offline self-check of the pure helpers below, no Ollama and no model time:
  *   LIVE_HINT=1 ./node_modules/.bin/vitest run test/classification-hint-live.test.ts -t "pure helpers"
  *
@@ -59,12 +62,19 @@
  * a claim about real owners.
  *
  * ARMS, same titles, same RUNS, interleaved per (title, run) in the fixed order
- * A, B, C, S, A2 so warm-up drift cannot favour one arm:
+ * A, B, C, S, A2, P so warm-up drift cannot favour one arm:
  *   A   baseline: enrichQuick(text, parse, vocab) with no hints (today's prompt)
  *   A2  a repeat of A: the noise floor
  *   B   SHIPPED: POST /api/tasks/quick/parse through the real route (frequency hints, accept filter)
  *   C   B's captured prompt with the hint blocks moved to just before 'Entry:' (hint last).
  *       NON-GATING diagnostic, so a null result can be explained.
+ *   P   PLACEBO (added 2026-11-02, after the first runs; NON-GATING; run last in each cell so
+ *       the registered order of the others is untouched): B's block, in B's place, built from
+ *       real lessons about OTHER conventions: as many lessons as B shows, as close to B's
+ *       length as the index allows, never carrying the title's own convention's value (for a
+ *       control, the convention it sits beside, if any). B against A confounds "the owner's
+ *       lessons help" with "any such block changes what the model answers"; B against P
+ *       takes the block, its position and its framing out of the comparison.
  *   S   classificationHint with the real embedder injected (similarity), for the record
  *   B1  B with k: 1; runs only when B fails G2 or G3 (the named remedy)
  *   N0  the narrow one-field question exactly as services/classification-score.ts sends it,
@@ -82,6 +92,11 @@
  * losses (A right, B wrong). The A-versus-A2 flips. Prompt growth in characters.
  * Retrieval precision@1 and @k (does the top lesson carry the owner's value for this
  * title; a property of the fixture and the retrieval mode, no generation model involved).
+ * ANSWER SHAPE (added 2026-11-02): the JSON type of "categories" in every raw completion
+ * (array | string | missing | other), the share of each arm that is an array (the only shape
+ * production keeps: constrainToVocabulary returns [] for anything else), accuracy among the
+ * calls that did answer an array, and a lenient secondary score that reads a bare string as a
+ * one-item list. The lenient score is NOT what production does; it says what the model meant.
  *
  * PRE-REGISTERED GATES (fast tier only), 2026-11-02, before the first live run. Do not edit
  * a gate after seeing a result; add a dated note under it instead. Scored titles are the
@@ -111,6 +126,33 @@
  * Verdicts: IMPROVED / HARMED / NO MEASURABLE CHANGE / INCONCLUSIVE: NO HEADROOM
  * (plus INCONCLUSIVE: NOISE for the A-versus-A2 rule above).
  *
+ * NOTES ADDED AFTER THE FIRST RUNS. The gates, their thresholds and the verdict words above are
+ * exactly as registered. Nothing below edits one: each item is a new non-gating diagnostic, a
+ * clearer label, or a dated reading of a run that had already happened.
+ *   2026-11-02, after the first runs: the default fast tier (qwen2.5:0.5b) answered "categories"
+ *   as a bare string on all 60 baseline completions of the first run. Production keeps only
+ *   arrays, so on that tier quick-add yields no category pick, the wizard gets no
+ *   classification_claim, and nothing can be corrected. That run's INCONCLUSIVE: NO HEADROOM was
+ *   a type artifact (0 claims on 18 training parses and a baseline of 0 of 12 targets, both
+ *   because no pick survived), not a finding that the model files things the way the owner
+ *   does. The later runs set OLLAMA_FAST, which makes the model they name "the fast tier the
+ *   app resolves" for the assertion in beforeAll and so the gating tier of that run: the second
+ *   gemma3:1b (arrays on 12 of its 60 baseline completions, bare strings on the rest, so it is
+ *   only partly past the problem), the third gemma3n:e4b (arrays on all 60 of its baseline
+ *   completions, and on every other completion of that run). Neither is "the default tier"; the
+ *   artifact now says when the gating tier was set by a pin rather than the box default
+ *   (provenance.gatingTierNote).
+ *   2026-11-02: a baseline whose "categories" is an array on fewer than 50% of its completions
+ *   is labelled INCONCLUSIVE: UNUSABLE ANSWER SHAPE. INCONCLUSIVE: NO HEADROOM stays for a model
+ *   that answers arrays and gets the owner's values right. A run is not stopped earlier or later
+ *   for it; only the label and the reading change.
+ *   2026-11-02: power notes. G2 can only flip the controls the baseline got right, and G3's
+ *   key-presence clause cannot fail from a baseline that already omits keys. The report prints
+ *   both numbers beside the gates and "NOT POWERED: ..." when fewer than 6 controls are
+ *   baseline-correct or the baseline emits all nine keys on under 50% of its calls. PASS and
+ *   FAIL mean exactly what was registered; the note says how much a PASS can be worth.
+ *   2026-11-02: arm P, the answer-shape table and the provenance block are described above.
+ *
  * DECISION RULE (the ship rule, restated; the lead decides, the harness only reads it off).
  * Capture ships regardless. The hint half ships only if on the fast tier G2, G3 and G4 hold
  * AND G1 holds. G2 or G3 fails: re-run B with k: 1 (arm B1), then S; if both still fail,
@@ -134,7 +176,13 @@
  * no motivation corrections and the motivation hint is empty throughout (the production
  * arguments are still exercised, and a stray motivation hint would fail the prompt checks).
  * One invented owner and three conventions: this measures whether the mechanism helps a small
- * model follow a vocabulary it is shown, not how often real owners correct anything. A call
+ * model follow a vocabulary it is shown, not how often real owners correct anything. The
+ * fixture has exactly RETRIEVE_K (3) distinct owner values (leisure, career, growth), so the
+ * frequency hint, one lesson for each of the owner's most-corrected values, can be a COMPLETE
+ * convention table here. A real owner with more than three corrected values, or with skewed
+ * counts, gets a hint that covers only the most-corrected ones: this overstates what the hint
+ * can carry for them. Arm P's lessons are real lessons about the other conventions, not an
+ * invented unrelated topic, so it controls for the block, not for every possible distractor. A call
  * that outruns CALL_POLICY.classify's 15 s ceiling is recorded as errored, as it would be in
  * the app: it counts as a wrong pick and as an empty completion. POST /api/tasks/quick is not
  * driven here (it shares enrichEntry with the parse route and its prompt is pinned in
@@ -147,13 +195,18 @@
  * is empty or errored, the hint is present exactly once in every B/C/S/B1/N prompt that had
  * a retrieval and in the right place, none in any A/A2/A0/N0 prompt, removing the hints from
  * a B prompt gives the stock prompt, the no-index prompts are byte-identical, the capture
- * wrote the rows it should. REPORTED, never asserted: every effect size, every gate verdict,
- * and any empty or errored completion in a hinted arm (that is G3's finding, and asserting it
- * would abort the very verdict the gate exists to give).
+ * wrote the rows it should; and for P, one placebo block in B's place that is additive over
+ * the stock prompt and carries no lesson for the title's own value. REPORTED, never asserted:
+ * every effect size, every gate verdict, the answer shape of every arm, how closely P matched
+ * B's length, and any empty or errored completion in a hinted arm (that is G3's finding, and
+ * asserting it would abort the very verdict the gate exists to give).
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { runInNewContext } from 'node:vm';
 // Installs the SQLite store; model resolution reads the per-owner Settings override.
 import { sqlite } from '../src/db/index.js';
 import { config } from '../src/lib/config.js';
@@ -165,11 +218,12 @@ import { MOTIVATION_VALUES } from '../src/agents/rubric.js';
 import { generateJson, generate, embed, parseJsonLoose } from '../src/mcp/ollama.js';
 import {
   setInstalledModels, parseParamB, resolveModel, resolveEmbedModel, matchInstalled,
+  explainModel, explainModelDefault, type ResolvedModel,
 } from '../src/lib/models.js';
 import { suggestibleVocabulary, type TagVocabulary } from '../src/services/tags.js';
 import { ollamaScorer } from '../src/services/classification-score.js';
 import {
-  calibrateClassification, classificationHint, classificationInput, retrieveExemplars,
+  calibrateClassification, classificationHint, classificationInput, exemplarPrompt, retrieveExemplars,
   CORRECTION_FLOOR, EMBED_TIMEOUT_MS, RETRIEVE_K, type Exemplar,
 } from '../src/services/classification-learning.js';
 import { startTestServer, resetDb, api, createOwner, SECOND_OWNER_ID, type TestServer } from './helpers.js';
@@ -357,14 +411,44 @@ const GATES = {
   reloadFactor: 3,
 } as const;
 
+/**
+ * Thresholds of the diagnostics added after the first live runs (2026-11-02, see the notes
+ * under the gates). They label and annotate. None of them is a gate: no PASS, FAIL or G1
+ * verdict reads them, and no run is stopped or continued because of one.
+ */
+const DIAGNOSTICS = {
+  /** A baseline whose "categories" is an array on a smaller share of its completions has no usable answer shape. */
+  minUsableShapePct: 50,
+  /** With fewer baseline-correct controls than this, G2 has too few to flip to say much. */
+  minFlippableControls: 6,
+  /** A baseline that emits every requested key on a smaller share of calls leaves G3's key clause nothing to lose. */
+  minBaselineKeyCoveragePct: 50,
+  /** An arm whose array share sits this many points from A's has changed the answer shape. */
+  shapeShiftPoints: 20,
+  /** Placebo candidates considered per title (the combinations of them are searched, so this is capped). */
+  placeboCandidates: 20,
+} as const;
+
+/** The fast tier the gates were registered against: the box default in lib/config.ts. */
+const REGISTERED_FAST_DEFAULT = 'qwen2.5:0.5b';
+
 const LATENCY_N = 30;
 const PROBE_N = 10;
 
 // ── Pure helpers ──────────────────────────────────────────────────────────────
 
-type Arm = 'A0' | 'A' | 'A2' | 'B' | 'C' | 'S' | 'B1' | 'N0' | 'N';
+type Arm = 'A0' | 'A' | 'A2' | 'B' | 'C' | 'S' | 'B1' | 'N0' | 'N' | 'P';
 type Verdict =
   | 'IMPROVED' | 'HARMED' | 'NO MEASURABLE CHANGE' | 'INCONCLUSIVE: NO HEADROOM' | 'INCONCLUSIVE: NOISE';
+/** What a run that stopped for want of evidence is called. */
+type StoppedStatus = 'INCONCLUSIVE: NO HEADROOM' | 'INCONCLUSIVE: UNUSABLE ANSWER SHAPE';
+/**
+ * The JSON type of "categories" in a raw completion. Only `array` survives production's
+ * constrainToVocabulary. `missing` is an absent key and also a completion with no object to
+ * read it from (empty, errored, unparseable); `other` is a present value that is neither
+ * (null, a number, an object).
+ */
+type CategoriesType = 'array' | 'string' | 'missing' | 'other';
 
 /** The keys enrichQuick's prompt asks for (categories included: the owner has them). */
 const WIDE_KEYS = [
@@ -372,6 +456,8 @@ const WIDE_KEYS = [
   'motivation', 'categories', 'tags',
 ] as const;
 const NARROW_KEYS = ['categories'] as const;
+/** The order arms are listed in every table. */
+const ARMS_REPORTED: readonly Arm[] = ['A0', 'A', 'A2', 'B', 'P', 'C', 'S', 'B1', 'N0', 'N'];
 /** The first line of exemplarPrompt's block; every hint contains it exactly once. */
 const HINT_MARKER = 'This user has corrected you before.';
 
@@ -387,8 +473,16 @@ interface CallRecord {
   hintPresent: boolean;
   retrievalIds: string[];
   raw: string;
+  categoriesType: CategoriesType;
   pick: string | null;
   correct: boolean;
+  /**
+   * The first category the model MEANT: a bare string is read as a one-item list. Not what
+   * production does (it discards the string); the secondary score that separates "wrong"
+   * from "wrong shape".
+   */
+  lenientPick: string | null;
+  lenientCorrect: boolean;
   validJson: boolean;
   allKeys: boolean;
   /** Empty or errored: the completion carries nothing. */
@@ -443,13 +537,34 @@ function occurrences(haystack: string, needle: string): number {
  * The owner's lesson filter, a copy of routes/tasks.ts `choosable` (which is route-local
  * and not exported). A copy on purpose: the mechanism check compares the hint THIS builds
  * with the hint found in the route's prompt, so a drift between the two shows up as a
- * violation instead of as a quietly different experiment.
+ * violation instead of as a quietly different experiment. The pure-helper self-check also
+ * lifts the route's own function out of its source and runs both on the same inputs, so a
+ * drift shows up offline, before any model time is spent.
+ *
+ * Synced 2026-11-02 with the version that reads `correctValue` (a category pick is stored as
+ * its names joined by ', ', see canonicalValue) as a whole sequence of allowed names, each
+ * one a non-empty whole name, case-insensitive. A name may itself contain a comma
+ * ("Health, Fitness" is stored as `health,-fitness`), which a split on ',' would cut in two.
  */
 function choosable(allowed: readonly string[]): (e: Exemplar) => boolean {
-  const set = new Set(allowed.map((a) => a.toLowerCase()));
+  const names = [...new Set(allowed.map((a) => a.toLowerCase()).filter(Boolean))];
+  const SEP = ', ';
   return (e) => {
-    const names = e.correctValue.split(',').map((n) => n.trim()).filter(Boolean);
-    return names.length > 0 && names.every((n) => set.has(n.toLowerCase()));
+    const value = e.correctValue.toLowerCase();
+    // Positions already tried: one that had led to a match would have ended the walk.
+    const tried = new Set<number>();
+    // Whether `value` from `at` to its end is one name, or a name, ', ' and then more of the
+    // same. Every step eats a non-empty name, so a doubled or trailing separator cannot match.
+    const walk = (at: number): boolean => {
+      if (tried.has(at)) return false;
+      tried.add(at);
+      return names.some((n) => {
+        if (!value.startsWith(n, at)) return false;
+        const end = at + n.length;
+        return end === value.length || (value.startsWith(SEP, end) && walk(end + SEP.length));
+      });
+    };
+    return value.length > 0 && walk(0);
   };
 }
 
@@ -527,6 +642,97 @@ function efficacyVerdict(n: number, net: number, noiseFlips: number): Verdict {
   return 'NO MEASURABLE CHANGE';
 }
 
+// ── Answer shape ──────────────────────────────────────────────────────────────
+
+/**
+ * The JSON type of "categories" in a raw completion, read with the parser production reads
+ * it with (generateJson goes through parseJsonLoose), so "array" here means what
+ * constrainToVocabulary will keep.
+ */
+function categoriesTypeOf(raw: string): CategoriesType {
+  let obj: unknown;
+  try { obj = parseJsonLoose(raw); } catch { return 'missing'; }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj) || !('categories' in obj)) return 'missing';
+  const v = (obj as { categories: unknown }).categories;
+  return Array.isArray(v) ? 'array' : typeof v === 'string' ? 'string' : 'other';
+}
+
+/** The first category the model meant: a bare string is read as a (comma-separated) list. Not production's reading. */
+function lenientPickOf(raw: string, vocabulary: string[]): string | null {
+  let obj: Record<string, unknown> | null = null;
+  try { obj = parseJsonLoose<Record<string, unknown>>(raw); } catch { return null; }
+  const c = obj?.categories;
+  return constrainToVocabulary(typeof c === 'string' ? c.split(',') : c, vocabulary, 3)[0] ?? null;
+}
+
+interface ShapeStats { n: number; array: number; string: number; missing: number; other: number; arrayPct: number }
+function shapeStats(calls: readonly CallRecord[]): ShapeStats {
+  const count = (t: CategoriesType): number => calls.filter((c) => c.categoriesType === t).length;
+  return {
+    n: calls.length, array: count('array'), string: count('string'), missing: count('missing'), other: count('other'),
+    arrayPct: pct(count('array'), calls.length),
+  };
+}
+
+/** Mostly not arrays: whatever the picks say, they are picks production would not have kept. */
+const shapeUnusable = (s: ShapeStats): boolean => s.n > 0 && s.arrayPct < DIAGNOSTICS.minUsableShapePct;
+const shapeShifted = (basePct: number, armPct: number): boolean => Math.abs(armPct - basePct) >= DIAGNOSTICS.shapeShiftPoints;
+
+/** Call-level accuracy, strict (production's reading), among the calls that answered an array, and lenient. */
+interface ShapeAccuracy { n: number; correct: number; arrays: number; correctGivenArray: number; lenient: number }
+function accuracyGivenShape(calls: readonly CallRecord[]): ShapeAccuracy {
+  const arrays = calls.filter((c) => c.categoriesType === 'array');
+  return {
+    n: calls.length, correct: calls.filter((c) => c.correct).length, arrays: arrays.length,
+    correctGivenArray: arrays.filter((c) => c.correct).length, lenient: calls.filter((c) => c.lenientCorrect).length,
+  };
+}
+
+interface ArmShape { shape: ShapeStats; targets: ShapeAccuracy; controls: ShapeAccuracy }
+function armShape(
+  recs: readonly CallRecord[], model: string, arm: Arm, targetTitles: readonly string[], controlTitles: readonly string[],
+): ArmShape | null {
+  const calls = armCalls(recs, model, arm);
+  if (calls.length === 0) return null;
+  const of = (titles: readonly string[]) => accuracyGivenShape(calls.filter((c) => titles.includes(c.title)));
+  return { shape: shapeStats(calls), targets: of(targetTitles), controls: of(controlTitles) };
+}
+
+/** Titles where a strict majority of the runs picked the owner's value, reading a bare string as a list. */
+function lenientMajority(recs: readonly CallRecord[], model: string, arm: Arm, titles: readonly string[]): number {
+  return titles.filter((t) => majorityCorrect(
+    recs.filter((r) => r.model === model && r.arm === arm && r.title === t).map((r) => r.lenientCorrect),
+  )).length;
+}
+
+/** A run that stopped for want of evidence: say WHY, so a type artifact is not read as "nothing to teach". */
+const stoppedStatus = (baseline: ShapeStats): StoppedStatus =>
+  shapeUnusable(baseline) ? 'INCONCLUSIVE: UNUSABLE ANSWER SHAPE' : 'INCONCLUSIVE: NO HEADROOM';
+
+const SHAPE_WHY = 'a bare string (how qwen2.5:0.5b answers) is discarded by constrainToVocabulary in production, '
+  + 'so quick-add yields no category pick from it and the wizard has no claim to echo';
+
+function unusableShapeNote(a0: ShapeStats): string {
+  return `the baseline answered "categories" as an array on ${fmt1(a0.arrayPct)}% of ${a0.n} completions `
+    + `(string ${a0.string}, missing ${a0.missing}, other ${a0.other}); ${SHAPE_WHY}. `
+    + 'The picks are mostly absent for a reason that says nothing about what the model knows';
+}
+
+/** What an unusable baseline shape does to every reading below it. A plain line, not a registered verdict. */
+function baselineShapeLine(aPct: number): string[] {
+  if (!(Number.isFinite(aPct) && aPct < DIAGNOSTICS.minUsableShapePct)) return [];
+  return [`Answer shape: A answers "categories" as an array on only ${fmt1(aPct)}% of its calls, so A's accuracy is mostly a count of answers production would discard. `
+    + 'Read G1 to G5 as shape-confounded (INCONCLUSIVE: UNUSABLE ANSWER SHAPE for the baseline).'];
+}
+
+/** A treatment arm that changed the array share: its change in picks may be the shape, and P says whether the block alone does that. */
+function shapeShiftLine(aPct: number, arm: Arm, armPct: number, placeboPct: number | null): string[] {
+  if (!shapeShifted(aPct, armPct)) return [];
+  return [`Answer shape: ${arm} moved the array share from ${fmt1(aPct)}% to ${fmt1(armPct)}%, so a change in the picks may be the shape and not the lessons.`
+    + (arm !== 'P' && placeboPct !== null && shapeShifted(aPct, placeboPct) && Math.sign(placeboPct - aPct) === Math.sign(armPct - aPct)
+      ? ` P moved it the same way (to ${fmt1(placeboPct)}%): the shape change comes with the block, not with the owner's lessons.` : '')];
+}
+
 interface SchemaStats { n: number; validJsonPct: number; allKeysPct: number; empty: number; errored: number }
 function schemaStats(calls: readonly CallRecord[]): SchemaStats {
   return {
@@ -545,6 +751,32 @@ interface TreatmentEval {
   g2: { baseCorrect: number; flipped: string[]; healed: string[]; pass: boolean };
   g3: { base: SchemaStats; treat: SchemaStats; pass: boolean };
   g5: { baseShare: number; treatShare: number; pass: boolean };
+  /**
+   * NON-GATING (added 2026-11-02). What the baseline leaves G2 and G3 able to see: the
+   * controls G2 can flip are the ones A got right, and G3's key clause cannot fall below a
+   * baseline that already omits keys. `notPowered` is the plain-language version.
+   */
+  power: {
+    g2FlippableControls: number;
+    controls: number;
+    g3BaseKeysPct: number;
+    g3BaseArrayPct: number;
+    g3TreatArrayPct: number;
+    notPowered: string[];
+  };
+}
+
+function powerNotes(flippable: number, controls: number, baseKeysPct: number): string[] {
+  const notes: string[] = [];
+  if (flippable < DIAGNOSTICS.minFlippableControls) {
+    notes.push(`NOT POWERED: G2 can only flip ${flippable} of ${controls} controls (the ones the baseline got right; fewer than ${DIAGNOSTICS.minFlippableControls}), `
+      + 'so its PASS says little about over-application.');
+  }
+  if (!(baseKeysPct >= DIAGNOSTICS.minBaselineKeyCoveragePct)) {
+    notes.push(`NOT POWERED: G3's key clause starts from a baseline that emits every requested key on ${fmt1(baseKeysPct)}% of its calls `
+      + `(under ${DIAGNOSTICS.minBaselineKeyCoveragePct}%), so a hinted arm has little or nothing to lose and the clause cannot fail in earnest.`);
+  }
+  return notes;
 }
 
 /** G1, G2, G3 and G5 for one treatment arm against A, on one model's records. */
@@ -585,6 +817,14 @@ function evaluateTreatment(
       treatShare: pct(targets.treatCorrect, targets.n),
       pass: targets.treatCorrect > targets.baseCorrect,
     },
+    power: {
+      g2FlippableControls: controls.baseCorrect,
+      controls: controls.n,
+      g3BaseKeysPct: base.allKeysPct,
+      g3BaseArrayPct: shapeStats(armCalls(recs, model, 'A')).arrayPct,
+      g3TreatArrayPct: shapeStats(armCalls(recs, model, treat)).arrayPct,
+      notPowered: powerNotes(controls.baseCorrect, controls.n, base.allKeysPct),
+    },
   };
 }
 
@@ -595,6 +835,166 @@ function hintLatencyGate(withIndexMs: readonly number[], withoutIndexMs: readonl
   return {
     withP50, withP95, withoutP95,
     pass: withP50 <= GATES.hintReadMs.withP50 && withP95 <= GATES.hintReadMs.withP95 && withoutP95 <= GATES.hintReadMs.withoutP95,
+  };
+}
+
+// ── Arm P: the placebo block ──────────────────────────────────────────────────
+
+/** The value a placebo must not carry for this item: a target's own, or that of the convention a control sits beside. */
+function ownValueOf(item: FixtureItem): string | null {
+  if (item.kind === 'target') return item.expected;
+  const beside = item.besides ? CONVENTIONS.find((c) => c.id === item.besides) : undefined;
+  return beside ? beside.owner : null;
+}
+
+/** Whether a stored correct value (a ', '-joined pick) names `value`. */
+const namesValue = (stored: string, value: string): boolean =>
+  `, ${stored.toLowerCase()}, `.includes(`, ${value.toLowerCase()}, `);
+
+function* combinations<T>(items: readonly T[], k: number, from = 0, prefix: readonly T[] = []): Generator<T[]> {
+  if (prefix.length === k) { yield [...prefix]; return; }
+  for (let i = from; i <= items.length - (k - prefix.length); i++) yield* combinations(items, k, i + 1, [...prefix, items[i]]);
+}
+
+/**
+ * The lessons of arm P for one title: as many as B's block has (`real`), none that B shows
+ * and none carrying `own`, drawn from the owner's real index (`pool`). Among the candidates
+ * the choice prefers as many distinct values as B's block has (one lesson per value, the
+ * shape frequentCorrections gives B) and then the length closest to B's, so the block is
+ * the same size and layout and differs in what it says. Candidates are put in a fixed order
+ * by a hash of the title, so a run repeats and different titles see different lessons.
+ * Fewer candidates than B has lessons gives fewer lessons: the caller reports that.
+ */
+function placeboLessons(pool: readonly Exemplar[], own: string | null, real: readonly Exemplar[], title: string): Exemplar[] {
+  if (real.length === 0) return [];
+  const shown = new Set(real.map((e) => e.logId));
+  const candidates = pool
+    .filter((e) => !shown.has(e.logId) && !(own !== null && namesValue(e.correctValue, own)))
+    .map((e) => ({ e, key: sha12(`${title}|${e.logId}`) }))
+    .sort((a, b) => a.key.localeCompare(b.key))
+    .slice(0, DIAGNOSTICS.placeboCandidates)
+    .map(({ e }) => e);
+  const k = Math.min(real.length, candidates.length);
+  if (k === 0) return [];
+  const want = exemplarPrompt(real).length;
+  let best: Exemplar[] = [];
+  let bestScore: { distinct: number; gap: number } | null = null;
+  for (const pick of combinations(candidates, k)) {
+    const distinct = new Set(pick.map((e) => e.correctValue.toLowerCase())).size;
+    const gap = Math.abs(exemplarPrompt(pick).length - want);
+    if (!bestScore || distinct > bestScore.distinct || (distinct === bestScore.distinct && gap < bestScore.gap)) {
+      best = pick;
+      bestScore = { distinct, gap };
+    }
+  }
+  // Most-corrected value first, the order frequentCorrections gives B's block.
+  const freq = new Map<string, number>();
+  for (const e of pool) freq.set(e.correctValue, (freq.get(e.correctValue) ?? 0) + 1);
+  return best.sort((a, b) => (freq.get(b.correctValue) ?? 0) - (freq.get(a.correctValue) ?? 0)
+    || a.correctValue.localeCompare(b.correctValue) || a.logId.localeCompare(b.logId));
+}
+
+/** What B against P says, in words and counts. Non-gating; the thresholds are G1's, the verdict words are not. */
+function placeboReading(c: { n: number; wins: number; losses: number; net: number }): string {
+  if (c.n === 0) return 'P did not run on any scored target, so B could not be compared with it.';
+  const tally = `${c.wins} titles where B is right and P wrong, ${c.losses} the other way`;
+  const points = (100 * c.net) / c.n;
+  if (c.net >= GATES.g1MinNet || points >= GATES.g1MinPoints) {
+    return `B is ahead of P (${tally}): more than the block's presence and framing account for.`;
+  }
+  if (c.net <= -GATES.g1MinNet || points <= -GATES.g1MinPoints) {
+    return `P is ahead of B (${tally}): the placebo does at least as well as the owner's own lessons, so whatever B gained over A is not shown to come from them.`;
+  }
+  return `B and P are within one title of each other (${tally}): this measurement cannot tell the owner's lessons from the block's presence and framing `
+    + `(minimum detectable effect one title in ${c.n}).`;
+}
+
+// ── Provenance ────────────────────────────────────────────────────────────────
+
+const SECRET_NAME = /KEY|TOKEN|SECRET|PASS|AUTH|CRED/i;
+const redactUrl = (v: string): string => v.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@\s]*@/i, '$1[redacted]@');
+
+/** The variables of `env` that start with `prefix`, sorted, with anything credential-shaped redacted. */
+function envWithPrefix(env: NodeJS.ProcessEnv, prefix: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of Object.keys(env).sort()) {
+    const v = env[key];
+    if (key.startsWith(prefix) && v !== undefined) out[key] = SECRET_NAME.test(key) ? '[redacted]' : redactUrl(v);
+  }
+  return out;
+}
+
+const quoteArg = (a: string): string => (/^[\w@%+=:,./-]+$/.test(a) ? a : JSON.stringify(a));
+
+/**
+ * The command line that started this run. Vitest runs a test file in a worker whose own
+ * argv is the worker script, so the starter's argv is taken from the parent process when it
+ * can be read (Linux /proc) and names vitest. A string assembled from the harness's own
+ * variables would be a description of what was meant, not a record of what was run.
+ */
+function pickCommand(own: readonly string[], parent: readonly string[] | null): { argv: string[]; command: string; source: string } {
+  const useParent = parent !== null && parent.some((a) => /vitest/i.test(a));
+  const argv = [...(useParent ? parent : own)];
+  return { argv, command: argv.map(quoteArg).join(' '), source: useParent ? 'parent process (/proc cmdline)' : 'this process (process.argv)' };
+}
+
+function readParentArgv(): string[] | null {
+  try {
+    return readFileSync(`/proc/${process.ppid}/cmdline`, 'utf8').split('\0').filter(Boolean);
+  } catch {
+    return null;
+  }
+}
+
+/** Where the gating tier came from, said plainly: a pin is a later choice, not the tier the gates were registered against. */
+function gatingTierNote(a: { resolved: ResolvedModel; pinned: boolean; pinVar: string | null; registeredDefault: string }): string {
+  const { resolved, pinned, pinVar, registeredDefault } = a;
+  const isDefault = resolved.name.toLowerCase() === registeredDefault.toLowerCase();
+  if (resolved.source === 'override') {
+    return `The gating tier ${resolved.name} comes from the owner's Settings override, not from the box default (${registeredDefault}) the gates were registered against.`;
+  }
+  if (pinned) {
+    const by = pinVar ?? 'an OLLAMA_* pin';
+    return isDefault
+      ? `The gating tier ${resolved.name} was set by ${by}; it is also the box default (${registeredDefault}) the gates were registered against.`
+      : `The gating tier ${resolved.name} was set by ${by}, NOT by the box default. The gates were registered against ${registeredDefault}; `
+        + `this artifact is the gates applied to ${resolved.name}, and a run of the default tier is a different artifact.`;
+  }
+  return isDefault
+    ? `The gating tier is the box default, ${resolved.name} (resolved as: ${resolved.source}).`
+    : `The gating tier ${resolved.name} was resolved as '${resolved.source}', not by the box default (${registeredDefault}) the gates were registered against.`;
+}
+
+const git = (args: string[], cwd: string): string | null => {
+  try {
+    return execFileSync('git', args, { cwd, encoding: 'utf8', timeout: 5_000, stdio: ['ignore', 'pipe', 'ignore'] }).replace(/\n+$/, '');
+  } catch {
+    return null;
+  }
+};
+
+const fileSha12 = (rel: string): string | null => {
+  try {
+    return createHash('sha256').update(readFileSync(new URL(rel, import.meta.url))).digest('hex').slice(0, 12);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * What code ran. The commit alone would be misleading in a worktree with edits on top, so
+ * the paths that differ from it and a hash of the sources under test are recorded too.
+ * Best effort: any of it can be null (no git, a source tarball).
+ */
+function harnessProvenance() {
+  const serverDir = fileURLToPath(new URL('..', import.meta.url));
+  const status = git(['status', '--porcelain', '--', 'src', 'test/classification-hint-live.test.ts'], serverDir);
+  return {
+    commit: git(['rev-parse', 'HEAD'], serverDir),
+    differingFromCommit: status === null ? null : status.split('\n').filter(Boolean).slice(0, 40),
+    sha256Prefix: Object.fromEntries([
+      'test/classification-hint-live.test.ts', 'src/routes/tasks.ts', 'src/agents/quickadd.ts', 'src/services/classification-learning.ts',
+    ].map((rel) => [rel, fileSha12(`../${rel}`)])),
   };
 }
 
@@ -633,7 +1033,8 @@ function fixtureProblems(): string[] {
 describe.skipIf(!LIVE)('classification hint · pure helpers', () => {
   const mk = (arm: Arm, title: string, run: number, correct: boolean, over: Partial<CallRecord> = {}): CallRecord => ({
     arm, model: 'm', title, kind: 'target', convention: 'exercise-leisure', expected: 'leisure', run,
-    promptSha: '', hintPresent: false, retrievalIds: [], raw: '{}', pick: correct ? 'leisure' : 'health', correct,
+    promptSha: '', hintPresent: false, retrievalIds: [], raw: '{}', categoriesType: 'array',
+    pick: correct ? 'leisure' : 'health', correct, lenientPick: correct ? 'leisure' : 'health', lenientCorrect: correct,
     validJson: true, allKeys: true, empty: false, error: null, ms: 1, embedMs: null, ...over,
   });
   /** `shape` is the per-run string for one title, e.g. 'FFTTT'. */
@@ -722,6 +1123,10 @@ describe.skipIf(!LIVE)('classification hint · pure helpers', () => {
     expect(one.g1).toMatchObject({ n: 2, net: 1, noiseFlips: 0, verdict: 'IMPROVED', deltaPoints: 50, mdePoints: 50 });
     expect(one.g5).toMatchObject({ baseShare: 0, treatShare: 50, pass: true });
     expect(one.g3.pass).toBe(true);
+    // PASS stays PASS; the note says how little a PASS is worth when only 2 controls could flip.
+    expect(one.power).toMatchObject({ g2FlippableControls: 2, controls: 3, g3BaseKeysPct: 100, g3BaseArrayPct: 100, g3TreatArrayPct: 100 });
+    expect(one.power.notPowered).toHaveLength(1);
+    expect(one.power.notPowered[0]).toMatch(/^NOT POWERED: G2 can only flip 2 of 3 controls/);
 
     const worse = [...recs, ...rows('A', 'c4', 'TTTTT'), ...rows('B', 'c4', 'FFFFF')];
     expect(evaluateTreatment(worse, 'm', 'B', ['s1', 's2'], [...titles, 'c4']).g2.pass).toBe(false); // 2 flips > 1
@@ -769,14 +1174,382 @@ describe.skipIf(!LIVE)('classification hint · pure helpers', () => {
     expect(hintLast(stock, ['', ''])).toBe(stock); // nothing to move
   });
 
-  it('choosable keeps only lessons whose every value the model may still answer with', () => {
+  const lessonOf = (correctValue: string, logId = 'l'): Exemplar => ({ logId, inputText: 't', llmValue: 'x', correctValue });
+
+  it('choosable reads a stored pick as a sequence of whole allowed names, a comma inside a name included', () => {
     const ok = choosable(['Health', 'leisure']);
-    const e = (correctValue: string): Exemplar => ({ logId: 'l', inputText: 't', llmValue: 'x', correctValue });
-    expect(ok(e('health'))).toBe(true);
-    expect(ok(e('leisure, health'))).toBe(true);
-    expect(ok(e('leisure, finance'))).toBe(false);
-    expect(ok(e(''))).toBe(false);
-    expect(ok(e('career'))).toBe(false);
+    expect(ok(lessonOf('health'))).toBe(true);
+    expect(ok(lessonOf('HEALTH'))).toBe(true); // case-insensitive
+    expect(ok(lessonOf('leisure, health'))).toBe(true);
+    expect(ok(lessonOf('health, leisure, health'))).toBe(true); // a sequence, repeats allowed
+    expect(ok(lessonOf('leisure, finance'))).toBe(false);
+    expect(ok(lessonOf('career'))).toBe(false);
+    expect(ok(lessonOf(''))).toBe(false);
+    expect(ok(lessonOf('   '))).toBe(false);
+    // No empty segment, and canonicalValue's separator is exactly ', '.
+    for (const bad of ['health,', ', health', 'health, ', 'health, , leisure', 'health,leisure', 'health;leisure']) {
+      expect(ok(lessonOf(bad)), JSON.stringify(bad)).toBe(false);
+    }
+    // normalizeTagName("Health, Fitness") keeps the comma: the name is `health,-fitness`.
+    const withComma = choosable(['health', 'Health,-Fitness', 'leisure']);
+    expect(withComma(lessonOf('health,-fitness'))).toBe(true);
+    expect(withComma(lessonOf('health,-fitness, leisure'))).toBe(true);
+    expect(withComma(lessonOf('leisure, health,-fitness, health'))).toBe(true);
+    expect(withComma(lessonOf('health,-fit'))).toBe(false); // not a whole name
+    expect(choosable(['health', 'leisure'])(lessonOf('health,-fitness'))).toBe(false); // the name is not allowed
+    // Empty and duplicate allowed names change nothing; a long run is not exponential.
+    expect(choosable(['', 'a', 'A', 'aa'])(lessonOf('a, aa, a'))).toBe(true);
+    const run = 'a, '.repeat(300);
+    expect(choosable(['a', 'aa'])(lessonOf(`${run}a`))).toBe(true);
+    expect(choosable(['a', 'aa'])(lessonOf(`${run}b`))).toBe(false);
+    expect(choosable([])(lessonOf('health'))).toBe(false);
+  });
+
+  it("choosable agrees with the one in routes/tasks.ts, lifted out of that file's source", async () => {
+    const src = readFileSync(new URL('../src/routes/tasks.ts', import.meta.url), 'utf8');
+    const at = src.indexOf('function choosable(');
+    expect(at, 'routes/tasks.ts has no function choosable( any more: update this extraction and the copy above').toBeGreaterThanOrEqual(0);
+    const end = src.indexOf('\n}\n', at);
+    expect(end, 'the end of choosable( was not found').toBeGreaterThan(at);
+    const { default: ts } = await import('typescript'); // heavy, so only this test pays for it
+    const js = ts.transpileModule(src.slice(at, end + 2), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+    const route = runInNewContext(`${js}\n;choosable`) as typeof choosable;
+    expect(typeof route).toBe('function');
+    const lists = [['health', 'leisure'], ['Health', 'Health,-Fitness', 'leisure'], ['a', 'aa'], [''], [], ['finance', 'Finance', 'career']];
+    const values = [
+      'health', 'HEALTH', ' health ', 'leisure, health', 'leisure, finance', '', '   ', 'health,', ', health', 'health, ', 'health, , leisure',
+      'health,leisure', 'health,-fitness', 'health,-fitness, leisure', 'leisure, health,-fitness, health', 'health,-fit',
+      'a, aa, a', 'a, a, aa, aa', 'aa, a, ', 'finance, career', 'career, finance, career', 'Career,  finance',
+    ];
+    for (const list of lists) {
+      for (const value of values) {
+        expect(choosable(list)(lessonOf(value)), `harness copy vs route on ${JSON.stringify(list)} / ${JSON.stringify(value)}`)
+          .toBe(route(list)(lessonOf(value)));
+      }
+    }
+  });
+
+  it('categoriesTypeOf reads the shape production sees', () => {
+    // The first line is qwen2.5:0.5b on all 60 baseline completions of the first live run.
+    expect(categoriesTypeOf('{"direction":"community","categories":"leisure","tags":[]}')).toBe('string');
+    expect(categoriesTypeOf('{"categories":["leisure"]}')).toBe('array');
+    expect(categoriesTypeOf('{"categories":[]}')).toBe('array');
+    expect(categoriesTypeOf('```json\n{"categories":["health"]}\n```')).toBe('array'); // the loose parse production uses
+    expect(categoriesTypeOf('{"direction":"home"}')).toBe('missing');
+    expect(categoriesTypeOf('{}')).toBe('missing');
+    expect(categoriesTypeOf('')).toBe('missing'); // an empty or errored completion has nothing to read
+    expect(categoriesTypeOf('not json at all')).toBe('missing');
+    expect(categoriesTypeOf('["leisure"]')).toBe('missing'); // no object, so no key
+    expect(categoriesTypeOf('null')).toBe('missing');
+    expect(categoriesTypeOf('{"categories":null}')).toBe('other');
+    expect(categoriesTypeOf('{"categories":{"a":1}}')).toBe('other');
+    expect(categoriesTypeOf('{"categories":7}')).toBe('other');
+  });
+
+  it('a bare string is no pick in production, and a lenient pick for the record', () => {
+    expect(constrainToVocabulary('leisure', CATEGORIES, 3)).toEqual([]); // the premise: production drops it
+    expect(constrainToVocabulary(['leisure'], CATEGORIES, 3)).toEqual(['leisure']);
+    expect(lenientPickOf('{"categories":"Leisure"}', CATEGORIES)).toBe('leisure');
+    expect(lenientPickOf('{"categories":"health, leisure"}', CATEGORIES)).toBe('health');
+    expect(lenientPickOf('{"categories":["leisure","health"]}', CATEGORIES)).toBe('leisure');
+    expect(lenientPickOf('{"categories":"hobbies"}', CATEGORIES)).toBeNull();
+    expect(lenientPickOf('{"categories":7}', CATEGORIES)).toBeNull();
+    expect(lenientPickOf('{}', CATEGORIES)).toBeNull();
+    expect(lenientPickOf('garbage', CATEGORIES)).toBeNull();
+  });
+
+  it('shape shares, the unusable-shape label, accuracy among array answers, the lenient score', () => {
+    const str = { categoriesType: 'string' as const, pick: null, correct: false };
+    const calls = [
+      ...rows('A', 't1', 'TTF'), // arrays: 2 right, 1 wrong
+      ...rows('A', 't2', 'FFFFF', { ...str, lenientPick: 'leisure', lenientCorrect: true }), // bare strings the model meant right
+      ...rows('A', 't3', 'F', { categoriesType: 'missing', pick: null, lenientPick: null, lenientCorrect: false }),
+      ...rows('A', 't4', 'F', { categoriesType: 'other', pick: null, lenientPick: null, lenientCorrect: false }),
+    ];
+    expect(shapeStats(calls)).toEqual({ n: 10, array: 3, string: 5, missing: 1, other: 1, arrayPct: 30 });
+    expect(shapeUnusable(shapeStats(calls))).toBe(true);
+    expect(accuracyGivenShape(calls)).toEqual({ n: 10, correct: 2, arrays: 3, correctGivenArray: 2, lenient: 7 });
+    expect(lenientMajority(calls, 'm', 'A', ['t1', 't2', 't3'])).toBe(2); // t1 and t2; t3 is missing
+    expect(armShape(calls, 'm', 'A', ['t1', 't2'], ['t3'])).toMatchObject({
+      shape: { n: 10 }, targets: { n: 8, correct: 2, arrays: 3, lenient: 7 }, controls: { n: 1, correct: 0, arrays: 0, lenient: 0 },
+    });
+    expect(armShape(calls, 'm', 'B', ['t1'], [])).toBeNull(); // the arm never ran
+
+    // The boundary: exactly half is usable, a shade under is not, nothing at all is not a verdict.
+    const halves = (arrays: number, n: number) => Array.from({ length: n }, (_, i) => mk('A', 'x', i, true, { categoriesType: i < arrays ? 'array' : 'string' }));
+    expect(shapeUnusable(shapeStats(halves(5, 10)))).toBe(false);
+    expect(shapeUnusable(shapeStats(halves(49, 100)))).toBe(true);
+    expect(shapeUnusable(shapeStats([]))).toBe(false);
+    expect(stoppedStatus(shapeStats(calls))).toBe('INCONCLUSIVE: UNUSABLE ANSWER SHAPE');
+    expect(stoppedStatus(shapeStats(halves(10, 10)))).toBe('INCONCLUSIVE: NO HEADROOM');
+    const note = unusableShapeNote(shapeStats(calls));
+    expect(note).toContain('30.0%');
+    expect(note).toContain('constrainToVocabulary'); // the printed output says why a bare string is no pick
+    expect(note).toContain('qwen2.5:0.5b');
+  });
+
+  it('the shape reading names an unusable baseline, a shifted share and a placebo that shifted with it', () => {
+    expect(baselineShapeLine(0).join(' ')).toContain('INCONCLUSIVE: UNUSABLE ANSWER SHAPE');
+    expect(baselineShapeLine(49.9)).toHaveLength(1);
+    expect(baselineShapeLine(50)).toEqual([]);
+    expect(baselineShapeLine(NaN)).toEqual([]);
+    expect(shapeShiftLine(100, 'B', 100, null)).toEqual([]);
+    expect(shapeShiftLine(80, 'B', 99.9, null)).toEqual([]); // under the shift threshold
+    const moved = shapeShiftLine(20, 'B', 75, null);
+    expect(moved.join(' ')).toContain('20.0% to 75.0%');
+    expect(moved.join(' ')).not.toContain('P moved');
+    expect(shapeShiftLine(60, 'B', 90, 88).join(' ')).toContain('P moved it the same way');
+    expect(shapeShiftLine(60, 'B', 90, 61).join(' ')).not.toContain('P moved');
+    expect(shapeShiftLine(60, 'B', 90, 30).join(' ')).not.toContain('P moved'); // the other way
+    expect(shapeShiftLine(60, 'P', 90, 88).join(' ')).not.toContain('the same way'); // P does not compare itself with itself
+    expect(shapeShiftLine(NaN, 'B', NaN, null)).toEqual([]);
+  });
+
+  it('power notes say how little a PASS is worth, and leave PASS and FAIL as registered', () => {
+    expect(powerNotes(6, 12, 100)).toEqual([]);
+    expect(powerNotes(5, 12, 100)).toHaveLength(1);
+    expect(powerNotes(5, 12, 100)[0]).toMatch(/^NOT POWERED: G2 can only flip 5 of 12 controls/);
+    expect(powerNotes(12, 12, 49.9)[0]).toMatch(/^NOT POWERED: G3's key clause/);
+    expect(powerNotes(12, 12, 50)).toEqual([]);
+    expect(powerNotes(12, 12, NaN)).toHaveLength(1); // no baseline calls is not a powered gate
+    expect(powerNotes(0, 12, 0)).toHaveLength(2);
+
+    // A baseline that already omits keys (qwen2.5:0.5b: 3 of 9): G3 passes, as registered, and says it could not fail.
+    const calls = (arm: Arm, n = 20, over: Partial<CallRecord> = {}) => Array.from({ length: n }, (_, i) => mk(arm, 'x', i, true, over));
+    const g3 = evaluateTreatment([...calls('A', 20, { allKeys: false }), ...calls('B', 20, { allKeys: false })], 'm', 'B', [], []);
+    expect(g3.g3.pass).toBe(true);
+    expect(g3.power.g3BaseKeysPct).toBe(0);
+    expect(g3.power.notPowered.join(' ')).toContain("G3's key clause");
+  });
+
+  // The pool the placebo draws from: the owner's six training lessons per convention, as calibrate would index them.
+  const pool = CONVENTIONS.flatMap((c) => c.train.map((t, i): Exemplar => ({
+    logId: `${c.id}:${i}`, inputText: t, llmValue: `${c.modelDefault}, ${c.owner}`, correctValue: c.owner,
+  })));
+  /** B's block: the newest lesson of each value, which is what the frequency path shows when each value is as common as the next. */
+  const bBlock = CONVENTIONS.map((c) => pool.filter((e) => e.correctValue === c.owner).at(-1)!);
+
+  it("the placebo has B's lesson count, never B's lessons, never the title's own value, and B's length as closely as the pool allows", () => {
+    const own = 'leisure';
+    const p = placeboLessons(pool, own, bBlock, 'Leg day at the gym');
+    expect(p).toHaveLength(bBlock.length);
+    expect(p.some((e) => e.correctValue === own)).toBe(false);
+    expect(p.some((e) => bBlock.some((r) => r.logId === e.logId))).toBe(false);
+    expect(new Set(p.map((e) => e.correctValue))).toEqual(new Set(['career', 'growth'])); // one value left per other convention, both shown
+    expect(placeboLessons(pool, own, bBlock, 'Leg day at the gym')).toEqual(p); // a run repeats
+    const gap = Math.abs(exemplarPrompt(p).length - exemplarPrompt(bBlock).length);
+    // Better than the naive pick (the first candidates in hash order, no length search).
+    const naive = pool.filter((e) => e.correctValue !== own && !bBlock.includes(e)).slice(0, 3);
+    expect(gap).toBeLessThanOrEqual(Math.abs(exemplarPrompt(naive).length - exemplarPrompt(bBlock).length));
+    expect(gap).toBeLessThanOrEqual(6);
+    // It is a real block in B's format.
+    expect(occurrences(exemplarPrompt(p), HINT_MARKER)).toBe(1);
+    // Different titles see different lessons (the draw is keyed on the title).
+    const draws = new Set(TARGET_ITEMS.map((t) => placeboLessons(pool, ownValueOf(t), bBlock, t.title).map((e) => e.logId).join()));
+    expect(draws.size).toBeGreaterThan(1);
+  });
+
+  it('the placebo of a control avoids only the convention it sits beside, and takes every value when it sits beside none', () => {
+    const dentist = ITEMS.find((i) => i.title === 'Dentist appointment')!;
+    const flu = ITEMS.find((i) => i.title === 'Flu shot at the pharmacy')!;
+    expect(ownValueOf(dentist)).toBe('leisure'); // beside exercise-leisure
+    expect(ownValueOf(flu)).toBeNull();
+    expect(ownValueOf(TARGET_ITEMS[0])).toBe(TARGET_ITEMS[0].expected);
+    expect(placeboLessons(pool, ownValueOf(dentist), bBlock, dentist.title).some((e) => e.correctValue === 'leisure')).toBe(false);
+    const free = placeboLessons(pool, null, bBlock, flu.title);
+    expect(free).toHaveLength(3);
+    expect(new Set(free.map((e) => e.correctValue)).size).toBe(3); // one lesson per value, like B's block
+  });
+
+  it('the placebo copes with a short pool, no lessons to match, and a stored pick that names the own value among others', () => {
+    expect(placeboLessons(pool, 'leisure', [], 't')).toEqual([]);
+    const few = pool.filter((e) => e.correctValue !== 'career' && !bBlock.includes(e)).slice(0, 2); // only leisure and growth rows left
+    expect(placeboLessons(few, 'leisure', bBlock, 't').every((e) => e.correctValue === 'growth')).toBe(true);
+    expect(placeboLessons([], 'leisure', bBlock, 't')).toEqual([]);
+    const mixed: Exemplar[] = [{ logId: 'm1', inputText: 'x', llmValue: 'y', correctValue: 'health, leisure' }, ...pool.filter((e) => e.correctValue === 'career')];
+    expect(placeboLessons(mixed, 'leisure', bBlock.slice(0, 2), 't').some((e) => e.logId === 'm1')).toBe(false);
+    expect(namesValue('Health, Leisure', 'leisure')).toBe(true);
+    expect(namesValue('leisure-ish', 'leisure')).toBe(false);
+    expect(namesValue('health,-fitness', 'health')).toBe(false);
+  });
+
+  it("the placebo's pool is the owner's own index, through the same filter the route applies", () => {
+    resetDb();
+    try {
+      const insert = sqlite.prepare(
+        `INSERT INTO classification_exemplars (owner_id, field, log_id, input_text, llm_value, correct_value, embedding, computed_date)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, '2026-11-02')`,
+      );
+      insert.run(OWNER, 'category', 'l1', 'Gym session', 'health', 'leisure');
+      insert.run(OWNER, 'category', 'l2', 'Invoice the client', 'finance', 'career, finance');
+      insert.run(OWNER, 'category', 'l3', 'Old habit', 'health', 'a-category-since-deleted'); // not answerable now: the route drops it too
+      insert.run(OWNER, 'motivation', 'l4', 'Help mum', 'me', 'them'); // another field
+      createOwner(SECOND_OWNER_ID);
+      insert.run(SECOND_OWNER_ID, 'category', 'l5', 'Someone else', 'health', 'leisure'); // another owner
+      const got = indexExemplars(OWNER, { categories: CATEGORIES } as Vocab);
+      expect(got.map((e) => e.logId)).toEqual(['l1', 'l2']);
+      expect(got[1]).toEqual({ logId: 'l2', inputText: 'Invoice the client', llmValue: 'finance', correctValue: 'career, finance' });
+    } finally {
+      resetDb();
+    }
+  });
+
+  it('the placebo reading is a count and a sentence, never a registered verdict word', () => {
+    expect(placeboReading({ n: 0, wins: 0, losses: 0, net: 0 })).toMatch(/did not run/);
+    expect(placeboReading({ n: 12, wins: 3, losses: 1, net: 2 })).toMatch(/^B is ahead of P \(3 titles where B is right and P wrong, 1 the other way\)/);
+    expect(placeboReading({ n: 4, wins: 1, losses: 0, net: 1 })).toMatch(/^B is ahead of P/); // 25 points
+    expect(placeboReading({ n: 12, wins: 1, losses: 0, net: 1 })).toMatch(/within one title of each other/);
+    expect(placeboReading({ n: 12, wins: 0, losses: 3, net: -3 })).toMatch(/^P is ahead of B/);
+    for (const c of [{ n: 12, wins: 3, losses: 1, net: 2 }, { n: 12, wins: 1, losses: 0, net: 1 }, { n: 12, wins: 0, losses: 3, net: -3 }]) {
+      expect(placeboReading(c)).not.toMatch(/IMPROVED|HARMED|NO MEASURABLE CHANGE|INCONCLUSIVE/);
+    }
+  });
+
+  it('the placebo report compares P with A and B with P over the titles P ran on only', () => {
+    const before = records.length;
+    try {
+      const add = (arm: Arm, title: string, shape: string) => records.push(...rows(arm, title, shape, { model: 'pm' }));
+      add('A', 'win', 'FFFFF'); add('B', 'win', 'TTTTT'); add('P', 'win', 'FFFFF'); // B right where P wrong
+      add('A', 'same', 'FFFFF'); add('B', 'same', 'TTTTT'); add('P', 'same', 'TTTTT'); // the block alone does it
+      add('A', 'skipped', 'FFFFF'); add('B', 'skipped', 'TTTTT'); // P had no lessons: not counted against B
+      const metas: PlaceboMeta[] = [
+        { title: 'win', own: 'leisure', bLessons: 3, pLessons: 3, bChars: 200, pChars: 205, values: [], logIds: [] },
+        { title: 'same', own: 'leisure', bLessons: 3, pLessons: 2, bChars: 200, pChars: 190, values: [], logIds: [] },
+        { title: 'skipped', own: 'leisure', bLessons: 3, pLessons: 0, bChars: 200, pChars: 0, values: [], logIds: [] },
+      ];
+      const r = placeboReport('pm', metas, ['win', 'same', 'skipped'], []);
+      expect(r.ran).toBe(true);
+      expect(r.targets.bVsP).toMatchObject({ n: 2, baseCorrect: 1, treatCorrect: 2, wins: 1, losses: 0 });
+      expect(r.targets.vsA).toMatchObject({ n: 2, baseCorrect: 0, treatCorrect: 1 });
+      expect(r.short).toEqual(['same', 'skipped']); // 'same' has 2 lessons against B's 3
+      expect(r.lengthDelta).toEqual({ meanAbs: 7.5, maxAbs: 10 });
+      expect(r.titles.map((m) => m.title)).toEqual(['win', 'same']);
+      expect(placeboReport('no such model', [], [], []).ran).toBe(false);
+    } finally {
+      records.length = before;
+    }
+  });
+
+  it('a baseline of bare strings reads as an unusable shape, not as no headroom, in every place the report says so', () => {
+    const before = records.length;
+    try {
+      const M = 'shape-model';
+      const targets = ['t1', 't2', 't3', 't4'];
+      const controls = ['c1', 'c2', 'c3', 'c4'];
+      const str = { categoriesType: 'string' as const, pick: null, correct: false, lenientPick: 'leisure', lenientCorrect: true };
+      const arr = { categoriesType: 'array' as const };
+      const put = (arm: Arm, titles: readonly string[], shape: string, over: Partial<CallRecord> = {}) => {
+        for (const t of titles) records.push(...rows(arm, t, shape, { model: M, kind: t.startsWith('c') ? 'control' : 'target', ...over }));
+      };
+      // qwen2.5:0.5b-like baseline: every answer a bare string. Hinted arms answer arrays and get some right.
+      put('A0', targets, 'FFFFF', str);
+      put('A', targets, 'FFFFF', str); put('A2', targets, 'FFFFF', str);
+      put('A', controls.slice(0, 2), 'TTTTT', arr); put('A', controls.slice(2), 'FFFFF', str);
+      put('B', targets, 'TTTTT', arr); put('B', controls, 'TTTTT', arr);
+      put('P', targets, 'TTTTT', arr); put('P', controls, 'TTTTT', arr);
+      const a0 = shapeStats(armCalls(records, M, 'A0'));
+      expect(a0).toMatchObject({ n: 20, array: 0, string: 20, arrayPct: 0 });
+      expect(stoppedStatus(a0)).toBe('INCONCLUSIVE: UNUSABLE ANSWER SHAPE');
+      expect(lenientMajority(records, M, 'A0', targets)).toBe(4); // what the model meant: 4 of 4, not 0
+
+      const b = evaluateTreatment(records, M, 'B', targets, controls);
+      const report = {
+        model: M, gating: true, status: 'ran', note: '', baseline: [],
+        baselineShape: { a0, unusable: shapeUnusable(a0), strictTargets: 0, lenientTargets: 4 },
+        shapes: Object.fromEntries((['A0', 'A', 'A2', 'B', 'P'] as Arm[]).map((arm) => [arm, armShape(records, M, arm, targets, controls)!])),
+        baselineKeys: keyCoverage(armCalls(records, M, 'A'), WIDE_KEYS),
+        placebo: placeboReport(M, targets.concat(controls).map((title) => ({ title, own: null, bLessons: 3, pLessons: 3, bChars: 300, pChars: 296, values: [], logIds: [] })), targets, controls),
+        capture: null, index: null, hintChars: null, retrieval: {}, evaluations: [b], summary: [], flips: [], narrow: null,
+        latency: null, residency: null, g4: { checked: 1, bad: 0 }, reading: [],
+      } as ModelReport;
+
+      const shape = renderShape(report).join('\n');
+      expect(shape).toContain('constrainToVocabulary');
+      expect(shape).toMatch(/^P +40 +100\.0 /m);
+      expect(shape).toMatch(/^A0 +20 +0\.0 +20 /m);
+      const placeboText = renderPlacebo(report).join('\n');
+      expect(placeboText).toContain('Placebo P (diagnostic, not a gate)');
+      expect(placeboText).toContain('within one title of each other'); // B and P both right: the block alone does it
+      const evalText = renderEval(b).join('\n');
+      expect(evalText).toContain('G2 can only flip 2 controls'); // only c1 and c2 were right at baseline
+      expect(evalText).toContain('NOT POWERED: G2');
+      expect(evalText).toContain('G3 baseline: every requested key');
+      const reading = readOff(report).join('\n');
+      expect(reading).toContain('INCONCLUSIVE: UNUSABLE ANSWER SHAPE');
+      expect(reading).toContain('P moved it the same way');
+      const verdict = verdictLine(report);
+      expect(verdict).toContain('INCONCLUSIVE: UNUSABLE ANSWER SHAPE (baseline A0 array 0.0%)');
+      expect(verdict).toContain('NOT POWERED: G2');
+      expect(verdict).toContain('B vs P +0 titles');
+      // The registered verdicts are still the registered ones: B beats A by 4 titles, whatever the shape.
+      expect(b.g1.verdict).toBe('IMPROVED');
+
+      // The whole printout renders from such a report, and carries the new blocks.
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      let printed = '';
+      try {
+        report.reading = readOff(report);
+        printReport(report);
+        printed = log.mock.calls.map((c) => String(c[0])).join('\n');
+      } finally {
+        log.mockRestore();
+      }
+      expect(printed).toContain('Answer shape, the JSON type of "categories"');
+      expect(printed).toContain('Placebo P (diagnostic, not a gate)');
+      expect(printed).toContain('G2 can only flip 2 controls');
+      expect(printed).toContain('NOT POWERED: G2');
+      expect(printed).toContain('Reading the pre-registered rule:');
+    } finally {
+      records.length = before;
+    }
+  });
+
+  it('provenance: only OLLAMA_* is read, credentials are redacted, and the command is the starter argv', () => {
+    const env = {
+      OLLAMA_FAST: 'gemma3n:e4b', OLLAMA_URL: 'http://user:pw@host:11434', OLLAMA_API_KEY: 'sekret', OLLAMA_MAX_LOADED_MODELS: '2',
+      PATH: '/bin', HOME: '/home/x', LIVE_HINT: '1', LIVE_HINT_RUNS: '5',
+    };
+    expect(envWithPrefix(env, 'OLLAMA_')).toEqual({
+      OLLAMA_API_KEY: '[redacted]', OLLAMA_FAST: 'gemma3n:e4b', OLLAMA_MAX_LOADED_MODELS: '2', OLLAMA_URL: 'http://[redacted]@host:11434',
+    });
+    expect(Object.keys(envWithPrefix(env, 'LIVE_HINT'))).toEqual(['LIVE_HINT', 'LIVE_HINT_RUNS']);
+    expect(redactUrl('http://127.0.0.1:11434')).toBe('http://127.0.0.1:11434');
+    expect(redactUrl('https://tok@example.com/x')).toBe('https://[redacted]@example.com/x');
+
+    const worker = ['/usr/bin/node', '/x/node_modules/vitest/dist/workers/forks.js'];
+    const parent = ['node', './node_modules/.bin/../vitest/vitest.mjs', 'run', 'test/a.test.ts', '-t', 'pure helpers'];
+    expect(pickCommand(worker, parent)).toMatchObject({ source: 'parent process (/proc cmdline)', command: 'node ./node_modules/.bin/../vitest/vitest.mjs run test/a.test.ts -t "pure helpers"' });
+    expect(pickCommand(worker, null).source).toBe('this process (process.argv)');
+    expect(pickCommand(worker, ['bash', '-c', 'x']).argv).toEqual(worker); // a parent that is not vitest is not the starter
+  });
+
+  it('provenance: the gating tier note says when a pin, not the box default, set it', () => {
+    const base = { registeredDefault: 'qwen2.5:0.5b' };
+    const pinned = gatingTierNote({ ...base, resolved: { name: 'gemma3n:e4b', source: 'pin' }, pinned: true, pinVar: 'OLLAMA_FAST' });
+    expect(pinned).toContain('set by OLLAMA_FAST');
+    expect(pinned).toContain('NOT by the box default');
+    expect(pinned).toContain('qwen2.5:0.5b');
+    expect(gatingTierNote({ ...base, resolved: { name: 'qwen2.5:0.5b', source: 'pin' }, pinned: true, pinVar: 'OLLAMA_SMALL' })).toContain('also the box default');
+    expect(gatingTierNote({ ...base, resolved: { name: 'qwen2.5:0.5b', source: 'default' }, pinned: false, pinVar: null })).toContain('is the box default');
+    expect(gatingTierNote({ ...base, resolved: { name: 'gemma3n:e4b', source: 'auto' }, pinned: false, pinVar: null })).toContain("'auto'");
+    expect(gatingTierNote({ ...base, resolved: { name: 'gemma3:1b', source: 'override' }, pinned: false, pinVar: null })).toContain('Settings override');
+    expect(fastPinVar(false, { OLLAMA_FAST: 'x' })).toBeNull();
+    expect(fastPinVar(true, { OLLAMA_FAST: 'x' })).toBe('OLLAMA_FAST');
+    expect(fastPinVar(true, { OLLAMA_SMALL: 'x' })).toBe('OLLAMA_SMALL');
+  });
+
+  it('provenance: the harness reads its own commit, the paths that differ from it and a hash of the sources, best effort', () => {
+    const h = harnessProvenance();
+    expect(h.commit === null || /^[0-9a-f]{40}$/.test(h.commit)).toBe(true);
+    expect(h.differingFromCommit === null || Array.isArray(h.differingFromCommit)).toBe(true);
+    expect(h.sha256Prefix['test/classification-hint-live.test.ts']).toMatch(/^[0-9a-f]{12}$/);
+    expect(h.sha256Prefix['src/routes/tasks.ts']).toMatch(/^[0-9a-f]{12}$/);
+  });
+
+  it('key coverage counts the share of completions carrying each key', () => {
+    const c = (raw: string) => mk('A', 'x', 0, true, { raw });
+    expect(keyCoverage([c('{"direction":"home","categories":"leisure"}'), c('{"direction":"work"}'), c('oops'), c('{"direction":"home","tags":[]}')], ['direction', 'categories', 'tags']))
+      .toEqual({ direction: 75, categories: 25, tags: 25 });
   });
 
   it('the fixture is well formed against the real parser', () => {
@@ -784,6 +1557,12 @@ describe.skipIf(!LIVE)('classification hint · pure helpers', () => {
     expect(TRAIN_ITEMS).toHaveLength(18);
     expect(TARGET_ITEMS).toHaveLength(12);
     expect(CONTROL_ITEMS).toHaveLength(12);
+  });
+
+  it('the fixture has exactly RETRIEVE_K distinct owner values, as the header says it does', () => {
+    // WHAT THIS DOES NOT SHOW rests on this: with as many owner values as the hint carries, the frequency
+    // hint can be a complete convention table. If either number moves, the sentence there is stale.
+    expect(new Set(CONVENTIONS.map((c) => c.owner)).size).toBe(RETRIEVE_K);
   });
 });
 
@@ -801,6 +1580,8 @@ const violations: string[] = [];
 const reports: ModelReport[] = [];
 const startedAt = new Date().toISOString();
 let ollamaVersion = '';
+/** What this run was and ran on; filled in beforeAll, written into every artifact flush. */
+let provenance: Record<string, unknown> = {};
 let haveEmbedder = false;
 const caps = new Map<string, string[]>();
 
@@ -820,6 +1601,8 @@ interface CaptureStats {
   firstMatch: number;
   /** The claim differed from the saved set: a row born closed, a correction. */
   corrections: number;
+  /** The JSON type of "categories" in each training parse's raw completion (the route's own call). */
+  shapes: Record<CategoriesType, number>;
 }
 interface Stat { p50: number; p95: number; max: number }
 interface LatencyReport {
@@ -853,12 +1636,46 @@ interface ResidencyReport {
     steps?: { title: string; embedMs: number; generateMs: number; resident: string[] }[];
   };
 }
+/** Arm P's lessons for one title, against B's block for the same title. */
+interface PlaceboMeta {
+  title: string;
+  /** The value the lessons must not carry. */
+  own: string | null;
+  bLessons: number;
+  pLessons: number;
+  bChars: number;
+  pChars: number;
+  values: string[];
+  logIds: string[];
+}
+type Comparison = ReturnType<typeof compareArms>;
+interface PlaceboReport {
+  ran: boolean;
+  why?: string;
+  /** Titles P ran on. */
+  titles: PlaceboMeta[];
+  /** Titles where P could not match B's lesson count (too few lessons about other values), or had none to show. */
+  short: string[];
+  lengthDelta: { meanAbs: number; maxAbs: number };
+  shape: ShapeStats;
+  /** P against A: the format effect on its own. B against P: base = P, so a win is a title where B is right and P wrong. */
+  targets: { vsA: Comparison; bVsP: Comparison };
+  controls: { vsA: Comparison; bVsP: Comparison };
+  reading: string;
+}
 interface ModelReport {
   model: string;
   gating: boolean;
-  status: 'ran' | 'INCONCLUSIVE: NO HEADROOM';
+  status: 'ran' | StoppedStatus;
   note: string;
   baseline: BaselineRow[];
+  /** The JSON type of "categories" over all the A0 completions, and whether it is mostly not an array. */
+  baselineShape: { a0: ShapeStats; unusable: boolean; lenientTargets: number; strictTargets: number } | null;
+  /** Per arm: answer shape and accuracy among array answers, on the scored targets and on the controls. */
+  shapes: Record<string, ArmShape>;
+  /** Share of A's completions carrying each requested key. */
+  baselineKeys: Record<string, number> | null;
+  placebo: PlaceboReport | null;
   capture: CaptureStats | null;
   index: { corrections: number; indexed: number; heldOut: number; byValue: Record<string, number>; withVectors: number } | null;
   hintChars: { category: number; motivation: number } | null;
@@ -984,13 +1801,15 @@ function toRecord(
   } catch { /* not strict JSON */ }
   const keys: readonly string[] = opts.narrow ? NARROW_KEYS : WIDE_KEYS;
   const pick = opts.pick !== undefined ? opts.pick : pickFromRaw(raw, vocab);
+  const lenientPick = lenientPickOf(raw, vocab.categories);
   const sha = sha12(prompt);
   if (prompt) distinctPrompts.set(sha, prompt);
   const r: CallRecord = {
     arm, model, title: item.title, kind: item.kind === 'control' ? 'control' : 'target',
     convention: item.convention, expected: item.expected, run,
     promptSha: sha, hintPresent: occurrences(prompt, HINT_MARKER) > 0, retrievalIds: opts.retrievalIds ?? [],
-    raw, pick, correct: pick !== null && pick.toLowerCase() === item.expected.toLowerCase(),
+    raw, categoriesType: categoriesTypeOf(raw), pick, correct: pick !== null && pick.toLowerCase() === item.expected.toLowerCase(),
+    lenientPick, lenientCorrect: lenientPick !== null && lenientPick.toLowerCase() === item.expected.toLowerCase(),
     validJson: strict !== null, allKeys: strict !== null && keys.every((k) => k in strict!),
     empty: raw.trim() === '', error: opts.error ?? seam?.error ?? null, ms: seam?.ms ?? NaN,
     embedMs: opts.embedMs ?? null,
@@ -1045,6 +1864,20 @@ async function retrieveFor(mode: 'frequency' | 'similarity', title: string, voca
   return hit;
 }
 const idsOf = (ex: readonly Exemplar[]): string[] => ex.map((e) => e.logId);
+
+/**
+ * Every lesson the owner's category index holds that the production filter would let through:
+ * the pool arm P draws from. A plain read of the table calibrate wrote, as the harness already
+ * does for the vector counts; the retrieval functions only ever return the top k of it.
+ */
+function indexExemplars(owner: string, vocab: Vocab): Exemplar[] {
+  const rows = sqlite.prepare(
+    `SELECT log_id, input_text, llm_value, correct_value FROM classification_exemplars WHERE owner_id = ? AND field = 'category' ORDER BY log_id`,
+  ).all(owner) as { log_id: string; input_text: string; llm_value: string; correct_value: string }[];
+  return rows
+    .map((r) => ({ logId: r.log_id, inputText: r.input_text, llmValue: r.llm_value, correctValue: r.correct_value }))
+    .filter(choosable(vocab.categories));
+}
 
 const stockPrompts = new Map<string, string>();
 
@@ -1168,6 +2001,27 @@ async function viaSimilarity(ctx: Ctx, item: FixtureItem, run: number): Promise<
   return record;
 }
 
+/**
+ * P: enrichQuick with B's block swapped for the placebo block, in the same place. Called as S is
+ * (straight at enrichQuick), and B's route prompt is asserted equal to enrichQuick's with the
+ * same hints, so the two differ in the lessons only.
+ */
+async function viaPlacebo(ctx: Ctx, item: FixtureItem, run: number, hints: Hints, retrievalIds: string[]): Promise<CallRecord> {
+  const { record, prompt } = await viaEnrich('P', ctx, item, run, hints, { retrievalIds });
+  if (prompt) {
+    checkPrompt(ctx.model, 'P', item, prompt, hints, 'adjacent');
+    // Added, not rewritten: take the block out and it is the stock prompt, as for B.
+    try {
+      if (withoutHints(prompt, [hints.motivation, hints.category]) !== stockPrompts.get(item.title)) {
+        violate(ctx.model, `P "${item.title}": the placebo prompt differs from the stock prompt by more than the block`);
+      }
+    } catch (err) {
+      violate(ctx.model, `P "${item.title}": ${(err as Error).message}`);
+    }
+  }
+  return record;
+}
+
 /** N0 / N: the narrow one-field question, exactly as ollamaScorer sends it. */
 async function viaNarrow(
   arm: 'N0' | 'N', ctx: Ctx, item: FixtureItem, run: number, hint: string, score: NonNullable<Awaited<ReturnType<typeof ollamaScorer>>>,
@@ -1180,6 +2034,47 @@ async function viaNarrow(
   return record;
 }
 
+/** Share of the calls (in percent) whose raw completion carries each requested key. */
+function keyCoverage(calls: readonly CallRecord[], keys: readonly string[]): Record<string, number> {
+  const objects = calls.map((c): Record<string, unknown> => {
+    try {
+      const o = parseJsonLoose<unknown>(c.raw);
+      return o && typeof o === 'object' && !Array.isArray(o) ? (o as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
+  });
+  return Object.fromEntries(keys.map((k) => [k, Number(fmt1(pct(objects.filter((o) => k in o).length, calls.length)))]));
+}
+
+/** Arm P against A (the format effect alone) and against B (the lessons' content), on the titles P ran on. */
+function placeboReport(
+  model: string, metas: readonly PlaceboMeta[], scoredTitles: readonly string[], controlTitles: readonly string[],
+): PlaceboReport {
+  const ran = new Set(armCalls(records, model, 'P').map((c) => c.title));
+  const used = metas.filter((m) => ran.has(m.title));
+  const deltas = used.map((m) => Math.abs(m.pChars - m.bChars));
+  const against = (titles: readonly string[]) => ({
+    vsA: compareArms(records, model, 'A', 'P', titles.filter((t) => ran.has(t))),
+    bVsP: compareArms(records, model, 'P', 'B', titles.filter((t) => ran.has(t))),
+  });
+  const targets = against(scoredTitles);
+  return {
+    ran: ran.size > 0,
+    ...(ran.size === 0 ? { why: 'no title had lessons about other values to build a placebo from' } : {}),
+    titles: used,
+    short: metas.filter((m) => m.pLessons === 0 || m.pLessons < m.bLessons).map((m) => m.title),
+    lengthDelta: {
+      meanAbs: Number(fmt1(deltas.reduce((a, b) => a + b, 0) / (deltas.length || NaN))),
+      maxAbs: deltas.length ? Math.max(...deltas) : NaN,
+    },
+    shape: shapeStats(armCalls(records, model, 'P')),
+    targets,
+    controls: against(controlTitles),
+    reading: placeboReading(targets.bVsP),
+  };
+}
+
 const armLine = (model: string, arm: Arm, scored: readonly string[], controls: readonly string[]): Record<string, unknown> | null => {
   const calls = armCalls(records, model, arm);
   if (calls.length === 0) return null;
@@ -1188,7 +2083,8 @@ const armLine = (model: string, arm: Arm, scored: readonly string[], controls: r
   const ms = calls.map((c) => c.ms).filter(Number.isFinite);
   return {
     arm, calls: s.n, targets: `${score(scored)}/${scored.length}`, controls: `${score(controls)}/${controls.length}`,
-    validJsonPct: Number(fmt1(s.validJsonPct)), allKeysPct: Number(fmt1(s.allKeysPct)), empty: s.empty, errored: s.errored,
+    validJsonPct: Number(fmt1(s.validJsonPct)), allKeysPct: Number(fmt1(s.allKeysPct)),
+    categoriesArrayPct: Number(fmt1(shapeStats(calls).arrayPct)), empty: s.empty, errored: s.errored,
     meanMs: Number(fmt0(ms.reduce((a, b) => a + b, 0) / (ms.length || NaN))), p95Ms: Number(fmt0(percentile(ms, 95))),
   };
 };
@@ -1210,11 +2106,71 @@ function renderEval(e: TreatmentEval): string[] {
   lines.push(
     `    G2 over-application ${g2.pass ? 'PASS' : 'FAIL'}: ${g2.flipped.length} of ${g2.baseCorrect} baseline-correct controls went wrong `
       + `(allowed ${GATES.g2MaxFlips})${g2.flipped.length ? `: ${g2.flipped.join('; ')}` : ''}${g2.healed.length ? ` | controls that went right: ${g2.healed.join('; ')}` : ''}`,
+    `      G2 can only flip ${e.power.g2FlippableControls} controls (the baseline-correct ones, ${e.power.g2FlippableControls} of ${e.power.controls}; the rest are wrong already)`,
     `    G3 schema safety    ${g3.pass ? 'PASS' : 'FAIL'}: valid JSON ${fmt1(g3.base.validJsonPct)}% -> ${fmt1(g3.treat.validJsonPct)}%, `
       + `all keys ${fmt1(g3.base.allKeysPct)}% -> ${fmt1(g3.treat.allKeysPct)}%, empty ${g3.base.empty} -> ${g3.treat.empty}, errored ${g3.base.errored} -> ${g3.treat.errored}`,
+    `      G3 baseline: every requested key on ${fmt1(e.power.g3BaseKeysPct)}% of calls, "categories" an array on ${fmt1(e.power.g3BaseArrayPct)}% of calls `
+      + `(${e.arm}: ${fmt1(e.power.g3TreatArrayPct)}%); the registered clause reads key presence only, not its type`,
     `    G5 loop             ${g5.pass ? 'PASS' : 'FAIL'}: the owner's value ${fmt1(g5.baseShare)}% -> ${fmt1(g5.treatShare)}% of scored targets`,
+    ...e.power.notPowered.map((note) => `    ${note}`),
   );
   return lines;
+}
+
+function renderShape(report: ModelReport): string[] {
+  const lines = [
+    `Answer shape, the JSON type of "categories" in each completion. ${SHAPE_WHY.charAt(0).toUpperCase()}${SHAPE_WHY.slice(1)}.`,
+    'arm  calls  array%  string  missing  other   correct (production)         given an array answer       read leniently',
+  ];
+  const acc = (a: ShapeAccuracy): string => (a.n === 0 ? '-' : `${a.correct}/${a.n}`);
+  const given = (a: ShapeAccuracy): string => (a.n === 0 ? '-' : `${a.correctGivenArray}/${a.arrays}`);
+  const lenient = (a: ShapeAccuracy): string => (a.n === 0 ? '-' : `${a.lenient}/${a.n}`);
+  for (const arm of ARMS_REPORTED) {
+    const x = report.shapes[arm];
+    if (!x) continue;
+    lines.push(`${arm.padEnd(4)} ${String(x.shape.n).padEnd(6)} ${fmt1(x.shape.arrayPct).padEnd(7)} ${String(x.shape.string).padEnd(7)} ${String(x.shape.missing).padEnd(8)} ${String(x.shape.other).padEnd(7)} `
+      + `T ${acc(x.targets).padEnd(7)} C ${acc(x.controls).padEnd(7)}   T ${given(x.targets).padEnd(7)} C ${given(x.controls).padEnd(7)}   T ${lenient(x.targets).padEnd(7)} C ${lenient(x.controls)}`);
+  }
+  lines.push('  (call counts, not titles; T = scored targets, A0 = all 12 targets, C = controls)');
+  if (report.baselineKeys) {
+    const gaps = Object.entries(report.baselineKeys).filter(([, v]) => !(v >= DIAGNOSTICS.minBaselineKeyCoveragePct));
+    lines.push(`  keys A's completions carry (percent of calls): ${Object.entries(report.baselineKeys).map(([k, v]) => `${k} ${v}`).join(', ')}`
+      + (gaps.length ? `; present on under ${DIAGNOSTICS.minBaselineKeyCoveragePct}%: ${gaps.map(([k]) => k).join(', ')}` : ''));
+  }
+  return lines;
+}
+
+function renderPlacebo(report: ModelReport): string[] {
+  const p = report.placebo;
+  if (!p) return [];
+  if (!p.ran) return [`Placebo P (diagnostic, not a gate): not run (${p.why ?? 'no reason recorded'}).`];
+  const side = (label: string, c: PlaceboReport['targets']): string =>
+    `  ${label}: A ${c.vsA.baseCorrect} -> P ${c.vsA.treatCorrect} of ${c.vsA.n} titles (the block alone); `
+    + `P ${c.bVsP.baseCorrect} -> B ${c.bVsP.treatCorrect} (${c.bVsP.wins} titles B right where P wrong, ${c.bVsP.losses} the other way)`;
+  const a = report.shapes.A?.shape.arrayPct ?? NaN;
+  const lines = [
+    "Placebo P (diagnostic, not a gate): B's block with the owner's lessons swapped for real lessons about other values, same place, "
+      + `same lesson count, length within ${p.lengthDelta.maxAbs} chars of B's (mean ${p.lengthDelta.meanAbs})${p.short.length ? `; ${p.short.length} titles short of B's count` : ''}`,
+    side('scored targets', p.targets),
+    side('controls', p.controls),
+  ];
+  if (p.targets.bVsP.winTitles.length) lines.push(`    B right, P wrong: ${p.targets.bVsP.winTitles.join('; ')}`);
+  if (p.targets.bVsP.lossTitles.length) lines.push(`    P right, B wrong: ${p.targets.bVsP.lossTitles.join('; ')}`);
+  lines.push(`  "categories" an array on: A ${fmt1(a)}%, B ${fmt1(report.shapes.B?.shape.arrayPct ?? NaN)}%, P ${fmt1(p.shape.arrayPct)}%`,
+    `  ${p.reading}`);
+  return lines;
+}
+
+/** Which variable pinned the fast tier, named the way config.ts reads them: OLLAMA_FAST, else the old OLLAMA_SMALL. */
+const fastPinVar = (pinned: boolean, env: NodeJS.ProcessEnv): string | null =>
+  !pinned ? null : env.OLLAMA_FAST !== undefined ? 'OLLAMA_FAST' : 'OLLAMA_SMALL';
+
+async function apiPs(): Promise<unknown> {
+  try {
+    return await (await fetch(`${config.ollamaUrl}/api/ps`)).json();
+  } catch {
+    return null;
+  }
 }
 
 function flush(): void {
@@ -1222,9 +2178,18 @@ function flush(): void {
   const artifact = {
     harness: 'classification-hint-live',
     startedAt, writtenAt: new Date().toISOString(),
-    command: `LIVE_HINT=1 LIVE_HINT_RUNS=${RUNS} LIVE_HINT_MODELS=${MODELS.join(',')} LIVE_HINT_OUT=${OUT} vitest run test/classification-hint-live.test.ts`,
-    env: { runs: RUNS, models: MODELS, ollamaUrl: config.ollamaUrl, ollamaVersion, maxLoadedModels: process.env.OLLAMA_MAX_LOADED_MODELS ?? null },
+    // The starter's real argv (see pickCommand), not a line assembled from the harness's own variables.
+    command: provenance.command ?? null,
+    env: {
+      runs: RUNS, models: MODELS, ollamaUrl: redactUrl(config.ollamaUrl), ollamaVersion,
+      // The OLLAMA_* of the TEST PROCESS. OLLAMA_MAX_LOADED_MODELS here says nothing about the
+      // Ollama server's own setting (null here is not "one model at a time"): see provenance.ollama.apiPsAtStart.
+      ollamaInTestProcess: envWithPrefix(process.env, 'OLLAMA_'),
+      liveHint: envWithPrefix(process.env, 'LIVE_HINT'),
+    },
+    provenance,
     gates: GATES,
+    diagnostics: DIAGNOSTICS,
     fixture: { conventions: CONVENTIONS, controls: CONTROLS },
     reports,
     violations,
@@ -1238,7 +2203,8 @@ function flush(): void {
 
 async function runModel(model: string, gating: boolean, partner: string | undefined): Promise<ModelReport> {
   const report: ModelReport = {
-    model, gating, status: 'ran', note: '', baseline: [], capture: null, index: null, hintChars: null,
+    model, gating, status: 'ran', note: '', baseline: [], baselineShape: null, shapes: {}, baselineKeys: null, placebo: null,
+    capture: null, index: null, hintChars: null,
     retrieval: {}, evaluations: [], summary: [], flips: [], narrow: null, latency: null, residency: null,
     g4: { checked: 0, bad: 0 }, reading: [],
   };
@@ -1272,16 +2238,32 @@ async function runModel(model: string, gating: boolean, partner: string | undefi
       perTitle: Object.fromEntries(mine.map((t) => [t.title, cell(model, 'A0', t.title)])),
     });
   }
+  // The answer shape of the baseline comes first: with a shape production discards, the
+  // accuracy below counts answers that never became picks, whatever the model knew.
+  const a0Shape = shapeStats(armCalls(records, model, 'A0'));
+  const allTargetTitles = TARGET_ITEMS.map((t) => t.title);
+  const strictTargets = allTargetTitles.filter((t) => majorityCorrect(flagsFor(records, model, 'A0', t))).length;
+  const lenientTargets = lenientMajority(records, model, 'A0', allTargetTitles);
+  report.baselineShape = { a0: a0Shape, unusable: shapeUnusable(a0Shape), strictTargets, lenientTargets };
   say('Baseline on the targets, before any evidence (a convention at or above 75% is not scored):');
   for (const b of report.baseline) {
-    say(`  ${b.convention.padEnd(18)} ${b.correct}/${b.n} = ${fmt0((100 * b.correct) / b.n)}%  ${b.headroom ? 'headroom' : 'INCONCLUSIVE: NO HEADROOM'}`);
+    say(`  ${b.convention.padEnd(18)} ${b.correct}/${b.n} = ${fmt0((100 * b.correct) / b.n)}%  `
+      + `${b.headroom ? (report.baselineShape.unusable ? 'headroom (shape-confounded, see below)' : 'headroom') : 'INCONCLUSIVE: NO HEADROOM'}`);
     for (const [title, c] of Object.entries(b.perTitle)) say(`      ${c.padEnd(8)} ${title}`);
+  }
+  say(`Answer shape of the baseline: "categories" was an array on ${a0Shape.array} of ${a0Shape.n} completions (${fmt1(a0Shape.arrayPct)}%), `
+    + `a string on ${a0Shape.string}, missing on ${a0Shape.missing}, something else on ${a0Shape.other}. Production keeps only arrays. `
+    + `Read leniently (a bare string taken as a one-item list; NOT what production does) the baseline is ${lenientTargets} of ${allTargetTitles.length} targets, not ${strictTargets}.`);
+  if (report.baselineShape.unusable) {
+    say(`INCONCLUSIVE: UNUSABLE ANSWER SHAPE for the baseline: ${unusableShapeNote(a0Shape)}. The headroom above is not a headroom reading.`);
   }
   const scoredConventions = report.baseline.filter((b) => b.headroom).map((b) => b.convention);
   if (scoredConventions.length === 0) {
-    report.status = 'INCONCLUSIVE: NO HEADROOM';
-    report.note = 'the model already files every convention the way the owner does; nothing to teach';
-    say(`INCONCLUSIVE: NO HEADROOM (${report.note})`);
+    report.status = stoppedStatus(a0Shape);
+    report.note = report.baselineShape.unusable
+      ? unusableShapeNote(a0Shape)
+      : 'the model already files every convention the way the owner does; nothing to teach';
+    say(`${report.status} (${report.note})`);
     flush();
     return report;
   }
@@ -1295,7 +2277,10 @@ async function runModel(model: string, gating: boolean, partner: string | undefi
   for (const sweep of [sweepA, sweepB]) { report.g4.checked += sweep.checked; report.g4.bad += sweep.bad; }
 
   // Phase 1: the evidence, through the real capture path.
-  const capture: CaptureStats = { parsed: 0, claims: 0, noClaim: 0, exact: 0, firstMatch: 0, corrections: 0 };
+  const capture: CaptureStats = {
+    parsed: 0, claims: 0, noClaim: 0, exact: 0, firstMatch: 0, corrections: 0,
+    shapes: { array: 0, string: 0, missing: 0, other: 0 },
+  };
   report.capture = capture;
   const queues = CONVENTIONS.filter((c) => scoredConventions.includes(c.id)).map((c) => TRAIN_ITEMS.filter((t) => t.convention === c.id));
   const order: FixtureItem[] = [];
@@ -1304,6 +2289,7 @@ async function runModel(model: string, gating: boolean, partner: string | undefi
     const { value: parsed, calls } = await seamOf(() => parseViaRoute(item.title));
     capture.parsed++;
     const seam = calls.find((c) => !c.dry);
+    if (seam) capture.shapes[categoriesTypeOf(seam.raw)]++;
     if (seam) checkPrompt(model, 'A', item, seam.prompt, null, 'adjacent'); // no index yet: no hint
     if (seam && seam.prompt !== stockPrompts.get(item.title)) violate(model, `capture "${item.title}": the live prompt is not the stock prompt`);
     const claim = parsed?.body?.classification_claim as { text: string; categories: string[] } | undefined;
@@ -1333,8 +2319,12 @@ async function runModel(model: string, gating: boolean, partner: string | undefi
       violate(model, `capture "${item.title}": the log row is not what the echoed claim should write (${JSON.stringify(rows)})`);
     }
   }
-  say(`Capture: ${capture.parsed} titles parsed, ${capture.claims} claims echoed (${capture.noClaim} with none: the model abstained or did not answer), `
+  // "No claim" is not "the model did not answer": the route offers a claim only for an array that names the
+  // owner's own categories, so a bare string, an abstention and an unknown name all look the same from here.
+  say(`Capture: ${capture.parsed} titles parsed, ${capture.claims} claims echoed (${capture.noClaim} with none: no category pick survived the route), `
     + `${capture.exact} exactly the owner's value, ${capture.firstMatch} with the owner's value first, ${capture.corrections} corrections written. `
+    + `"categories" in those ${capture.parsed} completions: array ${capture.shapes.array}, string ${capture.shapes.string}, `
+    + `missing ${capture.shapes.missing}, other ${capture.shapes.other} (production keeps only arrays). `
     + `Stock-prompt sweeps before the index: ${sweepA.checked} + ${sweepB.checked} titles, ${sweepA.bad + sweepB.bad} differing from the stock prompt.`);
 
   // Calibrate once, as shipped (no embedder), then check what it produced.
@@ -1354,10 +2344,11 @@ async function runModel(model: string, gating: boolean, partner: string | undefi
   say(`Index after calibrate (embedFn: null): ${report.index.corrections} category corrections, ${report.index.indexed} indexed, `
     + `${report.index.heldOut} held out; by owner value ${JSON.stringify(byValue)}`);
   if (report.index.corrections < CORRECTION_FLOOR) {
-    report.status = 'INCONCLUSIVE: NO HEADROOM';
+    report.status = stoppedStatus(a0Shape);
     report.note = `only ${report.index.corrections} corrections (the floor is ${CORRECTION_FLOOR}) from ${capture.claims} claims on ${capture.parsed} training titles `
-      + `(${capture.noClaim} produced no claim): there is no evidence to learn from`;
-    say(`INCONCLUSIVE: NO HEADROOM (${report.note})`);
+      + `(${capture.noClaim} produced no claim): there is no evidence to learn from`
+      + (report.baselineShape.unusable ? `. ${unusableShapeNote(a0Shape)}` : '');
+    say(`${report.status} (${report.note})`);
     flush();
     return report;
   }
@@ -1407,9 +2398,40 @@ async function runModel(model: string, gating: boolean, partner: string | undefi
 
   // The arms, interleaved per (title, run).
   const armItems = [...scoredTargets, ...CONTROL_ITEMS];
+
+  // Arm P's block for each title, built once from the index (see placeboLessons).
+  const pool = indexExemplars(OWNER, vocab);
+  const placebo = new Map<string, { hint: string; meta: PlaceboMeta }>();
+  for (const item of armItems) {
+    const real = await retrieveFor('frequency', item.title, vocab);
+    const own = ownValueOf(item);
+    const lessons = placeboLessons(pool, own, real, item.title);
+    const hint = exemplarPrompt(lessons);
+    if (own !== null && lessons.some((e) => namesValue(e.correctValue, own))) violate(model, `P "${item.title}": a placebo lesson carries the title's own value ${own}`);
+    if (lessons.some((e) => real.some((r) => r.logId === e.logId))) violate(model, `P "${item.title}": a placebo lesson is one B shows`);
+    placebo.set(item.title, {
+      hint,
+      meta: {
+        title: item.title, own, bLessons: real.length, pLessons: lessons.length,
+        bChars: hintFor.get(item.title)!.category.length, pChars: hint.length,
+        values: lessons.map((e) => e.correctValue), logIds: idsOf(lessons),
+      },
+    });
+  }
+  const metas = [...placebo.values()].map((v) => v.meta);
+  const deltas = metas.filter((m) => m.pLessons > 0).map((m) => Math.abs(m.pChars - m.bChars));
+  say(`Placebo block (arm P) built for ${metas.filter((m) => m.pLessons > 0).length} of ${metas.length} titles from ${pool.length} lessons in the index: same count as B's block `
+    + `(${metas.filter((m) => m.pLessons < m.bLessons).length} titles short), never the title's own value, length within `
+    + `${deltas.length ? Math.max(...deltas) : 'n/a'} chars of B's (mean ${fmt1(deltas.reduce((a, b) => a + b, 0) / (deltas.length || NaN))}).`);
+  const pSample = placebo.get(scoredTargets[0].title);
+  if (pSample?.hint) {
+    say(`The placebo block for "${scoredTargets[0].title}" (its own value is ${pSample.meta.own}; ${pSample.meta.pChars} chars against B's ${pSample.meta.bChars}):${pSample.hint.replace(/\n$/, '')}`);
+  }
+
   const t0 = Date.now();
   for (const item of armItems) {
     const hints = hintFor.get(item.title)!;
+    const ph = placebo.get(item.title)!;
     for (let run = 0; run < RUNS; run++) {
       const a = await viaEnrich('A', ctx, item, run);
       checkPrompt(model, 'A', item, a.prompt, null, 'adjacent');
@@ -1419,10 +2441,11 @@ async function runModel(model: string, gating: boolean, partner: string | undefi
       const a2 = await viaEnrich('A2', ctx, item, run);
       checkPrompt(model, 'A2', item, a2.prompt, null, 'adjacent');
       for (const r of [a.record, a2.record]) if (r.empty) violate(model, `${r.arm} "${item.title}" run ${run}: empty or errored completion ${r.error ?? ''}`);
+      if (ph.meta.pLessons > 0) await viaPlacebo(ctx, item, run, { category: ph.hint, motivation: hints.motivation }, ph.meta.logIds);
     }
     flush();
   }
-  say(`Arms A, B, C${haveEmbedder ? ', S' : ''}, A2 done: ${armItems.length} titles x ${RUNS} runs in ${Math.round((Date.now() - t0) / 1000)} s.`);
+  say(`Arms A, B, C${haveEmbedder ? ', S' : ''}, A2, P done: ${armItems.length} titles x ${RUNS} runs in ${Math.round((Date.now() - t0) / 1000)} s.`);
 
   let evalB = evaluateTreatment(records, model, 'B', scoredTitles, controlTitles);
 
@@ -1474,14 +2497,18 @@ async function runModel(model: string, gating: boolean, partner: string | undefi
     }
     report.evaluations.push(evaluateTreatment(records, model, arm, scoredTitles, controlTitles));
   }
-  for (const arm of ['A0', 'A', 'A2', 'B', 'C', 'S', 'B1', 'N0', 'N'] as Arm[]) {
-    const line = armLine(model, arm, arm === 'A0' ? TARGET_ITEMS.map((t) => t.title) : scoredTitles, arm === 'A0' ? [] : controlTitles);
+  for (const arm of ARMS_REPORTED) {
+    const line = armLine(model, arm, arm === 'A0' ? allTargetTitles : scoredTitles, arm === 'A0' ? [] : controlTitles);
     if (line) report.summary.push(line);
+    const shape = armShape(records, model, arm, arm === 'A0' ? allTargetTitles : scoredTitles, arm === 'A0' ? [] : controlTitles);
+    if (shape) report.shapes[arm] = shape;
   }
+  report.baselineKeys = keyCoverage(armCalls(records, model, 'A'), WIDE_KEYS);
+  report.placebo = placeboReport(model, metas, scoredTitles, controlTitles);
   for (const item of armItems) {
     report.flips.push({
       title: item.title, kind: item.kind, convention: item.convention, expected: item.expected,
-      ...Object.fromEntries((['A', 'A2', 'B', 'C', 'S', 'B1', 'N0', 'N'] as Arm[]).map((arm) => [arm, cell(model, arm, item.title)])),
+      ...Object.fromEntries(ARMS_REPORTED.filter((arm) => arm !== 'A0').map((arm) => [arm, cell(model, arm, item.title)])),
       pickA: modalPick(armCalls(records, model, 'A').filter((r) => r.title === item.title).map((r) => r.pick)),
       pickB: modalPick(armCalls(records, model, 'B').filter((r) => r.title === item.title).map((r) => r.pick)),
     });
@@ -1584,7 +2611,7 @@ async function measureLatency(report: ModelReport, ctx: Ctx, armItems: readonly 
   // (c) RESIDENCY: resident sets per arm, and suspected reloads against the warm median.
   const warmMedian = percentile(armCalls(records, model, 'A').map((c) => c.ms).filter(Number.isFinite), 50);
   const perArm: ResidencyReport['perArm'] = {};
-  for (const arm of ['A', 'B', 'C', 'S', 'A2', 'B1', 'N0', 'N'] as Arm[]) {
+  for (const arm of ['A', 'B', 'C', 'S', 'A2', 'P', 'B1', 'N0', 'N'] as Arm[]) {
     const slot = residency[`${model}|${arm}`];
     if (!slot) continue;
     const calls = armCalls(records, model, arm).filter((c) => Number.isFinite(c.ms));
@@ -1636,6 +2663,16 @@ function readOff(report: ModelReport): string[] {
   const out: string[] = [];
   const b = report.evaluations.find((e) => e.arm === 'B');
   if (!b) return out;
+  // Added 2026-11-02, non-gating, for every model: what the answer shape, the placebo and the
+  // power of G2 and G3 do to how far the verdicts below can be read.
+  const aShape = report.shapes.A?.shape.arrayPct ?? NaN;
+  const pShape = report.placebo?.ran ? report.placebo.shape.arrayPct : null;
+  out.push(...baselineShapeLine(aShape));
+  for (const arm of ['B', 'C', 'S', 'B1'] as Arm[]) {
+    out.push(...shapeShiftLine(aShape, arm, report.shapes[arm]?.shape.arrayPct ?? NaN, pShape));
+  }
+  if (report.placebo) out.push(`Placebo: ${report.placebo.reading}`);
+  out.push(...b.power.notPowered);
   if (!report.gating) {
     out.push('Not the fast tier: informational, the gates do not apply to this model.');
     return out;
@@ -1670,7 +2707,8 @@ function readOff(report: ModelReport): string[] {
     : 'Not every gate the ship rule names holds for B on the fast tier: capture ships, the hint half does not by default.');
   if (s) {
     const edge = compareArms(records, report.model, 'B', 'S', report.flips.filter((f) => f.kind === 'target').map((f) => String(f.title)));
-    out.push(`S against B on the scored targets: ${edge.baseCorrect} -> ${edge.treatCorrect} of ${edge.n} (${edge.net >= 0 ? '+' : ''}${edge.net} net). `
+    out.push(`S against B on the scored targets: ${edge.baseCorrect} -> ${edge.treatCorrect} of ${edge.n} (${edge.net >= 0 ? '+' : ''}${edge.net} net; `
+      + `"categories" an array on ${fmt1(report.shapes.B?.shape.arrayPct ?? NaN)}% of B's calls and ${fmt1(report.shapes.S?.shape.arrayPct ?? NaN)}% of S's). `
       + 'Flipping embedFn: null to {} needs a clear edge AND no latency or residency damage (see the residency block).');
   }
   return out;
@@ -1716,20 +2754,22 @@ function renderResidency(r: ResidencyReport): string[] {
 function printReport(report: ModelReport): void {
   const lines: string[] = [`\n--- ${report.model}: results (${RUNS} runs per title and arm) ---`];
   lines.push(`Scored targets: ${report.flips.filter((f) => f.kind === 'target').length} titles; controls: ${CONTROL_ITEMS.length}. A0 is the pre-training baseline on all 12 targets.`);
-  lines.push('arm  targets  controls  validJSON  allKeys  empty  err  meanMs  p95Ms');
+  lines.push('arm  targets  controls  validJSON  allKeys  catArray  empty  err  meanMs  p95Ms');
   for (const r of report.summary) {
     lines.push(`${String(r.arm).padEnd(4)} ${String(r.targets).padEnd(8)} ${String(r.controls).padEnd(9)} ${String(r.validJsonPct).padEnd(10)} ${String(r.allKeysPct).padEnd(8)} `
-      + `${String(r.empty).padEnd(6)} ${String(r.errored).padEnd(4)} ${String(r.meanMs).padEnd(7)} ${r.p95Ms}`);
+      + `${String(r.categoriesArrayPct).padEnd(9)} ${String(r.empty).padEnd(6)} ${String(r.errored).padEnd(4)} ${String(r.meanMs).padEnd(7)} ${r.p95Ms}`);
   }
   if (report.hintChars) lines.push(`Prompt growth per hinted prompt (mean): ${report.hintChars.category} chars for the category hint, ${report.hintChars.motivation} for motivation.`);
+  lines.push('', ...renderShape(report));
   lines.push('', "Per title (run string > majority; T = the owner's value first):");
   for (const f of report.flips) {
     lines.push(`  [${String(f.convention ?? 'control').padEnd(17)}] ${String(f.title).padEnd(44)} -> ${String(f.expected).padEnd(13)} `
-      + (['A', 'A2', 'B', 'C', 'S', 'B1', 'N0', 'N'] as const).filter((k) => f[k] !== '-').map((k) => `${k} ${f[k]}`).join('  ')
+      + ARMS_REPORTED.filter((k) => k !== 'A0' && f[k] !== '-').map((k) => `${k} ${f[k]}`).join('  ')
       + `   (A said ${f.pickA ?? '-'}, B said ${f.pickB ?? '-'})`);
   }
   lines.push('', 'Gates (fast tier only; the other models are informational):');
   for (const e of report.evaluations) lines.push(...renderEval(e));
+  if (report.placebo) lines.push('', ...renderPlacebo(report));
   if (report.narrow) lines.push('', `Narrow question (diagnostic): ${JSON.stringify(report.narrow)}`);
   if (report.latency) lines.push('', ...renderLatency(report.latency));
   if (report.residency) lines.push('', ...renderResidency(report.residency));
@@ -1743,10 +2783,19 @@ function verdictLine(r: ModelReport): string {
   const b = r.evaluations.find((e) => e.arm === 'B');
   if (!b) return `[live-hint] ${r.model}: no B arm was recorded`;
   const tag = r.gating ? 'FAST TIER' : 'informational';
+  // Annotations only: they never change a registered verdict, they say how far it can be read.
+  const aPct = r.shapes.A?.shape.arrayPct ?? NaN;
+  const notes = [
+    r.baselineShape?.unusable ? `INCONCLUSIVE: UNUSABLE ANSWER SHAPE (baseline A0 array ${fmt1(r.baselineShape.a0.arrayPct)}%)` : '',
+    shapeShifted(aPct, r.shapes.B?.shape.arrayPct ?? NaN) ? `B moved the array share ${fmt1(aPct)}% -> ${fmt1(r.shapes.B?.shape.arrayPct ?? NaN)}%` : '',
+    r.placebo?.ran ? `B vs P ${r.placebo.targets.bVsP.net >= 0 ? '+' : ''}${r.placebo.targets.bVsP.net} titles` : '',
+    b.power.notPowered.length ? `NOT POWERED: ${[b.power.g2FlippableControls < DIAGNOSTICS.minFlippableControls && 'G2', !(b.power.g3BaseKeysPct >= DIAGNOSTICS.minBaselineKeyCoveragePct) && 'G3'].filter(Boolean).join(', ')}` : '',
+  ].filter(Boolean);
   return `[live-hint] ${r.model} (${tag}) B: G1 ${b.g1.verdict} (${b.g1.net >= 0 ? '+' : ''}${b.g1.net} of ${b.g1.n} titles, minimum detectable one title) | `
     + `G2 ${b.g2.pass ? 'PASS' : 'FAIL'} (${b.g2.flipped.length} flipped) | G3 ${b.g3.pass ? 'PASS' : 'FAIL'} | `
     + `G4 ${r.g4.bad === 0 && r.g4.checked > 0 ? 'PASS' : 'FAIL'} (${r.g4.checked} asserted) | G5 ${b.g5.pass ? 'PASS' : 'FAIL'} | `
-    + `G6 ${r.latency ? (r.latency.gateG6.pass ? 'PASS' : 'FAIL') : 'not measured'}`;
+    + `G6 ${r.latency ? (r.latency.gateG6.pass ? 'PASS' : 'FAIL') : 'not measured'}`
+    + (notes.length ? ` || ${notes.join(' | ')}` : '');
 }
 
 // ── The suite ─────────────────────────────────────────────────────────────────
@@ -1785,7 +2834,31 @@ describe.skipIf(!LIVE)('classification hint · live measurement', () => {
     const embedModel = await resolveEmbedModel();
     haveEmbedder = matchInstalled(embedModel) !== null;
     say(`[live-hint] fast tier ${fast}; embedder ${embedModel} ${haveEmbedder ? 'installed' : 'NOT installed: arm S and the similarity retrieval are skipped'}; `
-      + `Ollama ${ollamaVersion || 'unknown version'}, OLLAMA_MAX_LOADED_MODELS in this process: ${process.env.OLLAMA_MAX_LOADED_MODELS ?? 'unset'}`);
+      + `Ollama ${ollamaVersion || 'unknown version'}, OLLAMA_MAX_LOADED_MODELS in this process: ${process.env.OLLAMA_MAX_LOADED_MODELS ?? 'unset'} `
+      + '(the test process only: the server\'s own value is not visible from here)');
+
+    // Provenance: how the fast tier resolved, what started the run, what code it ran.
+    const fastDefault = explainModelDefault('fast');
+    let fastForOwner: ResolvedModel | null = null;
+    try { fastForOwner = await explainModel('fast'); } catch { /* a note, not a precondition */ }
+    const pinVar = fastPinVar(config.pins.ollama.fast, process.env);
+    const note = gatingTierNote({ resolved: fastForOwner ?? fastDefault, pinned: config.pins.ollama.fast, pinVar, registeredDefault: REGISTERED_FAST_DEFAULT });
+    const start = pickCommand(process.argv, readParentArgv());
+    provenance = {
+      command: start.command,
+      commandSource: start.source,
+      argv: { starter: start.argv, thisProcess: process.argv, execArgv: process.execArgv },
+      cwd: process.cwd(), node: process.version, platform: process.platform,
+      fastTier: {
+        registeredDefault: REGISTERED_FAST_DEFAULT, configuredName: config.ollamaFastModel,
+        resolvedDefault: fastDefault, resolvedForOwner: fastForOwner, pins: config.pins.ollama, pinnedBy: pinVar,
+      },
+      gatingTierNote: note,
+      ollama: { url: redactUrl(config.ollamaUrl), version: ollamaVersion, apiPsAtStart: await apiPs() },
+      harness: harnessProvenance(),
+    };
+    say(`[live-hint] ${note}`);
+    say(`[live-hint] command: ${start.command} (${start.source})`);
     expect(fixtureProblems()).toEqual([]);
     srv = await startTestServer();
   });

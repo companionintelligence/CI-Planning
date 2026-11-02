@@ -118,7 +118,13 @@ export interface FieldCalibration {
   field: ClassifiedField;
   /** Decided (non-pending) rows examined in the window. */
   decided: number;
-  /** Corrections among them — the strong labeled examples. */
+  /** Corrections among them that the field's classifier could have chosen — the strong
+   *  labeled examples. A category correction to '' (the owner cleared the picker) is
+   *  decided but is NOT counted here: the category prompt makes the model choose from the
+   *  owner's list, so "none" is an answer it cannot give and the scorer cannot grade, and
+   *  counting it would clear the floor for an index that teaches nothing. So this can be
+   *  below the number of rows the owner overrode. Motivation keeps its '' rows (null is a
+   *  real label there). */
   corrections: number;
   /** Exemplar rows written (0 when the floor was not cleared). */
   indexed: number;
@@ -181,6 +187,13 @@ const INSERT_EXEMPLAR = `
   VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
 const SELECT_EXEMPLARS = `
   SELECT log_id, input_text, llm_value, correct_value, embedding
+    FROM classification_exemplars WHERE owner_id = ? AND field = ?
+   ORDER BY log_id`;
+/** The same rows without the vector, for the frequency path: up to MAX_EXEMPLARS BLOBs of
+ *  ~3 KB each that nothing would read. Same ORDER BY, because "the newest of each value"
+ *  is the last row in log_id order. */
+const SELECT_EXEMPLARS_NO_VECTOR = `
+  SELECT log_id, input_text, llm_value, correct_value
     FROM classification_exemplars WHERE owner_id = ? AND field = ?
    ORDER BY log_id`;
 
@@ -369,16 +382,21 @@ interface StoredExemplar extends Exemplar {
   vec: number[] | null;
 }
 
-async function loadExemplars(ownerId: string, field: ClassifiedField): Promise<StoredExemplar[]> {
-  const rows = await store().prepare(SELECT_EXEMPLARS).all<{
-    log_id: string; input_text: string; llm_value: string; correct_value: string; embedding: Buffer | null;
-  }>(ownerId, field);
+/**
+ * The owner's index for a field. `withVectors` false is the frequency path (`embedFn:
+ * null`): the embedding column is not selected and nothing is unpacked, so every row comes
+ * back with `vec: null`. That path is the interactive one, where the cost of a read is
+ * the point.
+ */
+async function loadExemplars(ownerId: string, field: ClassifiedField, withVectors: boolean): Promise<StoredExemplar[]> {
+  type Row = { log_id: string; input_text: string; llm_value: string; correct_value: string; embedding?: Buffer | null };
+  const rows = await store().prepare(withVectors ? SELECT_EXEMPLARS : SELECT_EXEMPLARS_NO_VECTOR).all<Row>(ownerId, field);
   return rows.map((r) => ({
     logId: r.log_id,
     inputText: r.input_text,
     llmValue: r.llm_value,
     correctValue: r.correct_value,
-    vec: unpackVector(r.embedding),
+    vec: withVectors ? unpackVector(r.embedding) : null,
   }));
 }
 
@@ -420,7 +438,10 @@ export async function retrieveExemplars(
   const k = opts.k ?? RETRIEVE_K;
   const { accept } = opts;
   try {
-    const all = await loadExemplars(ownerId, field);
+    // `null` is decided before the read, so the frequency path never touches the vectors.
+    // An undefined embedFn still reads them: whether an embedder is ready is only asked
+    // once there is something to rank, so an owner with no index costs no status probe.
+    const all = await loadExemplars(ownerId, field, opts.embedFn !== null);
     const stored = accept ? all.filter((e) => accept(e)) : all;
     if (stored.length === 0 || k <= 0) return [];
 
@@ -516,6 +537,23 @@ export type ScoreFn = (args: {
 }) => Promise<string | null>;
 
 /**
+ * Whether a CORRECTED row is a label the field's classifier could have chosen, and so
+ * something the index may teach and the scorer may grade.
+ *
+ * A category correction to '' is the owner clearing the picker: a real answer ("none of
+ * these"), and it stays in the log and in `decided`. But the category prompt makes the
+ * model choose from the owner's list, so "(nothing)" is not a value it can produce, the
+ * quick-add hint drops it, and the scorer, which returns a pick or null, can only miss it
+ * or skip it. Counting it would clear CORRECTION_FLOOR for an index that teaches nothing
+ * and drag the measured accuracy down on questions with no answerable form. Motivation
+ * keeps its '' rows: null ("the entry does not say who it is for") is a real label in
+ * that prompt, and `scoreHeldOut` leaves them unmeasured.
+ */
+function isLearnableLabel(field: ClassifiedField, row: DecidedRow): boolean {
+  return !(field === 'category' && canonicalValue(row.correctValue) === '');
+}
+
+/**
  * Rebuild one owner's exemplar index and measure it. Deterministic given the same rows
  * and the same clock: the window, the stride and every sort are fixed.
  *
@@ -535,7 +573,9 @@ export async function calibrateClassification(
 
   for (const field of FIELDS) {
     const decided = await decidedRows(ownerId, field, now);
-    const corrections = decided.filter((r) => r.corrected);
+    // Labels only: cleared category pickers are decided but are neither counted toward the
+    // floor nor indexed nor held out (see isLearnableLabel).
+    const corrections = decided.filter((r) => r.corrected && isLearnableLabel(field, r));
 
     // Below the floor the index is EMPTIED, not left stale: an owner who deletes their
     // corrections must stop being taught by them on the next run.
@@ -648,6 +688,10 @@ async function scoreHeldOut(
   let n = 0;
   let correct = 0;
   for (const row of heldOut.slice(0, MAX_SCORED)) {
+    // The scorer answers with a value or null, so it has no way to say '' and a '' target
+    // could only be a guaranteed miss or a skip. Category never gets here (not a label);
+    // a motivation row cleared to null can, and is left unmeasured rather than counted wrong.
+    if (!canonicalValue(row.correctValue)) continue;
     let answer: string | null;
     try {
       const hint = await classificationHint(ownerId, field, row.inputText, { embedFn: opts.embedFn });

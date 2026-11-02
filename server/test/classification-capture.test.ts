@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { startTestServer, resetDb, api, createOwner, SECOND_OWNER_ID, type TestServer } from './helpers.js';
-import { logAssignment, rowOutcome, PENDING_MS } from '../src/services/classification-learning.js';
+import { calibrateClassification, logAssignment, rowOutcome, CORRECTION_FLOOR, PENDING_MS } from '../src/services/classification-learning.js';
 
 /**
  * Phase 8 wiring — the two seams the learning loop actually hangs from.
@@ -274,7 +274,10 @@ describe('the wizard’s Add records the preview’s category pick', () => {
     expect(got).toHaveLength(2);
   });
 
-  it('is acted on only after the create succeeded', async () => {
+  it('writes nothing for a create the route refuses before any task exists', async () => {
+    // All three return before a row is written, so this pins only that a refused create
+    // records nothing. That the settle waits for a SUCCESSFUL create is the dependency
+    // cycle test below, where the task row exists and the create still fails.
     const withClaim = { categories: ['health'], classification_claim: claim() };
     expect((await create({ ...withClaim, title: '' })).status).toBe(400);
     expect((await create({ ...withClaim, motivation: 'everyone' })).status).toBe(422);
@@ -317,6 +320,10 @@ describe('the wizard’s Add records the preview’s category pick', () => {
     });
 
     it('a name is not in the owner’s vocabulary, in any of its forms', async () => {
+      // This pins that each form is dropped, not which guard drops it (the debug reason
+      // is not read here). In particular the four-name case does not isolate the shape
+      // cap: 'growth' is muted below and the vocabulary cap is three too, so the
+      // vocabulary count would refuse it even without the shape check.
       sqlite.prepare(`UPDATE tags SET muted = 1 WHERE owner_id = ? AND name = 'growth'`).run(OWNER);
       createOwner(SECOND_OWNER_ID);
       categoryTag('secret', SECOND_OWNER_ID);
@@ -326,7 +333,7 @@ describe('the wizard’s Add records the preview’s category pick', () => {
         ['growth'],                        // muted
         ['secret'],                        // another owner's
         ['leisure', 'leisure'],            // a duplicate
-        ['leisure', 'health', 'career', 'growth'], // four names, though each is real
+        ['leisure', 'health', 'career', 'growth'], // four names, one of them muted
       ];
       for (const categories of bad) {
         await dropped({ categories: ['health'], classification_claim: claim(categories) });
@@ -355,7 +362,9 @@ describe('the wizard’s Add records the preview’s category pick', () => {
     });
 
     it('the claim is hostile in size', async () => {
-      // Dropped on its length, without being walked.
+      // Dropped. Which guard refuses it is not observable here: the shape check does on its
+      // length before anything iterates it, but the vocabulary count (10,000 copies dedupe
+      // to one name) would refuse it as well.
       await dropped({ categories: ['health'], classification_claim: claim(new Array(10_000).fill('leisure')) });
       // 501 characters is over the line even when the title IS that long: classificationInput
       // would slice both to 500 and call them equal, so only the raw length can refuse it.
@@ -468,11 +477,21 @@ describe('the wizard’s Add records the preview’s category pick', () => {
   });
 
   describe('a later edit of the categories', () => {
+    const patch = (id: string, json: Record<string, unknown>, query = '') =>
+      api(srv.url, `/api/tasks/${id}${query}`, { method: 'PATCH', json });
+    /** A wizard Add that left the model's pick alone: an OPEN row on a task saved with it. */
+    async function born(title: string, categories: string[] = ['leisure']): Promise<string> {
+      const res = await create({ title, categories, classification_claim: claim(categories, title) });
+      expect(res.status).toBe(201);
+      return res.body.task.id;
+    }
+    const rowOf = (taskId: string) => rows().find((r) => r.task_id === taskId)!;
+
     it('closes an equal (open) row as the owner’s answer', async () => {
       const created = await create({ categories: ['leisure'], classification_claim: claim() });
       const id = created.body.task.id;
-      const patch = await api(srv.url, `/api/tasks/${id}`, { method: 'PATCH', json: { categories: ['health'] } });
-      expect(patch.status).toBe(200);
+      const res = await patch(id, { categories: ['health'] });
+      expect(res.status).toBe(200);
       const [row] = rows();
       expect(rows()).toHaveLength(1);
       expect(row.final_value).toBe('health');
@@ -480,21 +499,135 @@ describe('the wizard’s Add records the preview’s category pick', () => {
       expect(rowOutcome(row, new Date())).toBe('corrected');
     });
 
-    it('settles an equal row as accepted when the owner confirms the same pick', async () => {
-      const created = await create({ categories: ['leisure'], classification_claim: claim() });
-      await api(srv.url, `/api/tasks/${created.body.task.id}`, { method: 'PATCH', json: { categories: ['leisure'] } });
-      const [row] = rows();
-      expect(row.corrected_at).not.toBeNull();
-      expect(rowOutcome(row, new Date())).toBe('accepted');
+    it('leaves an open row open when the same pick is sent again, so a real correction can still follow', async () => {
+      // The wizard's Edit re-sends its picker whether or not the owner touched it. That is
+      // no answer: counting it would freeze the row as 'accepted' ahead of its 24h window
+      // and the correction made an hour later would be the second answer, and lost.
+      const id = await born(TITLE);
+      const resend = await patch(id, { categories: ['leisure'], priority: 2 });
+      expect(resend.status).toBe(200);
+      const [open] = rows();
+      expect(open).toMatchObject({ final_value: null, corrected_at: null });
+      expect(rowOutcome(open, new Date())).toBeNull();                              // still pending
+      expect(rowOutcome(open, new Date(Date.now() + 2 * PENDING_MS))).toBe('accepted'); // the weak accept, after a day
+
+      await patch(id, { categories: ['health'] });
+      const [closed] = rows();
+      expect(rows()).toHaveLength(1);
+      expect(closed.final_value).toBe('health');
+      expect(rowOutcome(closed, new Date())).toBe('corrected');
+    });
+
+    it('closes an open row with the SAVED set, never the request', async () => {
+      // The request says one thing and the database ends up holding another; the row
+      // records the database. Each case has its own task, because the first answer wins.
+      const cases: [string, string[], string][] = [
+        ['Cased', ['Health', 'health'], 'health'],                                   // case and a duplicate
+        ['Unknown', ['health', 'nonexistent'], 'health'],                            // a name that never lands
+        ['Capped', ['career', 'health', 'leisure', 'growth'], 'career, health, leisure'], // the cap of three
+      ];
+      for (const [title, sent, saved] of cases) {
+        const id = await born(title);
+        const res = await patch(id, { categories: sent });
+        expect(res.body.task.categories.join(', '), title).toBe(saved);
+        expect(rowOf(id), title).toMatchObject({ llm_value: 'leisure', final_value: saved });
+        expect(rowOutcome(rowOf(id), new Date()), title).toBe('corrected');
+      }
+    });
+
+    it('treats a respelling of the saved set as no answer', async () => {
+      // None of these changes what is saved, so none of them is the owner saying anything.
+      // Recording the request would have called each a correction ('Leisure' != 'leisure').
+      const sends: string[][] = [['Leisure'], ['leisure', 'nonexistent'], ['leisure', 'leisure']];
+      for (const [i, sent] of sends.entries()) {
+        const id = await born(`Respelled ${i}`);
+        const res = await patch(id, { categories: sent });
+        expect(res.body.task.categories).toEqual(['leisure']);
+        expect(rowOf(id), JSON.stringify(sent)).toMatchObject({ final_value: null, corrected_at: null });
+      }
+    });
+
+    it('counts a reorder as an answer, because the order is the stripe order', async () => {
+      const id = await born(TITLE, ['leisure', 'health']);
+      await patch(id, { categories: ['health', 'leisure'] });
+      expect(rowOf(id)).toMatchObject({ llm_value: 'leisure, health', final_value: 'health, leisure' });
+      expect(rowOutcome(rowOf(id), new Date())).toBe('corrected');
+    });
+
+    it('closes an open row with "" when the picker is emptied', async () => {
+      const id = await born(TITLE);
+      await patch(id, { categories: [] });
+      expect(rowOf(id).final_value).toBe('');
+      expect(rowOutcome(rowOf(id), new Date())).toBe('corrected');
+    });
+
+    it('takes an empty set sent to a task that already has none as no answer', async () => {
+      const id = insertTask(TITLE);
+      await logAssignment(OWNER, { taskId: id, field: 'category', inputText: TITLE, llmValue: ['leisure'] });
+      const res = await patch(id, { categories: [] });
+      expect(res.status).toBe(200);
+      expect(rowOf(id)).toMatchObject({ final_value: null, corrected_at: null });
     });
 
     it('changes nothing on a row the Add already closed: the first answer wins', async () => {
       const created = await create({ categories: ['health'], classification_claim: claim() });
       const before = rows();
-      const patch = await api(srv.url, `/api/tasks/${created.body.task.id}`, { method: 'PATCH', json: { categories: ['leisure'] } });
-      expect(patch.status).toBe(200);
+      const res = await patch(created.body.task.id, { categories: ['leisure'] });
+      expect(res.status).toBe(200);
       expect(rows()).toEqual(before);
       expect(before[0].final_value).toBe('health');
+    });
+
+    describe('a series save from a generated instance', () => {
+      // Instances carry no category rows, so the wizard's Edit of one opens with an empty
+      // picker and a "this and future" save sends that picker to the TEMPLATE, where the
+      // habit's open row lives.
+      const habit = async (title: string) => {
+        const res = await create({
+          title, recurrence_rule: 'FREQ=DAILY', is_habit: true, categories: ['leisure'], classification_claim: claim(['leisure'], title),
+        });
+        expect(res.status).toBe(201);
+        const template = res.body.task.id as string;
+        const instance = sqlite.prepare(`SELECT id FROM tasks WHERE recurrence_parent_id = ? LIMIT 1`).get(template) as { id: string } | undefined;
+        expect(instance, 'the create generates instances').toBeDefined();
+        return { template, instance: instance!.id };
+      };
+      const series = (id: string, json: Record<string, unknown>) => patch(id, json, '?scope=series');
+
+      it('leaves the template’s row open when it sends no categories, or the template’s own set', async () => {
+        const a = await habit('Habit A');
+        const b = await habit('Habit B');
+        expect((await series(a.instance, { priority: 2 })).status).toBe(200);
+        const res = await series(b.instance, { categories: ['leisure'] });
+        expect(res.status).toBe(200);
+        expect(res.body.task.categories).toEqual(['leisure']);
+        for (const { template } of [a, b]) {
+          expect(rowOf(template)).toMatchObject({ final_value: null, corrected_at: null });
+        }
+      });
+
+      it('cannot teach the classifier anything when it sends the instance’s empty picker', async () => {
+        // The one case the server rule cannot cover: sending [] to a template that HAS a
+        // set is a real change to what is saved (it clears the template, which it always
+        // did), so the row closes with ''. The client must not send the instance's picker
+        // as testimony. What is guaranteed here is the damage limit: a cleared picker is
+        // an answer but not a label, so these never reach the floor, the index or the
+        // held-out slice.
+        const habits = [await habit('Habit C'), await habit('Habit D')];
+        expect(habits.length).toBeGreaterThanOrEqual(CORRECTION_FLOOR);
+        for (const { instance } of habits) {
+          const res = await series(instance, { categories: [] });
+          expect(res.status).toBe(200);
+          expect(res.body.task.categories).toEqual([]);
+        }
+        const r = await calibrateClassification(OWNER, new Date(), { embedFn: null });
+        const cat = r.fields.find((f) => f.field === 'category')!;
+        expect(cat.corrections).toBe(0);
+        expect(cat.indexed).toBe(0);
+        expect(cat.heldOut).toBe(0);
+        const index = sqlite.prepare(`SELECT COUNT(*) n FROM classification_exemplars WHERE owner_id = ?`).get(OWNER) as { n: number };
+        expect(index.n).toBe(0);
+      });
     });
   });
 });

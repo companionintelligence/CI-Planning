@@ -332,6 +332,94 @@ describe('the batch calibration', () => {
   });
 });
 
+// A cleared category picker is an answer the owner gave ("none of these") but not a label
+// the category classifier could have produced: its prompt makes the model choose from the
+// owner's list. So it is decided evidence that never counts as a learnable correction.
+describe('a category answered with "" (a cleared picker)', () => {
+  const cat = (r: Awaited<ReturnType<typeof calibrateClassification>>) => r.fields.find((f) => f.field === 'category')!;
+  const mot = (r: Awaited<ReturnType<typeof calibrateClassification>>) => r.fields.find((f) => f.field === 'motivation')!;
+
+  it('is decided evidence, and a correction as far as its outcome goes', async () => {
+    await evidence({ text: 'gym workout 0', llm: 'Leisure', final: '' });
+    const [row] = await decidedRows(OWNER, 'category', NOW);
+    expect(row).toMatchObject({ correctValue: '', corrected: true });
+  });
+
+  it('does not clear the floor, however many there are', async () => {
+    await evidence({ text: 'gym workout 0', llm: 'Leisure', final: 'Health' });
+    for (let i = 1; i <= CORRECTION_FLOOR + 4; i++) await evidence({ text: `gym workout ${i}`, llm: 'Leisure', final: '' });
+    // A stale index from before must go too: below the floor the stock prompt stands.
+    sqlite.prepare(
+      `INSERT INTO classification_exemplars (owner_id, field, log_id, input_text, llm_value, correct_value, embedding, computed_date)
+       VALUES (?, 'category', 'stale', 'gym', 'Leisure', 'Health', NULL, '2026-08-01')`,
+    ).run(OWNER);
+
+    const r = await calibrateClassification(OWNER, NOW, { embedFn: fakeEmbed });
+    expect(cat(r).decided).toBe(CORRECTION_FLOOR + 5);   // they are evidence …
+    expect(cat(r).corrections).toBe(1);                  // … but only one is a label
+    expect(cat(r).indexed).toBe(0);
+    expect(cat(r).accuracy).toBeNull();
+    expect(exemplarRows()).toHaveLength(0);
+  });
+
+  it('stays out of the index and the held-out slice, and cannot drag the accuracy down', async () => {
+    // Interleaved, so that a stride over EVERY correction would land only on cleared ones.
+    for (let i = 0; i < 8; i++) {
+      await evidence({ text: `gym workout ${i}`, llm: 'Leisure', final: 'Health' });
+      await evidence({ text: `cleared picker ${i}`, llm: 'Leisure', final: '' });
+    }
+    const graded: string[] = [];
+    const hints: string[] = [];
+    const r = await calibrateClassification(OWNER, NOW, {
+      embedFn: fakeEmbed,
+      scoreFn: async ({ inputText, hint }) => { graded.push(inputText); hints.push(hint); return 'Health'; },
+    });
+    expect(cat(r).decided).toBe(16);
+    expect(cat(r).corrections).toBe(8);
+    expect(graded).toHaveLength(8 / HELD_OUT_STRIDE);
+    expect(graded.every((t) => t.startsWith('gym workout'))).toBe(true);
+    expect(cat(r).indexed).toBe(8 - graded.length);
+    expect(exemplarRows().map((e) => e.correct_value)).not.toContain('');
+    expect(exemplarRows().every((e) => e.input_text.startsWith('gym workout'))).toBe(true);
+    expect(cat(r).accuracy).toBe(1);
+
+    // And the scorer's prompt, which asks for a pick from the list, is never taught "(nothing)".
+    expect(hints.length).toBeGreaterThan(0);
+    for (const h of hints) {
+      expect(h).toContain('the user chose Health');
+      expect(h).not.toContain('(nothing)');
+    }
+  });
+
+  it('is kept for motivation, where null is a real label', async () => {
+    await evidence({ field: 'motivation', text: 'help mum 0', llm: 'me', final: 'them' });
+    await evidence({ field: 'motivation', text: 'tidy the desk', llm: 'me', final: '' });
+    const r = await calibrateClassification(OWNER, NOW, { embedFn: fakeEmbed });
+    expect(mot(r).corrections).toBe(2);
+    expect(mot(r).indexed).toBe(2);
+    expect(exemplarRows('motivation').map((e) => e.correct_value).sort()).toEqual(['', 'them']);
+    expect(await classificationHint(OWNER, 'motivation', 'tidy', { embedFn: null })).toContain('the user chose (nothing).');
+  });
+
+  it('is never scored when it lands in the held-out slice (a motivation null)', async () => {
+    // The scorer answers with a value or null, so a '' target is a guaranteed miss or a
+    // skip. It is left unmeasured; the three real labels are still indexed.
+    for (let i = 0; i < HELD_OUT_STRIDE - 1; i++) {
+      await evidence({ field: 'motivation', text: `help mum ${i}`, llm: 'me', final: 'them' });
+    }
+    await evidence({ field: 'motivation', text: 'tidy the desk', llm: 'me', final: '' }); // every Nth: held out
+    const graded: string[] = [];
+    const r = await calibrateClassification(OWNER, NOW, {
+      embedFn: fakeEmbed,
+      scoreFn: async ({ inputText }) => { graded.push(inputText); return 'them'; },
+    });
+    expect(graded).toEqual([]);
+    expect(mot(r).heldOut).toBe(0);
+    expect(mot(r).accuracy).toBeNull();
+    expect(mot(r).indexed).toBe(HELD_OUT_STRIDE - 1);
+  });
+});
+
 // ── Retrieval ─────────────────────────────────────────────────────────────────
 
 describe('what a live classification reads', () => {
@@ -411,6 +499,34 @@ describe('what a live classification reads', () => {
     // still usable exemplars, and nothing throws.
     const got = await retrieveExemplars(OWNER, 'category', 'gym run', { embedFn: fakeEmbed });
     expect(got.length).toBeGreaterThan(0);
+  });
+
+  it('on the frequency path, never reads the vectors at all', async () => {
+    // The interactive path asks for `embedFn: null` precisely so that it costs one small
+    // read. Hide the embedding column: any SELECT that names it now throws, and retrieval
+    // turns a throw into "no exemplars". So an answer proves the column was not read.
+    await indexed([
+      { text: 'gym workout monday', llm: 'Leisure', final: 'Health' },
+      { text: 'gym workout tuesday', llm: 'Leisure', final: 'Health' },
+      { text: 'gym workout friday', llm: 'Leisure', final: 'Health' },
+      { text: 'quarterly invoice', llm: 'Career', final: 'Finance' },
+      { text: 'invoice the client', llm: 'Career', final: 'Finance' },
+      { text: 'file the taxes', llm: 'Career', final: 'Finance' },
+      { text: 'gym workout sunday', llm: 'Leisure', final: 'Health' },
+    ]);
+    expect(exemplarRows().every((e) => e.embedding !== null)).toBe(true); // vectors ARE stored
+    const plain = await retrieveExemplars(OWNER, 'category', 'gym run', { embedFn: null });
+    expect(plain.length).toBeGreaterThan(0);
+
+    sqlite.exec(`ALTER TABLE classification_exemplars RENAME COLUMN embedding TO embedding_hidden`);
+    try {
+      expect(await retrieveExemplars(OWNER, 'category', 'gym run', { embedFn: null })).toEqual(plain);
+      expect(await classificationHint(OWNER, 'category', 'gym run', { embedFn: null })).toBe(exemplarPrompt(plain));
+      // The poison bites where vectors are wanted, so the assertions above are not vacuous.
+      expect(await retrieveExemplars(OWNER, 'category', 'gym run', { embedFn: fakeEmbed })).toEqual([]);
+    } finally {
+      sqlite.exec(`ALTER TABLE classification_exemplars RENAME COLUMN embedding_hidden TO embedding`);
+    }
   });
 
   it('does not touch a live embedder that is not installed', async () => {

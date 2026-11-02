@@ -16,7 +16,16 @@ import { createSignal } from 'solid-js';
  *   3. a Time Block parse is about a block (no task row): no claim;
  *   4. a claim whose names the picker could not show in full (stale tags store) is not
  *      kept: the owner would "correct" a pick they never saw;
- *   5. closing and reopening the modal forgets it.
+ *   5. closing and reopening the modal forgets it;
+ *   6. a create that FAILED keeps it (Add again still records), a create that LANDED and
+ *      was followed by a failing step spends it (Add again makes a second task and must
+ *      not record the same decision twice);
+ *   7. a habit Add (Repeat + Track as habit) carries it as well.
+ *
+ * And the other half of the evidence rule, on EDIT: the picker is seeded from the row, so
+ * an edit sends `categories` only when the owner used the picker (a Time Block edit too);
+ * a series save opened from a generated instance (which has no category rows) would
+ * otherwise send that empty set and wipe the template's categories. Add always sends it.
  *
  * The REAL lib/element.ts runs (claimIfFaithful, saveElement), so `api.tasks.create` is
  * the wire seam. Mocked: `../lib/api.js` and `../stores/index.js` (plus three leaf
@@ -25,7 +34,10 @@ import { createSignal } from 'solid-js';
 
 const quickParseMock = vi.fn();
 const tasksCreateMock = vi.fn(async (_b: unknown) => ({ task: { id: 'task-new' } }));
+const tasksUpdateMock = vi.fn(async (_id: string, _b: unknown, _scope?: string) => ({}));
 const blocksCreateMock = vi.fn(async (_b: unknown) => ({ block: { id: 'blk-new' } }));
+const blocksUpdateMock = vi.fn(async (_id: string, _b: unknown) => ({}));
+const patternsUpdateMock = vi.fn(async (_id: string, _b: unknown) => ({}));
 const showToastMock = vi.fn();
 
 vi.mock('../lib/api.js', () => ({
@@ -36,12 +48,12 @@ vi.mock('../lib/api.js', () => ({
     tasks: {
       quickParse: (...a: unknown[]) => quickParseMock(...a),
       create: (b: unknown) => tasksCreateMock(b),
-      update: vi.fn(async () => ({})),
+      update: (id: string, b: unknown, scope?: string) => tasksUpdateMock(id, b, scope),
       suggestTags: async () => ({ tags: [] }),
       suggestSubtasks: async () => ({ subtasks: [] }),
     },
-    blocks: { create: (b: unknown) => blocksCreateMock(b), update: vi.fn(async () => ({})), addTasks: vi.fn(async () => ({})) },
-    patterns: { create: vi.fn(async () => ({})), update: vi.fn(async () => ({})), placeToday: vi.fn(async () => ({})) },
+    blocks: { create: (b: unknown) => blocksCreateMock(b), update: (id: string, b: unknown) => blocksUpdateMock(id, b), addTasks: vi.fn(async () => ({})) },
+    patterns: { create: vi.fn(async () => ({})), update: (id: string, b: unknown) => patternsUpdateMock(id, b), placeToday: vi.fn(async () => ({})) },
   },
 }));
 
@@ -55,16 +67,27 @@ const TAGS = [
   { id: 'c3', name: 'career', kind: 'category', directions: [] },
 ];
 
-type ModalState = { open: boolean; mode: 'add' | 'edit'; kind: 'task' | 'timeblock' | null };
+type ModalState = {
+  open: boolean; mode: 'add' | 'edit'; kind: 'task' | 'timeblock' | null;
+  editTarget?: { kind: 'task' | 'timeblock'; id: string };
+};
 const CLOSED: ModalState = { open: false, mode: 'add', kind: null };
 const [modal, setModal] = createSignal<ModalState>(CLOSED);
+
+// Store rows a test sets up (reset in beforeEach): the rows an EDIT loads from, and the
+// routines behind the Routine chip (it needs the enable_routines pref and a Routine type).
+let TASKS: unknown[] = [];
+let BLOCKS: unknown[] = [];
+let PATTERNS: unknown[] = [];
+let PATTERN_TYPES: unknown[] = [];
+let PREFS: Record<string, unknown> = {};
 
 vi.mock('../stores/index.js', () => ({
   elementModal: () => modal(),
   setElementModal: (v: ModalState) => setModal(v),
   tags: () => TAGS,
-  blocks: () => [], concepts: () => [], tasks: () => [], patterns: () => [], patternTypes: () => [],
-  patternPrefs: () => ({ prefs: {} }), categoryPrefs: () => ({ prefs: {} }), prefs: () => ({}),
+  blocks: () => BLOCKS, concepts: () => [], tasks: () => TASKS, patterns: () => PATTERNS, patternTypes: () => PATTERN_TYPES,
+  patternPrefs: () => ({ prefs: {} }), categoryPrefs: () => ({ prefs: {} }), prefs: () => PREFS,
   patternBlocks: () => undefined,
   showToast: (...a: unknown[]) => showToastMock(...a),
   refetchBlocks: vi.fn(), refetchTasks: vi.fn(), refetchFlightPlan: vi.fn(),
@@ -85,6 +108,7 @@ const parseOk = (categories: string[] | undefined, claim: { text: string; catego
 });
 
 const open = (kind: 'task' | 'timeblock' = 'task') => setModal({ open: true, mode: 'add', kind });
+const openEdit = (kind: 'task' | 'timeblock', id: string) => setModal({ open: true, mode: 'edit', kind, editTarget: { kind, id } });
 const nlInput = () => screen.getByPlaceholderText(/^Describe it/) as HTMLInputElement;
 const titleInput = () => screen.getByPlaceholderText(/title…$/) as HTMLInputElement;
 const chip = (name: string) => screen.getByRole('button', { name });
@@ -105,9 +129,23 @@ async function add() {
   return JSON.parse(JSON.stringify(tasksCreateMock.mock.calls[0]?.[0] ?? null));
 }
 
+/** Press the footer button (Add, or Save in edit mode) and wait for the n-th toast. */
+async function press(label: 'Add' | 'Save', toasts = 1) {
+  fireEvent.click(screen.getByRole('button', { name: label }));
+  await waitFor(() => expect(showToastMock).toHaveBeenCalledTimes(toasts));
+}
+/** The n-th create body as it reached the wire (JSON round-trip drops undefined, like fetch). */
+const createBody = (n: number) => JSON.parse(JSON.stringify(tasksCreateMock.mock.calls[n]?.[0] ?? null));
+/** [id, wire body, scope] of the n-th task update. */
+const updateCall = (n: number) => {
+  const [id, body, scope] = tasksUpdateMock.mock.calls[n]!;
+  return { id, body: JSON.parse(JSON.stringify(body)) as Record<string, unknown>, scope };
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   quickParseMock.mockReset();
+  TASKS = []; BLOCKS = []; PATTERNS = []; PATTERN_TYPES = []; PREFS = {};
   setModal(CLOSED);
 });
 
@@ -237,5 +275,185 @@ describe('ElementWizard — classification claim', () => {
     const body = await add();
     expect(body.title).toBe(LINE);
     expect('classification_claim' in body).toBe(false);
+  });
+});
+
+describe('ElementWizard — what happens to the claim around the create', () => {
+  it('a create that FAILED keeps the claim: Add again sends the same one', async () => {
+    quickParseMock.mockResolvedValueOnce(parseOk(['leisure'], claimFor(['leisure'])));
+    tasksCreateMock.mockRejectedValueOnce(new Error('offline'));
+    render(() => <ElementWizard />);
+    open();
+    await describeIt(LINE);
+
+    await press('Add', 1);
+    expect(showToastMock).toHaveBeenLastCalledWith('offline', 'error');
+    await press('Add', 2);
+    expect(showToastMock).toHaveBeenLastCalledWith('Task saved', 'success');
+
+    expect(tasksCreateMock).toHaveBeenCalledTimes(2);
+    expect(createBody(0).classification_claim).toEqual(claimFor(['leisure']));
+    expect(createBody(1).classification_claim).toEqual(claimFor(['leisure']));   // no task existed, so it still records
+  });
+
+  it('a create that LANDED followed by a failing step spends the claim: Add again sends none', async () => {
+    PREFS = { enable_routines: true };
+    PATTERN_TYPES = [{ id: 'pt-routine', name: 'Routine' }];
+    PATTERNS = [{ id: 'pat-1', name: 'Morning', type_id: 'pt-routine', task_ids: [] }];
+    quickParseMock.mockResolvedValueOnce(parseOk(['leisure'], claimFor(['leisure'])));
+    patternsUpdateMock.mockRejectedValueOnce(new Error('routine gone'));
+    render(() => <ElementWizard />);
+    open();
+    await describeIt(LINE);
+    // The Routine TAB shares the chip's name and comes first in the DOM; the chip is last.
+    fireEvent.click(screen.getAllByRole('button', { name: 'Routine' }).at(-1)!);
+    fireEvent.click(screen.getByRole('button', { name: 'Morning' }));
+
+    await press('Add', 1);                                   // task 1 exists, the routine attach threw
+    expect(showToastMock).toHaveBeenLastCalledWith('routine gone', 'error');
+    expect(createBody(0).classification_claim).toEqual(claimFor(['leisure']));
+    await press('Add', 2);                                   // the modal stayed open: this makes task 2
+
+    expect(tasksCreateMock).toHaveBeenCalledTimes(2);
+    expect(createBody(1).title).toBe(LINE);
+    expect(createBody(1).categories).toEqual(['leisure']);
+    expect('classification_claim' in createBody(1)).toBe(false);   // one decision, one row
+  });
+
+  it('a habit Add (Repeat + Track as habit) sends is_habit, the rule and the claim', async () => {
+    quickParseMock.mockResolvedValueOnce(parseOk(['leisure'], claimFor(['leisure'])));
+    render(() => <ElementWizard />);
+    open();
+    await describeIt(LINE);
+    fireEvent.click(screen.getByRole('button', { name: /Repeat/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Daily' }));
+    fireEvent.click(screen.getByRole('button', { name: /Track as habit/ }));
+
+    const body = await add();
+    expect(body.is_habit).toBe(true);
+    expect(body.recurrence_rule).toBe('FREQ=DAILY');
+    expect(body.classification_claim).toEqual(claimFor(['leisure']));
+  });
+});
+
+describe('ElementWizard — an edit sends the category picker only if the owner used it', () => {
+  const taskRow = (over: Record<string, unknown> = {}) => ({
+    id: 'task-9', title: 'Gym session', status: 'open', tags: ['work'], secondary_tags: [],
+    categories: ['leisure'], priority: 3, scheduled_for: '2026-11-03', task_time: '09:00',
+    estimated_minutes: 30, depends_on: [], ...over,
+  });
+  const blockRow = () => ({
+    id: 'blk-1', title: 'Deep work', tag: 'work', secondary_tags: [], categories: ['health'],
+    block_type: 'scheduled', all_day: false, is_locked: false, status: 'scheduled',
+    start_at: '2026-11-03T09:00:00', end_at: '2026-11-03T10:00:00',
+  });
+
+  it('task edit, picker untouched: the update body has no categories key', async () => {
+    TASKS = [taskRow()];
+    render(() => <ElementWizard />);
+    openEdit('task', 'task-9');
+    expect(chip('Leisure').className).toContain('border-primary');   // seeded from the row
+
+    await press('Save');
+    const { id, body, scope } = updateCall(0);
+    expect(id).toBe('task-9');
+    expect(scope).toBeUndefined();
+    expect(body.title).toBe('Gym session');       // the save happened, only the picker was left out
+    expect('categories' in body).toBe(false);
+    expect(tasksCreateMock).not.toHaveBeenCalled();
+  });
+
+  it('task edit, picker used: the update body carries what it shows', async () => {
+    TASKS = [taskRow()];
+    render(() => <ElementWizard />);
+    openEdit('task', 'task-9');
+    fireEvent.click(chip('Health'));
+
+    await press('Save');
+    expect(updateCall(0).body.categories).toEqual(['leisure', 'health']);
+  });
+
+  it('task edit, picker emptied by the owner: [] is sent (an explicit clear)', async () => {
+    TASKS = [taskRow()];
+    render(() => <ElementWizard />);
+    openEdit('task', 'task-9');
+    fireEvent.click(chip('Leisure'));    // off
+
+    await press('Save');
+    expect(updateCall(0).body.categories).toEqual([]);
+  });
+
+  it('series save from a generated instance, picker untouched: no categories (the template keeps its own)', async () => {
+    // Instances carry no category rows, so the seeded picker is empty; sending that would
+    // wipe the template's categories.
+    TASKS = [taskRow({ id: 'inst-1', categories: [], recurrence_parent_id: 'tmpl-1' })];
+    render(() => <ElementWizard />);
+    openEdit('task', 'inst-1');
+    fireEvent.click(screen.getByRole('button', { name: 'This & future' }));
+
+    await press('Save');
+    const { id, body, scope } = updateCall(0);
+    expect(id).toBe('inst-1');
+    expect(scope).toBe('series');
+    expect('categories' in body).toBe(false);
+  });
+
+  it('series save from an instance where the owner picked a category: it is sent', async () => {
+    TASKS = [taskRow({ id: 'inst-1', categories: [], recurrence_parent_id: 'tmpl-1' })];
+    render(() => <ElementWizard />);
+    openEdit('task', 'inst-1');
+    fireEvent.click(screen.getByRole('button', { name: 'This & future' }));
+    fireEvent.click(chip('Career'));
+
+    await press('Save');
+    const { scope, body } = updateCall(0);
+    expect(scope).toBe('series');
+    expect(body.categories).toEqual(['career']);
+  });
+
+  it('a touch from an earlier session does not leak: reopening the same edit sends none again', async () => {
+    TASKS = [taskRow()];
+    render(() => <ElementWizard />);
+    openEdit('task', 'task-9');
+    fireEvent.click(chip('Health'));
+    setModal(CLOSED);
+    openEdit('task', 'task-9');
+    expect(chip('Leisure').className).toContain('border-primary');
+    expect(chip('Health').className).not.toContain('border-primary');   // reseeded from the row
+
+    await press('Save');
+    expect('categories' in updateCall(0).body).toBe(false);
+  });
+
+  it('time block edit follows the same rule: untouched sends none, used sends the picker', async () => {
+    BLOCKS = [blockRow()];
+    render(() => <ElementWizard />);
+    openEdit('timeblock', 'blk-1');
+    expect(chip('Health').className).toContain('border-primary');
+
+    await press('Save');
+    const untouched = blocksUpdateMock.mock.calls[0]![1] as Record<string, unknown>;
+    expect(untouched.title).toBe('Deep work');
+    expect('categories' in JSON.parse(JSON.stringify(untouched))).toBe(false);
+
+    setModal(CLOSED);
+    openEdit('timeblock', 'blk-1');
+    fireEvent.click(chip('Career'));
+    await press('Save', 2);
+    expect((blocksUpdateMock.mock.calls[1]![1] as Record<string, unknown>).categories).toEqual(['health', 'career']);
+  });
+
+  it('ADD always sends the picker, used or not (a new row has nothing to leave alone)', async () => {
+    render(() => <ElementWizard />);
+    open();
+    fireEvent.input(titleInput(), { target: { value: 'Pay the invoice' } });
+    expect((await add()).categories).toEqual([]);
+
+    vi.clearAllMocks();
+    setModal(CLOSED);
+    open();
+    fireEvent.input(titleInput(), { target: { value: 'Pay the invoice' } });
+    fireEvent.click(chip('Career'));
+    expect((await add()).categories).toEqual(['career']);
   });
 });

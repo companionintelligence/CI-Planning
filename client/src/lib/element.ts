@@ -208,6 +208,12 @@ export interface ElementForm {
    *  add-mode task/habit create so the server can record the owner's answer to it.
    *  Edit, routine and time-block saves never read it. */
   classificationClaim?: ClassificationClaim;
+  /** Called once, the moment the add-mode task/habit create has landed and before any step
+   *  that can still fail (routine chip, subtasks). The wizard spends its stored claim here:
+   *  a retry after such a failure makes a second task, and the one decision the owner made
+   *  must not be recorded twice. A create that threw never calls it, so that retry keeps the
+   *  claim. Edit, routine and time-block saves never call it. */
+  onCreated?: () => void;
   // Routine membership (modal redesign): single-select "Routine" chip. Applied
   // after the task exists (works for add + edit); undefined = leave membership alone.
   routineAddId?: string;
@@ -293,6 +299,7 @@ export async function saveElement(
       // The claim rides the create only (never an update, a subtask or a block): the server
       // settles it against the row it just made and silently drops one it cannot trust.
       taskId = (await api.tasks.create(form.classificationClaim ? { ...body, classification_claim: form.classificationClaim } : body)).task.id;
+      form.onCreated?.();
     } else if (form.editScope === 'series') {
       // Series edit → applies to the template; a rule change regenerates the window.
       await api.tasks.update(editId!, { ...body, recurrence_rule: rule ?? null, is_habit: kind === 'habit' }, 'series');
