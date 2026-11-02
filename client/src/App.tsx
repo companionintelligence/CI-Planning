@@ -8,6 +8,7 @@ import { CloseRitual } from './components/CloseRitual.js';
 import { Login }    from './views/Login.js';
 import { ConnectServer } from './views/ConnectServer.js';
 import { needsServerSetup } from './lib/server-config.js';
+import { setSignedIn } from './lib/session.js';
 import { Signup }   from './views/Signup.js';
 import { ResetPassword } from './views/ResetPassword.js';
 import { authGateActive } from './lib/api.js';
@@ -311,6 +312,13 @@ function SessionGate(props: { children?: any }) {
   const location = useLocation();
   const [me] = createResource(() => api.auth.me().then(() => true).catch(() => false));
 
+  // The account resources in stores/index.ts load once this is true (lib/session.ts).
+  createEffect(() => {
+    if (me.loading) return;
+    setSignedIn(me() === true);
+  });
+  onCleanup(() => setSignedIn(false));
+
   createEffect(() => {
     if (me.loading) return;
     if (me() === false && location.pathname !== '/login') {
@@ -351,6 +359,12 @@ export function App() {
   const [cfg] = createResource(() =>
     api.auth.config().catch(() => ({ mode: 'test' as const, disableOidc: false, portal: false, local: false, signup: 'off' as const })),
   );
+
+  // Ungated deployments (test, standalone) have no login, so the session exists as soon as
+  // the server's mode is known. In sso, SessionGate sets it from /api/auth/me instead.
+  createEffect(() => {
+    if (!cfg.loading && !authGateActive(cfg()!)) setSignedIn(true);
+  });
 
   return (
     <Show
