@@ -539,13 +539,21 @@ export async function updateTask(
   // Never throws — a task update must not fail because the learning log did.
   if (Array.isArray(input.categories)) {
     // An answer is a change to the SAVED set, recorded as read back rather than as sent.
-    // The wizard's Edit re-sends its picker whether or not the owner touched it, and
-    // counting that would close an open row as 'accepted' ahead of its 24h window and
-    // discard the correction the owner makes an hour later. Reading back also means a
-    // case, unknown-name or duplicate difference in the request cannot fabricate one.
-    // Known gap: a series save from a generated instance sends the instance's picker,
-    // empty because instances carry no category rows. That clears the template's set
-    // (older behaviour), so it reads as a real change here; the caller must not send it.
+    // The picker can arrive without an answer in it: a wizard Edit re-sends the set it was
+    // seeded with when the owner touched the picker and put it back, and a series save opened
+    // from a generated instance carries that instance's picker. Counting a same-set re-send
+    // would close an open row as 'accepted' ahead of its 24h window and discard the
+    // correction the owner makes an hour later. The wizard leaves categories out of an
+    // untouched task or habit edit; this read-back is a second guard, independent of that,
+    // and the only one a REST, GraphQL or agent caller gets. It also means a case,
+    // unknown-name or duplicate difference in the request cannot fabricate a change.
+    // Known gap, for those callers: only an UNCHANGED set is absorbed. A different or empty
+    // one is a real change here and is recorded as the owner's answer, so it cannot be told
+    // from a deliberate clear. A series save from a generated instance is the case that
+    // matters: the instance's picker is empty (instances carry no category rows), the write
+    // clears the template's set (older behaviour), and an open row for the template is
+    // closed as a correction to '' that nobody made. A caller must not send `categories`
+    // the owner did not set.
     const before = await entityCategoryNames('task', targetId);
     await setEntityCategories('task', targetId, await categoryIdsForOwner(input.categories, ownerId));
     const after = await entityCategoryNames('task', targetId);

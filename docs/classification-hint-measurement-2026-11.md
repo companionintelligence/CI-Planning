@@ -4,7 +4,9 @@ Evidence for `feat(classification): show quick-add the owner's corrections; reco
 category pick` (branch `feat/classification-hint-quick-add`, commits `96dbea90`, `0121a543` and
 `92854927`, on `origin/main` `9dce59ae`). The change has two halves with different standing.
 **Capture** (the wizard's Add records the model's category pick, so your edit of it becomes a
-correction) is bookkeeping: it changes no prompt. The **hint** (quick add and the Describe-it
+correction) is bookkeeping: at the time of the write it changes no prompt, though its rows go into
+the index the next Monday run builds, and every prompt that reads that index then shows them. The
+**hint** (quick add and the Describe-it
 preview show the model your most common category corrections) changes what a small local model is
 shown, and `agents/quickadd.ts` already records that a layout or wording change there is a retune
 that has to be measured, not argued. So the harness and its gates were written down before the
@@ -13,9 +15,11 @@ first live run (the ship rule gained one sentence after run 3; see
 
 ## Result in brief
 
-- **Capture ships.** It changes no prompt. The harness drove it end to end on real models (on
-  `gemma3n:e4b` it wrote 18 corrections, 14 of which went into the index the hint read and 4 of
-  which were held out for scoring) and tests cover it.
+- **Capture ships.** It changes no prompt at the time of the write. The harness drove it end to end
+  on real models (on `gemma3n:e4b` it wrote 18 corrections, 14 of which went into the index the hint
+  read and 4 of which were held out for scoring) and tests cover it. Its rows feed the same index
+  for the two other readers, memory enrichment (off by default) and the Monday scorer, and this
+  harness did not drive those (see [What this does not show](#what-this-does-not-show)).
 - **The hint ships on the evidence of one tier, `gemma3n:e4b`.** With the shipped layout (hint last)
   it took the scored targets from 3 of 12 to 7 of 12 titles, 4 wins and 0 losses, and a placebo block
   of the same size and place left them at 3 of 12. G1 **IMPROVED**; G3, G4, G5 and G6 pass, and G2
@@ -29,7 +33,10 @@ first live run (the ship rule gained one sentence after run 3; see
   `gemma3:1b` answers an array on 20% of baseline calls: G1 reads NO MEASURABLE CHANGE and the same
   INCONCLUSIVE label applies. The array answers that `gemma3:1b` did give were almost never the
   owner's value in any arm, so read that tier as unmeasured with a lean toward no benefit, not as a
-  gain hidden by the harness (see [Ship decision](#ship-decision)).
+  gain hidden by the harness (see [Ship decision](#ship-decision)). The block also has a cost there
+  that no gate reads: the required `direction` answer was one of the owner's three directions on 60.0%
+  of arm A's completions and 40.0% of arm B's (run 5), and each off-list answer sends the request
+  into `enrichQuick`'s second-chance direction call, a second model call.
 - **The who-it's-for half of the hint is unmeasured.** The wizard records category picks only, so the
   fixture has no who-it's-for corrections and that block was empty in all six runs.
 - **The registered ship rule, read literally, is not met.** It asks for G1 on the fast tier. That is
@@ -433,6 +440,42 @@ the figures are A 23.2% (22 of 95 calls), B 9.5% (9 of 95) and P 7.4% (7 of 95),
 block moved it the same way. The block, not its lessons, moves the answer shape on this model. See
 [What this does not show](#what-this-does-not-show).
 
+A second thing G3 does not read is whether `direction`, the one field `enrichQuick` marks REQUIRED,
+is one of the owner's three directions (work, home, community). G3 counts the key as present
+whatever it holds. Scored the way production scores it (trimmed, case-insensitive match against
+those three), from each arm's raw completions in the artifact:
+
+| Arm | Valid `direction` | Off-list, so `enrichQuick` asks again |
+|---|---|---|
+| A | 72 of 120 (60.0%) | 48 (40.0%) |
+| A2 | 70 of 120 (58.3%) | 50 (41.7%) |
+| B (hint last) | 48 of 120 (40.0%) | 72 (60.0%) |
+| C (adjacent) | 48 of 120 (40.0%) | 72 (60.0%) |
+| S | 21 of 120 (17.5%) | 99 (82.5%) |
+| P (placebo) | 5 of 95 (5.3%) | 90 (94.7%) |
+
+On the 19 titles P ran on the figures are A 47 of 95 (49.5%), B 27 of 95 (28.4%) and P 5 of 95
+(5.3%). The off-list answers are category names (B: health 33, relationships 20, finance 10, growth
+5, career 4). So it is the block's presence that moves this model's direction answer off the list,
+in either place: the adjacent layout (C) matches the hint-last one (B), and the placebo, whose
+lessons are about other conventions, goes further than B does. By title, the unit of this study: 7
+of the 24 titles went from a valid direction to an off-list one in most runs under B, 2 went the
+other way and 8 were off-list under both.
+
+What an off-list answer costs: when the first pass yields no valid direction, `enrichQuick` asks
+once more with a single-field prompt (`agents/quickadd.ts`, "Second chance"), which is a second
+model call. The fixture titles carry no direction of their own, so every off-list answer in the
+table would trigger it. The harness makes that call but does not record it (an artifact keeps the
+first-pass model call of each cell and request), so the retries here are counted from the answers
+and not seen, and whether the retry comes back with a valid direction was not recorded. The final direction the owner would
+have got is therefore not measured. The latency section ties this to the +85 ms.
+
+The same figures for the other runs, from their artifacts (valid of 120, A then B): run 2
+(`gemma3:1b`, adjacent) 71 then 40, run 3 (`gemma3n:e4b`) 109 then 110, run 6 (`gemma3n:e4b`) 105
+then 115. On `gemma3n:e4b` the effect does not appear and in run 6 it reverses, so the cost is a
+`gemma3:1b` one. `qwen2.5:0.5b` named a valid direction on 60 of 60 baseline completions in both of
+its runs.
+
 ### Run 6: `gemma3n:e4b`, pinned, B = hint last (confirmation), C = adjacent
 
 2 Nov 14:48:07 to 15:18:45 UTC (1,837 s). 780 model calls. Commit `92854927`, no differing paths. 18
@@ -473,9 +516,12 @@ What it shows, for B against A:
   1.
 - **C (adjacent) tied B** on the targets, 7 of 12 with the same four wins, and lost no control.
 - **S (similarity)** reached 8 of 12 (one more, Body scan relaxation) and **failed G2**: 2 of 12
-  controls flipped (Pay the electricity bill to `[]`; Review the monthly budget to `career, finance`,
-  a real over-application of the career convention). It also had 109 of its 120 model calls run more
-  than 3 times slower than the warm median (see [Latency and residency](#latency-and-residency)).
+  controls flipped (Pay the electricity bill to `[]`; Review the monthly budget from
+  `finance, career` to `career, finance`). The budget flip is a reorder: the baseline arms already
+  listed career second on all five runs, and S put it first on all five, which moves the
+  first-category pick the harness scores onto the career convention (run 3 shows the same reorder).
+  It also had 109 of its 120 model calls run more than 3 times slower than the warm median (see
+  [Latency and residency](#latency-and-residency)).
 
 ### Per-title flips, run 6
 
@@ -589,15 +635,40 @@ for an owner without an index (A-style) against one with an index (B), 30 interl
 | 5 (last) | 421.4 → 506.4 ms | +85.0 ms | 411.4 → 411.4 ms |
 | 6 (last) | 1422.5 → 1447.9 ms | +25.4 ms | 1419.8 → 1445.9 ms |
 
-None of these isolates what the hint costs. Run 2's negative difference is what the adjacent layout's
-short answers would produce (the first model call itself fell from 403 to 242 ms, and 91 of 120 B
-completions were three keys long). Run 5's +85 ms is not in the first model call
-(same p50) and not in the hint read (0.3 ms); the artifact does not say where it went, and a second
-direction call of about 80 ms (what the narrow question N0 costs on this model, mean 78 ms) would
-account for it, but that was not checked. Runs 3 and 6 add 353 characters of prompt on a model that
-takes about 1.4 s a call, and in run 6 the baseline arm A and its repeat A2 differ by 19 ms in mean
-model-call time (1455 and 1436), so differences of 25 to 32 ms cannot be told from jitter. The
-unconfounded cost of the hint is the read above.
+None of these isolates what the hint costs. Run 5's +85 ms is not in the hint read (0.3 ms) and not
+in the first model call (p50 411.4 ms on both sides). The artifacts keep only the first model call of
+each request, so the rest has to be read from the answers, and they fit one thing. `enrichQuick`
+asks a second, single-field direction question whenever the first pass names no valid direction (see
+[Run 5](#run-5-gemma31b-pinned-b--hint-last-confirmation-c--adjacent)), and on `gemma3:1b` the block
+makes that more common: 40.0% of A's requests against 60.0% of B's. The timed loop cycles through
+the 24 titles, 30 requests in all. A title's answer is near-identical from run to run at
+temperature 0.1, so counting the titles whose direction was off-list in most of an arm's five
+completions gives 12 of the 30 requests that would retry for A and 17 of the 30 for B. The p50 is the
+15th of the 30: for A, 18 requests do not retry, so it is one of those; for B, only 13 do not, so it
+is one that retries. That is the shape of the numbers (wall p50 minus first-call p50: 10.0 ms for A,
+95.0 ms for B), and A's wall p95, 535.4 ms against a first-call p95 of 424.9, is a retry as well. A
+retry of about 80 ms is what the narrow question N0 costs on this model (mean 78 ms; the direction
+question's own cost was not measured). This is a reconstruction from the answers, not a count: the
+timed loop did not record the retry.
+
+| Run | A: wall p50 minus first-call p50 | A: valid `direction` | B: wall p50 minus first-call p50 | B: valid `direction` |
+|---|---|---|---|---|
+| 2 (`gemma3:1b`, adjacent) | 25.2 ms | 71 of 120 | 103.0 ms | 40 of 120 |
+| 3 (`gemma3n:e4b`, adjacent) | 1.9 ms | 109 of 120 | 21.8 ms | 110 of 120 |
+| 5 (`gemma3:1b`, last) | 10.0 ms | 72 of 120 | 95.0 ms | 48 of 120 |
+| 6 (`gemma3n:e4b`, last) | 2.7 ms | 105 of 120 | 2.0 ms | 115 of 120 |
+
+Run 2 has the same shape as run 5, so its -82.9 ms is not only the adjacent layout's short answers
+(the first model call fell from 403 to 242 ms, and 91 of 120 B completions were three keys long):
+the retry gap grew from 25 to 103 ms under it. On average the cost is smaller than the p50
+difference: 20 more requests in 100 pay a call of about 78 ms, so about 16 ms a request, and the p50
+shows more because it falls on the edge between requests with and without the second call. Runs 3
+and 6 add 353 characters of prompt on a model that takes about 1.4 s a call and names an off-list
+direction on at most 13% of its completions; in run 6 the baseline arm A and its repeat A2 differ
+by 19 ms in mean model-call time (1455 and 1436), so differences of 25 to 32 ms cannot be told from
+jitter. So the hint costs under a millisecond to read, and on
+`gemma3:1b` the block also costs a second model call on part of the requests; what that adds in all
+was reconstructed, not measured.
 
 **Arm S and residency.** After every call the harness reads `GET /api/ps`. It calls a generate call
 slower than 3 times the warm median a "reload"; that is a label for the size of the delay, not an
@@ -623,9 +694,16 @@ What the resident sets show: in runs 2, 5 and 6 the poll after a generate call n
 `nomic-embed-text` (it listed the generation model and a leftover `qwen2.5:0.5b`), while in run 3 it
 listed it beside `gemma3n:e4b` on 108 to 109 of 120 calls per arm and S was slow on 11. The unit caps
 the server at two loaded models and keeps them 24 hours, so a leftover small model, the generation model and the
-embedder do not all fit. That is the reading these numbers fit, and it is why the embedder was kept
-off the interactive path. It is not something they show: the artifacts record the slowdown and the
-resident sets, not which model was evicted or when, and the start state differed between runs.
+embedder do not all fit. The numbers are consistent with that reading, and S was slow on most of its
+calls in three of the four runs (120, 120 and 109 of 120) and on 11 of 120 in run 3, where the
+embedder stayed resident. They do not show it: the artifacts record the slowdown and the resident
+sets, not which model was evicted or when, and the start state differed between runs. They also
+did not decide the layout of the interactive path. Frequency-only was fixed in `96dbea90`
+(12:49:00 UTC) and run 1 began within ten seconds of it (12:49:08), on eviction timings seen in the
+design phase that did not reproduce when they were rechecked. The grounds that survived were that
+frequency-only needs no embedder, works on an install without one, and can run under test, where
+the embedder is not ready. The runs came after the decision and are consistent with its first
+reason; they are not its evidence.
 S "with both generation models resident" was not run (only one model in `LIVE_HINT_MODELS`), so
 whether similarity could ever replace the frequency path on a box that holds two models is not
 settled.
@@ -670,7 +748,9 @@ Said plainly, because it happened after seeing a result.
 For the owner to confirm or reverse. Made on 2 Nov 2026 from the runs above.
 
 **Capture ships.** It writes nothing on a preview, is title-bound, vocabulary-checked and owner-scoped,
-and drops a claim it cannot trust without failing the create.
+and drops a claim it cannot trust without failing the create. Its rows enter the index like any
+other correction, so after the next Monday run they also reach memory enrichment's prompt (off unless
+`MEMORY_MODE` is set) and the Monday scorer's held-out prompts; this harness did not drive either.
 
 **The hint half ships.** It ships on the evidence of `gemma3n:e4b`, the only tier here where the
 measurement has power and the answer shape is usable, together with G3, G4 and G6 holding on the two
@@ -687,7 +767,9 @@ literally:
 - Only `gemma3n:e4b`, which is the quality default and sits in the fast slot here by an `OLLAMA_FAST`
   pin, meets the rule, with G1 IMPROVED.
 
-So the rule is met on one tier of three. The reasoning for shipping anyway:
+So the rule is met on one tier of three. The harness only reads the rule off, as the rule says it
+should: its log for the `gemma3:1b` run prints that reading while the code ships the hint half, so
+this section is where the departure is recorded. The reasoning for shipping anyway:
 
 1. On the two small tiers the harness could not power a G1 test. The baseline cannot express a pick
    in the shape production keeps (0% and 20% arrays), so "no change" there means the harness could
@@ -706,8 +788,9 @@ So the rule is met on one tier of three. The reasoning for shipping anyway:
 3. The harm that could be measured was small on `gemma3n:e4b`: with the shipped layout G3 passes, G2
    passes at its allowance (1 flipped, 1 allowed) with the placebo costing a control too, G4 passed
    on every prompt it checked, and the hint read is under a millisecond. On `gemma3:1b` G3 and G4
-   pass, G2 was not powered (2 of 12 controls could flip) and the array share fell (below). "Small"
-   is claimed for `gemma3n:e4b` only.
+   pass, G2 was not powered (2 of 12 controls could flip), the array share fell and the direction
+   answer went off-list more often, which costs a second model call (below). "Small" is claimed for
+   `gemma3n:e4b` only.
 4. On `qwen2.5:0.5b`, none of the 78 completions measured in run 4 (60 baseline, 18 training) gave a
    list (run 1 agrees on its 60 baseline completions), so on this box nothing was corrected and no
    index was built, and with no index the prompt is the stock prompt byte for byte. An index built
@@ -716,9 +799,16 @@ So the rule is met on one tier of three. The reasoning for shipping anyway:
 
 What this leaves open, so that nobody has to find it: on `gemma3:1b` the hint-last block lowered the
 share of array answers (20.8% to 7.5% over 24 titles, and 7.4% with the placebo over 19), which G3
-does not read, and the tier gained nothing measurable. An owner on that tier who has made 2 or more
-category corrections would be shown the block. If real owners on a small tier show fewer category
-picks after their first Monday run, that is the first place to look.
+does not read, and the tier gained nothing measurable. It also made the required `direction` answer
+go off-list more often (valid on 60.0% of A's completions and 40.0% of B's in run 5, and 5.3% of the
+placebo's), and each off-list answer makes `enrichQuick` ask a second direction question. That is a
+second model call of about 80 ms on 20 more requests in 100, about 16 ms a request on average, and
+the +85 ms p50 difference in the route's wall time fits it (see
+[Latency and residency](#latency-and-residency)); the call was reconstructed from the answers, not
+counted, and whether the retry returns a valid direction was not recorded. An owner on that tier who
+has made 2 or more category corrections would be shown the block, and would pay for it. If real
+owners on a small tier show fewer category picks or slower quick adds after their first Monday run,
+that is the first place to look.
 
 **The who-it's-for half ships unmeasured.** The same change shows the model the owner's me, us or
 them corrections, and no run exercised it (that block was empty throughout). In the app only memory
@@ -730,13 +820,14 @@ change in `enrichEntry`: hand `enrichQuick` an empty `motivation` hint.
 `enrichQuick(text, parsed, vocab)` with no hints. That is the whole behaviour change; the `choosable`
 helper and the hint imports become unused, and `quickadd-hint-routes.test.ts`, which pins the routes'
 use of the hint, would have to go or change. `enrichQuick`'s own `hints` parameter and its prompt test
-can stay. Capture is unaffected.
+can stay. Capture is unaffected, and its rows still reach the two other readers of the index.
 
 The `S` question stays as it was: flipping `{ embedFn: null }` to `{}` in `enrichEntry` needs a clear
 accuracy edge and no latency or residency damage. S reached 8 of 12 against B's 7 of 12 (+1, within one
 title), failed G2, and had 109 of its 120 model calls run more than 3 times slower than the warm
-median in run 6 (the embedder fits an eviction, see [Latency and residency](#latency-and-residency),
-but the artifacts do not show one). It is not adopted.
+median in run 6 (120, 120 and 11 of 120 in runs 2, 5 and 3). The numbers are consistent with an
+eviction, see [Latency and residency](#latency-and-residency), but the artifacts do not show one.
+It is not adopted.
 
 ## What this does not show
 
@@ -772,6 +863,16 @@ but the artifacts do not show one). It is not adopted.
   7.4%); G3, which reads key presence, cannot see it. Read leniently, the baseline's target calls
   were right 13 times in 60 and B's 5 times in 60. The harness cannot power a G1 test on this tier,
   and what data there is leans toward no benefit.
+- **The direction cost on `gemma3:1b`.** The block pushed the required `direction` answer off the
+  owner's three directions more often (valid on 60.0% of A's run-5 completions, 40.0% of B's; the
+  adjacent layout and the placebo do the same, so it is the block's presence), and each off-list
+  answer makes `enrichQuick` ask once more. G3 reads key presence and cannot see it. The extra call
+  is reconstructed from the answers and the wall times, not counted, because the artifacts keep only
+  the first model call of a request; whether the retry returns a valid direction, and so what
+  direction the owner finally gets, was not recorded. It is a `gemma3:1b` finding: `gemma3n:e4b`
+  names a valid direction on 87.5% to 95.8% of completions in every arm of runs 3 and 6, and
+  `qwen2.5:0.5b` on 60 of 60. The harness did not print this figure when the runs were made; it was
+  computed from the artifacts' raw completions afterwards, as the array column of runs 1 to 3 was.
 - **Small models only.** `qwen2.5:0.5b`, `gemma3:1b` and `gemma3n:e4b`. Nothing here says what a
   larger model, which may already follow the owner's vocabulary at baseline, does with the block.
 - **This box only.** One Ollama build (0.34.0), a Vulkan backend, a two-model cap and a 24-hour
@@ -784,8 +885,16 @@ but the artifacts do not show one). It is not adopted.
   a prompt sooner or later than that: an admin can run the job early from the Jobs page (for their
   own account only), `DELETE /api/classification/exemplars` empties the index at once, the route's
   `choosable` filter drops a lesson at read time when its category is renamed, muted or deleted, and
-  a Monday 04:10 that passes while the server is down is not made up. Corrections older than 90 days
-  stop counting.
+  a Monday 04:10 that passes while the server is down is not made up. Corrections on guesses made
+  more than 90 days ago stop counting (the window runs on the day the model guessed, not the day you
+  corrected it).
+- **Capture's rows reach prompts this harness did not drive.** After the next Monday run a
+  correction recorded by the wizard is in the index like any other (the log has no column for where
+  a row came from), so memory enrichment (off unless `MEMORY_MODE` is set; similarity when an
+  embedder answers, else frequency) and the Monday scorer's held-out prompts (similarity) show it
+  too, even if the hint half were dropped. Arm N asks the scorer's narrow question but with the
+  frequency hint, not the scorer's similarity retrieval, and memory enrichment's prompt was not
+  driven at all.
 - **Not driven.** `POST /api/tasks/quick` shares `enrichEntry` with the parse route, and its prompt is
   pinned in `test/quickadd-hint-prompt.test.ts`; the harness does not call it. The wizard (client) is
   not run: the harness echoes the claim itself, as the wizard's Add does, and the client behaviour is

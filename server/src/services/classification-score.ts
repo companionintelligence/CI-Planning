@@ -12,10 +12,11 @@ import { canonicalValue, type ScoreFn } from './classification-learning.js';
  * question), with the same rubric text and an exemplar hint retrieved the way enrichment
  * retrieves it (similarity when an embedder answers), and nothing else — no memory graph,
  * no description task. It is NOT quick-add's wide prompt, whose hint is frequency-only and
- * sits last, so the trend it feeds does not measure quick-add's own classifier. That isolation is deliberate: an old held-out task's knowledge-graph context is
- * long gone and unreproducible, so scoring the full enrichment prompt would measure
- * drift in the graph rather than in the thing learning actually changes. What varies
- * between runs here is the exemplar set, which is exactly what the trend should track.
+ * sits last, so the trend it feeds does not measure quick-add's own classifier. That
+ * isolation is deliberate: an old held-out task's knowledge-graph context is long gone and
+ * unreproducible, so scoring the full enrichment prompt would measure drift in the graph
+ * rather than in the thing learning actually changes. What varies between runs here is the
+ * exemplar set, which is exactly what the trend should track.
  *
  * Returns `undefined` when Ollama cannot answer at all, which the calibration reads as
  * "not measured" and records as a null accuracy — a gap in the trend, never a zero.

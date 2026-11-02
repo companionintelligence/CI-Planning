@@ -137,9 +137,11 @@ export function ElementWizard() {
   const [tbCustomRule, setTbCustomRule] = createSignal('');
   // Phase B (0134): 1–3 categories, tasks AND blocks; array order = stripe order.
   const [categoryIds, setCategoryIds] = createSignal<string[]>([]);
-  // True once the owner used the picker themselves; every seed (an edit's own row, a parse,
-  // a fresh open) puts it back to false. A task or habit EDIT save sends the picker only when
-  // it is true; a Time Block edit sends it either way.
+  // True once the owner used the picker themselves; seeding an edit's own row and a fresh
+  // open put it back to false (a parse seeds too, but only in Add, which sends the picker
+  // either way). It latches: tapping a chip back off does not clear it, deliberately, the
+  // owner used the picker. A task or habit EDIT save sends the picker only when it is true;
+  // a Time Block edit sends it either way.
   const [categoriesTouched, setCategoriesTouched] = createSignal(false);
   // Phase B (0135): per-element texture override (on by default; null colour = derive).
   const [textureEnabled, setTextureEnabled] = createSignal(true);
@@ -514,6 +516,11 @@ export function ElementWizard() {
     const isBlock = tab() === 'timeblock';
     try {
       const { parsed, llm, classification_claim } = await api.tasks.quickParse(value);
+      // The modal may have been reopened in Edit while this was in flight (the title stays
+      // typeable, so "open instead of adding?" is reachable; so is closing it and opening a
+      // task). Edit has no Describe-it line, so the answer belongs to a form that is gone:
+      // drop it before it touches a field, the picker or the claim.
+      if (isEdit()) return;
       setNlLlm(llm);
       // Hydrate the form fields — every value below is visible in the wizard for
       // review/correction before Add.
@@ -913,13 +920,21 @@ export function ElementWizard() {
         // AF-9: time-block secondary tags live in `intentions` (round-tripped on
         // edit), so no separate blind-preserve set is passed.
         // Phase B: 1–3 category names (picker order = stripe order) + texture override.
-        // A task or habit EDIT sends the picker only if the owner used it. The form seeds it
-        // from the row, so sending it back is no answer: it would close the task's learning
-        // row as accepted, and a series save opened from a generated instance (which carries
-        // no category rows) would send that empty set, wiping the template's categories and
-        // closing its row with a correction nobody made. Add sends the picker. A Time Block
-        // edit sends it always, as before: a block has no learning row, and its save re-stamps
-        // the block's frozen colour from the first category (services/blocks.ts updateBlock).
+        // A task or habit EDIT sends the picker only if the owner used it. The edit form used
+        // to re-send it on every save, and the seed is not testimony: it is a snapshot taken
+        // when the form opened, short of any category the tags() store could not show and of
+        // anything the server changed since. A series save opened from a generated instance
+        // is the sharp case: instances carry no category rows, so the seed is empty, and
+        // sending it wipes the template's categories. The server's changed-only read-back
+        // (updateTask) is a second guard behind this one: a same-set re-send changes nothing
+        // and closes no learning row. The gate latches once the owner touched the picker, even
+        // if they tapped a chip back off: they used it, so it sends what the picker shows (on
+        // an instance's series save, that can be the empty set).
+        // Still open, and older than this gate: that same instance series save sends tags []
+        // and secondary_tags [] (taskTagPayload), which wipes the template's direction and
+        // intention tags. Left for a follow-up. Add sends the picker. A Time Block edit sends
+        // it always, as before: a block has no learning row, and its save re-stamps the
+        // block's frozen colour from the first category (services/blocks.ts updateBlock).
         categories: isEdit() && (effectiveKind === 'task' || effectiveKind === 'habit') && !categoriesTouched()
           ? undefined : categoryNames(),
         textureEnabled: textureEnabled(),

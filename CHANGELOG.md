@@ -39,6 +39,7 @@ version at `GET /api/health` (`release`).
   (set as the fast model for the test; the default fast model is `qwen2.5:0.5b`) filed 7 of 12
   held-out titles the owner's way, up from 3. It learned two of the owner's three rules and none of the
   exercise titles. `gemma3:1b` answers a list on about 1 call in 5, so the test could not measure it.
+  The Settings → Learning card for categories now says the examples also reach the Describe-it line.
   See `docs/classification-hint-measurement-2026-11.md`.
 - **AI works through your CI Hub when the Hub is not running Ollama.** On a Hub whose AI runs on vLLM or
   Lemonade, Planning uses the Hub's OpenAI-compatible endpoint for chat, and for embeddings when one is named.

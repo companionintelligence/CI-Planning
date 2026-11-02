@@ -76,6 +76,13 @@ async function peopleFor(taskId: string): Promise<{ responsible: unknown[]; bene
  * "the user chose X" in a prompt whose list lacks X; the model would pick it and
  * `constrainToVocabulary` would drop it.
  *
+ * A cleared value is dropped for motivation too, although that prompt allows null: quick-add
+ * does not teach null, and the wizard records no motivation (its rows come only from
+ * `POST /api/tasks/quick`, which no screen calls, and memory enrichment, which is off unless
+ * MEMORY_MODE is set), so a "(nothing)" motivation lesson here would be one nobody has
+ * measured. Memory enrichment, whose prompt allows null as well, passes no `accept` and still
+ * sees those rows as "the user chose (nothing)".
+ *
  * Whole names, not a split on ',': nothing keeps a comma out of a category name
  * (`normalizeTagName` leaves it, `createTag` only refuses an empty one, and a rename in
  * Settings reaches it), so "Health, Fitness" is stored as `health,-fitness` and a split
@@ -109,11 +116,15 @@ function choosable(allowed: readonly string[]): (e: Exemplar) => boolean {
  *
  * Frequency-only on purpose (`embedFn: null`): an embed here is an `embedReady` status read
  * plus an embed on a path a person is watching, and on a box with few model slots it can push
- * the classify model out (slow generates alongside every similarity lookup in the live runs,
- * docs/classification-hint-measurement-2026-11.md; an eviction itself was not observed). So the whole cost is one indexed read per field, an owner
- * below the correction floor pays only that, and an install with no embedder pulled behaves
- * the same. The text is still computed; the day the hint should be about THIS input, the
- * change is `{ embedFn: null, accept }` to `{ accept }` here and nowhere else.
+ * the classify model out. The live runs came after that choice and fit it without proving it:
+ * generate calls slower than 3x the warm median came with all or nearly all of the similarity
+ * lookups in three of the four runs (120 of 120 in runs 2 and 5, 109 of 120 in run 6) and
+ * with 11 of 120 in run 3, where the embedder stayed resident. They record the slowdown, not
+ * which model was evicted, and no eviction was observed
+ * (docs/classification-hint-measurement-2026-11.md). So the whole cost is one indexed read per
+ * field, an owner below the correction floor pays only that, and an install with no embedder
+ * pulled behaves the same. The text is still computed; the day the hint should be about THIS
+ * input, the change is `{ embedFn: null, accept }` to `{ accept }` here and nowhere else.
  *
  * Keyed on the title, the string the log records: `mergeEnrichment` never changes it, so
  * the enriched title is the parsed one. Never throws on the hint side (`classificationHint`

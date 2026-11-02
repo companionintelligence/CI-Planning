@@ -1304,12 +1304,12 @@ Connections**. Replay the walkthrough from **Settings → Profile**.
   shows the ones most like the task when an embedder is available, and so do the Monday run's
   held-out scoring prompts. The loop is batch: a correction you make changes no prompt until the next
   Monday `calibrate_classification` run (an admin can run the job early from the Jobs page, for
-  their own account), a field needs at least 2 corrections first, and corrections older than 90 days
-  stop counting. The category lessons only help when the AI model answers categories as a list; the
-  built-in fast model, `qwen2.5:0.5b`, answers a bare word on the box measured, so there it picks no
-  category and has nothing to learn from. The who-it's-for lessons were not measured, and the Add
-  wizard does not record those picks, so on a default install that half stays empty. The measurement
-  is in `docs/classification-hint-measurement-2026-11.md`
+  their own account), a field needs at least 2 corrections first, and corrections on guesses made
+  more than 90 days ago stop counting. The category lessons only help when the AI model answers
+  categories as a list; the built-in fast model, `qwen2.5:0.5b`, answers a bare word on the box
+  measured, so there it picks no category and has nothing to learn from. The who-it's-for lessons
+  were not measured, and the Add wizard does not record those picks, so on a default install that
+  half stays empty. The measurement is in `docs/classification-hint-measurement-2026-11.md`
 - **Dismissal learning** — what you dismiss or approve from the suggestion stream is logged
   (`possible_outcome_log`); once you have 5 settled dismissals a weekly `calibrate_dismissals`
   job keeps a per-owner rollup of them, and up to 3 relevant ones are shown to the extraction

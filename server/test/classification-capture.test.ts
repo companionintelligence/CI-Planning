@@ -502,9 +502,10 @@ describe('the wizard’s Add records the preview’s category pick', () => {
     });
 
     it('leaves an open row open when the same pick is sent again, so a real correction can still follow', async () => {
-      // The wizard's Edit re-sends its picker whether or not the owner touched it. That is
-      // no answer: counting it would freeze the row as 'accepted' ahead of its 24h window
-      // and the correction made an hour later would be the second answer, and lost.
+      // Re-sending the same set (the wizard used to do it on every Edit, and REST, GraphQL
+      // and agent callers still can) is no answer: counting it would freeze the row as
+      // 'accepted' ahead of its 24h window and the correction made an hour later would be
+      // the second answer, and lost.
       const id = await born(TITLE);
       const resend = await patch(id, { categories: ['leisure'], priority: 2 });
       expect(resend.status).toBe(200);

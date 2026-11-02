@@ -27,6 +27,8 @@ import { createSignal } from 'solid-js';
  * save opened from a generated instance (which has no category rows) would otherwise send
  * that empty set and wipe the template's categories. Add always sends it. A Time Block
  * edit is outside the rule (a block has no learning row) and sends the picker as before.
+ * A Describe-it answer that lands after the modal was reopened in Edit is dropped, so it
+ * cannot seed the picker of a task it was never about.
  *
  * The REAL lib/element.ts runs (claimIfFaithful, saveElement), so `api.tasks.create` is
  * the wire seam. Mocked: `../lib/api.js` and `../stores/index.js` (plus three leaf
@@ -58,14 +60,16 @@ vi.mock('../lib/api.js', () => ({
   },
 }));
 
-// The picker offers health / leisure / career. 'finance' is deliberately NOT here: a
-// parse naming it stands in for a category created in another tab and not yet refetched.
+// The picker offers health / leisure / career / travel (four, so a test can sit at the cap
+// of three and still have a chip to tap). 'finance' is deliberately NOT here: a parse naming
+// it stands in for a category created in another tab and not yet refetched.
 const TAGS = [
   { id: 'd1', name: 'work', kind: 'direction', directions: [] },
   { id: 'd2', name: 'home', kind: 'direction', directions: [] },
   { id: 'c1', name: 'health', kind: 'category', directions: [] },
   { id: 'c2', name: 'leisure', kind: 'category', directions: [] },
   { id: 'c3', name: 'career', kind: 'category', directions: [] },
+  { id: 'c4', name: 'travel', kind: 'category', directions: [] },
 ];
 
 type ModalState = {
@@ -384,6 +388,19 @@ describe('ElementWizard — a task or habit edit sends the category picker only 
     expect(updateCall(0).body.categories).toEqual([]);
   });
 
+  it('task edit at the cap of 3: a tap on a fourth chip is refused, and a refused tap is not use', async () => {
+    // toggleCategory returns at three without latching the flag. If it did, Save would send
+    // the same three names back, which only the server's read-back would then make a no-op.
+    TASKS = [taskRow({ categories: ['health', 'leisure', 'career'] })];
+    render(() => <ElementWizard />);
+    openEdit('task', 'task-9');
+    fireEvent.click(chip('Travel'));
+    expect(chip('Travel').className).not.toContain('border-primary');   // the cap held
+
+    await press('Save');
+    expect('categories' in updateCall(0).body).toBe(false);
+  });
+
   it('series save from a generated instance, picker untouched: no categories (the template keeps its own)', async () => {
     // Instances carry no category rows, so the seeded picker is empty; sending that would
     // wipe the template's categories.
@@ -424,6 +441,56 @@ describe('ElementWizard — a task or habit edit sends the category picker only 
 
     await press('Save');
     expect('categories' in updateCall(0).body).toBe(false);
+  });
+
+  it('the open reset stands on its own: a touch in an Add session does not reach an edit whose row is not found', async () => {
+    // loadForEdit returns before seedCategories when the row is not in the store (not loaded
+    // yet, or deleted in another tab), so here only the reset in the open effect clears the
+    // flag. The form is blank, so Save needs a title typed first.
+    render(() => <ElementWizard />);
+    open();
+    fireEvent.input(titleInput(), { target: { value: 'Pay the invoice' } });
+    fireEvent.click(chip('Career'));
+    setModal(CLOSED);
+    openEdit('task', 'task-gone');
+    fireEvent.input(titleInput(), { target: { value: 'Pay the invoice' } });
+
+    await press('Save');
+    const { id, body } = updateCall(0);
+    expect(id).toBe('task-gone');
+    expect(body.title).toBe('Pay the invoice');
+    expect('categories' in body).toBe(false);
+  });
+
+  it('a Describe-it answer that lands after the modal was reopened in Edit is dropped', async () => {
+    // The parse is in flight when "open instead of adding?" (or closing the modal and
+    // opening a task) puts the wizard in Edit. The answer was for the Add form that is gone:
+    // it must not retitle the task, show its pick in the picker, or take the picker's place
+    // on Save (which sends none when the owner has not used it).
+    TASKS = [taskRow()];
+    let land!: (v: unknown) => void;
+    quickParseMock.mockReturnValueOnce(new Promise((resolve) => { land = resolve; }));
+    render(() => <ElementWizard />);
+    open();
+    fireEvent.input(nlInput(), { target: { value: LINE } });
+    fireEvent.keyDown(nlInput(), { key: 'Enter' });
+    await waitFor(() => expect(quickParseMock).toHaveBeenCalledTimes(1));
+    setModal(CLOSED);
+    openEdit('task', 'task-9');
+    expect(titleInput().value).toBe('Gym session');
+    expect(chip('Leisure').className).toContain('border-primary');
+
+    land(parseOk(['career'], claimFor(['career'])));
+    await new Promise((resolve) => setTimeout(resolve, 0));   // let the stale continuation run
+    expect(titleInput().value).toBe('Gym session');            // not the parse's title
+    expect(chip('Leisure').className).toContain('border-primary');
+    expect(chip('Career').className).not.toContain('border-primary');
+
+    await press('Save');
+    const { id, body } = updateCall(0);
+    expect(id).toBe('task-9');
+    expect(body.title).toBe('Gym session');
+    expect('categories' in body).toBe(false);
   });
 
   it('habit edit follows the task rule: untouched sends none, used sends the picker', async () => {

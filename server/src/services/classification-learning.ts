@@ -120,11 +120,13 @@ export interface FieldCalibration {
   decided: number;
   /** Corrections among them that the field's classifier could have chosen — the strong
    *  labeled examples. A category correction to '' (the owner cleared the picker) is
-   *  decided but is NOT counted here: the category prompt makes the model choose from the
-   *  owner's list, so "none" is an answer it cannot give and the scorer cannot grade, and
-   *  counting it would clear the floor for an index that teaches nothing. So this can be
-   *  below the number of rows the owner overrode. Motivation keeps its '' rows (null is a
-   *  real label there). */
+   *  decided but is NOT counted here: quick-add's category prompt has no way to answer none
+   *  and the scorer cannot grade '' (it returns null for [], which `scoreHeldOut` skips),
+   *  while memory enrichment's prompt does allow "[]". Leaving these out is a deliberate
+   *  simplification, so that no consumer is shown a "(nothing)" category lesson and the
+   *  floor is not cleared for an index that teaches quick-add nothing; it costs memory
+   *  enrichment the chance to learn 'none'. So this can be below the number of rows the
+   *  owner overrode. Motivation keeps its '' rows (null is a real label there). */
   corrections: number;
   /** Exemplar rows written (0 when the floor was not cleared). */
   indexed: number;
@@ -541,13 +543,18 @@ export type ScoreFn = (args: {
  * something the index may teach and the scorer may grade.
  *
  * A category correction to '' is the owner clearing the picker: a real answer ("none of
- * these"), and it stays in the log and in `decided`. But the category prompt makes the
- * model choose from the owner's list, so "(nothing)" is not a value it can produce, the
- * quick-add hint drops it, and the scorer, which returns a pick or null, can only miss it
- * or skip it. Counting it would clear CORRECTION_FLOOR for an index that teaches nothing
- * and drag the measured accuracy down on questions with no answerable form. Motivation
+ * these"), and it stays in the log and in `decided`. The reasons to leave it out of the
+ * index hold for two of the three category prompts, not all three: quick-add's has no way
+ * to answer none, and the scorer returns a pick or null (null for [], which `scoreHeldOut`
+ * skips), never '', so a '' target could only be missed or skipped. Memory enrichment's
+ * prompt does allow "[]". Leaving the rows out is a deliberate simplification: the scorer
+ * and memory enrichment read the index unfiltered, so no consumer is shown a "(nothing)"
+ * category lesson, and counting them would clear CORRECTION_FLOOR for an index that
+ * teaches quick-add nothing and drag the measured accuracy down on questions with no
+ * answerable form. The cost is that memory enrichment cannot learn 'none'. Motivation
  * keeps its '' rows: null ("the entry does not say who it is for") is a real label in
- * that prompt, and `scoreHeldOut` leaves them unmeasured.
+ * that prompt, and `scoreHeldOut` leaves them unmeasured (quick-add's hint still drops
+ * them, see `choosable` in routes/tasks.ts).
  */
 function isLearnableLabel(field: ClassifiedField, row: DecidedRow): boolean {
   return !(field === 'category' && canonicalValue(row.correctValue) === '');
