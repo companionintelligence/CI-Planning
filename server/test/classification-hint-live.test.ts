@@ -5,8 +5,9 @@
  * shape of docs/complexity-rubric-measurement-2026-08.md.
  *
  * OPT-IN ONLY: inert unless `LIVE_HINT=1`, because it needs a running Ollama with the
- * models named below and the embedder, and takes tens of minutes (about 1,100 model calls
- * per model, the 0.5B tier in minutes, the 4B-class tier in the better part of an hour).
+ * models named below and the embedder, and takes tens of minutes (660 to 1,020 model calls
+ * per model in the six recorded runs: the 0.5B tier in seconds, the 1B tier about 11
+ * minutes, gemma3n:e4b about 31).
  * It is committed so the numbers in the evidence doc can be reproduced rather than
  * believed. In a normal run the whole file reports as skipped.
  *

@@ -38,8 +38,9 @@ import { constrainToVocabulary, constrainOne, type EnrichOut } from './constrain
  * services). The blocks sit LAST, after the "never invent" rule and just before the entry
  * (motivation's, then categories'), and not beside the fields they teach: next to their
  * fields they made a small model (gemma3:1b) mostly stop its JSON after three keys, keeping
- * direction, categories and tags and dropping priority, timeOfDay, isComplex and motivation,
- * while with the same blocks last it answered every key. Measured 2026-11-02 with the live
+ * direction, categories and tags and dropping the other six (isComplex, priority,
+ * estimatedMinutes, timeOfDay, timeOfDayReason, motivation), while with the same blocks last
+ * it answered every key. Measured 2026-11-02 with the live
  * harness, server/test/classification-hint-live.test.ts (the dated note under its gates has
  * the figures). An owner with no corrections gets today's prompt byte for byte. The
  * direction retry gets no hint, because direction is not something the owner's corrections

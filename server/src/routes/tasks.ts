@@ -108,8 +108,9 @@ function choosable(allowed: readonly string[]): (e: Exemplar) => boolean {
  * last, just before the entry (`enrichQuick` places them), and the rest is as it was.
  *
  * Frequency-only on purpose (`embedFn: null`): an embed here is an `embedReady` status read
- * plus an embed on a path a person is watching, and on a box that holds one model at a time
- * it can evict the classify model. So the whole cost is one indexed read per field, an owner
+ * plus an embed on a path a person is watching, and on a box with few model slots it can push
+ * the classify model out (slow generates alongside every similarity lookup in the live runs,
+ * docs/classification-hint-measurement-2026-11.md; an eviction itself was not observed). So the whole cost is one indexed read per field, an owner
  * below the correction floor pays only that, and an install with no embedder pulled behaves
  * the same. The text is still computed; the day the hint should be about THIS input, the
  * change is `{ embedFn: null, accept }` to `{ accept }` here and nowhere else.

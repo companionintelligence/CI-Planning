@@ -95,6 +95,10 @@ Phase 8 added two of its own, both stated in [#558](https://github.com/companion
   the grader. Three tables — `classification_log` is the durable evidence and the only
   thing that cannot be recomputed. Capture hangs off three seams: quick-add and
   `task-enrich` log what the model claimed, `updateTask` records the owner's answer.
+  (As of 2 Nov 2026 there is a fourth: `POST /api/tasks` settles the claim the Describe-it
+  preview returned, `settlePreviewClaim` in `routes/tasks.ts`, and `updateTask` records only a
+  real change to the saved categories. Quick add's prompt also reads the index now; see
+  `docs/classification-hint-measurement-2026-11.md`.)
 - **9 — open time stays honest.** `busyFromBlocks` in `client/src/lib/open-time.ts`,
   and `occupiesMinuteAxis` in `client/src/lib/overlay.ts` — the one home for "does
   this block hold minutes", which click-to-create reads too.

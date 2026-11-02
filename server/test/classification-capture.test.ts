@@ -5,7 +5,9 @@ import { startTestServer, resetDb, api, createOwner, SECOND_OWNER_ID, type TestS
 import { calibrateClassification, logAssignment, rowOutcome, CORRECTION_FLOOR, PENDING_MS } from '../src/services/classification-learning.js';
 
 /**
- * Phase 8 wiring — the two seams the learning loop actually hangs from.
+ * Phase 8 wiring — the seams the learning loop actually hangs from: quick-add and the
+ * memory fill-in log what the model claimed, updateTask records the owner's answer, and
+ * the wizard's Add settles the echoed preview claim (from the claim cases below).
  *
  * `classification-learning.test.ts` proves the rules; this proves they are CONNECTED:
  * the owner's edit of a machine-assigned field becomes evidence, and a field the
