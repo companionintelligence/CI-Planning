@@ -123,13 +123,11 @@ export function Login() {
     try {
       await api.auth.login(username().trim(), password());
       // FULL-DOCUMENT load, not navigate() — the session only exists as of this response.
-      // stores/index.ts creates ~19 module-scope resources at import time, so every one of
-      // them already fired and 401'd while this login screen was on show. A client-side
-      // route change mounts Shell against those *errored* resources; Solid rethrows the
-      // stored 'unauthenticated' error, the router transition never settles, and the app
-      // hangs on the SessionGate spinner until a manual refresh. Reloading re-creates the
-      // resources with the cookie present. This also matches the Companion Portal branch,
-      // which is a top-level navigation and so was never affected.
+      // The module-scope resources in stores/index.ts wait for a session (lib/session.ts), so
+      // none of them has errored on this screen and a client-side route change would mount
+      // cleanly too. The reload is kept as the plain way to start the signed-in session from
+      // a clean state. This also matches the Companion Portal branch, which is a top-level
+      // navigation.
       window.location.assign(from() ?? '/');
     } catch {
       // The server returns a deliberately generic 401 — mirror it (no enumeration).
