@@ -31,6 +31,9 @@ version at `GET /api/health` (`release`).
   stored VAPID pair so a pair sealed by an earlier test file cannot leave push dormant.
 
 ### Added
+- **`pnpm snapshot` works from the repo root.** The backup script only existed in `server/`, but
+  `ops/litestream.yml` and the Settings backup warning already told people to run `pnpm snapshot`.
+  The root now has the shortcut, like `seed` and `migrate`.
 - **Settings switches for Routines and Rituals.** Settings → Preferences → Routine Settings now
   has "Routines on the Planner" (`enable_routines`: the Routine option in the Add dialog, and recurring
   Routines placing themselves on the Planner) and "Rituals" (`enable_rituals`: the Ritual type in the
