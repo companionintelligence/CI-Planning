@@ -1,6 +1,8 @@
 # Release readiness — master plan (Phases T-Y)
 
 > **Superseded 2026-10-21** — the launch-readiness map is now [PRODUCTION-READINESS-2026-10-21.md](PRODUCTION-READINESS-2026-10-21.md); this July plan is kept for the phase history.
+>
+> **Where the phases ended up (checked against `3cfbbdf2`, 2026-11-01).** T, U, V and W are built: owner-scoped multi-tenant data (`owners` ≡ user), Companion Portal sign-in plus a local username/password mode (`AUTH_MODE=sso`, `DISABLE_OIDC`), password reset (migration `0104`) and the GraphQL layer at `/api/graphql`. The live migration head is `0172`, not `0091`. The portal default is now the production issuer `https://hub.ci.computer/api/auth`; `hub.companionintelligence.com`, named in Phase U below, is the portal's dev zone. Phase X's subject, the 36-tool MCP server, is not in this tree: the only MCP server in `server/src` is the four-tool Google Calendar one (`server/src/mcp/google-server.ts`). Phase Y's environment documentation lives in `.env.example` and `server/.env.example`.
 
 **Status:** Planning only — no code, schema, or config touched to produce this or any linked doc. Companion to [ROADMAP.md](ROADMAP.md). Continues the lettered-phase convention (`B0`...`S` exist; this starts at `T`).
 
@@ -53,4 +55,4 @@ I don't have access to CI-Hub, CI-Server, or hub.companionintelligence.com's sou
 1. **hub.companionintelligence.com's OIDC discovery document** (or the issuer URL so I/an implementer can fetch `.well-known/openid-configuration`), plus how existing consumers (CI-Import Tools, CI-Hub) register as OAuth clients — is there a self-service registration, or does someone provision a `client_id`/`client_secret` by hand? (Phase U)
 2. **CI-Hub's actual password-reset flow** — I couldn't find CI-Hub's source in either of your connected folders. If you share the repo, a doc, or even just screenshots of the flow, I'll mirror its shape instead of guessing. (Phase V)
 3. **CI-Server's MCP intent vocabulary spec** — the naming/verb convention you want Companion Planning's 36 MCP tools aligned to. Without it, X can only audit what exists today, not tell you where it diverges. (Phase X)
-4. **A decision on the tenant model** — see T's "open decision" section. This is the single highest-leverage thing to lock down first since it changes the shape of al
+4. **A decision on the tenant model** — see T's "open decision" section. This is the single highest-leverage thing to lock down first.

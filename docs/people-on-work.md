@@ -4,9 +4,11 @@
 > or time block — two peer people-sets over one shared model — detected automatically
 > when an item is suggested, with the colour picker collapsed into a modal to make room.
 >
-> Status: **implemented** (PR #574), migrations 0151–0153. Written 2026-08-16 against
-> `main` @ `91a374e9`; the review-fix notes inline below record where the shipped
-> behaviour differs from the first draft of this plan.
+> Status: **implemented** (PR #574), migrations 0151–0154 (`0151_people`,
+> `0152_possible_task_people`, and the per-role block pins `0153`/`0154`). Written
+> 2026-08-16 against `main` @ `91a374e9`; the review-fix notes inline below record where the
+> shipped behaviour differs from the first draft of this plan. File links point at the code
+> as of `3cfbbdf2` (2026-11-01); §2 describes the code as it was when the plan was written.
 
 ---
 
@@ -15,7 +17,7 @@
 **`tasks.owner_id` exists and means *tenant*, not "person responsible".** `owner ≡ user`
 is a locked decision (Phase T #1, 1:1 tenant = user); `owner_id` is the tenancy key every
 query filters on, and `possible_tasks.proposed_owner_id` is the same thing (T4,
-[schema.ts:116](server/src/db/schema.ts#L116)). Nothing in this feature is named `owner`.
+[schema.ts:119](../server/src/db/schema.ts#L119)). Nothing in this feature is named `owner`.
 
 **"User" is overloaded too**, and the feature depends on the distinction:
 
@@ -71,7 +73,7 @@ avatar a card shows when there is room for exactly one. That preserves the origi
 ### What happens to `motivation`
 
 `tasks.motivation` (`'me' | 'us' | 'them' | NULL`,
-[schema.ts:83](server/src/db/schema.ts#L83)) is a shipped Triality axis with its own
+[schema.ts:86](../server/src/db/schema.ts#L86)) is a shipped Triality axis with its own
 scoring, learning, and calibration jobs. It is **not** removed and **not** hand-set any
 more — it becomes a **projection of the beneficiary set**, recomputed on every write:
 
@@ -141,10 +143,9 @@ categories they already copied.
 
 ### Time blocks
 
-`motivation` is **task-only** today — verified: no reference in
-[block.graphql](server/src/graphql/block.graphql) or
-[routes/blocks.ts](server/src/routes/blocks.ts), and blocks inherit their linked task's
-value ([ElementWizard.tsx:1310-1311](client/src/components/ElementWizard.tsx#L1310)).
+`motivation` is **task-only** — verified: no reference in
+[block.graphql](../server/src/graphql/block.graphql) or
+[routes/blocks.ts](../server/src/routes/blocks.ts).
 
 Nothing changes there, and no motivation column is added to blocks. Both people-sets live
 in `entity_people` keyed by `entity_kind`, so a block carries Responsible and
@@ -154,47 +155,58 @@ disappears entirely with the two-field split.
 
 ---
 
-## 2. What exists today
+## 2. What existed before
 
-Grounding, so the diffs below are real rather than assumed.
+Grounding, as of the commit this plan was written against (`91a374e9`), so the diffs below
+were real rather than assumed. A **Now** line says where the implementation has since closed
+the gap.
 
-**No person entity exists anywhere** — no table, no service, no API. "People" appears in
-the codebase only as a passing remark about undated graph nodes
-([memory.ts:616](server/src/connectors/memory.ts#L616)).
+**No person entity existed** — no table, no service, no API. "People" appeared in the
+codebase only as a passing remark about undated graph nodes (still at
+[memory.ts:625](../server/src/connectors/memory.ts#L625)). **Now:** `people`,
+`person_emails`, `entity_people` and `possible_task_people`
+([schema.ts:587-640](../server/src/db/schema.ts#L587)), `services/people.ts`,
+`routes/people.ts` and `people.graphql`.
 
 **The account roster exists but is operator-only.** `GET /api/accounts`
-([accounts.ts:104-107](server/src/routes/accounts.ts#L104)) returns every real owner —
+([accounts.ts:105-108](../server/src/routes/accounts.ts#L105)) returns every real owner —
 behind `requireAdmin`, and returning `email`, `role`, and `hasPassword`. The **us**
 shortcut needs a roster any authenticated user can read, so this endpoint **must not be
-loosened**; add a separate minimal one (§4).
+loosened**; add a separate minimal one (§4). **Now:** `GET /api/people/accounts`
+([routes/people.ts:36](../server/src/routes/people.ts#L36)).
 
-**Calendar attendees are typed but never populated.** `CalendarEvent.attendees?: string[]`
-is declared at [google.ts:26](server/src/mcp/google.ts#L26) and nothing fills it. Broken
+**Calendar attendees were typed but never populated.** `CalendarEvent.attendees?: string[]`
+was declared in [mcp/google.ts](../server/src/mcp/google.ts) and nothing filled it. Broken
 in three places:
 
-| Layer | File | State |
+| Layer | File | State then |
 |---|---|---|
-| MCP handler → Google REST | [mcp/google-server.ts:54-65](server/src/mcp/google-server.ts#L54) | maps `summary`→`title` only; no attendees, organizer, or description |
-| MCP client → `RemoteEvent` | [connectors/base.ts:7-20](server/src/connectors/base.ts#L7) | no attendee field on the type |
-| Live client → `CalendarEvent` | [google.ts:159-166](server/src/mcp/google.ts#L159) | maps id/title/start/end; hardcodes `description: ''` |
+| MCP handler → Google REST | `mcp/google-server.ts` | mapped `summary`→`title` only; no attendees, organizer, or description |
+| MCP client → `RemoteEvent` | `connectors/base.ts` | no attendee field on the type |
+| Live client → `CalendarEvent` | `mcp/google.ts` | mapped id/title/start/end; hardcoded `description: ''` |
+
+**Now:** all three carry them —
+[`mapGoogleEvent`](../server/src/mcp/google-server.ts#L65),
+[`RemoteEvent.attendees` / `organizer` / `description`](../server/src/connectors/base.ts#L21),
+and the live `listEvents` mapping ([google.ts:168-182](../server/src/mcp/google.ts#L168)).
 
 **Gmail carries `from` and is the only review-gated source.** Ingest stashes
 `{ from, subject }` into `possible_tasks.source_payload`
-([ingest.ts:368-370](server/src/agents/ingest.ts#L368)). Email possibles wait for
+([ingest.ts:566](../server/src/agents/ingest.ts#L566)). Email possibles wait for
 approval; gcal/text/memory auto-promote
-([review-gate.ts:22](server/src/services/review-gate.ts#L22)). Gmail is off by default on
+([review-gate.ts:22](../server/src/services/review-gate.ts#L22)). Gmail is off by default on
 most installs — `gmail.readonly` is a Google *restricted* scope.
 
-**The colour control is the `TEXTURE` section**
-([ElementWizard.tsx:1334-1364](client/src/components/ElementWizard.tsx#L1334)): On/Off
+**The colour control was the `TEXTURE` section** of `ElementWizard.tsx`: On/Off
 pill, Auto pill, and a 14-swatch grid wrapping to **three rows** in the 290px left pane,
-directly under "Who is this for?". Verified in the running app.
+directly under "Who is this for?". **Now:** a trigger pill that opens
+[`TextureModal`](../client/src/components/TextureModal.tsx) (§7a).
 
 ---
 
 ## 3. Data model
 
-Migration `0151_people` (SQLite is at `0150`).
+Migration `0151_people` (SQLite was at `0150` when this was written).
 
 ### `people` — the per-tenant directory
 
@@ -219,7 +231,7 @@ misreadable line in the design.
   population.
 - `account_id = owner_id` ⇒ the user's own row, so `is_self` is derived, not stored.
 - `UNIQUE(owner_id, display_name)` mirrors `tags`' per-owner uniqueness
-  ([schema.ts:345](server/src/db/schema.ts#L345)); `UNIQUE(owner_id, account_id)` keeps
+  ([schema.ts:366](../server/src/db/schema.ts#L366)); `UNIQUE(owner_id, account_id)` keeps
   one row per account per directory.
 
 ### `person_emails` — the matching key
@@ -249,7 +261,7 @@ PRIMARY KEY (entity_kind, entity_id, person_id, role)
 ```
 
 A structural mirror of `entity_categories`
-([schema.ts:535](server/src/db/schema.ts#L535)) — same entity-spanning idiom, same
+([schema.ts:559](../server/src/db/schema.ts#L559)) — same entity-spanning idiom, same
 no-FK-on-`entity_id` rule, same `position`, same created_at default. `role` is in the
 primary key because **the same person legitimately appears in both sets** (you are
 usually both responsible for and a beneficiary of your own work), which is precisely why
@@ -264,7 +276,7 @@ Indexes: `ix_entity_people_person(person_id)`,
 ### `possible_task_people` — carrying detection through promotion
 
 Migration `0152`, following `possible_task_tags`
-([schema.ts:547](server/src/db/schema.ts#L547)):
+([schema.ts:571](../server/src/db/schema.ts#L571)):
 
 ```
 possible_task_people(possible_task_id, person_id, role, source, confidence)
@@ -272,13 +284,15 @@ possible_task_people(possible_task_id, person_id, role, source, confidence)
 
 ### Schema bookkeeping
 
-- Mirror all four tables in [`db/schema.ts`](server/src/db/schema.ts) — the drift checker
-  already reports 16 tables missing from it; do not make it 20.
+- Mirror all four tables in [`db/schema.ts`](../server/src/db/schema.ts) — the drift checker
+  (`pnpm --filter server db:check-drift`) already reported 16 tables missing from it; do not
+  make it 20. Shipped: all four are mirrored ([schema.ts:587-640](../server/src/db/schema.ts#L587)).
 - Values enforced in code, not `CHECK` constraints (repo convention, stated in
-  [0141](server/src/db/migrations/0141_task_motivation.ts)).
-- Append to `MIGRATIONS` in [migrations/index.ts](server/src/db/migrations/index.ts).
+  [0141](../server/src/db/migrations/0141_task_motivation.ts)).
+- Append to `MIGRATIONS` in [migrations/index.ts](../server/src/db/migrations/index.ts).
 - **Postgres parity is open** — `server/db/postgres/migrations/` stops at a 2026-08-02
-  baseline while SQLite is at 0150, so that path already lags.
+  baseline (`20260802000400_create_planning_baseline.sql`) while SQLite was at 0150 when
+  this was written (it is at 0172 now), so that path already lagged and still does.
 
 ---
 
@@ -304,6 +318,8 @@ model, not just the UI.
 **The roster endpoint.** `GET /api/accounts` is operator-only and returns email + role +
 `hasPassword`; do not relax it. Add `GET /api/people/accounts` — any authenticated
 session, returning `{ id, name }` only, sentinel excluded (as `listOwners` already does).
+(As shipped the entry is `{ account_id, name, person_id }`, `person_id` being the directory row
+if one already exists; still no email or role.)
 A member filling a people field should not thereby learn everyone's email address and
 role. On a single-account install it simply returns just them, and the picker falls back
 to named people — the field stays fully usable.
@@ -321,23 +337,23 @@ The two fields detect very differently, and that asymmetry is the important part
   the record. Deterministic resolution, no model.
 - **Beneficiaries are a judgment.** Nothing in an invite says who the work is *for*. This
   is where the LLM earns its place — and it is the question
-  [services/motivation.ts](server/src/services/motivation.ts) already answers today.
+  [services/motivation.ts](../server/src/services/motivation.ts) already answers today.
 
 ### 5a. Prerequisite: plumb calendar attendees
 
 Nothing about Responsible detection from calendar works until this lands. Four mechanical
 edits:
 
-1. [mcp/google-server.ts:54-65](server/src/mcp/google-server.ts#L54) — map
+1. [mcp/google-server.ts:65-91](../server/src/mcp/google-server.ts#L65) (`mapGoogleEvent`) — map
    `attendees[].email`, `organizer.email`, and `description` onto the tool response.
-2. [connectors/base.ts:7](server/src/connectors/base.ts#L7) — add `attendees?`,
+2. [connectors/base.ts:7](../server/src/connectors/base.ts#L7) — add `attendees?`,
    `organizer?`, `description?` to `RemoteEvent`.
-3. `toRemoteEvent` in [mcp/client.ts](server/src/mcp/client.ts) — pass them through.
-4. [mcp/google.ts:159-166](server/src/mcp/google.ts#L159) — populate
+3. `toRemoteEvent` in [mcp/client.ts](../server/src/mcp/client.ts) — pass them through.
+4. [mcp/google.ts:168-182](../server/src/mcp/google.ts#L168) — populate
    `CalendarEvent.attendees`; stop hardcoding `description: ''`.
 
-Step 4's description fix is a free win: gcal extraction currently only ever sees the event
-*title*.
+Step 4's description fix is a free win: gcal extraction used to see only the event
+*title*. All four edits shipped as written.
 
 ### 5b. Responsible — deterministic
 
@@ -368,9 +384,17 @@ For `them` with no resolvable person, the model may propose *names* as free stri
 those surface as "create person?" chips on the suggestion, never as silent directory
 writes.
 
-Extend `ExtractedTask` ([extract.ts:19-30](server/src/agents/extract.ts#L19)) with
+Extend `ExtractedTask` ([extract.ts:18-29](../server/src/agents/extract.ts#L18)) with
 `responsibleHints?: string[]` and `beneficiaryHints?: string[]`, normalized in
 `normalize()` with the same defensive clamping the existing fields get.
+
+> **As shipped, §5c was not built this way.** Ingest attaches only the *responsible* set
+> ([ingest.ts:230-240](../server/src/agents/ingest.ts#L230)); beneficiaries are not seeded
+> from the classifier, because expanding `us` to `{ you }` on a single-account install would
+> project straight back to `me` and silently downgrade the label. `ExtractedTask` has no
+> `responsibleHints` / `beneficiaryHints`: addresses ingest cannot resolve ride on
+> `source_payload.people_hints` and become `confirmed = 0` people at promotion
+> ([possibles.ts:78-90](../server/src/services/possibles.ts#L78)).
 
 New `server/src/services/people.ts` owns resolve, match, create-provisional, attach, the
 **us** expansion, and the `motivation` projection — mirroring how `services/motivation.ts`
@@ -398,33 +422,37 @@ can violate it.
 ## 6. API surface
 
 Both transports, since REST and GraphQL share one owner-scoped service implementation
-(Decision 3, restated at [possibles.ts:14](server/src/services/possibles.ts#L14)).
+(Decision 3, restated at [possibles.ts:19](../server/src/services/possibles.ts#L19)).
 
 **REST** — new `server/src/routes/people.ts`: `GET/POST/PATCH/DELETE /api/people`,
 `POST /api/people/:id/merge`, and the minimal `GET /api/people/accounts` roster from §4.
-Register in [routes/index.ts](server/src/routes/index.ts).
+Register in [routes/index.ts](../server/src/routes/index.ts). As shipped, there is also
+`GET /api/people/:id` and `POST /api/people/accounts/:id` (find-or-create the directory row
+for an account when it is picked off the roster).
 
 **Task & block payloads** — add `responsible` and `beneficiaries` to the serialized shape
-([lib/serialize.ts](server/src/lib/serialize.ts)); accept `responsible_ids` and
-`beneficiary_ids` on create/update in [services/tasks.ts](server/src/services/tasks.ts)
+([lib/serialize.ts](../server/src/lib/serialize.ts)); accept `responsible_ids` and
+`beneficiary_ids` on create/update in [services/tasks.ts](../server/src/services/tasks.ts)
 and the blocks service, with the `motivation` projection applied server-side on every
 beneficiary write. Strip `source` from client bodies exactly as the route strips
-`motivation_source` ([tasks.ts:145-148](server/src/services/tasks.ts#L145)) — a client may
+`motivation_source` ([tasks.ts:145-148](../server/src/services/tasks.ts#L145)) — a client may
 set a value, never claim provenance.
 
 **GraphQL** — new `people.graphql` + `people-resolvers.ts`; add
-`responsible: [Person!]!` and `beneficiaries: [Person!]!` to `Task` and `TimeBlock`.
-Register in [graphql/index.ts](server/src/graphql/index.ts) and cost the new list fields
-in [complexity.ts](server/src/graphql/complexity.ts).
+`responsible: [PersonType!]!` and `beneficiaries: [PersonType!]!` to `Task` and `TimeBlock`.
+Register in [graphql/resolvers.ts](../server/src/graphql/resolvers.ts) (as shipped; the
+plan said `graphql/index.ts`) and cost the new list fields in
+[complexity.ts](../server/src/graphql/complexity.ts).
 
 **Promotion** — add `carryPossiblePeople()` beside `carryPossibleTags()`
-([possibles.ts:64-71](server/src/services/possibles.ts#L64)), called from the same place
+([possibles.ts:71](../server/src/services/possibles.ts#L71); `carryPossiblePeople` is at
+[possibles.ts:90](../server/src/services/possibles.ts#L90)), called from the same place
 so REST and GraphQL promote identically, carrying both roles.
 
 **SSE** — broadcast people changes on the existing channel
-([routes/sse.ts](server/src/routes/sse.ts)).
+([routes/sse.ts](../server/src/routes/sse.ts)).
 
-**Backup/export** — add the new tables to [routes/backup.ts](server/src/routes/backup.ts),
+**Backup/export** — add the new tables to [routes/backup.ts](../server/src/routes/backup.ts),
 scoped by `owner_id`, or a restore silently drops every assignment.
 
 ---
@@ -436,14 +464,15 @@ scoped by `owner_id`, or a restore silently drops every assignment.
 Replace the three-row swatch grid with a **single trigger pill** — `Texture · [●]`,
 showing on/off state and a dot in the current colour — opening a small modal with the same
 controls plus Done. Reuse the
-[`ObjectiveModal`](client/src/components/ObjectiveModal.tsx) shell, and the existing
-[`ItemColorPicker`](client/src/components/ItemColorPicker.tsx) for the grid rather than
+[`ObjectiveModal`](../client/src/components/ObjectiveModal.tsx) shell, and the existing
+[`ItemColorPicker`](../client/src/components/ItemColorPicker.tsx) for the grid rather than
 keeping the inline copy — that component is already used by three other screens, so this
-also deletes a duplicate.
+also deletes a duplicate. As shipped: `TextureTrigger` and `TextureModal` in
+[TextureModal.tsx](../client/src/components/TextureModal.tsx), which uses `ItemColorPicker`.
 
 No state changes: the `textureEnabled()` / `textureColorToken()` signals and the
 `doSave()` payload
-([ElementWizard.tsx:845-846](client/src/components/ElementWizard.tsx#L845)) are untouched.
+([ElementWizard.tsx:903-904](../client/src/components/ElementWizard.tsx#L903)) are untouched.
 
 ### 7b. The reclaimed space — and it comes out even
 
@@ -476,30 +505,33 @@ Behaviour, identical for both fields:
 - **us** is always available, single sign-on account or not (§1): it pins you into the set
   and opens the picker, which reaches accounts and named people alike. It stays open until
   a second person is on the item, so `us` never quietly resolves to `me`.
-- A detected set renders the same `(suggested)` hint the motivation control already uses
-  ([ElementWizard.tsx:1315-1317](client/src/components/ElementWizard.tsx#L1315)) and only
-  sends on touch — same `motivationTouched()` idiom, now per field.
+- A detected set renders a `(suggested)` hint
+  ([PeopleField.tsx:184](../client/src/components/PeopleField.tsx#L184)) and only
+  sends on touch — the `motivationTouched()` idiom, now per field (`responsibleTouched` /
+  `beneficiariesTouched`).
 - Both fields appear on the **Time Block** tab too, unchanged (§1).
-- Extend `ElementForm` ([element.ts:159-182](client/src/lib/element.ts#L159)) with
+- Extend `ElementForm` ([element.ts:159](../client/src/lib/element.ts#L159)) with
   `responsibleIds` / `beneficiaryIds` and thread through `saveElement`. The existing
-  `motivation` form field is **removed** — the server derives it.
+  `motivation` form field is **removed** — the server derives it. (As shipped, the wizard
+  has no motivation control any more, but `ElementForm.motivation` was kept for quick-add's
+  overlay, which still sets it directly; see [element.ts:182](../client/src/lib/element.ts#L182).)
 
 ### 7c. Everywhere else
 
 | Surface | Change |
 |---|---|
-| [SuggestionsSection.tsx:88-105](client/src/components/SuggestionsSection.tsx#L88) | show detected Responsible/Beneficiaries in the meta line **before** approval — the whole point of detecting at suggestion time |
-| [DetailsDrawer.tsx](client/src/components/DetailsDrawer.tsx) | both sets as read-only chip rows, on tasks **and** blocks (editing stays in the wizard) |
-| [TaskCard.tsx](client/src/components/TaskCard.tsx) / [BlockCard.tsx](client/src/components/BlockCard.tsx) | compact initials cluster for Responsible (lead first), no names |
-| [Settings.tsx](client/src/views/Settings.tsx) | new **People** panel: list, rename, merge, delete, review unconfirmed |
-| [AllTasks.tsx](client/src/views/AllTasks.tsx) | filter by person **and by role** — "what am I on the hook for" vs "what I'm doing for Mom" are different questions |
+| [SuggestionsSection.tsx:92-124](../client/src/components/SuggestionsSection.tsx#L92) | show detected Responsible/Beneficiaries in the meta line **before** approval — the whole point of detecting at suggestion time (shipped for Responsible only: ingest detects only that set) |
+| [DetailsDrawer.tsx](../client/src/components/DetailsDrawer.tsx) | both sets as read-only chip rows, on tasks **and** blocks (editing stays in the wizard) |
+| [TaskCard.tsx](../client/src/components/TaskCard.tsx) / [BlockCard.tsx](../client/src/components/BlockCard.tsx) | compact initials cluster for Responsible (lead first), no names (shipped on `TaskCard.tsx` and the Planner's [`PlannerEntityCard.tsx`](../client/src/components/PlannerEntityCard.tsx); `BlockCard.tsx` has none) |
+| [Settings.tsx](../client/src/views/Settings.tsx) | new **People** panel: list, rename, merge, delete, review unconfirmed |
+| [AllTasks.tsx](../client/src/views/AllTasks.tsx) | filter by person **and by role** — "what am I on the hook for" vs "what I'm doing for Mom" are different questions (**not built**: `AllTasks.tsx` has no person filter) |
 
 ---
 
 ## 8. Out of scope — but note the coupling
 
 **Pushing Responsible to Google Calendar as attendees.** `RemoteEventInput`
-([connectors/base.ts:22](server/src/connectors/base.ts#L22)) has no attendee field, and
+([connectors/base.ts:34](../server/src/connectors/base.ts#L34)) has no attendee field, and
 adding one makes the app *send invitations to real people* — a different blast radius from
 reading them. Its own change, behind `CP_SYNC_WRITEBACK`, with an explicit confirm.
 
@@ -510,7 +542,7 @@ out free.
 
 **Triality re-calibration.** `motivation` becoming derived changes *how often* it is set —
 today it is frequently NULL, and a beneficiary picker will fill it far more often. The
-calibration job ([0143](server/src/db/migrations/0143_calibrate_triality_job.ts)) should
+calibration job ([0143](../server/src/db/migrations/0143_calibrate_triality_job.ts)) should
 be re-run and the weights sanity-checked after rollout, or the axis silently shifts
 meaning under the existing thresholds.
 
@@ -533,6 +565,11 @@ meaning under the existing thresholds.
 
 Steps 1–5 ship manual assignment on their own. 6–7 add the automatic half. 8–10 are the
 UI. **6 precedes 7**, and **8 precedes 9** (9 needs the space 8 frees).
+
+As shipped (PR #574 and its review rounds): all ten steps landed except that step 7 detects
+the Responsible set only (§5c), step 9 kept `ElementForm.motivation` for quick-add, and
+step 10's person/role filter on `AllTasks.tsx` was not built. The per-role block pins
+(`0153`, then `0154`) came after the plan.
 
 Tests, `.test.ts(x)` beside each unit per repo convention. The ones that carry weight: the
 `motivation` projection across all four cases (especially empty ⇒ NULL, not `us`), the

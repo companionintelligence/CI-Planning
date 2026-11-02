@@ -10,22 +10,22 @@
 
 ## 1. Project overview
 
-Companion Planning is a **local-first, AI-assisted personal planning system**. It runs as a private server on a laptop or desktop, reachable from any device over Tailscale, stores everything in local SQLite, and uses a local LLM (Ollama) for briefings, task extraction, grooming, and auto-scheduling. No cloud required; no account.
+Companion Planning is a **local-first, AI-assisted personal planning system**. It runs as a private server on a laptop or desktop, reachable from any device over Tailscale, stores everything in local SQLite, and uses a local LLM (Ollama) for briefings, task extraction, grooming, and auto-scheduling. No cloud required; no account. Capacitor iOS and Android app shells (`mobile/`) wrap the same client and connect to a server you run — see [README → Mobile app](README.md#mobile-app-ios-and-android).
 
 **Shipped phases (A → AG, plus the post-AG work in §1.1 and the Categories⇄Balance
-feature in §1.2; migration head 0135):** Tasks + scheduler · Rich semantics + time tracking · Recurrence · Calendar grid · Time-blocks + patterns + cockpit · Notifications + Web Push · Backups + export/import + audit · Identity + auth + connector infrastructure · Two-way calendar sync (Google) · Google OAuth 2.1 + MCP · AI scheduler + reactive reflow · Multi-device sync + offline writes · Life-planning layer (objectives, reflections, weekly review, calibration) · **Phase O — the gamified five-star day** (FOCUS card with linked/freeform focus + Today's Brief pop-up, a day note, `computeStars()` + nightly-frozen `daily_recap` stars, calendar heatmap; the standalone Morning Briefing section is retired) · **Phase P — planner hygiene** (a shared `clear-range` engine behind the CLI, `POST /api/planner/clear`, and a `recurrence_horizon_days` setting that bounds + auto-prunes both recurrence engines) · **Phase Q — schema hygiene** (FK enforcement guaranteed on every connection via a shared `openDb()`, FK-path index coverage, and owner-identity integrity rebuilds of `flight_plan` and `daily_summaries` — pre-multi-tenant) · **Phase S — schema consolidation** (dropped the dead `plan_outcomes` table + its cron; merged `daily_summaries` + `day_stars` into `daily_recap`; `pattern_prefs` + `category_prefs` into `tag_prefs`) · **Phase T — multi-tenant owner-scoping** (every table + route + service scoped to `owner_id`; owner-less rows retired) · **Phase U — CI-Portal OIDC + local auth** (session-cookie login: OAuth 2.1 + PKCE relying-party, or `DISABLE_OIDC` local username/password) · **Phase V — password reset** (single-use tokens; `session_epoch` invalidation) · **Phase W — GraphQL CRUD layer alongside REST** (complete; see §6a) · **Phase X — MCP intent vocabulary** · **Phase Y — env-config** (every env var documented; `server/.env.example`). Also in this window: task placement lifecycle (open↔scheduled), task→objective auto-promotion with height-based leveling, block-template application, and objectives joining the multi-device sync layer (0085–0087).
+feature in §1.2; this list stops at migration 0135 — the end of §1.3 points to what came after):** Tasks + scheduler · Rich semantics + time tracking · Recurrence · Calendar grid · Time-blocks + patterns + cockpit · Notifications + Web Push · Backups + export/import + audit · Identity + auth + connector infrastructure · Two-way calendar sync (Google) · Google OAuth 2.1 + MCP · AI scheduler + reactive reflow · Multi-device sync + offline writes · Life-planning layer (objectives, reflections, weekly review, calibration) · **Phase O — the gamified five-star day** (FOCUS card with linked/freeform focus + Today's Brief pop-up, a day note, `computeStars()` + nightly-frozen `daily_recap` stars, calendar heatmap; the standalone Morning Briefing section is retired) · **Phase P — planner hygiene** (a shared `clear-range` engine behind the CLI, `POST /api/planner/clear`, and a `recurrence_horizon_days` setting that bounds + auto-prunes both recurrence engines) · **Phase Q — schema hygiene** (FK enforcement guaranteed on every connection via a shared `openDb()`, FK-path index coverage, and owner-identity integrity rebuilds of `flight_plan` and `daily_summaries` — pre-multi-tenant) · **Phase S — schema consolidation** (dropped the dead `plan_outcomes` table + its cron; merged `daily_summaries` + `day_stars` into `daily_recap`; `pattern_prefs` + `category_prefs` into `tag_prefs`) · **Phase T — multi-tenant owner-scoping** (every table + route + service scoped to `owner_id`; owner-less rows retired) · **Phase U — CI-Portal OIDC + local auth** (session-cookie login: OAuth 2.1 + PKCE relying-party, or `DISABLE_OIDC` local username/password) · **Phase V — password reset** (single-use tokens; `session_epoch` invalidation) · **Phase W — GraphQL CRUD layer alongside REST** (complete; see §6a) · **Phase X — MCP intent vocabulary** · **Phase Y — env-config** (every env var documented; `server/.env.example`). Also in this window: task placement lifecycle (open↔scheduled), task→objective auto-promotion with height-based leveling, block-template application, and objectives joining the multi-device sync layer (0085–0087).
 
 **Phase Z Time-Sense** (a Focus Ritual + estimate-calibration loop — EOD alignment, daily-brief fold-in, "Keep working"/"Schedule again", focus-cue reminders + vibrate, per-cue prefs, suggest-only estimate chip, voice loop) has **landed behind the `time_sense_enabled` master flag** (flag-off = behavior-neutral; migs 0106–0109). The **calendar / UI feedback waves** have also landed (QuickAdd mounted in Today, Planner de-scroll, Flight-Plan tabs + saved-blocks + search, three-axis calendar tag filter, container-outlines + click-to-add, select-date → day-type picker, collapsed night hours).
 
 **Phases AA–AE** (2026-07, migs 0113–0117) close out the current line:
-- **AA — Memory-aware agentic layer** (CI-Server `companion-memory`, pull-first, behind the `memory_pull_enabled` flag): a read-only connector (`connectors/memory.ts`, fixture/live), the `memory_suggest` agent that stages next-48h events as Inbox suggestions, a memory-informed Daily Brief (AA2), memory-aware autoplan ordering + a history-based default estimate for memory-drafted tasks (AA3a/AA3b), and a one-way `push_memory` background sync (AA4). Flag-off = byte-identical.
+- **AA — Memory-aware agentic layer** (CI-Server `companion-memory`, pull-first, behind the `memory_pull_enabled` flag): a read-only connector (`connectors/memory.ts`, fixture/live), the `memory_suggest` agent that stages upcoming events (the `memory_window_days` pref sets how far ahead) as suggestions (the Inbox they first landed in was retired in AF, below), a memory-informed Daily Brief (AA2), memory-aware autoplan ordering + a history-based default estimate for memory-drafted tasks (AA3a/AA3b), and a one-way `push_memory` background sync (AA4). Flag-off = byte-identical.
 - **AB — Natural scheduling** (`scheduled_for`/`task_time` are START intent that drives placement; `due_at` is a deadline only).
-- **AC — Today + Tasks UI overhaul** (Today: single header row — Today's Brief · Focus bullseye · Note as popovers; FAB restored; DUE collapsible. Tasks: task-chip redesign with a merged direction-icon/done toggle, Routine grouping by routine, end-of-day archive, and a midnight `reset_routines` job that reopens routine checklists).
+- **AC — Today + Tasks UI overhaul** (Today: single header row — Today's Brief · Focus bullseye · Note as popovers; FAB restored; the DUE card, since turned into a button with a popup. Tasks: task-chip redesign with a merged direction-icon/done toggle, Routine grouping by routine, end-of-day archive, and a midnight `reset_routines` job that reopens routine checklists).
 - **AD — Calendar reliability** (`task_time` honored across quick-add + flight-plan; container→task direction inheritance; Alt-drag free placement).
 - **AE — Reflow correctness** (snapshot-based reactive reflow: the clear set equals the re-place set, so a task edit can no longer wipe other auto-placed blocks; placement status parity; not-before-now clamp; locked-block guards). See §6.
 
 **Phases AF–AG + ship-readiness** (2026-07, migs 0118–0126) — note 0119 is an intentional gap (see `migrations/index.ts`); the line continues past AG in §1.1:
-- **AF — Task management** (migs 0120/0121): Objectives surface as a **tab inside `/tasks`** (URL-synced `?focus`), tree API returns tasks-per-leaf, quick-add subtask, assign-to-objective on the task card. **The Inbox surface is retired** — ingested `possible_tasks` are deduplicated inline and **auto-promoted** into Tasks (no manual triage), surfacing in a date-derived **New Today** section until owner-local midnight; `/inbox`, `/objectives`, `/patterns`, `/routines` are now redirects/tabs, not standalone views. Includes **AF-11 tag unification** (routine-tag cleanup 0120, task-intention level move 0121).
+- **AF — Task management** (migs 0120/0121): Objectives surface as a **tab inside `/tasks`** (URL-synced `?focus`), tree API returns tasks-per-leaf, quick-add subtask, assign-to-objective on the task card. **The Inbox surface is retired** — ingested `possible_tasks` are deduplicated inline and **auto-promoted** into Tasks (no manual triage), surfacing in a date-derived **New Today** section until owner-local midnight; `/inbox`, `/objectives` and `/patterns` are now redirects into `/tasks` (Objectives and Routines are tabs there), not standalone views; there is no `/routines` route. Includes **AF-11 tag unification** (routine-tag cleanup 0120, task-intention level move 0121).
 - **AG — Multi-tenant RBAC** (mig 0125): `owners.role` drives scopes at one choke point (`lib/auth/scopes.ts` `roleToScopes`, unknown role → read-only), replacing the hardcoded `[READ, WRITE, ADMIN]` triple. Three roles — `operator` (R+W+A) · `member` (R+W) · `viewer` (R); existing owners backfill to `operator`, OIDC auto-provision defaults to `member` (closes the auto-admin hole). Operator-gated `routes/accounts.ts` (`GET/POST/PATCH/DELETE /api/accounts` + `/:id/invite`) creates/manages accounts via password-less invite + reset-token link.
 - **Ship-readiness + hardening** (migs 0122–0124, 0126): seeded developer identity scrubbed (0122); dead `auto_mode` column dropped, top-bar Suggest/Schedule toggle repointed to `trust_mode` (0123); in-app Google connection setup + auto-provisioned Web Push VAPID keys via the `app_config` table (0124); base **category** tags (Personal / Professional / Social) seeded (0126) — **superseded by the six Balance-dimension categories, migration 0134, §1.2**. License: **PolyForm Noncommercial 1.0.0** (was CI-Commercial-1.0 until 2026-10).
 
@@ -35,7 +35,7 @@ Two tracks landed after the AG close-out. Neither has a phase letter; §1.2 (Cat
 
 Also in this window, all flag-gated or additive: memory enrichment (`POST /api/tasks/:id/enrich` + the nightly `enrich_tasks` job, 0136), the close ritual + durable calibration history behind the Balance → Metrics tab (0137/0138), and **Triality** — three candidate next actions (Habitual · Contextual · Novel) ranked by local arithmetic over a balanced-ternary situation vector, a task `motivation` axis (me/us/them), an append-only outcome log, and a weekly weight-calibration job (each weight clamped to ½×–2× of its default, then renormalized so the slot's weights still sum to the default total), all behind `scheduling_prefs.triality_enabled` (default 0; migs 0139–0143; design record `docs/triality-design.md`). **No generative model chooses or re-orders a pick**; the one piece of I/O in the scoring path is a local *embedding* call that supplies half the novelty term when Ollama answers (bounded by a 40-candidate cap and a 4s stage budget, with a pure-arithmetic fallback when it does not) — so stopping Ollama can change the picks against identical SQLite state, and "deterministic" holds only for a fixed embedding availability. Flag-off = no routes, no UI, no suggestion computation; the `calibrate_triality` cron row is seeded unconditionally by 0143 and no-ops on an empty log, so it is not byte-identical: every owner still gets the weekly `job_runs` row, its `job:run` SSE broadcast, and the extra row in `/jobs`. Its surfaces are the Focus suggestion banner and the Balance → Metrics measurement tiles — **no new routed view**.
 
-**Life priorities + the Priorities Wizard** (migs 0127/0128, #356). A `life_priorities` row per `(owner, category)` captures a self-audit — `satisfaction` (1–10), `importance` (1–10), `target_hours_per_week`. It backs two routed views: **`/priorities`** (the wizard) and **`/balance`** (the dashboard). `scheduling_prefs.sleep_hours_per_week` (0128, default 63 = 9h × 7) reserves sleep as unschedulable, so the wizard's weekly pool is `168 − sleep_hours_per_week`. `/balance` reads the self-audit back — a **Balance Index** (how far `satisfaction` tracks `importance`) plus the allocated weekly targets. Self-contained, and narrower than it may sound: **it reports stated intent, not measured time.** There is still no actual-vs-target tracking (`Balance.tsx` reads no `time_entries`/`actual_minutes`) or scheduling boosts — but the `no task.category` gap named here is now **closed by the Categories⇄Balance feature (§1.2)**.
+**Life priorities + the Priorities Wizard** (migs 0127/0128, #356). A `life_priorities` row per `(owner, category)` captures a self-audit — `satisfaction` (1–10), `importance` (1–10), `target_hours_per_week`. It backs two routed views: **`/priorities`** (the wizard) and **`/balance`** (the dashboard). `scheduling_prefs.sleep_hours_per_week` (0128, default 63 = 9h × 7) reserves sleep as unschedulable, so the wizard's weekly pool is `168 − sleep_hours_per_week`. `/balance` reads the self-audit back — a **Balance Index** (how far `satisfaction` tracks `importance`) plus the allocated weekly targets. Self-contained, and narrower than it may sound: **it reports stated intent, not measured time.** At the time there was no actual-vs-target tracking (`Balance.tsx` read no `time_entries`/`actual_minutes`) or scheduling boosts — but the `no task.category` gap named here is now **closed by the Categories⇄Balance feature (§1.2)**. Since then the Balance → Metrics tab (`components/BalanceMetrics.tsx`) reports measured counts, timed minutes and ratings, and the balance-targets wave (0164/0165) added a scheduled-vs-target shortfall read (`services/balance-budget.ts`), an auto-planning bias gated by `scheduling_prefs.balance_bias_enabled`, and the weekly `balance_week_log` snapshot.
 
 **Objectives archive + 48h purge** (migs 0129/0130, #366 and follow-ups #367–#372). **`DELETE /api/objectives/:id` no longer hard-deletes — it archives.** This is the single most load-bearing behavioral change in this window, and the invariant it rests on is easy to break:
 
@@ -182,25 +182,33 @@ and the new fill order cannot disagree about the set: `sqliteUtcToISO()` (`lib/t
 folded into `localDateInTZ`, and the same normalization in `isCreatedOnDay` client-side. A
 no-op for the proper ISO strings every other caller passes.
 
+**After 0147.** §1 stops narrating at migration 0147. Migrations 0148–0172 are recorded elsewhere: the "Added" columns of §5.2 and the classes of §5.3 (people on work 0151–0154 · the classification, dismissal, plan-loop and placement learning loops 0149–0150, 0157–0158, 0162–0163 and 0166–0167 · the 1–5 close-ritual score 0161 · the balance-targets wave 0164–0165 · sign-up codes 0172), the job list in §7.1, the per-wave ticket plans under `docs/factory/`, `docs/people-on-work.md`, `docs/AH-focus-timeblocks.md` (0148) and `CHANGELOG.md`.
+
 ---
 
 ## 2. Tech stack
 
 | Layer | Choice | Notes |
 |---|---|---|
-| Frontend | **SolidJS** + Vite | Fine-grained reactivity, small bundle |
-| Styling | Tailwind + shadcn-solid / Kobalte | CI-Hub design tokens; dark-first |
-| Backend | **Koa.js** (Node ≥22) | Minimal async middleware |
-| DB | **SQLite** via `better-sqlite3` | WAL mode, embedded, zero-ops |
-| Migrations | Plain TypeScript functions | Sequential, idempotent; `_migrations` table |
-| ORM | **Drizzle ORM** + raw `better-sqlite3` | Typed schema; raw SQL for hot paths |
+| Frontend | **SolidJS** 1.9 + Vite 8 | Fine-grained reactivity, small bundle |
+| Styling | Tailwind CSS 4 + `@companionintelligence/tokens` | CI-Hub design tokens as CSS variables (`client/src/index.css`); light/dark by a `.dark` class, dark-first default |
+| Backend | **Koa 3** (Node ≥22) | Minimal async middleware; run with `tsx` (no compile step). `.nvmrc` pins Node 26.3.0 and the Docker image is `node:26-bookworm-slim` |
+| DB | **SQLite** via `better-sqlite3` 12 | WAL mode, embedded, zero-ops |
+| Vector search | `sqlite-vec` (optional) | Transient `vec0` KNN index for possible-task dedupe; a plain cosine loop takes over when the extension can't load |
+| Postgres (in progress) | `pg` + TypeORM + dbmate-format SQL migrations | A port foundation, **not** a deployment option yet: opt-in with `DATABASE_URL` (migrations run at boot) and `STORE_BACKEND=postgres` (the cutover switch, default `sqlite`). The app still runs on SQLite, and the 56-table Postgres baseline was collapsed from the SQLite migrations through 0147, so the 18 tables and the columns added since are not in it — see [server/db/postgres/README.md](server/db/postgres/README.md) |
+| Migrations | Plain TypeScript functions | Sequential, idempotent; applied versions recorded in the `schema_migrations` table |
+| ORM | **Drizzle ORM** schema mirror + raw SQL | `schema.ts` mirrors 45 of the 74 tables (guarded by `schema-parity.test.ts`); queries are mostly raw SQL through the async `store()` facade (`db/store.ts`), which wraps `better-sqlite3` |
 | GraphQL | **Apollo Server 5** + `@as-integrations/koa` | Schema-first SDL at `POST /api/graphql`, alongside REST; custom complexity limiter; `graphql@16` (Phase W, complete) |
-| LLM runtime | **Ollama** (local) | Graceful degradation when offline |
+| LLM runtime | **Ollama** (local) | Graceful degradation when offline; model tiers resolve from what is installed (`lib/models.ts`) |
 | MCP | `@modelcontextprotocol/sdk` | Gmail + Google Calendar over OAuth |
 | Cron | `croner` + `scheduled_jobs` table | Persistent job registry |
-| PWA | Hand-written service worker (`client/public/sw.js`) + manifest | Web Push (VAPID) only; no offline shell |
-| Auth | Session-cookie login (OIDC/PKCE RP + local argon2id) + hashed API-key | Mints a signed, httpOnly cp_session on sso login; hashed x-api-key for standalone; no per-request Bearer |
+| PWA | Web App Manifest + hand-written service worker (`client/public/sw.js`) | Installable; Web Push (VAPID) and notification-click routing only — deliberately no fetch/cache handler, so there is no offline shell |
+| Mobile | **Capacitor** 8 (`mobile/ios`, `mobile/android`) | Shells around the same client build that connect to a server you run; live updates by polling `GET /api/sync/changes` (an `EventSource` can't carry the session cookie there). See [README → Mobile app](README.md#mobile-app-ios-and-android) |
+| Auth | Session-cookie login (OIDC/PKCE RP + local argon2id) + hashed API-key | Mints a signed, httpOnly `cp_session` on sso login; local accounts can self-sign-up with a single-use invite code (`AUTH_SIGNUP`, default `invite`); hashed `x-api-key` for standalone; no per-request Bearer |
 | Crypto | AES-256-GCM (`CP_KEK_B64`) | OAuth tokens sealed in `connection_tokens` |
+| Mail | `nodemailer` | Password-reset and invite emails; SMTP when `SMTP_HOST` is set, otherwise a console transport that logs the message |
+| Error reporting | Sentry (`@sentry/node`, `@sentry/browser`) | Opt-out: on whenever a `SENTRY_DSN` is configured, off with `CI_TELEMETRY=off` or `CI_LOCAL_ONLY=true` — see [docs/operations/error-reporting.md](docs/operations/error-reporting.md) |
+| Tests | Vitest 4 (server + client), Playwright | Server suites in `server/test/`; Playwright smoke specs against the built container in `tests/container/` |
 
 ---
 
@@ -212,26 +220,27 @@ graph TB
         Phone["Phone / Tablet"]
         Laptop["Other Laptops"]
         Browser["Any Browser"]
+        App["iOS / Android app<br/>(Capacitor shell)"]
     end
 
     subgraph Host["Local Host"]
         subgraph Koa["Koa.js — port 3848"]
-            API["REST API<br/>20+ route modules"]
+            API["REST API<br/>48 route modules"]
             GQL["GraphQL<br/>/api/graphql (Apollo, alongside REST)"]
             SSE["SSE /api/events<br/>real-time push"]
             Engine["Scheduling Engine<br/>autoplan · reflow · review"]
-            Cron["Croner Jobs<br/>20 cron jobs (21 kinds)"]
+            Cron["Croner Jobs<br/>25 cron jobs (26 kinds)"]
             Migrate["Migration runner<br/>0001 → head on boot"]
         end
         FE["SolidJS PWA<br/>(built into server/public/)"]
-        SW["Service Worker<br/>Web Push + offline shell"]
+        SW["Service Worker<br/>Web Push (no offline cache)"]
         DB[("SQLite WAL<br/>companion.db")]
     end
 
     subgraph AI["AI (optional — Ollama)"]
-        Small["qwen2.5:0.5b<br/>extraction / triage"]
-        Medium["gemma3n:e4b<br/>briefings / planning"]
-        Embed["nomic-embed-text<br/>dedupe embeddings"]
+        Small["fast tier (default qwen2.5:0.5b)<br/>extraction / triage"]
+        Medium["quality tier (default gemma3n:e4b)<br/>briefings / planning"]
+        Embed["embed tier (default nomic-embed-text)<br/>dedupe embeddings"]
     end
 
     subgraph Google["Google (live mode only)"]
@@ -246,6 +255,7 @@ graph TB
     Phone -->|HTTPS / Tailscale| FE
     Laptop -->|HTTPS / Tailscale| FE
     Browser -->|HTTPS / Tailscale| FE
+    App -->|"HTTPS / Tailscale · polls /api/sync/changes"| API
     FE <-->|REST fetch| API
     FE <-->|GraphQL| GQL
     FE <-->|SSE stream| SSE
@@ -269,35 +279,55 @@ graph TB
 ## 4. Repository layout
 
 ```
-Companion-Planning/
+CI-Planning/
 ├── client/                   SolidJS PWA
+│   ├── public/               sw.js (push-only service worker) · manifest.webmanifest · icons
 │   └── src/
 │       ├── components/       Shared UI components
-│       ├── views/            One file per route (Today, Focus, Calendar, Priorities, Balance, …)
+│       ├── views/            One file per routed screen (Today, Focus, Calendar, AllTasks,
+│       │                     Tags, PrioritiesWizard, Balance, Settings, Jobs, Login, Signup,
+│       │                     ResetPassword) + ConnectServer, the app shells' first-run screen
 │       ├── stores/           Solid signals/resources shared across views
-│       ├── sw/               Service-worker source (Web Push + offline shell)
-│       └── lib/              api.ts · dates.ts · objective-promote.ts
+│       ├── sw/               Service-worker registration (the worker itself is public/sw.js)
+│       └── lib/              api.ts · dates.ts · objective-promote.ts · server-config.ts ·
+│                             live-poll.ts · textures.ts
 ├── server/
+│   ├── db/postgres/          dbmate-format Postgres migrations + README (the opt-in port, §2)
+│   ├── test/                 Vitest suites
 │   └── src/
 │       ├── db/
-│       │   ├── migrations/   0001_baseline → head, ordered in index.ts (0119 is an
-│       │   │                 intentional gap — do not "fix" it)
-│       │   └── index.ts      BetterSqlite3 open + uuid7 UDF + runMigrations
-│       ├── engine/           autoplan · review · reflow (auto-defense) · flight-plan
-│       ├── routes/           REST controllers (one file per resource)
+│       │   ├── migrations/   0001_baseline → 0172 (168 files), ordered in index.ts (0009, 0119,
+│       │   │                 0159 and 0160 have no file; 0119 is an intentional gap — do not
+│       │   │                 "fix" it)
+│       │   ├── index.ts      openDb (open.ts) + uuid7 UDF + sqlite-vec + runMigrations (migrate.ts)
+│       │   ├── schema.ts     Drizzle mirror of 45 of the 74 tables (§5.2)
+│       │   ├── store.ts      async data facade — the store() every query goes through
+│       │   └── pg.ts · migrate-pg.ts · datasource.ts · entities/   Postgres port (opt-in, §2)
+│       ├── engine/           autoplan (incl. flight-plan placement) · scheduler · review ·
+│       │                     auto-defense (reactive reflow) · day-reflow · recurrence ·
+│       │                     reminders · stars · clear-range
+│       ├── routes/           REST controllers (one file per resource; 48 modules mounted by index.ts)
 │       ├── graphql/          Apollo schema-first SDL + resolvers (Phase W, alongside routes/)
 │       ├── sync/             apply.ts — the field-LWW merge engine (§12)
-│       ├── jobs/             Croner job definitions (21 kinds; 20 cron-scheduled)
-│       ├── services/         ~27 modules — the shared owner-scoped layer REST + GraphQL
+│       ├── jobs/             Croner job definitions (26 kinds; 25 cron-scheduled)
+│       ├── services/         53 modules — the shared owner-scoped layer REST + GraphQL
 │       │                     both call (tasks · blocks · objectives · task-promotion ·
-│       │                     priorities · stars · timer · vapid-config · …)
+│       │                     priorities · stars · timer · people · vapid-config · …)
 │       ├── connectors/       Google OAuth 2.1 + Calendar/Gmail MCP bridge · CI-Server companion-memory (memory.ts)
-│       ├── mcp/              MCP client/session for the Google tool surface (Phase X)
-│       ├── agents/           ingest · groom · sync reconciler · memory-suggest · plan (authoring)
-│       ├── cli/              operator scripts (clear-range, …)
-│       └── lib/              config · crypto · dates · tz · logger · ids · auth/scopes
-├── docs/                     ROADMAP · GLOSSARY · phase specs · diagrams
-└── ops/                      litestream.yml · launchd plist
+│       ├── mcp/              MCP client/session for the Google tool surface (Phase X) · Ollama client (ollama.ts)
+│       ├── agents/           ingest · groom · sync reconciler · memory-suggest · plan (authoring) · summarize · quickadd
+│       ├── cli/              issue-key.ts — API-key issuing (pnpm --filter server key:issue)
+│       ├── scripts/          migrate · snapshot · restore · seed-test-data · check-schema-drift ·
+│       │                     clear-planner-from · import-plan
+│       └── lib/              config · crypto · dates · tz · logger · ids · auth/ (scopes, session, …) · mail · telemetry
+├── mobile/                   Capacitor iOS and Android shells (ios/, android/) — README → Mobile app
+├── tests/container/          Playwright smoke specs against the built container (run-local.sh)
+├── video/                    Product-video build (storyboard.json + captured screenshots), built locally
+├── scripts/factory/          factory.sh — gh wrapper for the Factory ticket workflow (docs/FACTORY.md)
+├── docs/                     ROADMAP · GLOSSARY · phase specs · diagrams · factory/ wave plans
+├── ops/                      litestream.yml · launchd/ plists · systemd/ unit · scripts/ (install and helper scripts)
+├── .github/workflows/        ci · docker-publish · mobile-build · style-canon-lint
+└── Dockerfile · docker-compose.yml · .env.example
 ```
 
 ---
@@ -327,6 +357,9 @@ erDiagram
     OWNERS ||--o{ ESTIMATE_CALIBRATION : calibrated_by
     OWNERS ||--o{ DAILY_RECAP : recapped_in
     OWNERS ||--o{ LIFE_PRIORITIES : audits
+    OWNERS ||--o{ PEOPLE : keeps
+    PEOPLE ||--o{ ENTITY_PEOPLE : named_via
+    TASKS ||--o{ ENTITY_PEOPLE : involves
 ```
 
 > `OBJECTIVES ||--o{ OBJECTIVES : parent_of` is the **live** tree only. An archived node
@@ -337,22 +370,22 @@ erDiagram
 
 ORM = modeled in `server/src/db/schema.ts` (the Drizzle mirror, guarded by
 `schema-parity.test.ts`). Raw = raw-SQL only — invisible to Drizzle queries and to that
-parity test. 66 live tables total, grouped below by concern; superseded by the full UML
-class diagram in §5.3. (The People feature — `people` / `person_emails` / `entity_people` /
-`possible_task_people`, 0151–0154 — isn't broken into its own subsection below yet; a
-pre-existing gap this pass didn't close. The live count is 70 including those four.)
+parity test. 74 live tables total (45 ORM, 29 raw; the `schema_migrations` bookkeeping
+table is not counted), grouped below by concern; superseded by the full UML class diagram
+in §5.3.
 
 #### Identity, auth & config
 
 | Table | Purpose | ORM | Added |
 |---|---|---|---|
-| `owners` | User identity — auth columns `external_subject`/`username`/`password_hash` (0101), reset columns `backup_email`/`session_epoch` (0103) | ✓ | 0001, 0101, 0103 |
+| `owners` | User identity — auth columns `external_subject`/`username`/`password_hash` (0101), reset columns `backup_email`/`session_epoch` (0103), `role` (`operator`\|`member`\|`viewer`, 0125) | ✓ | 0001, 0101, 0103, 0125 |
 | `api_keys` | Hashed `x-api-key` credentials for `AUTH_MODE=standalone` | ✓ | 0049 |
 | `auth_states` | Pre-login OIDC PKCE state (issued at `/login`, consumed at the callback) | ✓ | 0102 |
 | `oauth_states` | Single-use OAuth 2.1 PKCE/state rows, consumed at callback | ✓ | 0058 |
 | `connection_tokens` | Encrypted OAuth tokens (AES-256-GCM, `CP_KEK_B64`); `provider` ∈ Google + `ci_memory` (per-owner CI-Server memory creds, AA0/AA0b) | ✓ | 0050 |
 | `password_reset_tokens` | Single-use local-owner password-reset tokens (Phase V) | ✓ | 0104 |
 | `app_config` | Server-owned singleton config rows set from inside the app rather than env — in-app Google connection setup + the auto-provisioned Web Push VAPID keypair (generated + persisted on first boot; env pins win) | raw | 0124 |
+| `signup_codes` | Single-use, expiring (7-day TTL) invite codes for local self-serve sign-up (`AUTH_SIGNUP=invite`, the default): `code_hash` = sha256 of the raw code, which is shown to the operator once at mint time and never stored; `used_at`/`used_by` stamp the one-shot claim, `revoked_at` an operator withdrawal; both owner FKs are `ON DELETE SET NULL` | ✓ | 0172 |
 
 #### Core work
 
@@ -369,7 +402,7 @@ pre-existing gap this pass didn't close. The live count is 70 including those fo
 
 | Table | Purpose | ORM | Added |
 |---|---|---|---|
-| `time_blocks` | Named time spans — task · meeting · focus · break · buffer; `owner_id` NOT NULL (0099). `category_id`/`color_token` (0069) are legacy reads only — writes go through `entity_categories` (0134/§1.2); `texture_enabled`/`texture_color_token` (0135) per-element override | ✓ | 0015, 0099, 0135 |
+| `time_blocks` | Named time spans — task · meeting · focus · break · buffer; `owner_id` NOT NULL (0099). `category_id`/`color_token` (0069) are legacy reads only — writes go through `entity_categories` (0134/§1.2); `texture_enabled`/`texture_color_token` (0135) per-element override; `responsible_pinned`/`beneficiaries_pinned` (0153/0154) — a task-backed block inherits its task's people per role unless it has rows of its own or the flag makes its own (possibly empty) set authoritative; inbound calendar mirrors are always `is_locked` (0148 backfill) | ✓ | 0015, 0099, 0135, 0148, 0153, 0154 |
 | `block_templates` | Reusable Time-Block templates with saved task lists | ✓ | 0022 |
 
 #### Tags & taxonomy
@@ -382,13 +415,13 @@ pre-existing gap this pass didn't close. The live count is 70 including those fo
 | `category_direction_optouts` | Per-category direction SCOPE, opt-out polarity — a row means a direction is turned OFF for that category; empty = all directions on | ✓ | 0069 |
 | `entity_tags` | Polymorphic tag store for tasks, blocks, routines (CON-3); `created_at` NOT NULL DEFAULT CURRENT_TIMESTAMP (0110, table rebuilt); **no FK on `entity_id`** — integrity is app-enforced (`services/tags.ts`) | ✓ | 0033, 0110 |
 | `entity_categories` | Polymorphic **category** store for tasks/time_blocks (`entity_kind, entity_id, category_tag_id, position`), 1–3 per entity, `position` (0–2) = stripe order. A block's *effective* categories are its own rows, else its linked task's (§1.2); **no FK on `entity_id`**, same as `entity_tags` | ✓ | 0134 |
-| `tag_prefs` | Per-owner × per-tag config by `kind` (direction/category): shared color_token/default_minutes + direction-only auto_fill/reminder_offsets/icon_shape; merged `pattern_prefs` + `category_prefs`. `category` rows are the six Balance-dimension hues (0134) | ✓ | 0039, 0069, 0097, 0134 |
+| `tag_prefs` | Per-owner × per-tag config by `kind` (direction/category): shared color_token/default_minutes + direction-only auto_fill/reminder_offsets/icon_shape; merged `pattern_prefs` + `category_prefs`. `category` rows are the six Balance-dimension hues (0134); `show_open_time` (0170, direction-only, default 1) — whether a direction's free windows appear on the Today Open Time card | ✓ | 0039, 0069, 0097, 0134, 0170 |
 
 #### Routines (patterns)
 
 | Table | Purpose | ORM | Added |
 |---|---|---|---|
-| `patterns` | Routines — typed, reusable task collections (Habit ◯ / Routine ▢) | ✓ | 0013 |
+| `patterns` | Routines — typed, reusable task collections (Habit ◯ / Routine ▢); `color_token` (0133) is a per-item colour, NULL = inherit the type's | ✓ | 0013, 0133 |
 | `pattern_types` | Routine taxonomy — **load-bearing, do not rename** | ✓ | 0019 |
 | `pattern_tasks` | Routine ↔ task many-to-many | ✓ | 0013 |
 | `pattern_blocks` | Direction-scoped scheduling windows (workday/weekend) | ✓ | 0037 |
@@ -398,7 +431,7 @@ pre-existing gap this pass didn't close. The live count is 70 including those fo
 
 | Table | Purpose | ORM | Added |
 |---|---|---|---|
-| `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (default 7), `time_sense_enabled` (0106) + per-cue focus prefs `focus_ritual_enabled`/`haptic_cues_enabled`/`ambient_color_enabled`/`calibration_loop_enabled`/`z_experiment_arm` (0108), `view_prefs` cross-device calendar view-state (0111), `memory_pull_enabled` master flag for the CI-Server memory layer (default 0, 0113), `sleep_hours_per_week` (0128, default 63 = 9h × 7 — reserved as unschedulable; the Priorities Wizard's pool is `168 −` this), `triality_enabled` master flag (default 0, 0139), and (§1.3, 0147) the ingestion windows `memory_window_days` (1–30, default 2 — how far AHEAD the memory pull reads) and `email_lookback_days` (1–90, default 7 — how far BACK a Gmail ingest may reach) | ✓ | 0001, 0091, 0106, 0108, 0111, 0113, 0128, 0139, *0147* |
+| `scheduling_prefs` | Focus/break bounds, timezone, trust dial `trust_mode`, `planning_mode` (`basic`\|`smart`; independent of the trust dial since 0171), `fill_order` (`priority`\|`overdue`\|`new_today`, §1.3), model overrides, feature flags, `recurrence_horizon_days` (default 7), `time_sense_enabled` (0106) + per-cue focus prefs `focus_ritual_enabled`/`haptic_cues_enabled`/`ambient_color_enabled`/`calibration_loop_enabled`/`z_experiment_arm` (0108), `view_prefs` cross-device calendar view-state (0111), `memory_pull_enabled` master flag for the CI-Server memory layer (default 0, 0113), `sleep_hours_per_week` (0128, default 63 = 9h × 7 — reserved as unschedulable; the Priorities Wizard's pool is `168 −` this), `triality_enabled` master flag (default 0, 0139), and (§1.3, 0147) the ingestion windows `memory_window_days` (1–30, default 2 — how far AHEAD the memory pull reads) and `email_lookback_days` (1–90, default 7 — how far BACK a Gmail ingest may reach), `onboarded_at` (0132 — NULL until the first-run wizard is completed or skipped), `llm_thinking_enabled` (0155, default 0 — opt-in "thinking" pass on generation calls), `capacity_hours_per_week` (0156, default 56 = 8h × 7 — the AI-authoring capacity hint; it replaced `workday_start`/`workday_end`, which stay in the table but are neither read, written nor modeled in `schema.ts`) and `balance_bias_enabled` (0164, default 1 — gates the auto-planning bias toward life dimensions behind their weekly target) | ✓ | 0001, 0091, 0106, 0108, 0111, 0113, 0128, 0132, 0139, *0147*, 0155, 0156, 0164, 0171 |
 | `day_types` | Custom day types + per-date assignment (T-SCHED-3); `workday`/`weekend` builtins, rename-only | ✓ | 0068 |
 | `day_of_week_map` | Recurring weekly default: dow (0=Sun…6=Sat, UTC noon) → day-type key | ✓ | 0068 |
 | `day_assignments` | Per-date override: a specific `YYYY-MM-DD` → day-type key (beats the weekly map) | ✓ | 0068 |
@@ -418,11 +451,22 @@ pre-existing gap this pass didn't close. The live count is 70 including those fo
 
 | Table | Purpose | ORM | Added |
 |---|---|---|---|
-| `objectives` | Hierarchical life goals — Goal › Project › Objective by height; `source_task_id` marks auto-promoted nodes; `version`/`field_ts` for sync. **Archive (0129):** `archived_at` (non-null ⇒ soft-deleted, absent from the live tree, `status` untouched), `archive_root_id` (the node whose archiving cascaded to this row; NULL on the root), `purge_after` (absolute reap deadline; server-owned — never client-authored) + `ix_objectives_purge_after`. See §1.1 | raw | 0081, 0085, 0086, 0087, 0129 |
+| `objectives` | Hierarchical life goals — Goal › Project › Objective by height; `source_task_id` marks auto-promoted nodes; `version`/`field_ts` for sync. **Archive (0129):** `archived_at` (non-null ⇒ soft-deleted, absent from the live tree, `status` untouched), `archive_root_id` (the node whose archiving cascaded to this row; NULL on the root), `purge_after` (absolute reap deadline; server-owned — never client-authored) + `ix_objectives_purge_after`. `color_token` (0133) is a per-item colour, NULL = default. See §1.1 | raw | 0081, 0085, 0086, 0087, 0129, 0133 |
 | `objective_tasks` | Objective ↔ Task linkage for progress roll-up | raw | 0081 |
 | `reflections` | FOCUS card slots — today focus + up to 3 weekly goals per ISO week; optional source link to a Task/Objective (`source_kind`/`source_ref`); also the one-per-day `kind='day_note'` row | raw | 0080, 0088 |
 | `life_priorities` | Self-audit per `(owner, category)` — `satisfaction` 1–10, `importance` 1–10, `target_hours_per_week`. Backs `/priorities` (wizard) + `/balance` (dashboard); `UNIQUE(owner_id, category)`. `category` is a plain TEXT key (no FK) — shares its NAME vocabulary with `tags.kind='category'` (0134) but the two are linked only by string equality, per owner | ✓ | 0127 |
-| `balance_week_log` | Balance-targets wave (bal-6) — one row per `(owner, week_start, category)`, `UNIQUE`. A weekly `snapshot_balance` job freezes `target_hours`/`scheduled_minutes`/`timed_minutes` for the week just closed, `INSERT OR IGNORE` (first-freeze-wins). `category` is bare TEXT, same string-equality link to `life_priorities`/`tags` as above — no FK. History for a future learning surface; the live bias (below) reads the *instruction* (`life_priorities` + this week's calendar), not this log | raw | 0165 |
+| `balance_week_log` | Balance-targets wave (bal-6) — one row per `(owner, week_start, category)`, `UNIQUE`. A weekly `snapshot_balance` job freezes `target_hours`/`scheduled_minutes`/`timed_minutes` for the week just closed, `INSERT OR IGNORE` (first-freeze-wins). `category` is bare TEXT, same string-equality link to `life_priorities`/`tags` as above — no FK. Its only reader is `balanceHistory()` (`services/balance-snapshot.ts`, `GET /api/priorities/history`), which feeds the details drawer's "met target N of last M weeks" line; the live bias (`balance_bias_enabled`, 0164) reads the *instruction* (`life_priorities` + this week's calendar), never this log | raw | 0165 |
+
+#### People on work
+
+Who does an item and who it is for — see `docs/people-on-work.md`.
+
+| Table | Purpose | ORM | Added |
+|---|---|---|---|
+| `people` | Per-tenant person directory. `owner_id` is tenancy (whose directory); `account_id` is the login account the person *is*, when they have one (NULL for most people; `account_id = owner_id` marks the owner's own row, so "is self" is derived, never stored). `confirmed` = 0 for rows ingest created provisionally; `source` ∈ `manual`/`account`/`gcal`/`gmail`/`llm`. UNIQUE `(owner_id, display_name)`, plus a partial UNIQUE `(owner_id, account_id)` | ✓ | 0151 |
+| `person_emails` | The deterministic matching key: a lowercased address resolves to a person with no model in the loop. PK `(owner_id, email)` — unique per tenant, not globally | ✓ | 0151 |
+| `entity_people` | Both people-sets an item carries, for tasks and time blocks: `role` (`responsible` = who does the work · `beneficiary` = who it is for) is in the PK because one person is usually in both; `source` ∈ `user`/`llm`/`calendar`/`email`; `position` 0 within `responsible` = the lead. **No FK on `entity_id`**, same as `entity_tags`/`entity_categories` | ✓ | 0151 |
+| `possible_task_people` | People detected on a suggestion, carried onto the task at promote — the people twin of `possible_task_tags`. PK `(possible_task_id, person_id, role)`; `source` ∈ `llm`/`calendar`/`email`; per-row `confidence` (responsible comes from attendees/headers, beneficiary from the model) | ✓ | 0152 |
 
 #### Learning loops
 
@@ -431,7 +475,7 @@ pre-existing gap this pass didn't close. The live count is 70 including those fo
 | `estimate_calibration` | Per-owner bias stats (p25/p50/p75 of actual/estimated ratio); scope columns (0107). Regenerable rollup — replaced wholesale each run | raw | 0083, 0107 |
 | `calibration_history` | Append-only calibration trend — one row per (owner, scope, day) from the same job; never recomputed or pruned | raw | 0138 |
 | `calibration_combo_pins` | Pinned scope combos for the calibration UI, one row per (owner, scope_ref) | raw | 0107 |
-| `triality_log` | Append-only Triality outcome log — one row per suggestion shown (`slot`, `action_kind`/`action_ref`, the full `scores` JSON breakdown), stamped once more on `opened`/`staged`/`dismissed`. The learning corpus, not a cache: two requests log two sets of rows. Enums in code; raw SQL only (not in `schema.ts`); indexed on `(owner_id, local_date)` | raw | 0140 |
+| `triality_log` | Append-only Triality outcome log — one row per suggestion shown (`slot`, `action_kind`/`action_ref`, the full `scores` JSON breakdown), stamped once more on `opened`/`staged`/`dismissed`. The learning corpus, not a cache: two requests log two sets of rows. Enums in code; raw SQL only (not in `schema.ts`); indexed on `(owner_id, local_date)`. `confidence` (0144) is a TEXT JSON band stamped at show time, reported and never fed back into ranking; NULL = shown before it existed, and readers exclude those rows from confidence aggregates | raw | 0140, 0144 |
 | `triality_weights` | Learned Triality weights per `(owner_id, slot)` PK — `weights` JSON, `sample_count`, `computed_date`. Regenerable rollup replaced wholesale by `calibrate_triality`; **absence means "the default weights"**, so deleting an owner's rows is the reset switch. Raw SQL only | raw | 0142 |
 | `classification_log` | Append-only evidence for the parse/classify LLM's per-owner vocabulary — one row per assignment (`field`, `input_text`, `llm_value`, `final_value` null until corrected, `assigned_at`/`corrected_at`). Never online, never mid-request: a bad afternoon of corrections can't bend a live answer | raw | 0149 |
 | `classification_exemplars` | Regenerable few-shot retrieval index the classify prompt reads, rebuilt wholesale per owner by the weekly `calibrate_classification` job; deleting an owner's rows resets the adaptation without losing the log above | raw | 0149 |
@@ -442,6 +486,9 @@ pre-existing gap this pass didn't close. The live count is 70 including those fo
 | `plan_loop_runs` | Revision-loop wave — one row per `runLoop()` invocation (Phase M §A0 authoring loop): `stage`, `passed`, `escaped`, `escape_reason`, `score`, `iterations`. The durable evidence sink `agents/loop.ts`'s own contract promised but never got — its default sink was `audit_log`, which nothing ever reads back | raw | 0162 |
 | `plan_revision_log` | Append-only evidence — one row per candidate the loop scored inside a run: `run_id` (indexed TEXT, deliberately NOT a foreign key — revisions are written during the run, before the run's own row exists), `iter`, `score`, `reason`, `defects` JSON, `critique` | raw | 0162 |
 | `plan_loop_stats` | Measured trend per `(owner, stage, computed_date)`, written weekly by `calibrate_plan_loop` over its trailing window — `avg_iterations`/`pass_rate` NULL when `runs` = 0, never 0 | raw | 0162 |
+| `placement_log` | Placement-learning wave — durable, append-only evidence, one row per engine placement: `slot_key` (the task's level-1 direction name, or `(none)`), `chosen_start_at`/`chosen_hour`, `fit` (0 = `pickGap` fell back to the largest gap and truncated — a forced placement that expresses no preference), `candidates` (the JSON menu of free gaps `pickGap` weighed). Closed with `moved_*` when the owner drags the block. `block_id`/`task_id` are deliberately NOT foreign keys: the evidence must outlive the auto blocks `reflow()` recreates on every run | raw | 0166 |
+| `placement_preferences` | Regenerable rollup, rebuilt wholesale per owner by the weekly `calibrate_placement` job: PK `(owner_id, slot_key)`, `p25_hour`/`p75_hour` = the owner-local hour BAND where corrections landed, `corrections`, `sample_count` | raw | 0166 |
+| `placement_survival` | Measured trend per `(owner_id, computed_date)` — `decided`/`accepted`/`corrected`, `survival_rate` NULL when `decided` = 0 (a gap, never a false 0%), `keys_learned`, `biased` | raw | 0166 |
 
 #### Sync & external calendars
 
@@ -468,9 +515,9 @@ Dropped along the way (superseded, not in the live shape above): `task_tags` (00
 
 ### 5.3 UML class diagram
 
-Full column-level shape of every live table, grouped by concern. `«PK»` marks the primary
-key (composite where multiple columns are listed); `⊗`/`⊘` on a relationship below mean
-`ON DELETE CASCADE` / `ON DELETE SET NULL`.
+Column-level shape of every live table (key columns, not every column), grouped by concern. `«PK»` marks the primary
+key (composite where multiple columns are listed); `«no FK»` marks a reference the database does
+not enforce.
 
 ```mermaid
 classDiagram
@@ -485,7 +532,7 @@ class owners {
 class scheduling_prefs {
   +TEXT id «PK»
   owner_id «FK 1:1»
-  workday_start/_end, timezone
+  timezone, capacity_hours_per_week
   trust_mode, fill_order, planning_mode
   planning/recurrence_horizon_days
   feature flags, model overrides, view_prefs
@@ -506,6 +553,7 @@ class time_blocks {
   title, start_at, end_at, all_day
   block_kind, block_type, status
   is_locked, is_auto, color_token
+  responsible_pinned, beneficiaries_pinned
   recurrence_rule/_parent_id, auto_run_id
   version, field_ts
 }
@@ -547,7 +595,7 @@ class entity_categories {
 class tag_prefs {
   +TEXT id «PK» — uq(owner, tag)
   kind, color_token, default_minutes
-  auto_fill, reminder_offsets, icon_shape
+  auto_fill, reminder_offsets, icon_shape, show_open_time
 }
 class tag_directions { +«PK» intention_tag_id, direction_tag_id }
 class tag_categories { +«PK» intention_tag_id, category_tag_id }
@@ -576,7 +624,7 @@ class objectives {
   +TEXT id «PK»
   owner_id, parent_id, category_id, source_task_id
   level, horizon, status, cadence
-  progress_cache, archived_at, purge_after
+  progress_cache, archived_at, purge_after, color_token
 }
 class objective_tasks { +«PK» objective_id, task_id : linked, version }
 class reflections {
@@ -602,7 +650,7 @@ class calibration_combo_pins { +«PK» owner_id, scope_ref }
 class classification_log { +TEXT id «PK» : field, input_text, llm_value, final_value, assigned_at, corrected_at }
 class classification_exemplars { +«PK» owner_id, field, log_id : llm_value, correct_value, embedding }
 class classification_accuracy { +«PK» owner_id, field, computed_date : held_out, correct, accuracy }
-class triality_log { +TEXT id «PK» : slot, action_kind/_ref, scores, outcome }
+class triality_log { +TEXT id «PK» : slot, action_kind/_ref, scores, outcome, confidence }
 class triality_weights { +«PK» owner_id, slot : weights, sample_count }
 class possible_outcome_log { +TEXT id «PK» : possible_task_id «no FK», source_kind, input_text, outcome, decided_at, local_date }
 class possible_dismissal_exemplars { +«PK» owner_id, log_id : input_text, source_kind, embedding }
@@ -625,6 +673,22 @@ class oauth_states { +TEXT id «PK» : state «uq», code_verifier }
 class password_reset_tokens { +TEXT id «PK» : token_hash, expires_at, used_at }
 class possible_task_tags { +possible_task_id, tag_id «FK» }
 class app_config { +key «PK» : value, updated_at }
+class people {
+  +TEXT id «PK»
+  owner_id «FK tenancy», account_id «FK to owners, NULL unless this person has a login»
+  display_name «uq per owner», confirmed, source
+}
+class person_emails { +«PK» owner_id, email : person_id «FK» }
+class entity_people {
+  +«PK» entity_kind, entity_id, person_id, role
+  role: responsible|beneficiary, source, position
+  «entity_id: NO FK — app-enforced»
+}
+class possible_task_people { +«PK» possible_task_id, person_id, role : source, confidence }
+class signup_codes { +TEXT id «PK» : code_hash «uq», created_by/used_by «FK SET NULL», expires_at, used_at, revoked_at }
+class placement_log { +TEXT id «PK» : block_id/task_id «no FK», slot_key, chosen_start_at/_hour, fit, candidates, moved_start_at/_hour, local_date }
+class placement_preferences { +«PK» owner_id, slot_key : p25_hour, p75_hour, corrections, sample_count }
+class placement_survival { +«PK» owner_id, computed_date : decided, accepted, corrected, survival_rate, keys_learned, biased }
 
 owners "1" -- "1" scheduling_prefs : configures
 owners "1" --o "0..*" tasks : owns
@@ -677,6 +741,12 @@ owners "1" --o "0..*" tag_prefs
 owners "1" --o "0..*" pattern_day_optouts
 owners "1" --o "0..*" outbound_queue
 owners "1" --o "0..*" external_events
+owners "1" --o "0..*" people : directory
+owners "1" --o "0..*" person_emails
+owners "1" --o "0..*" signup_codes : created_by, used_by «SET NULL»
+owners "1" --o "0..*" placement_log
+owners "1" --o "0..*" placement_preferences
+owners "1" --o "0..*" placement_survival
 
 tasks "1" --o "0..*" tasks : subtask of
 tasks "1" --o "0..*" time_blocks : scheduled as
@@ -688,6 +758,7 @@ tasks "1" --o "0..*" pattern_tasks
 tasks "1" --o "0..*" objective_tasks
 possible_tasks "0..1" ..> "1" tasks : promoted to
 possible_tasks "1" --o "0..*" possible_task_tags
+possible_tasks "1" --o "0..*" possible_task_people
 
 time_blocks "1" --o "0..*" time_blocks : Plan container
 time_blocks "1" --o "0..*" time_entries
@@ -713,6 +784,13 @@ entity_tags ..> patterns : entity_kind='routine' «no FK»
 entity_categories ..> tasks : «no FK»
 entity_categories ..> time_blocks : «no FK»
 
+people "1" --o "0..*" person_emails : matched by address
+people "1" --o "0..*" entity_people
+people "1" --o "0..*" possible_task_people
+people "0..*" --> "0..1" owners : account_id «the login this person is»
+entity_people ..> tasks : entity_kind='task' «no FK»
+entity_people ..> time_blocks : entity_kind='time_block' «no FK»
+
 pattern_types "1" --o "0..*" patterns : typed by
 patterns "1" --o "0..*" pattern_tasks
 patterns "1" --o "0..*" pattern_day_optouts
@@ -733,20 +811,27 @@ plan_revision_log "0..*" ..> "0..1" plan_loop_runs : run_id «no FK, written bef
 plan_loop_runs ..> plan_loop_stats : weekly calibration
 classification_log ..> classification_exemplars : weekly calibration
 balance_week_log ..> life_priorities : category «string match, no FK»
+placement_log ..> time_blocks : block_id «no FK, evidence outlives the block»
+placement_log ..> placement_preferences : weekly calibration
+placement_log ..> placement_survival : weekly measurement
 ```
 
 Three things worth flagging in the model:
 
-- **`entity_tags` / `entity_categories` are polymorphic with no FK on `entity_id`** — the
-  dotted edges above are app-enforced by `services/tags.ts`, not the DB. `time_blocks.tag`
-  and `patterns.tag` remain denormalized top-level mirrors.
+- **`entity_tags` / `entity_categories` / `entity_people` are polymorphic with no FK on `entity_id`** — the
+  dotted edges above are app-enforced by `services/tags.ts` (`removeEntityTags` clears all
+  three on every hard delete), not the DB. `time_blocks.tag` and `patterns.tag` remain
+  denormalized top-level mirrors.
 - **`owners` is the tenant root** — nearly every table hangs off it, but cascade behavior
-  is inconsistent (some `ON DELETE CASCADE`, some plain FK), so owner deletion isn't yet a
-  single safe operation.
-- **26 tables live only in raw SQL**, outside `schema.ts` (marked "raw" in §5.2) — the
+  is inconsistent (some `ON DELETE CASCADE`, some plain FK), so owner deletion is an explicit
+  ordered purge rather than a bare `DELETE`: `deleteOwner()` (`lib/owners.ts`, behind
+  `DELETE /api/accounts/:id`) runs one transaction with deferred FK checks, clears the
+  owner's portable tables, then the non-portable ones, then the `owners` row, and refuses to
+  remove the last operator.
+- **29 tables live only in raw SQL**, outside `schema.ts` (marked "raw" in §5.2) — the
   whole life layer (`objectives`, `reflections`), the AI-loop tables, and every
   evidence/rollup/measurement trio in the Learning loops section (calibration, triality,
-  classification, dismissal, plan-loop) plus `balance_week_log`. They're invisible to
+  classification, dismissal, plan-loop, placement) plus `balance_week_log`. They're invisible to
   Drizzle queries *and* to the `schema-parity` test that guards drift — deliberately, per
   each table's own migration comment: none of them are mirrored in `schema.ts`.
 
@@ -758,7 +843,7 @@ Two clocks drive the day:
 
 | Clock | What it does | When it runs |
 |---|---|---|
-| **Slow (LLM)** | Orders tasks into a frozen `daily_plan` with a "why now" rationale per block | Once per day on demand (`POST /api/plan/reauthor`) or the nightly job |
+| **Slow (LLM)** | Orders tasks into a frozen `daily_plan` with a "why now" rationale per block | Once per (owner, day), author-once: on the day's first `POST /api/auto/run`, or forced on demand by `POST /api/plan/reauthor`. The LLM loop runs only when `planning_mode='smart'` and Ollama is ready; otherwise a deterministic order is written. No nightly job authors the plan |
 | **Fast (deterministic)** | Re-packs movable auto-blocks from a snapshot of the day whenever the obstacle set shifts | Debounced reactive trigger on a *scheduling-relevant* task edit / calendar sync / missed block |
 
 **Snapshot-based reflow (Phase AE — `engine/auto-defense.ts`).** The reactive reflow's re-place set is **exactly the movable auto blocks it snapshotted** — the clear set equals the re-place set by construction, so re-placing after a task edit can never delete a block it isn't about to rebuild. (This fixed the AE bug where editing one placed task's start time wiped every *other* flight-plan-placed task: the old code cleared all agent blocks but re-placed only a subset.) `daily_plan` is an *ordering* hint only; it no longer gates membership. Related AE invariants: **status parity** (every placement path flips a task `open → scheduled` and reverts it when its last active block is cleared/swept; engine placements mirror `scheduled_for` but never `task_time`, which stays user-stated intent), a **not-before-now clamp** (on the owner-local current day engine-chosen slots never start before now — a late reflow packs the remaining day), and **locked-block guards** (no engine path — reflow clear, reschedule, nightly review, missed sweep — may delete/relabel/relocate an `is_locked=1` pin). The replan trigger is gated to fire only on a scheduling-relevant column change (`updateTouchesSchedule`), so a title/notes/tag edit never churns the day.
@@ -773,7 +858,7 @@ Two clocks drive the day:
 
 ## 6a. GraphQL layer (Phase W — complete)
 
-Companion Planning exposes an **Apollo Server 5** GraphQL surface at `POST /api/graphql`, mounted via `@as-integrations/koa` **alongside** the REST API — REST remains authoritative and untouched. The schema is **schema-first** (hand-authored SDL) and follows CI-Server-compatible conventions: `Node` / Relay-style `Connection`/`Edge`/`PageInfo` pagination, and `DateTime` / `JSON` custom scalars. Introspection is on; a **custom complexity-limiter plugin** (not `graphql-query-complexity`) guards query cost, and `graphql` is pinned to 16.x. The whole surface sits under `requireAuth`, and the resolver context reads `currentOwnerId()` from the same `AsyncLocalStorage` the REST routes use. **Decision 3:** every resolver calls the existing `services/*.ts` functions — it never re-derives owner-scoping. A shared service layer (`services/tasks.ts`, `blocks.ts`, `flight-plan.ts`, `patterns.ts`, `objectives.ts`, `notifications.ts`, `prefs.ts`, `jobs.ts`, `engine-ops.ts`, alongside the pre-existing `services/tags.ts`) gives REST and GraphQL one owner-scoped implementation per resource area.
+Companion Planning exposes an **Apollo Server 5** GraphQL surface at `POST /api/graphql`, mounted via `@as-integrations/koa` **alongside** the REST API — REST remains authoritative and untouched. The schema is **schema-first** (hand-authored SDL) and follows CI-Server-compatible conventions: `Node` / Relay-style `Connection`/`Edge`/`PageInfo` pagination, and `DateTime` / `JSON` custom scalars. Introspection is on; a **custom complexity-limiter plugin** (not `graphql-query-complexity`) guards query cost (`GRAPHQL_MAX_COMPLEXITY`, default 1000), and `graphql` is pinned to 16.x. The whole surface sits under `requireAuth` (a POST maps to the `planning:write` scope, so a read-only `viewer` session or key cannot call it), and the resolver context reads `currentOwnerId()` from the same `AsyncLocalStorage` the REST routes use. **Decision 3:** every resolver calls the existing `services/*.ts` functions — it never re-derives owner-scoping. A shared service layer (`services/tasks.ts`, `blocks.ts`, `flight-plan.ts`, `patterns.ts`, `objectives.ts`, `notifications.ts`, `prefs.ts`, `jobs.ts`, `engine-ops.ts`, alongside the pre-existing `services/tags.ts`) gives REST and GraphQL one owner-scoped implementation per resource area.
 
 The full CRUD surface is now live (W1–W13 + W-sandbox + W-close):
 - **TagType** (direction / intention / category hierarchy connections + `entities` reverse edge)
@@ -782,8 +867,9 @@ The full CRUD surface is now live (W1–W13 + W-sandbox + W-close):
 - **Objective / Reflection / DayStars / DailyRecap** (unblocks `TaskType.objective`); **PossibleTask / BlockTemplate**
 - **Reminder / PushSubscription**; **SchedulingPrefs**; **ScheduledJob / JobRun** (admin-scope gated, system-global)
 - mutation-only **engine ops** (autoplan / find-slot / instruct / clear-planner)
+- since the CRUD wave: **Person** (`people` / `person` / `accountRoster`, plus the `responsible` / `beneficiaries` edges on Task and TimeBlock, 0151) and **Triality** (`trialityNext` / `trialityFeedback`, flag-gated on `triality_enabled`)
 
-A self-hosted, flag-gated GraphiQL sandbox (`GET /api/graphql/sandbox`, `GRAPHQL_SANDBOX`, prod-off) ships too. Perf indexes for the tag keyset connections landed in migration 0112. See [docs/W-graphql-crud.md](docs/W-graphql-crud.md).
+A self-hosted, flag-gated GraphiQL sandbox (`GET /api/graphql/sandbox`; on outside production, and `GRAPHQL_SANDBOX=1` opts it in under `NODE_ENV=production`) ships too. Perf indexes for the tag keyset connections landed in migration 0112. See [docs/W-graphql-crud.md](docs/W-graphql-crud.md).
 
 ---
 
@@ -805,7 +891,7 @@ sequenceDiagram
     Ing->>MCP: fetch deltas since that instant
     MCP-->>Ing: events / messages
     loop each item
-        Ing->>LLM: extract action items (small model)
+        Ing->>LLM: extract action items (quality tier)
         LLM-->>Ing: candidate + confidence
         Ing->>DB: upsert possible_tasks
     end
@@ -832,6 +918,7 @@ sequenceDiagram
 
     Note over Cron,DB: Weekly ─────────────────────────────────────
     Cron->>DB: calibrate_triality (Mon 03:50) — re-tune Triality slot weights
+    Cron->>DB: calibrate_classification / calibrate_dismissals / calibrate_plan_loop / snapshot_balance / calibrate_placement (Mon 04:10–04:50) — the other weekly per-owner learning passes
     Cron->>DB: advance_objectives (Mon 05:00) — stage objective tasks
 ```
 
@@ -863,7 +950,12 @@ own callback is a bug, and the old `catch {}` blocks turned it into an empty res
 indistinguishable from a model that had nothing to say. Each caller still owns its own
 fallback — `suggestTags` returns `[]`, `enrichTaskFromMemory` returns
 `{ enriched: false, reason }`, `renderCopy` drops to its rotation pool, ingest stages a
-raw `fallbackTask` — only the plumbing converges.
+raw `fallbackTask` for a reply that is not JSON — only the plumbing converges. Ingest also
+uses `llmAttempt(op, fn)`, `llmOrNull`'s sibling that says *which* of the two failures
+happened (`'unavailable'` or `'unparseable'`): with Ollama down it stages nothing and
+defers the item, because the watermark moves past everything it stages and a stub written
+during an outage would never be revisited (`agents/ingest.ts`; the run log counts these as
+`deferred`).
 
 Two paths are deliberately outside it. The `runLoop` stage callbacks (`generate` /
 `judge` / `revise` in `agents/plan.ts`) must keep THROWING: the §A0 loop's error contract
@@ -876,7 +968,7 @@ breaks straight to the pool, while a gate rejection regenerates once with the re
 back.
 
 "Can we call a model?" is answered only by `isReady()` — `status().ready`, meaning
-reachable **and** the effective fast/quality models are actually pulled. The predicate it
+reachable **and** the effective fast/quality models are actually pulled (the embedder is deliberately not part of it; the embedding paths ask `embedReady()`). The predicate it
 replaced, `isAvailable()` (`status().available`, "Ollama answered `/api/tags`"), is a
 green light with nothing behind it, and gating on it ran the full generate→judge→revise
 loop against installs that could not serve a single call. `status().available` survives
@@ -946,8 +1038,8 @@ rubric-governed verdict, over N≥5 runs, and assert the completion is non-empty
 | Kind | Cron | Purpose |
 |---|---|---|
 | `fire_reminders` | every 1m | Fire due reminders exactly once (SSE + Web Push) |
-| `sync_calendar` | every 15m | Two-way Google Calendar sync — meeting mirror + placement (Phase J) |
-| `ingest_gmail` | every 15m | Extract possible-task candidates from Gmail messages (review-gated — they wait for approval, see services/review-gate.ts). The `since` watermark is floored at `now − email_lookback_days` (§1.3), so a first ingest or a post-outage run can't replay months of mail through the extraction LLM |
+| `sync_calendar` | every 15m | Google Calendar sync — inbound meeting mirror + placement always; outbound push of local blocks only with `CP_SYNC_WRITEBACK=true`, and `CP_SYNC_DISABLED=true` stops both (Phase J) |
+| `ingest_gmail` | every 15m | Extract possible-task candidates from Gmail messages (review-gated — they wait for approval, see services/review-gate.ts). The `since` watermark is floored at `now − email_lookback_days` (§1.3), so a first ingest or a post-outage run can't replay months of mail through the extraction LLM. In live mode the job runs only when `CP_GOOGLE_ENABLE_GMAIL=true`; a run extracts at most 50 messages (oldest first), and an Ollama outage defers the batch with the watermark held instead of staging stubs |
 | `ingest_gcal` | every 30m | Extract possible-task candidates from Calendar events |
 | `memory_suggest` | every 6h | Pull the upcoming CI-Server memory graph, stage events as suggestions (AA1; no-op unless `memory_pull_enabled` + connector creds). Window is `memory_window_days` (§1.3, default 2), shared with the daily brief via `memoryWindowMs(owner)` |
 | `tag_tasks` | hourly | Auto-tag every untagged open task for the owner |
@@ -958,17 +1050,18 @@ rubric-governed verdict, over N≥5 runs, and assert the completion is non-empty
 | `calibrate_estimates` | daily 01:30 | Compute personal estimate bias ratio — **moved here from Sun 04:00 by 0107** (`UPDATE scheduled_jobs SET cron = '30 1 * * *'`, applied only to rows still on the old weekly cron so an operator-customized one is never clobbered) |
 | `promote_possibles` | — (manual only) | Unconditionally promote any pending inbox stragglers into Tasks, then hands-off auto-block — cron row retired by 0118 (AF-3: producers auto-promote at ingestion; `nightly_grooming` subsumes the sweep) |
 | `nightly_grooming` | daily 02:00 | Per owner: embedding-dedupe pending possibles · bump overdue open-task priority · unconditionally promote pending stragglers · hands-off auto-block the newly promoted |
-| `snapshot_db` | daily 02:00 | Write a point-in-time SQLite backup |
+| `snapshot_db` | daily 02:00 | Write a point-in-time SQLite backup to `<DB dir>/backups/companion-<timestamp>.db` and keep the newest `SNAPSHOT_RETAIN` (default 7), see §14 |
 | `push_memory` | daily 02:00 | One-way push of completed tasks / habit occurrences / reflections to CI-Server as `POST /v1/events` (AA4; gated by `memory_sync_enabled` + per-entity scope toggles; watermarked by `memory_last_synced_at`) |
 | `generate_recurrences` | daily 02:45 | Materialize recurring Task/Habit instances; flag missed habits |
 | `auto_schedule` | daily 03:00 | **Proposes** open-task candidates into the flight-plan (`fillFlightPlanCandidates`) and sweeps blocks whose planned time passed un-started (`sweepMissedBlocks` → mark `skipped`, revert the task to `open`, re-stage at the END of the plan), then `requestReplan('missed')`. It does **not** pack the backlog — Auto stopped doing that in Phase G; placement is user-triggered via `POST /api/auto/run` |
-| `prune_sync_events` | daily 03:00 | Trim old `sync_events` rows beyond retention window |
+| `prune_sync_events` | daily 03:00 | Delete `sync_events` rows older than 30 days (all owners in one global pass), and log the `audit_log` row count, which is deliberately never pruned |
 | `enrich_tasks` | daily 03:20 | Per owner: fill blank description / direction / categories on thin tasks from Companion Memory (fill-blanks-only; no-op when memory is off) (0136) |
 | `calibrate_triality` | Mon 03:50 | Re-tune the per-slot Triality weights from 90 days of `triality_log` outcomes — batch, each weight clamped to ½×–2× of its default and then renormalized so the slot's weights still sum to the default total, and inert below 20 decided rows for a slot. **Owner-scoped** (in `OWNER_SCOPED_KINDS`): weights are per-owner by construction, and pooling one owner's feedback into another's ranking is ruled out absolutely (0143) |
 | `calibrate_classification` | Mon 04:10 | Weekly per-owner rebuild of `classification_exemplars` (the parse/classify LLM's few-shot retrieval index) from `classification_log` corrections, plus a held-out `classification_accuracy` measurement. **Owner-scoped**: corrections are per-owner by construction. Runs after `calibrate_triality` so the two weekly learning passes don't compete for one GPU (0149) |
 | `calibrate_dismissals` | Mon 04:20 | Close-loop wave (ticket 3): rebuild `possible_dismissal_exemplars` wholesale from settled `possible_outcome_log` evidence (inert below `DISMISSAL_FLOOR` = 5 settled dismissals) and append one `possible_dismissal_rate` reading. **Owner-scoped**: dismissal evidence is per-owner by construction, never pooled. Runs after `calibrate_classification` (Mon 04:10) so the weekly per-owner learning passes don't compete for one GPU (0158) |
 | `calibrate_plan_loop` | Mon 04:30 | Revision-loop wave (ticket 3): pure-SQL weekly aggregate over `plan_loop_runs` into one `plan_loop_stats` row per `(owner, stage)` — pass rate, first-try pass rate, escapes, average iterations. Makes NO model calls, but stays inside the weekly learning block so the cron schedule reads as one unit (0163) |
-| `snapshot_balance` | Mon 04:40 | Balance-targets wave (ticket 6): freeze each life dimension's target/scheduled/timed hours for the week just closed into `balance_week_log`. `INSERT OR IGNORE`, first-freeze-wins — a missed week can never be recomputed later. History only; nothing reads it back yet (0165) |
+| `snapshot_balance` | Mon 04:40 | Balance-targets wave (ticket 6): freeze each life dimension's target/scheduled/timed hours for the week just closed into `balance_week_log`. `INSERT OR IGNORE`, first-freeze-wins — a missed week can never be recomputed later. Its only reader is `GET /api/priorities/history` (`balanceHistory`), which feeds the details drawer's "met target N of last M weeks" readout; the bias, prompts and the engine never see this table (0165) |
+| `calibrate_placement` | Mon 04:50 | Placement-learning wave (ticket 4): weekly per-owner rebuild of `placement_preferences` — the owner-local hour band (p25–p75, at most 6 hours wide) each slot key actually ends up in — from 90 days of `placement_log` rows, plus one `placement_survival` reading. A key needs `CORRECTION_FLOOR` = 5 corrections before it gets a band, and at most 50 keys are kept. Makes NO model calls. **Owner-scoped** (in `OWNER_SCOPED_KINDS`): one owner's corrections never bias another's scheduler. The Auto engine's `placementScorer` then biases gap choice toward the band. Last of the Monday learning passes (0167) |
 | `advance_objectives` | Mon 05:00 | Stage tasks for active objectives into flight-plan |
 
 ---
@@ -977,18 +1070,18 @@ rubric-governed verdict, over N≥5 runs, and assert the completion is non-empty
 
 | View | Route | Key components |
 |---|---|---|
-| **Today** | `/` | Single header row (Today's Brief · Focus bullseye · Note, each a popover) + FAB · collapsible DUE card · day-stars tally · PLANNER (8h/expand, drag-reorder; Alt-drag = free placement) · Flight-plan staging · ElementWizard drawer (AC/AD) |
+| **Today** | `/` | Day-stars tally · day header (date stepper; **Due** button opening a popup; Today's Brief · Focus bullseye · Note, each a popover; capacity bar; open-time summary) · re-plan banner · PLANNER (8h/expand, drag-reorder; Alt-drag = free placement) · Flight-plan staging (the details drawer's Flight Plan tab) · FAB → ElementWizard modal (AC/AD) |
 | **Focus** | `/focus` | Today-only single-column list (upcoming / collapsed past); Time-Sense hero + Focus Ritual launcher; header mirrors Today's card (Brief · Focus goals · day note) + FAB; reminders card offers only today's tasks |
-| **Calendar** | `/calendar` | Day / week / month grid · five-star heatmap + note dots · Weekly Review panel (week toggle) · overlay filter (Direction + **Category**, brand ↔ colourful palette toggle — §1.2) · "Schedule Day" (fill-then-place intake) |
-| **Tasks** | `/tasks` | Filterable backlog with priorities, tags, notes, subtasks, dependencies; task-chip merged direction-icon/done toggle; Routine tasks grouped by routine with end-of-day archive (AC). Hosts the **Objectives** tree (Goal › Project › Objective) and **Routines** as URL-synced **tabs** (`?focus`, AF), plus a date-derived **New Today** section for auto-promoted suggestions. Section membership is pure derivation (`lib/task-sections.ts`), precedence Routine › Scheduled › New Today › Open (§1.3) — Scheduled sits ahead of New Today, so placing a task retires its New Today card on placement rather than at midnight |
-| **Balance** | `/balance` | Core-Dimension satisfaction/importance bars + Balance Index; each dimension's "N open" button opens a client-joined modal of its related open tasks (§1.2) |
+| **Calendar** | `/calendar` | Day / week / month grid · five-star heatmap (month view) + note dots · Weekly Review panel (week toggle) · overlay filter (Direction + **Category**, brand ↔ colourful palette toggle — §1.2) · "Plan my week" (Weekly Planning Assistant: fill week · schedule tasks · review) · "Schedule Day" (fill-then-place intake) |
+| **Tasks** | `/tasks` | Filterable backlog with priorities, tags, notes, subtasks, dependencies; task-chip merged direction-icon/done toggle; Routine tasks grouped by routine with end-of-day archive (AC). Hosts the **Objectives** tree (Goal › Project › Objective) and **Routines** as URL-synced **tabs** (`?tab=` — `tasks`, `objectives`, `habits`, `routines`, `timeblocks` — with `?focus=<id>` deep-linking into the Objectives tree; AF), plus a date-derived **New Today** section for auto-promoted suggestions. Section membership is pure derivation (`lib/task-sections.ts`), precedence Routine › Scheduled › New Today › Open (§1.3) — Scheduled sits ahead of New Today, so placing a task retires its New Today card on placement rather than at midnight |
+| **Balance** | `/balance` | Core-Dimension satisfaction/importance bars + Balance Index; each dimension's "N open" button opens a client-joined modal of its related open tasks (§1.2); a second **Metrics** tab holds the task metrics and the Triality tiles |
 | **Tags** | `/tags` | direction / intention / category taxonomy; weighted cloud; mute / delete; per-chip **Category** select on both tabs (§1.2) |
-| **Jobs** | `/jobs` | Scheduled job registry; run any job on demand, or **Run all**; execution log |
-| **Settings** | `/settings` | Work hours · model picker · Web Push opt-in · MCP connections · Google/CI-memory connections · Profile · Accounts (operator-only, AG) · export/import · recurrence duration · Clear Date Range. Connections also carries the two ingestion windows (§1.3) — a **Look ahead** field under the memory-pull toggle, and an **Email suggestions** card with **Look back** (Google-visibility-gated like the rest of that surface) |
+| **Jobs** | `/jobs` | Scheduled job registry; run any job on demand, or **Run all**; execution log. Operator-only: behind the login gate the nav entry is hidden from members and viewers, and the API answers 403 without the admin scope |
+| **Settings** | `/settings` | Four tabs. **Profile** — your name, sign-in handle and email; **Team** (operator-only, AG: accounts, roles, sign-up invite codes); Backup & Export; First-Time Experience replay; in the mobile shells, the server address. **Preferences** — schedule patterns (day types, per-direction windows), planner display, pattern tags, time-block categories, People, time-block and routine settings, reminders with the Web Push opt-in, recurrence duration, Clear Date Range. **Connections** — model picker, Companion Memory, Integrations (Google OAuth client), Connected accounts, Email suggestions. The two ingestion windows (§1.3) live here: a **Look ahead** field under the memory-pull toggle, and an **Email suggestions** card with **Look back** (Google-visibility-gated like the rest of that surface). **Logs** — Weekly-Planning-Assistant session logs |
 
-The nine routed views are `/`, `/focus`, `/calendar`, `/tasks`, `/tags`, `/priorities`, `/balance`, `/settings`, `/jobs` (`client/src/App.tsx`), plus the unauthenticated `/login` and `/reset-password`. Legacy paths `/inbox`, `/objectives`, `/patterns` **redirect** into their host tab — the Inbox surface was retired in Phase AF (ingested `possible_tasks` auto-promote, no manual triage), and Objectives/Routines became Tasks-view tabs. (`/routines` is **not** a route and never redirected — it 404s.) `/priorities` (wizard) and `/balance` (dashboard) are the life-priorities layer, §1.1.
+The nine routed views are `/`, `/focus`, `/calendar`, `/tasks`, `/tags`, `/priorities`, `/balance`, `/settings`, `/jobs` (`client/src/App.tsx`), plus the unauthenticated `/login`, `/signup` and `/reset-password`, which exist only when the deployment gates the SPA behind a login (`AUTH_MODE=sso`; `test` and `standalone` render the shell with no login route). In the iOS and Android shells a first-run *Connect to your server* screen (`views/ConnectServer.tsx`) shows before any of this until a server address is saved. Legacy paths `/inbox`, `/objectives`, `/patterns` **redirect** into their host tab — the Inbox surface was retired in Phase AF (ingested `possible_tasks` auto-promote, no manual triage), and Objectives/Routines became Tasks-view tabs. (`/routines` is **not** a route and never redirected — it 404s.) `/priorities` (wizard) and `/balance` (dashboard) are the life-priorities layer, §1.1.
 
-SSE drives live updates across all views — task / block / job / reminder events are broadcast owner-scoped.
+SSE drives live updates across all views — task / block / job / reminder events are broadcast owner-scoped. (The iOS and Android shells poll `GET /api/sync/changes` instead of holding the stream, §12.)
 
 ---
 
@@ -999,24 +1092,30 @@ SSE drives live updates across all views — task / block / job / reminder event
 | Mode | Use case | Mechanism |
 |---|---|---|
 | `test` | Dev / CI (forbidden in production) | System owner injected; no token required |
-| `standalone` | Docker / self-hosted | Hashed `x-api-key` in `api_keys` table (SHA-256, `crypto.timingSafeEqual`) |
-| `sso` | CI Hub appliance | Login mints a signed, httpOnly `cp_session` cookie (Koa `app.keys` from `SESSION_SECRET`); every request is authenticated by that cookie, never a Bearer token. Two login sub-modes: CI-Portal OIDC (OAuth 2.1 + PKCE RP; id_token JWKS-verified once at the callback, endpoints discovered via `CIPORTAL_ISSUER`) or, with `DISABLE_OIDC=true`, local username/password (argon2id). |
+| `standalone` | Headless API access: REST / GraphQL clients and agents (the browser UI does not attach API keys) | Hashed `x-api-key` in `api_keys` table (SHA-256, `crypto.timingSafeEqual`); mint one with `pnpm --filter server key:issue`. The SSE stream also accepts the key as `?api_key=` |
+| `sso` | CI Hub appliance; any multi-user or exposed install | Login mints a signed, httpOnly `cp_session` cookie (Koa `app.keys` from `SESSION_SECRET`; unset, the server generates one once and keeps it beside the database in `.session-secret`); every request is authenticated by that cookie, never a Bearer token. Two ways in, ending in the same cookie: local username/password (argon2id), served in both sub-modes (`POST /api/auth/login`, the break-glass operator seeded from `AUTH_DEFAULT_*`, self-serve sign-up below), and Companion Portal (CI-Portal) OIDC (OAuth 2.1 + PKCE RP; id_token verified against the portal's JWKS, RS256 or EdDSA, once at the callback; endpoints discovered via `CIPORTAL_ISSUER`). `DISABLE_OIDC=true` turns the portal off and leaves local sign-in as the only login. |
 
-Sessions are stateless signed cookies stamped with `owners.session_epoch`; bumping that epoch (logout-all / Phase V password reset) instantly invalidates every outstanding cookie for that owner. The older generic `AUTH_JWKS_URL` / `AUTH_ISSUER` / `AUTH_AUDIENCE` / `AUTH_CONTRACT_VERSION` vars predated the CI-Portal OIDC flow and have been **retired** — they were parsed into `config.auth` but consumed by no code path, so setting them looked like hardening while enforcing nothing. Their live equivalents: the JWKS endpoint and expected `iss` come from `CIPORTAL_ISSUER` discovery (with every discovered endpoint origin-checked against the issuer), and the `aud` check uses `CIPORTAL_CLIENT_ID`.
+Sessions are stateless signed cookies (`cp_session`: 30 days, `HttpOnly`, `SameSite=Lax`, `Secure` whenever the request is HTTPS, which behind a TLS-terminating proxy needs `TRUST_PROXY=true`) stamped with `owners.session_epoch`; bumping that epoch (a Phase V password reset, or an operator changing the account's role) instantly invalidates every outstanding cookie for that owner. Logout clears only the cookie of the browser that calls it; there is no logout-everywhere. The older generic `AUTH_JWKS_URL` / `AUTH_ISSUER` / `AUTH_AUDIENCE` / `AUTH_CONTRACT_VERSION` vars predated the CI-Portal OIDC flow and have been **retired** — they were parsed into `config.auth` but consumed by no code path, so setting them looked like hardening while enforcing nothing. Their live equivalents: the JWKS endpoint and expected `iss` come from `CIPORTAL_ISSUER` discovery (with every discovered endpoint origin-checked against the issuer), and the `aud` check uses `CIPORTAL_CLIENT_ID`.
 
 **Authorization — roles → scopes (Phase AG, mig 0125).** *Authentication* answers who you are; `owners.role` answers what you may do. One choke point converts role → scopes: `roleToScopes` (`lib/auth/scopes.ts`), replacing a hardcoded `[READ, WRITE, ADMIN]` triple that made every authenticated owner an admin.
 
 | Role | Scopes | Notes |
 |---|---|---|
 | `operator` | read · write · admin | Existing owners backfilled to this |
-| `member` | read · write | **OIDC auto-provision defaults here** — closes the auto-admin hole |
+| `member` | read · write | **Portal auto-provision and self-serve sign-up default here** — closes the auto-admin hole. The one exception: the first account on an instance with no operator becomes `operator` |
 | `viewer` | read | Read-only |
 
-**An unknown/unrecognized role degrades to read-only, never to admin** — the failure mode is a locked door, not an open one. Account management (`routes/accounts.ts`: `GET/POST/PATCH/DELETE /api/accounts` + `/:id/invite`) is operator-gated; onboarding is a password-less invite plus a reset-token link.
+**An unknown/unrecognized role degrades to read-only, never to admin** — the failure mode is a locked door, not an open one. Account management (`routes/accounts.ts`: `GET/POST/PATCH/DELETE /api/accounts`, `/:id/invite` and `/signup-codes`) is operator-gated; onboarding is a password-less invite plus a reset-token link, or a sign-up code (below). A role change bumps the target's session epoch so they sign in again with their new scopes, and the last operator can be neither demoted nor deleted.
 
-**Token crypto:** OAuth access/refresh tokens are sealed with AES-256-GCM in `connection_tokens`. The 32-byte key-encryption key is supplied as `CP_KEK_B64` — never committed; never in a log. Each row stores a `key_version` so keys can be rotated without re-authenticating.
+**Token crypto:** OAuth access/refresh tokens are sealed with AES-256-GCM in `connection_tokens`. The 32-byte key-encryption key is supplied as `CP_KEK_B64` — never committed; never in a log. Each row stores a `key_version` so keys can be rotated without re-authenticating (retired keys stay available as `CP_KEK_B64_V{n}`; the active version is `CP_KEK_VERSION`). The same key seals the Companion Memory credentials and the in-app Google client secret.
 
 **Log redaction:** `server/src/lib/logger.ts` recursively masks any key matching the secret pattern (tokens, `client_secret`, `authorization`, `code`, `kek`, `iv`, `ciphertext`, …) at any depth before serialization. URL query params carrying `token` / `code` / `client_secret` are scrubbed from string values. Cycle-safe, depth-guarded.
+
+**Local sign-up and onboarding.** Local username/password login (`POST /api/auth/login`, argon2id) is served in both `sso` sub-modes, with one constant-work verify whether or not the username exists. Self-serve sign-up (`POST /api/auth/signup`, the `/signup` page; `sso` only) follows `AUTH_SIGNUP`: `invite` (the default) needs a single-use, 7-day invite code that an operator mints in Settings → Team (`POST /api/accounts/signup-codes`; stored as a SHA-256 hash in `signup_codes`, migration 0172, shown once, revocable), `open` needs no code, `off` removes the endpoint (404). The person picks their own username and password; an operator never sees one. The first account on an instance with no operator becomes the operator, by whichever path creates it, and every later account is a `member`. A first-time Companion Portal sign-in is never provisioned silently: with `AUTH_AUTO_PROVISION=true` the callback parks the verified identity in a signed 10-minute cookie and the person confirms on a no-JS page; with it off the sign-in is refused (403). Login, sign-up and reset requests share a per-IP in-memory limiter (`AUTH_RATE_ISSUE_MAX` attempts per `AUTH_RATE_WINDOW_MS`, default 5 per minute); reset requests are also limited per identifier and answer the same way whether or not the account exists.
+
+**Cross-origin and CSRF.** CORS is closed by default: `app.ts` echoes an `Origin` back only when it is in the explicit allowlist `CORS_ALLOWED_ORIGINS` (comma-separated, empty by default, never `*`), because the SPA is same-origin (koa-static in production, the Vite proxy in dev) and a wildcard would let any page that gets a browser to attach valid credentials read authenticated JSON. There is no CSRF token on the JSON API; the session cookie is `SameSite=Lax`, so it is not sent on cross-site POSTs (a forged cross-site logout sees no cookie and does nothing). The browser-driven login flows add their own binding: Companion Portal `/start` sets a signed, single-use `cp_login_state` cookie that the callback must match to the returned `state` (login-CSRF defence), and the first-time sign-in confirmation form carries a CSRF token that is compared in constant time against its signed `cp_portal_intent` cookie.
+
+**Security headers** (`securityHeaders()` in `app.ts`) go on every response, the SPA shell included: a `Content-Security-Policy` with `script-src 'self'` (no inline script), inline styles allowed, Google Fonts as the only foreign origin, `connect-src` limited to the app itself plus the Sentry ingest origin when crash reporting is on plus anything in `CSP_EXTRA_CONNECT_SRC`, and `frame-ancestors 'none'`; `X-Content-Type-Options: nosniff`; `X-Frame-Options: DENY`; `Referrer-Policy: strict-origin-when-cross-origin`; a `Permissions-Policy` that denies camera, microphone and geolocation; and `Strict-Transport-Security` only when the request itself is HTTPS, so opening `http://` locally never pins a browser to TLS. The self-hosted GraphiQL sandbox gets its own, looser policy. Everything under `/api` sits behind `requireAuth` except a short public list in `lib/auth/requireAuth.ts`: health, the telemetry-policy and auth-config probes, login and logout, sign-up, password reset, the Portal login pair and its confirm page, and the Google and Companion Memory OAuth callbacks.
 
 ---
 
@@ -1030,23 +1129,23 @@ flowchart LR
     App -->|seal tokens| CT[("connection_tokens")]
     App -->|"CP_MCP_COMMAND stdio"| MCP["MCP child process"]
     MCP -->|"inject access token"| GCal["Google Calendar"]
-    MCP -->|"inject access token"| Gmail["Gmail"]
+    MCP -.->|"Gmail tools only with CP_GOOGLE_ENABLE_GMAIL"| Gmail["Gmail"]
 ```
 
-The `McpGoogleSession` owns the MCP child process and injects the per-account access token (fetched from `connection_tokens`, refreshed if needed) into each MCP call — the child never persists credentials of its own. With `GOOGLE_MODE` unset (the default) the Google integration starts **off**, but an admin can activate it **in-app**: Settings → Connections → Google OAuth client stores the client id (plain) + client secret (KEK-sealed) in the server-global `app_config` table and hot-applies live mode at runtime (`services/google-config.ts`; requires `CP_KEK_B64`). An explicit `GOOGLE_MODE` env pins the mode and makes the in-app setup read-only. `GOOGLE_MODE=fixture` is an explicit dev/demo opt-in that uses committed sample data with no network calls (refused under `NODE_ENV=production` unless `CP_ALLOW_FIXTURE=true`). In live mode each user connects their own account in Settings → Connections, and the ingest jobs run only for owners with an active connection. The Calendar MCP child defaults to the bundled server (`src/scripts/mcp-google-server.ts`), overridable via `CP_MCP_COMMAND`.
+The `McpGoogleSession` owns the MCP child process and hands the child the per-account access token (fetched from `connection_tokens`, refreshed if needed) in its environment as `GOOGLE_ACCESS_TOKEN` — never in argv, and the child's whole environment is `PATH` plus that token, so it never sees `CP_KEK_B64` or `DB_PATH`; a 401 forces one token refresh and a respawn. The child never persists credentials of its own. With `GOOGLE_MODE` unset (the default) the Google integration starts **off**, but an admin can activate it **in-app**: Settings → Connections → Google OAuth client stores the client id (plain) + client secret (KEK-sealed) in the server-global `app_config` table and hot-applies live mode at runtime (`services/google-config.ts`, behind the admin-scoped `GET/PUT /api/google-config`; requires `CP_KEK_B64`). An explicit `GOOGLE_MODE` env pins the mode and makes the in-app setup read-only. `GOOGLE_MODE=fixture` is an explicit dev/demo opt-in that uses committed sample data with no network calls (refused under `NODE_ENV=production` unless `CP_ALLOW_FIXTURE=true`). In live mode each user connects their own account in Settings → Connections, and the ingest jobs run only for owners with an active connection. The Calendar MCP child defaults to the bundled server (`src/scripts/mcp-google-server.ts`), overridable via `CP_MCP_COMMAND`. That server exposes only the four `calendar_*` tools, so live Gmail ingest needs both `CP_GOOGLE_ENABLE_GMAIL=true` (which also adds the Gmail scope to the consent request) and a Gmail-capable `CP_MCP_COMMAND`. The iOS and Android shells do not offer Connect Google (the OAuth redirect cannot finish inside the app); connect from a browser and the connection appears in the app.
 
-**Circuit breaker:** 5 consecutive MCP failures open the breaker for 30s; retries get 3 attempts with a `CP_MCP_TIMEOUT_MS` deadline.
+**Circuit breaker and retries:** 5 consecutive MCP failures open the breaker for 30s (`CP_MCP_BREAKER_THRESHOLD` / `CP_MCP_BREAKER_COOLDOWN_MS`). Each call is bounded by `CP_MCP_TIMEOUT_MS` (default 30s) and a timeout is not retried; 429 and 5xx responses are retried up to `CP_MCP_RETRIES` times (default 3) with exponential backoff and jitter; other 4xx responses are not retried.
 
 ---
 
 ## 10a. CI-Server memory connector (Phase AA)
 
-A **pull-first** integration with the CI-Server `companion-memory` graph. Two independent flags, both default off (⇒ byte-identical): **`memory_pull_enabled`** gates the read-only pull (suggestions, brief, ordering, estimate), and **`memory_sync_enabled`** separately gates the one-way `push_memory` sync — push can run with pull off, and vice-versa. Creds are per-owner in `connection_tokens` (`provider='ci_memory'`, KEK-sealed) — either a manually pasted key/bearer, or a **CI-Portal OAuth** grant (AA0b: OAuth 2.1 + PKCE with `offline_access`; the connector self-refreshes the bearer). With `MEMORY_MODE` unset (the default) the transport is **off** and every consumer sees "not connected"; `MEMORY_MODE=fixture` is a dev/demo opt-in that reads a committed sample graph with no network; `MEMORY_MODE=live` calls the real graph API. Every transport/4xx/5xx failure surfaces as `MemoryUnavailable`, so all consumers degrade deterministically.
+A **pull-first** integration with the CI-Server `companion-memory` graph. Two independent flags, both default off (⇒ byte-identical): **`memory_pull_enabled`** gates the read-only pull (suggestions, brief, ordering, estimate), and **`memory_sync_enabled`** separately gates the one-way `push_memory` sync — push can run with pull off, and vice-versa. Creds are per-owner in `connection_tokens` (`provider='ci_memory'`, KEK-sealed) — either a manually pasted key/bearer, or a **CI-Portal OAuth** grant (AA0b: OAuth 2.1 + PKCE with `offline_access`; the connector self-refreshes the bearer; the iOS and Android shells offer only the pasted URL + key form, because a Portal grant is a redirect out and back that the app cannot complete). With `MEMORY_MODE` unset (the default) the transport is **off** and every consumer sees "not connected"; `MEMORY_MODE=fixture` is a dev/demo opt-in that reads a committed sample graph with no network; `MEMORY_MODE=live` calls the real graph API. Every transport/4xx/5xx failure surfaces as `MemoryUnavailable`, so all consumers degrade deterministically.
 
 ```mermaid
 flowchart LR
     subgraph Pull["Pull (read-only) · memory_pull_enabled"]
-        MS["memory_suggest job<br/>(every 6h)"] -->|"graphData next-48h"| MEM["CI-Server<br/>companion-memory"]
+        MS["memory_suggest job<br/>(every 6h)"] -->|"graphData next memory_window_days"| MEM["CI-Server<br/>companion-memory"]
         MEM -->|events + participants| MS
         MS -->|stage| INBOX[("possible_tasks<br/>source_kind=memory")]
         BRIEF["Daily Brief / EOD<br/>(AA2)"] -->|graphContext| MEM
@@ -1059,7 +1158,7 @@ flowchart LR
     CT -.->|creds| PM
 ```
 
-**Consumers of the pull:** AA1 stages next-48h events as Inbox suggestions (idempotent on `source_ref`, capped, dismissed-is-terminal); AA2 folds a `graphContext` excerpt into the Daily Brief / EOD alignment; AA3a biases autoplan ordering toward memory-related tasks; AA3b seeds a better default estimate for memory-drafted tasks from the owner's own history. **Push (AA4)** is separate and one-way — completed tasks / habit occurrences / reflections as capture envelopes, gated by `memory_sync_enabled` + per-entity scope toggles, watermarked by `memory_last_synced_at`.
+**Consumers of the pull:** AA1 stages upcoming events (the next `memory_window_days`, default 2) as possible-task suggestions and auto-promotes the batch into Tasks (AF-3; idempotent on `source_ref`, at most 5 pending, dismissed-is-terminal); AA2 folds a `graphContext` excerpt into the Daily Brief / EOD alignment; AA3a biases autoplan ordering toward memory-related tasks; AA3b seeds a better default estimate for memory-drafted tasks from the owner's own history. **Push (AA4)** is separate and one-way — completed tasks / habit occurrences / reflections as capture envelopes, gated by `memory_sync_enabled` + per-entity scope toggles, watermarked by `memory_last_synced_at`.
 
 ---
 
@@ -1107,7 +1206,7 @@ flowchart TD
 
 ## 12. Multi-device sync (Phase L)
 
-**Two-clock merge strategy:** every mutating route increments a monotonic `version` counter and records a `field_ts` (per-field timestamp) alongside the updated row. A `sync_events` append-only log backs `Last-Event-ID` SSE catch-up, and `GET /api/sync/changes?since=<seq>` returns the same rows as JSON for clients that poll instead of streaming. The iOS and Android app shells poll it, because their `EventSource` cannot carry the session cookie. A cursor older than the 500-event window, or ahead of the owner's log, answers `resync: true`: refetch everything, then carry on from the returned cursor. Synced entities: **tasks, time blocks, objectives, and objective↔task links** (objectives joined the allowlist in 0087; links merge via an `unlink` tombstone so a removal round-trips under field-LWW).
+**Two-clock merge strategy:** every mutating route increments a monotonic `version` counter and records a `field_ts` (per-field timestamp) alongside the updated row. A `sync_events` append-only log backs `Last-Event-ID` SSE catch-up, and `GET /api/sync/changes?since=<seq>` returns the same rows as JSON for clients that poll instead of streaming. The iOS and Android app shells poll it (every 15 s while the app is on screen, on resume, and shortly after the app's own writes; `client/src/lib/live-poll.ts`), because their `EventSource` cannot carry the session cookie. A cursor older than the 500-event window, or ahead of the owner's log, answers `resync: true`: refetch everything, then carry on from the returned cursor. The `prune_sync_events` job trims log rows older than 30 days, and `POST /api/sync` applies at most 200 ops per batch. Synced entities: **tasks, time blocks, objectives, and objective↔task links** (objectives joined the allowlist in 0087; links merge via an unlink tombstone (`linked = 0`) so a removal round-trips under field-LWW).
 
 ```mermaid
 sequenceDiagram
@@ -1123,7 +1222,7 @@ sequenceDiagram
     Note over Device,Server: App shells poll GET /api/sync/changes?since=N instead of holding SSE
 ```
 
-**Monotonic completions:** a concurrent edit on another device can never un-complete a task — the `done_at` field is monotonically forward-only in the merge. The same guard pins task **placement**: a stale offline op carrying `status:'open'` can't revert a server-side `scheduled` (mirrors the `done` pin), so placement isn't lost across devices.
+**Monotonic completions:** a concurrent edit on another device can never un-complete a task — `applyMonotonic` pins `status: 'done'` and keeps the earliest `completed_at` in the merge. The same guard pins task **placement**: a stale offline op carrying `status:'open'` can't revert a server-side `scheduled` (mirrors the `done` pin), so placement isn't lost across devices.
 
 **Conflict surface:** a genuine conflict (two devices edited the same field in the same version window) shows a persistent banner — not a toast — so the user can review.
 
@@ -1147,7 +1246,7 @@ pnpm build && pnpm --filter server start
 # Runs on port 3848; access from any Tailscale device
 ```
 
-Install as launch agents: `bash ops/scripts/install.sh` (macOS). Set `DB_PATH` explicitly on Linux or Windows (default is `~/Library/Application Support/CompanionPlanning/companion.db` on macOS).
+Install as a launch agent: `bash ops/scripts/install.sh` installs dependencies, builds the client and, on macOS, registers every plist in `ops/launchd/` (the server is `com.companion-planning.server.plist`, with `REPO_PATH` substituted; the rest are the autocommit and daily/weekly/monthly summary helpers). On Linux use the systemd user unit `ops/systemd/companion-planning.service` (edit `WorkingDirectory` and `ExecStart`, then `systemctl --user enable --now companion-planning`); the host walkthrough is [docs/local-tailscale-setup.md](docs/local-tailscale-setup.md). Set `DB_PATH` explicitly on Linux or Windows (the default is `~/Library/Application Support/CompanionPlanning/companion.db`, which only suits macOS). The launchd plist deliberately does not set `NODE_ENV=production`; the systemd unit does, so it needs `AUTH_MODE` set in `server/.env`.
 
 ### Docker
 
@@ -1155,10 +1254,31 @@ Install as launch agents: `bash ops/scripts/install.sh` (macOS). Set `DB_PATH` e
 docker run -d --name ci-planning \
   -p 3848:3848 \
   -v ci-planning-data:/data \
+  -e TZ=America/Los_Angeles \
+  -e AUTH_MODE=sso \
+  -e DISABLE_OIDC=true \
+  -e AUTH_DEFAULT_USERNAME=you \
+  -e AUTH_DEFAULT_PASSWORD='pick-a-strong-password' \
   ghcr.io/companionintelligence/ci-planning:latest
 ```
 
+The image sets `NODE_ENV=production`, which refuses the default `AUTH_MODE=test` at boot, so a bare `docker run` with no auth variables exits instead of serving an open instance. The form above is the password-only install, the one `docker-compose.yml` ships; `SESSION_SECRET` is generated once and kept in `/data/.session-secret` unless you set it. Drop `DISABLE_OIDC` and set `PUBLIC_BASE_URL` and `AUTH_AUTO_PROVISION=true` to add Companion Portal sign-in (the seeded local account stays the operator; leave `AUTH_DEFAULT_PASSWORD` unset and the first Portal sign-in claims the operator role instead); `AUTH_MODE=standalone` is for API clients only (mint a key with `docker exec ci-planning node_modules/.bin/tsx src/cli/issue-key.ts`). The image runs `tsx src/index.ts` from `/app/server` as PID 1 with `DB_PATH=/data/companion.db`, reads operator overrides from `/data/.env` when it exists, and carries a `HEALTHCHECK` on `GET /api/health`. Images published with a Sentry DSN report crashes until `CI_TELEMETRY=off` or `CI_LOCAL_ONLY=true` ([docs/operations/error-reporting.md](docs/operations/error-reporting.md)).
+
 On CI Hub, install from the marketplace — the Hub mounts `${APP_DATA_DIR}/data` at `/data` and wires `OLLAMA_URL` automatically.
+
+### Docker Compose (self-host with a bundled Ollama)
+
+`docker-compose.yml` runs the app and an `ollama` service on one network (`OLLAMA_URL=http://ollama:11434`) as the password-only install (`AUTH_MODE=sso`, `DISABLE_OIDC=true`; `SESSION_SECRET`, `AUTH_DEFAULT_USERNAME` and `AUTH_DEFAULT_PASSWORD` come from `.env`, see `.env.example`). `docker compose --profile pull run --rm ollama-pull` fetches the default models once. A pgvector `postgres` service sits behind `--profile postgres` for the in-progress schema port (`DATABASE_URL` / `STORE_BACKEND=postgres`); the app serves SQLite, and Postgres is not a supported deployment yet. The CI Hub marketplace install ignores this file.
+
+### Mobile app shells (iOS and Android)
+
+`mobile/ios` and `mobile/android` are Capacitor shells that wrap the `client/` bundle (`pnpm --filter client build:mobile` writes `client/dist`) as a native app. They are thin clients of a server you run: first run asks for its address (checked against `/api/health` and `/api/auth/config`, kept on the device, changeable under Settings → Profile → Server). iOS 16.4+ and Android 7+ with System WebView 111+. They are not pnpm workspace members, the manual `mobile-build.yml` workflow builds a debug APK and an unsigned Simulator `.app`, and they are not store-ready. What they change on the server side:
+
+- **No CORS setting is needed.** Requests go through the native HTTP stack, so `CORS_ALLOWED_ORIGINS` stays empty.
+- **Live updates are polled** with `GET /api/sync/changes` (§12), because an `EventSource` in the shell cannot carry the session cookie.
+- **Sign-in is username/password only.** Companion Portal sign-in, Connect Google and the Companion Memory Portal connect are redirects out and back that the shell cannot complete, so make those connections from a browser. Web Push, the service worker and the export links are not available in the app.
+
+Full notes: [README.md](README.md#mobile-app-ios-and-android).
 
 ### Key environment variables
 
@@ -1166,17 +1286,29 @@ On CI Hub, install from the marketplace — the Hub mounts `${APP_DATA_DIR}/data
 |---|---|---|
 | `PORT` | `3848` | HTTP port |
 | `DB_PATH` | `~/Library/…/companion.db` | SQLite path |
+| `NODE_ENV` | (unset) | `production` turns on the fail-closed boot guards (refuses `AUTH_MODE=test`, and `GOOGLE_MODE` / `MEMORY_MODE=fixture` without `CP_ALLOW_FIXTURE=true`); the Docker image sets it |
 | `AUTH_MODE` | `test` | `test` / `standalone` / `sso` |
+| `SESSION_SECRET` | (generated) | Signs the session cookie; `sso` needs one. Unset, the server generates it once and keeps it in `.session-secret` beside the database. Pin it for more than one replica |
+| `DISABLE_OIDC` | `false` | `sso` only: `true` turns Companion Portal sign-in off, leaving username/password |
+| `AUTH_DEFAULT_USERNAME` / `AUTH_DEFAULT_PASSWORD` | (unset) / username `admin` | `sso` only: seeds the first local owner as operator on first boot. Required with `DISABLE_OIDC=true`, or the server refuses to start with no login path |
+| `AUTH_SIGNUP` | `invite` | `sso` only: local self-serve sign-up at `/signup` — `invite` (needs an operator-minted code), `open`, or `off` |
+| `AUTH_AUTO_PROVISION` | `false` | `true` lets a first-time Companion Portal sign-in create an owner (after the confirmation page); otherwise it is refused |
+| `CIPORTAL_ISSUER` | `https://hub.ci.computer/api/auth` | Companion Portal discovery base; the client id defaults to `ci-planning` (`CIPORTAL_CLIENT_ID`) |
+| `PUBLIC_BASE_URL` | `http://localhost:3848` | The address people open; the OAuth redirect URIs are built from it |
+| `TRUST_PROXY` | `false` | `true` behind a TLS-terminating proxy: honour `X-Forwarded-*` (Secure cookies, the real client IP for the rate limiter) |
+| `CORS_ALLOWED_ORIGINS` | (empty) | Comma-separated browser origins allowed to call `/api` cross-origin; never `*` |
+| `CSP_EXTRA_CONNECT_SRC` | (empty) | Extra origins the browser may call (CSP `connect-src`) |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama endpoint |
 | `GOOGLE_MODE` | (unset ⇒ off) | `live` (real OAuth) or `fixture` (offline sample data — dev/demo opt-in) |
 | `MEMORY_MODE` | (unset ⇒ off) | CI-Server memory transport: `live` or `fixture` (offline sample graph — dev/demo opt-in) |
 | `CI_SERVER_URL` | (unset) | CI-Server memory API base — the single-tenant fallback base, and required by the CI-Portal memory connect flow even under SSO |
 | `CI_SERVER_API_KEY` | (unset) | Shared fallback API key — **ignored under multi-tenant SSO** (per-owner creds come from `connection_tokens`) |
-| `CP_KEK_B64` | (unset) | 32-byte AES key for token sealing |
+| `CP_KEK_B64` | (unset) | 32-byte AES key (base64) that seals stored OAuth tokens, Companion Memory credentials and the in-app Google client secret; required for the in-app Google setup |
 | `CP_SYNC_WRITEBACK` | `false` | Push local blocks to Google Calendar |
-| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | (unset) | Web Push keys |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | (unset ⇒ generated on first boot) | Web Push keypair; setting both pins one, otherwise the server generates and stores a pair |
+| `SNAPSHOT_RETAIN` | `7` | Snapshots the `snapshot_db` job and `pnpm --filter server snapshot` keep |
 
-Full variable reference: [README.md](README.md#environment-variables)
+Full variable reference: [README.md](README.md#environment-variables) and `server/.env.example`
 
 ---
 
@@ -1190,9 +1322,11 @@ Everything lives in the single SQLite file at `DB_PATH`.
 
 | Method | How | Cadence |
 |---|---|---|
-| **Built-in snapshots** | `pnpm --filter server snapshot` or the `snapshot_db` job | Daily at 02:00; keeps `SNAPSHOT_RETAIN` (default 7) copies |
+| **Built-in snapshots** | `pnpm --filter server snapshot` or the `snapshot_db` job (files land in `<DB dir>/backups/companion-<timestamp>.db`) | Daily at 02:00; keeps `SNAPSHOT_RETAIN` (default 7) copies |
 | **Litestream** | `litestream replicate -config ops/litestream.yml` | Continuous WAL replication to object storage |
 | **Export/import** | `GET /api/export` → `POST /api/import` | On-demand; owner-scoped JSON |
+
+**Restore.** Snapshots restore offline: stop the server, then run `pnpm --filter server restore -- <snapshot-file>` (`src/scripts/restore.ts`). It validates the snapshot, refuses to run while the server (pidfile) or any other writer holds the database, moves the current `.db` with its `-wal` and `-shm` aside as one set into `pre-restore/` beside the database (it never deletes it), copies the snapshot into place and runs forward migrations. A Litestream replica restores with `litestream restore -config ops/litestream.yml -timestamp <ISO-8601> /data/companion.db`. A device whose sync cursor is ahead of the restored log is told to resync (`resync: true`, §12).
 
 ⚠ **Do not sync the live `.db` file with Syncthing/rsync** — SQLite WAL spans three files (`.db`, `.db-wal`, `.db-shm`) and file-sync tools copy them at different moments, producing a corrupt or inconsistent database. Use `pnpm --filter server snapshot` or Litestream.
 

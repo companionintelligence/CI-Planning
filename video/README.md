@@ -34,13 +34,27 @@ node tools/make-videos.mjs --list                 # every product, and how many 
 node tools/make-videos.mjs companion-planning     # both cuts, rendered from the committed shots
 ```
 
-It runs `ci-video` straight out of the CI-Common checkout on disk, so there is no registry, no
-token and no authentication step. Output lands in `~/Movies/CI-Product-Videos/companion-planning/`,
-outside every repo. It needs `ffmpeg`/`ffprobe` on `PATH` and Node 22+.
+It renders this repo's `video/` as it stands on the default branch (`--ref` picks another
+branch, tag or local checkout), with `ci-video` taken from the CI-Common clone on disk, so
+there is no registry, no token and no authentication step. Output lands in
+`~/Movies/CI-Product-Videos/companion-planning/`, outside every repo. It needs
+`ffmpeg`/`ffprobe` on `PATH` and Node 22+.
 
-`--capture` (re-shoot the screens before rendering) is **not yet wired for this product** — the
-runner has no stage entry for Companion Planning, so it falls back to render-only. To refresh the
-shots, boot the stage and run the capture by hand from this directory:
+That runner only renders: it refuses `--capture`, because staging an app takes more than one
+shell command. Re-shooting the screens is this repo's own job. From a checkout with CI-Common
+alongside (or `CI_WORKSPACE` pointing at the directory that holds it):
+
+```bash
+./video/make.sh                 # stage the app, capture, check, render
+./video/make.sh --no-render     # capture and check only (much faster)
+./video/make.sh --only <id>     # re-shoot a single shot by id
+./video/make.sh --keep-up       # leave the stage running when it finishes
+```
+
+`make.sh` is a shim over the kit's runner (`CI-Common/packages/video-kit/bin/make.sh`);
+everything repo-specific is in [`stage.sh`](stage.sh), which brings the stage up as described
+under "The stage" below. To do the same steps by hand, boot the stage and run the capture
+from this directory:
 
 ```bash
 npm install
@@ -61,7 +75,7 @@ Playwright alone against a throwaway manifest and put the real one back:
 
 ```bash
 cp package.json package.json.real
-printf '{"name":"cap","private":true,"type":"module","devDependencies":{"playwright":"^1.58.0"}}' > package.json
+printf '{"name":"cap","private":true,"type":"module","devDependencies":{"playwright":"1.62.1"}}' > package.json
 npm install --no-package-lock
 mv package.json.real package.json && rm -f package-lock.json
 ```
@@ -95,7 +109,7 @@ other product's capture has run on this machine. `video/node_modules/` is gitign
 ## The stage
 
 Capture runs against **source**, not the published container: `Dockerfile` sets
-`NODE_ENV=production` and `server/src/lib/config.ts:403` refuses to boot with `AUTH_MODE=test`
+`NODE_ENV=production` and `server/src/lib/config.ts:586` refuses to boot with `AUTH_MODE=test`
 there, while `docker-compose.yml` pins `AUTH_MODE=sso` — either way a login wall lands in front
 of every shot. From source, `AUTH_MODE` defaults to `test` and `client/src/App.tsx` renders
 `UngatedRouter`, so there is no login and no `storageState` to manage.
@@ -126,7 +140,7 @@ Both flags on that seed line are load-bearing:
   unfinished app; they now carry ordinary admin titles, but they are still filler and still not
   what the cut is about. Ask for 40 and the filler branch never runs.
 
-  **47, not 50** — as of 2026-08-08 the calendar half of the seed yields 15 tasks, not 18. The
+  **15 calendar tasks, not 18** — as of 2026-08-08 the calendar half of the seed yields 15 tasks. The
   LLM-off fallback used to title every event `Prep for ${event.title}`, which put
   `Prep for Board prep`, `Prep for Gym - leg day` and `Prep for Holiday - Office closed` in the
   backlog. It now reads each event's own description for the sentence a person would have written
@@ -144,7 +158,7 @@ and `Holiday - Office closed`. Measured 2026-08-08: a stage seeded at 20:42 had 
 21:00:01 it had 50, and nothing in the capture log said so. **Whether your shots contain those rows
 therefore depends on how long you took between staging and capturing**, which is not a property a
 committed screenshot may have. `ingest_gcal` short-circuits on `config.google.mode === 'off'`
-(`jobs/index.ts:123`), and the seeder builds `createFixtureGoogleClient()` directly rather than
+(`jobs/index.ts:130`), and the seeder builds `createFixtureGoogleClient()` directly rather than
 through config, so turning Google off costs the stage nothing: the meeting mirrors, the fixtures
 and every shot are identical, and the count stops moving.
 
@@ -291,7 +305,7 @@ file_cat submissions growth
 # is one week wide (2026-05-30 .. 2026-06-06), so Month view renders June 8-30 as an empty
 # grid — two thirds of the `calendar-month` frame. These are time blocks rather than fixture
 # events ON PURPOSE: the seeder mines every fixture event into a "Prep for …" task, so
-# widening calendar.json would push the backlog past --target=50 and move every other shot.
+# widening calendar.json would push the backlog past --target=40 and move every other shot.
 # All of them fall outside the frozen day and outside the visible week, so nothing else moves.
 mtg() { # mtg <YYYY-MM-DD> <HH:MM> <minutes> <title>
   local s e
@@ -342,7 +356,7 @@ Notes on why it is shaped that way:
    side: the quick-add parse runs there (`routes/tasks.ts` → `parseQuick`), so without
    `CP_FIXED_NOW` exported alongside `pnpm dev` the `add-element-parsed` shot films a date taken
    from your wall clock and contradicts the film's own frozen day.
-2. **No auth headers.** `requireAuth.ts:88-103` binds every `/api` call to `SYSTEM_OWNER` with
+2. **No auth headers.** `requireAuth.ts:95-111` binds every `/api` call to `SYSTEM_OWNER` with
    all scopes under `AUTH_MODE=test` — the same owner the seeder writes as.
 3. **Pin the model away.** Export `OLLAMA_URL=http://127.0.0.1:1` alongside `pnpm dev` so every
    LLM path takes its deterministic fallback. Without it the `add-element-parsed` shot's parse

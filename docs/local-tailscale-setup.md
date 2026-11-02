@@ -28,8 +28,8 @@ a clean origin.
 
 ```bash
 corepack enable
-pnpm install
-pnpm --filter client build     # emits into server/public/ — the server serves this
+pnpm install --frozen-lockfile   # a fresh clone needs a GitHub Packages token: see CONTRIBUTING.md
+pnpm --filter client build       # emits into server/public/ — the server serves this
 ```
 
 The client build is **not** automatic. Re-run it after any client change, or the
@@ -37,9 +37,10 @@ served PWA stays stale while the API moves on.
 
 ## 2. `server/.env`
 
-`DB_PATH` **must** be set explicitly on Linux (only macOS and the Docker image have a
-built-in default). Point it outside the checkout so the database survives branch
-switches, worktree deletion, and `git clean`:
+Set `DB_PATH` explicitly on Linux. The built-in default is a macOS path
+(`~/Library/Application Support/CompanionPlanning/companion.db`, created under your home
+directory on any OS), and the Docker image sets `/data/companion.db`. Point it outside the
+checkout so the database survives branch switches, worktree deletion, and `git clean`:
 
 ```bash
 DB_PATH=/home/<you>/.local/share/companion-planning/companion.db
@@ -80,8 +81,9 @@ if you share a tailnet. The alternatives:
 | Mode | Set | Notes |
 |---|---|---|
 | `test` | `AUTH_MODE=test` | No login. Requires `NODE_ENV` ≠ `production` (boot guard refuses otherwise). |
-| local login | `AUTH_MODE=sso`, `DISABLE_OIDC=true`, `SESSION_SECRET`, `AUTH_DEFAULT_USERNAME`/`_PASSWORD` | Username + password, argon2-hashed, signed session cookie. |
-| CI-Portal SSO | `AUTH_MODE=sso`, `CIPORTAL_CLIENT_ID` | Needs a client registered with CI-Portal. |
+| local login | `AUTH_MODE=sso`, `DISABLE_OIDC=true`, `SESSION_SECRET`, `AUTH_DEFAULT_USERNAME`/`_PASSWORD` | Username + password, argon2-hashed, signed session cookie. If `SESSION_SECRET` is unset the server generates one and keeps it in `.session-secret` beside the database. Self-serve sign-up at `/signup` takes an operator-minted invite code unless `AUTH_SIGNUP=open` (`off` removes it). |
+| Companion Portal SSO | `AUTH_MODE=sso` (leave `DISABLE_OIDC` unset) | Defaults to the production portal (`CIPORTAL_ISSUER=https://hub.ci.computer/api/auth`) and the first-party client id `ci-planning` (`CIPORTAL_CLIENT_ID`); the redirect URI (`<PUBLIC_BASE_URL>/api/auth/ciportal/callback`) must be registered with the Portal for that client. Needs `SESSION_SECRET` as above. |
+| standalone | `AUTH_MODE=standalone` | Every `/api` call needs a hashed `x-api-key` instead of a login (`pnpm --filter server key:issue` mints one). |
 
 If you stay on `test`, tighten the blast radius at the network layer instead — a
 Tailscale ACL restricting `beta-1:443` to your own devices, e.g.:
@@ -202,6 +204,10 @@ byte-for-byte. Confirm what the server will actually send before registering any
 curl -s localhost:3848/api/google-config
 # -> {"redirectUri":"https://<host>.<tailnet>.ts.net/api/oauth/google/callback", ...}
 ```
+
+(This `curl`, like the `/api/integrations` one in §6, answers without credentials only
+under `AUTH_MODE=test`. Under `sso` send the admin's session cookie, under `standalone` an
+admin `x-api-key`, or read the same state in **Settings → Connections**.)
 
 `kekAvailable: true` and `envPinned: false` in that response mean the in-app path is
 ready. Walk up the rungs in [google-cloud-setup.md §8](google-cloud-setup.md) — inbound

@@ -12,7 +12,10 @@ access. `--ref` matters - the workflow file is read from that branch, so a
 workflow that only exists on your feature branch must be dispatched against it.
 
 Full cross-repo runbook: `CI-Local-CICD/RUNBOOK.md` (regenerate with
-`ci-local docs`). This file is generated - do not hand-edit.
+`ci-local docs`). This file is generated - do not hand-edit. Two parts below were
+corrected by hand because the generator does not know them (the mobile build, and the
+tag ref on the release command); regenerating drops both. The merge gate itself is in
+[CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ---
 
@@ -47,13 +50,30 @@ gh workflow run ci.yml --repo companionintelligence/CI-Planning --ref main
 gh workflow run style-canon-lint.yml --repo companionintelligence/CI-Planning --ref main
 ```
 
+Locally: `pnpm lint:canon`.
+
+### Build the mobile shells
+
+**Mobile Build** — `mobile-build.yml`
+
+Builds the Capacitor shells in `mobile/`: a debug Android APK and an unsigned iOS Simulator
+`.app`, uploaded as workflow artifacts that expire after 7 days. It publishes nothing and
+is independent of release tags.
+
+```bash
+gh workflow run mobile-build.yml --repo companionintelligence/CI-Planning --ref main
+```
+
 ### Cut a release
 
 **Publish container** — `docker-publish.yml`
 
-Dispatch on the release tag's ref. A tag ref publishes `:latest`, `:sha-<short>` and `:<tag>`. Any
-other ref, `main` included, publishes an unversioned `0.0.0+sha-<short>` image and still moves `:latest`.
+Builds the image, smoke-tests it (standalone, local login and Companion Portal login), then pushes
+it to GHCR. Dispatch it on the release tag's ref (for example `v4.2.2`): a tag ref publishes
+`:latest`, `:sha-<short>` and `:<tag>`, with `CI_PLANNING_VERSION` set to the tag without its `v`.
+Any other ref, `main` included, publishes an unversioned `0.0.0+sha-<short>` image and still moves
+`:latest`.
 
 ```bash
-gh workflow run docker-publish.yml --repo companionintelligence/CI-Planning --ref v4.2.2
+gh workflow run docker-publish.yml --repo companionintelligence/CI-Planning --ref <tag>
 ```
