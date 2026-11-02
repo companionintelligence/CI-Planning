@@ -3,209 +3,362 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Companion Planning</title>
-<meta name="description" content="Companion Planning is a private, local-first planner for tasks, time blocks and your day. It runs on a server you control.">
+<title>Companion Planning: a private planner on your own server</title>
+<meta name="description" content="Companion Planning is a private planner for tasks, time blocks and your day. Plans live in one SQLite file on a server you run, opened in any browser.">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#0a6358" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b1417" media="(prefers-color-scheme: dark)">
 <link rel="canonical" href="https://planning.ci.computer/">
-<style>
-  :root {
-    --bg: #f4f7f6;
-    --surface: #ffffff;
-    --text: #0a222e;
-    --text-muted: #4a5f67;
-    --border: #d5e0e1;
-    --primary: #0a6358;
-    --primary-text: #ffffff;
-    --code-bg: #eaf2f0;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) {
-      --bg: #0b1417;
-      --surface: #111d21;
-      --text: #e6f0ee;
-      --text-muted: #9fb6b1;
-      --border: #22363b;
-      --primary: #c5e8dc;
-      --primary-text: #0b1417;
-      --code-bg: #172529;
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="alternate" type="application/json+oembed" href="https://planning.ci.computer/oembed.json" title="Companion Planning">
+<link rel="stylesheet" href="/assets/site.css">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Companion Planning">
+<meta property="og:title" content="Companion Planning: a private planner on your own server">
+<meta property="og:description" content="A private planner for tasks, time blocks and your day. Your plans live in one SQLite file on a server you run.">
+<meta property="og:url" content="https://planning.ci.computer/">
+<meta property="og:image" content="https://planning.ci.computer/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Companion Planning on a dark teal background, with its name and the Today view.">
+<meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Companion Planning: a private planner on your own server">
+<meta name="twitter:description" content="A private planner for tasks, time blocks and your day. Your plans live in one SQLite file on a server you run.">
+<meta name="twitter:image" content="https://planning.ci.computer/og-image.png">
+<meta name="twitter:image:alt" content="Companion Planning on a dark teal background, with its name and the Today view.">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://ci.computer/#organization",
+      "name": "Companion Intelligence",
+      "url": "https://ci.computer/"
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://planning.ci.computer/#website",
+      "name": "Companion Planning",
+      "url": "https://planning.ci.computer/",
+      "inLanguage": "en",
+      "publisher": { "@id": "https://ci.computer/#organization" }
+    },
+    {
+      "@type": "WebPage",
+      "@id": "https://planning.ci.computer/#webpage",
+      "name": "Companion Planning: a private planner on your own server",
+      "url": "https://planning.ci.computer/",
+      "inLanguage": "en",
+      "dateModified": "2026-11-02",
+      "isPartOf": { "@id": "https://planning.ci.computer/#website" },
+      "about": { "@id": "https://planning.ci.computer/#app" }
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://planning.ci.computer/#app",
+      "name": "Companion Planning",
+      "url": "https://planning.ci.computer/",
+      "applicationCategory": "ProductivityApplication",
+      "operatingSystem": "Any modern web browser",
+      "description": "A private, local-first planner for tasks, time blocks and your day. It runs on a server you control.",
+      "image": "https://planning.ci.computer/og-image.png",
+      "publisher": { "@id": "https://ci.computer/#organization" },
+      "sameAs": [
+        "https://github.com/companionintelligence/CI-Planning",
+        "https://hub.ci.computer/store/ci-planning"
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://planning.ci.computer/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What is Companion Planning?",
+          "acceptedAnswer": { "@type": "Answer", "text": "A private planner for tasks, time blocks, habits, routines and objectives. It runs on a server you control, and you open it in a browser." }
+        },
+        {
+          "@type": "Question",
+          "name": "Do I need a server?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Yes. Companion Planning is a window onto your own server. You can run the public Docker image on a computer you control, or install it from the Companion Hub store on a Companion Hub appliance." }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I use it on my phone?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Yes. Open your server's address in the phone's browser and add it to your home screen. The native iPhone and Android apps are in preparation." }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it need AI?",
+          "acceptedAnswer": { "@type": "Answer", "text": "No. The AI features are optional. Connect a model, such as an Ollama model, and they appear. Without one, they stay hidden." }
+        }
+      ]
     }
-  }
-  :root[data-theme="dark"] {
-    --bg: #0b1417;
-    --surface: #111d21;
-    --text: #e6f0ee;
-    --text-muted: #9fb6b1;
-    --border: #22363b;
-    --primary: #c5e8dc;
-    --primary-text: #0b1417;
-    --code-bg: #172529;
-  }
-
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font-family: Montserrat, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    line-height: 1.6;
-  }
-  a { color: var(--primary); }
-  .wrap {
-    max-width: 760px;
-    margin: 0 auto;
-    padding: 48px 16px 72px;
-  }
-  .hero {
-    text-align: center;
-    margin-bottom: 40px;
-  }
-  .badge {
-    display: inline-block;
-    font-size: 12px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--primary);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 4px 12px;
-    margin-bottom: 16px;
-  }
-  h1 {
-    font-size: clamp(28px, 6vw, 40px);
-    line-height: 1.2;
-    margin: 0 0 14px;
-  }
-  .lede {
-    color: var(--text-muted);
-    font-size: 17px;
-    max-width: 580px;
-    margin: 0 auto;
-  }
-  .cta-row {
-    display: flex;
-    gap: 12px;
-    justify-content: center;
-    flex-wrap: wrap;
-    margin-top: 24px;
-  }
-  .btn {
-    display: inline-block;
-    padding: 12px 20px;
-    border-radius: 8px;
-    text-decoration: none;
-    font-weight: 600;
-    font-size: 15px;
-  }
-  .btn.primary { background: var(--primary); color: var(--primary-text); }
-  .btn.secondary { color: var(--text); border: 1px solid var(--border); }
-
-  section {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 28px;
-    margin-bottom: 20px;
-  }
-  h2 {
-    font-size: 20px;
-    margin: 0 0 12px;
-  }
-  ul.features { list-style: none; padding: 0; margin: 0; }
-  ul.features li {
-    padding: 12px 0;
-    border-top: 1px solid var(--border);
-  }
-  ul.features li:first-child { border-top: 0; padding-top: 0; }
-  ul.features strong { color: var(--primary); }
-
-  ol.steps { padding-left: 22px; margin: 0; }
-  ol.steps li { margin-bottom: 14px; }
-  ol.steps li:last-child { margin-bottom: 0; }
-  ol.steps strong { color: var(--primary); }
-
-  ul.checks { list-style: none; padding: 0; margin: 0; }
-  ul.checks li {
-    position: relative;
-    padding-left: 26px;
-    margin-bottom: 10px;
-    color: var(--text-muted);
-  }
-  ul.checks li:last-child { margin-bottom: 0; }
-  ul.checks li::before {
-    content: "\2713";
-    position: absolute;
-    left: 0;
-    color: var(--primary);
-    font-weight: 700;
-  }
-
-  footer {
-    text-align: center;
-    color: var(--text-muted);
-    font-size: 13px;
-    margin-top: 40px;
-  }
-  footer a { color: inherit; }
-</style>
+  ]
+}
+</script>
 </head>
 <body>
-  <main class="wrap">
-    <header class="hero">
-      <span class="badge">Companion Planning</span>
-      <h1>Your planner, on a server you run</h1>
-      <p class="lede">
-        Companion Planning is a private, local-first planner for tasks, time blocks and your day.
-        Your plans are stored on the server you set up, and you open the planner in a browser.
-      </p>
-      <div class="cta-row">
-        <a class="btn primary" href="#how">How it works</a>
-        <a class="btn secondary" href="mailto:support@ci.computer">Ask a question</a>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap header-inner">
+    <a class="brand" href="/"><img src="/apple-touch-icon.png" width="32" height="32" alt="">Companion Planning</a>
+    <nav class="nav" aria-label="Main">
+      <a href="/#how">How it works</a>
+      <a href="/#features">Features</a>
+      <a href="/#screens">Screens</a>
+      <a href="/setup/">Setup</a>
+      <a href="/faq/">FAQ</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <span class="badge">Self-hosted planner</span>
+        <h1>Plan your day on a server you control</h1>
+        <p class="lede">Companion Planning keeps your tasks, time blocks and calendar on a server you run. Open it in any browser today. Native iPhone and Android apps are in preparation.</p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="#get">Get Companion Planning <svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+          <a class="btn btn-ghost" href="/setup/">Set up the server</a>
+        </div>
       </div>
-    </header>
+      <figure class="shot">
+        <picture>
+          <source media="(prefers-color-scheme: dark)" srcset="/img/today-dark.webp">
+          <img src="/img/today-light.webp" width="1440" height="900" fetchpriority="high" alt="The Today view: the day header with live counts, open time windows and the planner grid with time blocks.">
+        </picture>
+      </figure>
+    </div>
+    <div class="wrap facts">
+      <div class="fact"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="8" rx="2"/><rect x="3" y="13" width="18" height="8" rx="2"/><path d="M7 7h.01M7 17h.01"/></svg><span>Tasks in one SQLite file on your server</span></div>
+      <div class="fact"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3z"/></svg><span>Opens in any modern browser</span></div>
+      <div class="fact"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v4M15 1v4M9 19v4M15 19v4M1 9h4M1 15h4M19 9h4M19 15h4"/></svg><span>Optional local AI through Ollama</span></div>
+      <div class="fact"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M21 12a9 9 0 0 1-15.4 6.3L3 16"/><path d="M3 12a9 9 0 0 1 15.4-6.3L21 8"/><path d="M21 3v5h-5M3 21v-5h5"/></svg><span>Google Calendar stays off until you connect it</span></div>
+    </div>
+  </section>
 
-    <section>
-      <h2>What's inside</h2>
-      <ul class="features">
-        <li><strong>Today.</strong> The day at a glance: overdue, due today, scheduled and open counts, a focus card, and a grid for placing time blocks.</li>
-        <li><strong>Calendar.</strong> Day, week and month views, with export and a schedule-day control.</li>
-        <li><strong>Tasks.</strong> A backlog with priorities and tags, plus habits, routines, time blocks and objectives. Goals, projects and objectives form one tree.</li>
-        <li><strong>Optional AI.</strong> With a local Ollama model, the planner adds briefings, task extraction and auto-scheduling. These stay hidden until Ollama is reachable.</li>
-        <li><strong>Optional Google Calendar.</strong> Once you connect it, your events are read into the planner. Writing changes back to Google is a separate setting, and it is off by default.</li>
-      </ul>
-    </section>
+  <section class="section" id="features">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>Everything a day needs, in one planner</h2>
+        <p>Today, the calendar, the backlog and your goals share one app. You plan in one place, and the data stays on the server you run.</p>
+      </div>
+      <div class="grid-3">
+        <article class="card">
+          <div class="icon-badge"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></div>
+          <h3>Today</h3>
+          <p>The day at a glance: overdue, due today, scheduled and open counts, a focus card, and a planner grid for placing time blocks.</p>
+        </article>
+        <article class="card">
+          <div class="icon-badge"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div>
+          <h3>Calendar</h3>
+          <p>Day, week and month views, with Export, Review and Schedule Day controls.</p>
+        </article>
+        <article class="card">
+          <div class="icon-badge"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="m9 11 3 3 8-8"/></svg></div>
+          <h3>Tasks and objectives</h3>
+          <p>Priorities, tags, habits, routines and time blocks. Goals, projects and objectives form one tree, with an audit history.</p>
+        </article>
+        <article class="card">
+          <div class="icon-badge"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg></div>
+          <h3>Reminders</h3>
+          <p>In-app reminders, plus Web Push notifications from your server once you allow them in the browser.</p>
+        </article>
+        <article class="card">
+          <div class="icon-badge"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="8" rx="2"/><rect x="3" y="13" width="18" height="8" rx="2"/><path d="M7 7h.01M7 17h.01"/></svg></div>
+          <h3>Your server, your data</h3>
+          <p>Everything is stored in one SQLite file on the server you run. Use a desktop, a mini PC, a home server or a Docker host.</p>
+        </article>
+        <article class="card">
+          <div class="icon-badge"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v4M15 1v4M9 19v4M15 19v4M1 9h4M1 15h4M19 9h4M19 15h4"/></svg></div>
+          <h3>Optional local AI</h3>
+          <p>Connect an Ollama model or an OpenAI-compatible endpoint for briefings, task extraction and grooming. Without a model, the AI features stay hidden.</p>
+        </article>
+      </div>
+    </div>
+  </section>
 
-    <section id="how">
-      <h2>How it works</h2>
+  <section class="section" id="how">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>Up and running in three steps</h2>
+        <p>You set up the server once. Your phone and laptop only need its address.</p>
+      </div>
       <ol class="steps">
-        <li><strong>Run the server.</strong> Start Companion Planning on a computer you control, such as a desktop, a mini PC or a home server. Run it from source with Node.js 22 or newer, or with Docker.</li>
-        <li><strong>Open the planner.</strong> Go to the server's address in a browser. On a phone, you can add the planner to your home screen.</li>
-        <li><strong>Sign in.</strong> Sign in with an account on that server.</li>
+        <li class="step">
+          <span class="step-num">1</span>
+          <h3>Run the server</h3>
+          <p>Start the public Docker image on a computer you control, or install Companion Planning from the Companion Hub store. Set your time zone so that "today" is right.</p>
+        </li>
+        <li class="step">
+          <span class="step-num">2</span>
+          <h3>Open it in a browser</h3>
+          <p>Go to the server's address, for example http://192.168.1.20:3848. On a phone, add the planner to your home screen.</p>
+        </li>
+        <li class="step">
+          <span class="step-num">3</span>
+          <h3>Sign in</h3>
+          <p>Sign in with the username and password you set. The operator adds more people under Settings → Accounts.</p>
+        </li>
       </ol>
-    </section>
+      <p class="cta-row spaced"><a class="btn btn-ghost" href="/setup/">Full setup guide <svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a></p>
+    </div>
+  </section>
 
-    <section>
-      <h2>Your data</h2>
+  <section class="section" id="screens">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>See the planner</h2>
+        <p>Screenshots of the web planner, taken with seeded sample data, in light and dark.</p>
+      </div>
+      <div class="gallery">
+        <figure>
+          <div class="shot">
+            <picture>
+              <source media="(prefers-color-scheme: dark)" srcset="/img/calendar-dark.webp">
+              <img src="/img/calendar-light.webp" width="1440" height="900" loading="lazy" alt="The Calendar view, showing the current week with its time blocks and the Export, Review and Schedule Day controls.">
+            </picture>
+          </div>
+          <figcaption><strong>Calendar.</strong> Day, week and month views.</figcaption>
+        </figure>
+        <figure>
+          <div class="shot">
+            <picture>
+              <source media="(prefers-color-scheme: dark)" srcset="/img/tasks-dark.webp">
+              <img src="/img/tasks-light.webp" width="1440" height="900" loading="lazy" alt="The Tasks view with its backlog, priority chips, tags and the Tasks, Habits, Routines and Time Blocks tabs.">
+            </picture>
+          </div>
+          <figcaption><strong>Tasks.</strong> Priorities, tags, habits, routines and time blocks.</figcaption>
+        </figure>
+        <figure>
+          <div class="shot">
+            <picture>
+              <source media="(prefers-color-scheme: dark)" srcset="/img/objectives-dark.webp">
+              <img src="/img/objectives-light.webp" width="1440" height="900" loading="lazy" alt="The Objectives tab in its empty state, with the New Objective action.">
+            </picture>
+          </div>
+          <figcaption><strong>Objectives.</strong> Goals, projects and objectives in one tree.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="get">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>Get Companion Planning</h2>
+        <p>The web planner works today. Choose the way that fits your setup.</p>
+      </div>
+      <div class="grid-3">
+        <article class="card">
+          <div class="icon-badge"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3z"/></svg></div>
+          <h3>Companion Hub store</h3>
+          <p>On a Companion Hub appliance, install Companion Planning from the store.</p>
+          <p class="cta-row"><a class="btn btn-ghost" href="https://hub.ci.computer/store/ci-planning">Open the store listing <svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a></p>
+        </article>
+        <article class="card">
+          <div class="icon-badge"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="8" rx="2"/><rect x="3" y="13" width="18" height="8" rx="2"/><path d="M7 7h.01M7 17h.01"/></svg></div>
+          <h3>Docker</h3>
+          <p>Run the public image on a computer you control. It is published as ghcr.io/companionintelligence/ci-planning, and the setup guide has the full command.</p>
+          <p class="cta-row"><a class="btn btn-ghost" href="/setup/">Read the setup guide</a></p>
+        </article>
+        <article class="card">
+          <div class="icon-badge"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/></svg></div>
+          <h3>iPhone and Android</h3>
+          <p>The native apps are in preparation. They use the same server address and sign in with a username and password.</p>
+          <p class="cta-row">
+            <!-- When a store listing is live, replace each placeholder with a link to that listing. -->
+            <span class="badge-soon">App Store: coming soon</span>
+            <span class="badge-soon">Google Play: coming soon</span>
+          </p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="privacy">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>Your data stays on your server</h2>
+        <p>Your plans stay in one file on a server you run. Here is everything that can leave it.</p>
+      </div>
       <ul class="checks">
-        <li>Tasks, time blocks and tags live in one SQLite file on the server you run.</li>
-        <li>The optional AI features run on a local Ollama model.</li>
-        <li>Google Calendar sync stays off until you set it up.</li>
+        <li><svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m5 12 4 4 10-10"/></svg><span>Tasks, time blocks and tags live in one SQLite file on the server you run.</span></li>
+        <li><svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m5 12 4 4 10-10"/></svg><span>The apps send your data only to the server address you enter.</span></li>
+        <li><svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m5 12 4 4 10-10"/></svg><span>Google Calendar sync stays off until you connect it. Writing changes back to Google is a separate switch, and it is off by default.</span></li>
+        <li><svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m5 12 4 4 10-10"/></svg><span>The AI features use a model you configure, such as Ollama. Without one, they stay hidden.</span></li>
+        <li><svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m5 12 4 4 10-10"/></svg><span>Web Push notifications go through the browser's push service, once you allow them.</span></li>
+        <li><svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m5 12 4 4 10-10"/></svg><span>Released server images send error reports. They contain errors only, are scrubbed, and never include your data. Set CI_TELEMETRY=off to turn them off.</span></li>
       </ul>
-    </section>
+      <p class="cta-row spaced"><a class="btn btn-ghost" href="https://github.com/companionintelligence/CI-Planning">Read the project documentation <svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a></p>
+    </div>
+  </section>
 
-    <section>
-      <h2>What you need</h2>
-      <ul class="checks">
-        <li>A computer or home server that runs Node.js 22 or newer, or Docker.</li>
-        <li>A current browser for the planner.</li>
-        <li>The iPhone and Android apps are being prepared. Until they are available, open the planner in your phone's browser.</li>
-      </ul>
-    </section>
+  <section class="section" id="faq">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>Questions</h2>
+      </div>
+      <div class="faq">
+        <details>
+          <summary>What is Companion Planning?</summary>
+          <p>A private planner for tasks, time blocks, habits, routines and objectives. It runs on a server you control, and you open it in a browser.</p>
+        </details>
+        <details>
+          <summary>Do I need a server?</summary>
+          <p>Yes. Companion Planning is a window onto your own server. You can run the public Docker image on a computer you control, or install it from the Companion Hub store on a Companion Hub appliance.</p>
+        </details>
+        <details>
+          <summary>Can I use it on my phone?</summary>
+          <p>Yes. Open your server's address in the phone's browser and add it to your home screen. The native iPhone and Android apps are in preparation.</p>
+        </details>
+        <details>
+          <summary>Does it need AI?</summary>
+          <p>No. The AI features are optional. Connect a model, such as an Ollama model, and they appear. Without one, they stay hidden.</p>
+        </details>
+      </div>
+      <p class="cta-row spaced"><a class="btn btn-ghost" href="/faq/">More questions <svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a></p>
+    </div>
+  </section>
 
-    <footer>
-      <p>
-        Companion Planning is part of the <a href="https://ci.computer">Companion Intelligence</a> platform.
-        Questions: <a href="mailto:support@ci.computer">support@ci.computer</a>.
-      </p>
-    </footer>
-  </main>
+  <section class="section">
+    <div class="wrap">
+      <div class="band">
+        <h2>Plan on a server you control</h2>
+        <p>Set up the server, then open the planner from any browser on your network.</p>
+        <div class="cta-row center spaced">
+          <a class="btn btn-light" href="/setup/">Set up the server</a>
+          <a class="btn btn-light" href="https://hub.ci.computer/store/ci-planning">Companion Hub store</a>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-grid">
+    <div>
+      <p><strong>Companion Planning</strong> is part of the <a href="https://ci.computer/">Companion Intelligence</a> platform.</p>
+      <p class="small">Last updated 2026-11-02. Questions? <a href="mailto:support@ci.computer">support@ci.computer</a></p>
+    </div>
+    <ul class="footer-links" aria-label="Companion Planning">
+      <li><a href="/setup/">Setup guide</a></li>
+      <li><a href="/faq/">FAQ</a></li>
+      <li><a href="/support/">Support</a></li>
+    </ul>
+    <ul class="footer-links" aria-label="Elsewhere">
+      <li><a href="https://github.com/companionintelligence/CI-Planning">Source code</a></li>
+      <li><a href="https://hub.ci.computer/store/ci-planning">Companion Hub store</a></li>
+      <li><a href="https://ci.computer/">ci.computer</a></li>
+    </ul>
+  </div>
+</footer>
 </body>
 </html>

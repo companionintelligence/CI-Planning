@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Set up Companion Planning on your own server</title>
+<meta name="description" content="Run the public Companion Planning Docker image on your own computer, then sign in and open the planner from any browser on your network.">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#0a6358" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b1417" media="(prefers-color-scheme: dark)">
+<link rel="canonical" href="https://planning.ci.computer/setup/">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/assets/site.css">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Companion Planning">
+<meta property="og:title" content="Set up Companion Planning on your own server">
+<meta property="og:description" content="Run the public Companion Planning Docker image on your own computer, then sign in and open the planner from any browser on your network.">
+<meta property="og:url" content="https://planning.ci.computer/setup/">
+<meta property="og:image" content="https://planning.ci.computer/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Set up Companion Planning on your own server">
+<meta name="twitter:description" content="Run the public Companion Planning Docker image on your own computer, then sign in and open the planner from any browser on your network.">
+<meta name="twitter:image" content="https://planning.ci.computer/og-image.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "HowTo",
+      "@id": "https://planning.ci.computer/setup/#howto",
+      "name": "Set up Companion Planning on your own server",
+      "description": "Run the public Companion Planning Docker image on a computer you control, sign in, and open the planner in a browser.",
+      "inLanguage": "en",
+      "step": [
+        { "@type": "HowToStep", "name": "Run the server", "text": "Run the public image ghcr.io/companionintelligence/ci-planning:latest on a computer you control, with a data volume at /data, your time zone, a session secret and a first username and password." },
+        { "@type": "HowToStep", "name": "Open the planner", "text": "Open the server's address in a browser on your network." },
+        { "@type": "HowToStep", "name": "Sign in", "text": "Sign in with the username and password you set." }
+      ]
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "Companion Planning", "item": "https://planning.ci.computer/" },
+        { "@type": "ListItem", "position": 2, "name": "Setup", "item": "https://planning.ci.computer/setup/" }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap header-inner">
+    <a class="brand" href="/"><img src="/apple-touch-icon.png" width="32" height="32" alt="">Companion Planning</a>
+    <nav class="nav" aria-label="Main">
+      <a href="/#how">How it works</a>
+      <a href="/#features">Features</a>
+      <a href="/#screens">Screens</a>
+      <a href="/setup/" aria-current="page">Setup</a>
+      <a href="/faq/">FAQ</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="page-head">
+    <div class="wrap wrap-narrow">
+      <p class="crumbs"><a href="/">Companion Planning</a> / Setup</p>
+      <h1>Set up Companion Planning on your own server</h1>
+      <p class="lede">Run the public Docker image on a computer you control, sign in with a username and password, then open the planner from any browser on your network.</p>
+    </div>
+  </section>
+
+  <section class="section section-tight">
+    <div class="wrap">
+      <div class="prose">
+        <h2>What you need</h2>
+        <ul>
+          <li>A computer that stays on: a desktop, a mini PC, a home server or a Docker host.</li>
+          <li>Docker, or a Companion Hub appliance with Companion Planning installed from the store.</li>
+          <li>Your time zone as an IANA name, such as Europe/Berlin.</li>
+        </ul>
+
+        <h2>Run it with Docker</h2>
+        <p>The image is public and runs on amd64 and arm64. Replace the time zone, the address, the session secret and the password before you run it.</p>
+        <pre><code>docker run -d --name ci-planning \
+  -p 3848:3848 \
+  -v ci-planning-data:/data \
+  -e TZ=Europe/Berlin \
+  -e AUTH_MODE=sso \
+  -e DISABLE_OIDC=true \
+  -e PUBLIC_BASE_URL=http://192.168.1.20:3848 \
+  -e SESSION_SECRET=REPLACE_WITH_OPENSSL_RAND_HEX_32 \
+  -e AUTH_DEFAULT_USERNAME=you \
+  -e AUTH_DEFAULT_PASSWORD=REPLACE_WITH_A_STRONG_PASSWORD \
+  ghcr.io/companionintelligence/ci-planning:latest</code></pre>
+
+        <h3>Settings to know</h3>
+        <ul>
+          <li><code>PUBLIC_BASE_URL</code> is the address you type into the browser, with the scheme and port.</li>
+          <li>Generate <code>SESSION_SECRET</code> once with <code>openssl rand -hex 32</code>, and keep it. If it changes, every device signs out.</li>
+          <li><code>AUTH_DEFAULT_USERNAME</code> and <code>AUTH_DEFAULT_PASSWORD</code> create the first owner when the server starts for the first time. Changing them later does not change that account. Use the in-app password reset instead.</li>
+          <li>Your data lives in the <code>ci-planning-data</code> volume, mounted at <code>/data</code>.</li>
+        </ul>
+
+        <h2>Open it and sign in</h2>
+        <ol>
+          <li>Check that the server answers. Open <code>http://192.168.1.20:3848/api/health</code> in a browser on your network.</li>
+          <li>Open <code>http://192.168.1.20:3848</code> and sign in with the username and password you set.</li>
+          <li>On a phone, open the same address in the browser, then add the planner to your home screen.</li>
+        </ol>
+
+        <h2>Optional: AI, Google Calendar and crash reports</h2>
+        <h3>AI</h3>
+        <p>Point the server at an Ollama model with <code>OLLAMA_URL</code>, or at an OpenAI-compatible endpoint with <code>APP_OPENAI_BASE_URL</code>. Without a reachable model, the AI features stay hidden. The project's <a href="https://github.com/companionintelligence/CI-Planning/blob/main/docker-compose.yml">docker-compose.yml</a> runs the app with a bundled Ollama.</p>
+
+        <h3>Google Calendar</h3>
+        <p>Set <code>CP_KEK_B64</code> to a random key, generated with <code>openssl rand -base64 32</code>, so that stored tokens are encrypted. Keep that key the same. Then add a Google OAuth client under Settings → Connections and save it. Each person connects their own Google account. The steps for creating the client are in the <a href="https://github.com/companionintelligence/CI-Planning/blob/main/docs/google-cloud-setup.md">Google Cloud setup guide</a>.</p>
+
+        <h3>Crash reports</h3>
+        <p>Released images send error reports by default. They contain errors only, are scrubbed, and never include your data. Set <code>CI_TELEMETRY=off</code>, or <code>CI_LOCAL_ONLY=true</code>, to turn them off.</p>
+
+        <h3>Web Push</h3>
+        <p>Browser notifications work without extra setup. The server creates its push keys the first time it starts.</p>
+
+        <h2>Backups</h2>
+        <p>Read the <a href="https://github.com/companionintelligence/CI-Planning#backup-and-restore">Backup and restore</a> section of the project README before you rely on the server for real data. It covers built-in scheduled snapshots, Litestream, and export and import.</p>
+
+        <h2>Run from source</h2>
+        <p>Developers can run Companion Planning from a source checkout with Node.js 22 or newer and pnpm. The <a href="https://github.com/companionintelligence/CI-Planning#local-development">local development guide</a> has the steps.</p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-grid">
+    <div>
+      <p><strong>Companion Planning</strong> is part of the <a href="https://ci.computer/">Companion Intelligence</a> platform.</p>
+      <p class="small">Last updated 2026-11-02. Questions? <a href="mailto:support@ci.computer">support@ci.computer</a></p>
+    </div>
+    <ul class="footer-links" aria-label="Companion Planning">
+      <li><a href="/setup/">Setup guide</a></li>
+      <li><a href="/faq/">FAQ</a></li>
+      <li><a href="/support/">Support</a></li>
+    </ul>
+    <ul class="footer-links" aria-label="Elsewhere">
+      <li><a href="https://github.com/companionintelligence/CI-Planning">Source code</a></li>
+      <li><a href="https://hub.ci.computer/store/ci-planning">Companion Hub store</a></li>
+      <li><a href="https://ci.computer/">ci.computer</a></li>
+    </ul>
+  </div>
+</footer>
+</body>
+</html>

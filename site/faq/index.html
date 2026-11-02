@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Companion Planning FAQ: data, phones, AI and sign-in</title>
+<meta name="description" content="Answers about where Companion Planning stores your data, phone access, optional AI and Google Calendar, sign-in, backups and support.">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#0a6358" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b1417" media="(prefers-color-scheme: dark)">
+<link rel="canonical" href="https://planning.ci.computer/faq/">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/assets/site.css">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Companion Planning">
+<meta property="og:title" content="Companion Planning FAQ: data, phones, AI and sign-in">
+<meta property="og:description" content="Answers about where Companion Planning stores your data, phone access, optional AI and Google Calendar, sign-in, backups and support.">
+<meta property="og:url" content="https://planning.ci.computer/faq/">
+<meta property="og:image" content="https://planning.ci.computer/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Companion Planning FAQ: data, phones, AI and sign-in">
+<meta name="twitter:description" content="Answers about where Companion Planning stores your data, phone access, optional AI and Google Calendar, sign-in, backups and support.">
+<meta name="twitter:image" content="https://planning.ci.computer/og-image.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "FAQPage",
+      "@id": "https://planning.ci.computer/faq/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What is Companion Planning?",
+          "acceptedAnswer": { "@type": "Answer", "text": "A private planner for tasks, time blocks, habits, routines and objectives. It runs on a server you control, and you open it in a browser. The native iPhone and Android apps are in preparation." }
+        },
+        {
+          "@type": "Question",
+          "name": "Who runs the server?",
+          "acceptedAnswer": { "@type": "Answer", "text": "You do, or someone you trust. Run the public Docker image on a computer you control, or install Companion Planning from the Companion Hub store on a Companion Hub appliance." }
+        },
+        {
+          "@type": "Question",
+          "name": "Where is my data stored?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Tasks, time blocks and tags live in one SQLite file on the server. In the Docker image, the file is /data/companion.db, on the data volume you mount at /data." }
+        },
+        {
+          "@type": "Question",
+          "name": "Does my data leave my network?",
+          "acceptedAnswer": { "@type": "Answer", "text": "The apps send your data only to the server address you enter. Some features use the internet: Google Calendar sync when you connect it, Web Push notifications, and error reports from released images, which you can turn off with CI_TELEMETRY=off." }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I use it on my phone?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Yes. Open your server's address in the phone's browser and add it to your home screen. The native iPhone and Android apps are in preparation. They connect to your server with the same address and sign in with a username and password." }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it need AI?",
+          "acceptedAnswer": { "@type": "Answer", "text": "No. The AI features are optional. They use an Ollama model or an OpenAI-compatible endpoint that you configure. Without one, the AI features stay hidden." }
+        },
+        {
+          "@type": "Question",
+          "name": "How do people sign in?",
+          "acceptedAnswer": { "@type": "Answer", "text": "With a username and password. The operator creates accounts under Settings → Accounts, and each new account gets a link to set its password." }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I connect Google Calendar?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Yes. Add a Google OAuth client under Settings → Connections, then each person connects their own Google account. Reading events into the planner is the default. Writing changes back to Google is a separate switch that is off by default." }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I back it up?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Yes. The project README describes three options: scheduled snapshots built into the server, Litestream for streaming replication, and export and import for a single account." }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I get help?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Email support@ci.computer. The support page lists what to include." }
+        }
+      ]
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "Companion Planning", "item": "https://planning.ci.computer/" },
+        { "@type": "ListItem", "position": 2, "name": "FAQ", "item": "https://planning.ci.computer/faq/" }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap header-inner">
+    <a class="brand" href="/"><img src="/apple-touch-icon.png" width="32" height="32" alt="">Companion Planning</a>
+    <nav class="nav" aria-label="Main">
+      <a href="/#how">How it works</a>
+      <a href="/#features">Features</a>
+      <a href="/#screens">Screens</a>
+      <a href="/setup/">Setup</a>
+      <a href="/faq/" aria-current="page">FAQ</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="page-head">
+    <div class="wrap wrap-narrow">
+      <p class="crumbs"><a href="/">Companion Planning</a> / FAQ</p>
+      <h1>Frequently asked questions</h1>
+      <p class="lede">Short answers about your data, your phone, optional AI and Google Calendar, sign-in and backups.</p>
+    </div>
+  </section>
+
+  <section class="section section-tight">
+    <div class="wrap wrap-narrow">
+      <div class="faq">
+        <details>
+          <summary>What is Companion Planning?</summary>
+          <p>A private planner for tasks, time blocks, habits, routines and objectives. It runs on a server you control, and you open it in a browser. The native iPhone and Android apps are in preparation.</p>
+        </details>
+        <details>
+          <summary>Who runs the server?</summary>
+          <p>You do, or someone you trust. Run the public Docker image on a computer you control, or install Companion Planning from the Companion Hub store on a Companion Hub appliance.</p>
+        </details>
+        <details>
+          <summary>Where is my data stored?</summary>
+          <p>Tasks, time blocks and tags live in one SQLite file on the server. In the Docker image, the file is /data/companion.db, on the data volume you mount at /data.</p>
+        </details>
+        <details>
+          <summary>Does my data leave my network?</summary>
+          <p>The apps send your data only to the server address you enter. Some features use the internet: Google Calendar sync when you connect it, Web Push notifications, and error reports from released images, which you can turn off with CI_TELEMETRY=off.</p>
+        </details>
+        <details>
+          <summary>Can I use it on my phone?</summary>
+          <p>Yes. Open your server's address in the phone's browser and add it to your home screen. The native iPhone and Android apps are in preparation. They connect to your server with the same address and sign in with a username and password.</p>
+        </details>
+        <details>
+          <summary>Does it need AI?</summary>
+          <p>No. The AI features are optional. They use an Ollama model or an OpenAI-compatible endpoint that you configure. Without one, the AI features stay hidden.</p>
+        </details>
+        <details>
+          <summary>How do people sign in?</summary>
+          <p>With a username and password. The operator creates accounts under Settings → Accounts, and each new account gets a link to set its password.</p>
+        </details>
+        <details>
+          <summary>Can I connect Google Calendar?</summary>
+          <p>Yes. Add a Google OAuth client under Settings → Connections, then each person connects their own Google account. Reading events into the planner is the default. Writing changes back to Google is a separate switch that is off by default.</p>
+        </details>
+        <details>
+          <summary>Can I back it up?</summary>
+          <p>Yes. The <a href="https://github.com/companionintelligence/CI-Planning#backup-and-restore">project README</a> describes three options: scheduled snapshots built into the server, Litestream for streaming replication, and export and import for a single account.</p>
+        </details>
+        <details>
+          <summary>How do I get help?</summary>
+          <p>Email <a href="mailto:support@ci.computer">support@ci.computer</a>. The <a href="/support/">support page</a> lists what to include.</p>
+        </details>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-grid">
+    <div>
+      <p><strong>Companion Planning</strong> is part of the <a href="https://ci.computer/">Companion Intelligence</a> platform.</p>
+      <p class="small">Last updated 2026-11-02. Questions? <a href="mailto:support@ci.computer">support@ci.computer</a></p>
+    </div>
+    <ul class="footer-links" aria-label="Companion Planning">
+      <li><a href="/setup/">Setup guide</a></li>
+      <li><a href="/faq/">FAQ</a></li>
+      <li><a href="/support/">Support</a></li>
+    </ul>
+    <ul class="footer-links" aria-label="Elsewhere">
+      <li><a href="https://github.com/companionintelligence/CI-Planning">Source code</a></li>
+      <li><a href="https://hub.ci.computer/store/ci-planning">Companion Hub store</a></li>
+      <li><a href="https://ci.computer/">ci.computer</a></li>
+    </ul>
+  </div>
+</footer>
+</body>
+</html>

@@ -1,0 +1,18 @@
+# Companion Planning
+
+> Companion Planning is a private, local-first planner for tasks, time blocks and your day. It runs on a server you control, and you open it in a browser. Native iPhone and Android apps are in preparation.
+
+Companion Planning is part of the Companion Intelligence platform (https://ci.computer/). Your plans are stored in one SQLite file on the server. The AI features are optional and use a model you configure, such as Ollama. Google Calendar sync stays off until you connect it.
+
+## Pages
+
+- [Home](https://planning.ci.computer/): what Companion Planning is, its features and how to get it
+- [Setup guide](https://planning.ci.computer/setup/): run the public Docker image and sign in
+- [FAQ](https://planning.ci.computer/faq/): answers about data, phones, AI, Google Calendar, sign-in and backups
+- [Support](https://planning.ci.computer/support/): how to get help
+
+## Optional
+
+- [Companion Hub store listing](https://hub.ci.computer/store/ci-planning): install on a Companion Hub appliance
+- [Source code](https://github.com/companionintelligence/CI-Planning): project README and documentation
+- [Companion Intelligence](https://ci.computer/): the platform this planner belongs to

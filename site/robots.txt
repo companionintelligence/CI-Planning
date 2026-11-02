@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://planning.ci.computer/sitemap.xml

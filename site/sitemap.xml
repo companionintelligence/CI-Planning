@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+  <url>
+    <loc>https://planning.ci.computer/</loc>
+    <lastmod>2026-11-02</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+    <image:image>
+      <image:loc>https://planning.ci.computer/og-image.png</image:loc>
+      <image:title>Companion Planning</image:title>
+    </image:image>
+    <image:image>
+      <image:loc>https://planning.ci.computer/img/today-light.webp</image:loc>
+      <image:title>Companion Planning Today view</image:title>
+    </image:image>
+    <image:image>
+      <image:loc>https://planning.ci.computer/img/calendar-light.webp</image:loc>
+      <image:title>Companion Planning Calendar view</image:title>
+    </image:image>
+    <image:image>
+      <image:loc>https://planning.ci.computer/img/tasks-light.webp</image:loc>
+      <image:title>Companion Planning Tasks view</image:title>
+    </image:image>
+    <image:image>
+      <image:loc>https://planning.ci.computer/img/objectives-light.webp</image:loc>
+      <image:title>Companion Planning Objectives tab</image:title>
+    </image:image>
+  </url>
+  <url>
+    <loc>https://planning.ci.computer/setup/</loc>
+    <lastmod>2026-11-02</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://planning.ci.computer/faq/</loc>
+    <lastmod>2026-11-02</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://planning.ci.computer/support/</loc>
+    <lastmod>2026-11-02</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.5</priority>
+  </url>
+</urlset>
