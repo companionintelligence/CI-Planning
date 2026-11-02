@@ -20,6 +20,8 @@ import { GOOGLE_CONNECT_ENABLED } from '../lib/flags.js';
 import { ollamaHealth, ollamaHealthDescription } from '../lib/ollama-health.js';
 import { ConnectionAppearance } from '../components/ConnectionAppearance.js';
 import { FOCUS_STYLES, type FocusStyle } from '../lib/focus-appearance.js';
+import { LearningPanel } from '../components/learning/LearningPanel.js';
+import { learningCanReset } from '../lib/learning-access.js';
 
 const BROWSER_TZ = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
@@ -97,7 +99,7 @@ function fmtHourLabel(min: number): string {
 }
 
 export function Settings() {
-  const [activeTab, setActiveTab] = createSignal<'profile' | 'preferences' | 'connections' | 'logs'>('profile');
+  const [activeTab, setActiveTab] = createSignal<'profile' | 'preferences' | 'connections' | 'learning' | 'logs'>('profile');
   const [form, setForm] = createSignal<SettingsForm>({ ...DEFAULTS });
 
   // V8 — account (local sign-in only): the backup reset-email. Fetch auth config + the
@@ -802,6 +804,14 @@ export function Settings() {
           aria-selected={activeTab() === 'connections'}
         >
           Connections
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('learning')}
+          role="tab" class="view-tab"
+          aria-selected={activeTab() === 'learning'}
+        >
+          Learning
         </button>
         <button
           type="button"
@@ -2315,6 +2325,17 @@ export function Settings() {
         </Show>
 
       </form>
+
+      {/* ── LEARNING TAB ── Outside the <form> on purpose: its buttons act at once
+          (clear learned examples), and nothing here feeds `form()` or Save Settings.
+          `learningCanReset` (lib/learning-access.ts) is null while `me` loads, false for a viewer,
+          true otherwise; the server stays the authority and answers 403 to a clear it will not
+          do. `owner` keys the panel's memory of clears to this account. */}
+      <Show when={activeTab() === 'learning'}>
+        <div class="flex flex-col gap-5">
+          <LearningPanel canReset={learningCanReset(me.loading, me())} owner={me()?.ownerId ?? null} />
+        </div>
+      </Show>
 
       {/* Review modal (T6) — a LOCAL signal, not the global elementModal (reserved
           for the ElementWizard). Closes on backdrop click or the X. */}

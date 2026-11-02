@@ -61,6 +61,12 @@ version at `GET /api/health` (`release`).
   manual `mobile-build.yml` workflow builds a debug APK and an unsigned Simulator `.app`. Not
   store-ready: see "Mobile app" in the README. Companion Portal sign-in is not available in the
   app yet.
+- **Settings → Learning.** A new Settings tab shows what the weekly learning passes have measured: how often
+  the model's category and motivation guesses match your corrections, how many of the suggestions you decide
+  on you dismiss, how often Auto's placements are kept, and how often AI day ordering passes its own check.
+  Each figure shows how many cases are behind it, never shows a week with nothing measured as 0%, and says
+  what it does not prove. The first three have a button that clears what was learned; your history is kept
+  and Monday's pass can learn it again. The fourth only measures. No server change.
 
 ### Changed
 - **The native shells do not show controls they cannot run.** Export JSON, the calendar `.ics` export,
