@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The launch screen: the brand colour with the app mark centred. One drawable serves every
+     orientation and density, so the old per-density splash.png files are not needed. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/splash_background" />
+    <item android:gravity="center">
+        <bitmap android:src="@drawable/splash_icon" android:gravity="center" />
+    </item>
+</layer-list>
