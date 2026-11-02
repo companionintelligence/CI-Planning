@@ -7,6 +7,12 @@ version at `GET /api/health` (`release`).
 
 ## [Unreleased]
 
+### Changed
+- **Companion Portal sign-in brings you back to the page you asked for**, as Companion Memory does. When the
+  app sends you to the login screen it remembers where you were going (same-origin paths only, for ten
+  minutes), and the Portal round trip, the first-time account confirmation and the username sign-in all
+  return you there. Before, every sign-in landed on the home page.
+
 ### Fixed
 - **No stack trace in the server log each time a live-update stream closes.** Koa reports a
   response stream that closes before it ends (`ERR_STREAM_PREMATURE_CLOSE`) as an error, and

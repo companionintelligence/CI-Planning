@@ -314,7 +314,8 @@ function SessionGate(props: { children?: any }) {
   createEffect(() => {
     if (me.loading) return;
     if (me() === false && location.pathname !== '/login') {
-      navigate('/login', { replace: true });
+      // Keep the page they asked for, so signing in can bring them back to it (see Login.tsx).
+      navigate('/login', { replace: true, state: { from: location.pathname + location.search } });
     }
   });
 
