@@ -7,9 +7,9 @@ cat > "$HOOK" << 'HOOK_EOF'
 #!/usr/bin/env bash
 set -e
 echo "→ typecheck…"
-node_modules/.bin/tsc --noEmit
+pnpm run typecheck
 echo "→ unit tests…"
-node_modules/.bin/vitest run --reporter=dot --project=unit
+pnpm --filter client exec vitest run --reporter=dot --project=unit
 HOOK_EOF
 chmod +x "$HOOK"
 echo "✓ pre-commit hook installed at $HOOK"

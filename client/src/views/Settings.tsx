@@ -1,7 +1,7 @@
 import { createSignal, createEffect, Show, createResource, For, onMount } from 'solid-js';
 import { ViewHeader } from '../components/ViewHeader.js';
 import { BellRing, Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, Database, AlertTriangle, Users, KeyRound, ScrollText, Eye, FileJson, FileText, Mail, Ticket } from 'lucide-solid';
-import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast, texturesEnabled, setTexturesEnabled, focusAppearance, setFocusAppearance, plannerAxisState, setPlannerCollapseBounds, integrations, refetchIntegrations, recheckIntegrations, aiAvailable, connections, refetchConnections, openOnboardingAt, openTimeRange, setOpenTimeRange,
+import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast, texturesEnabled, setTexturesEnabled, focusAppearance, setFocusAppearance, plannerAxisState, setPlannerCollapseBounds, integrations, refetchIntegrations, recheckIntegrations, aiAvailable, connections, refetchConnections, openOnboardingAt, openTimeRange, setOpenTimeRange, refetchPatternTypes,
 } from '../stores/index.js';
 import { api, type PlanningSession } from '../lib/api.js';
 import { sessionToMarkdown, sessionToJson, exportFilename } from '../lib/plan-week-export.js';
@@ -45,6 +45,7 @@ interface SettingsForm {
   // Ingestion windows (0147). memory looks FORWARD (upcoming events), email looks BACK.
   memory_window_days: number; email_lookback_days: number;
   recall_keeps_pattern: boolean; // cockpit-v2 Phase 6
+  enable_routines: boolean; enable_rituals: boolean; // feature flags (0073 / 0024), off by default
   time_sense_enabled: boolean; // Phase Z master flag
   focus_ritual_enabled: boolean; haptic_cues_enabled: boolean; // Phase Z · Z5 per-cue matrix
   ambient_color_enabled: boolean; calibration_loop_enabled: boolean;
@@ -59,7 +60,7 @@ interface SettingsForm {
 
 /** The boolean fields of the form — for the reusable Toggle. */
 type BoolField =
-  | 'auto_fill_workday' | 'plan_allday_always' | 'plan_daylong_for_promoted' | 'plan_autofill_gaps' | 'concept_autosurface' | 'recall_keeps_pattern' | 'time_sense_enabled'
+  | 'auto_fill_workday' | 'plan_allday_always' | 'plan_daylong_for_promoted' | 'plan_autofill_gaps' | 'concept_autosurface' | 'recall_keeps_pattern' | 'enable_routines' | 'enable_rituals' | 'time_sense_enabled'
   | 'focus_ritual_enabled' | 'haptic_cues_enabled' | 'ambient_color_enabled' | 'calibration_loop_enabled' | 'triality_enabled' | 'llm_thinking_enabled' | 'balance_bias_enabled';
 
 const DEFAULTS: SettingsForm = {
@@ -76,6 +77,7 @@ const DEFAULTS: SettingsForm = {
   memory_pull_enabled: false,
   memory_window_days: 2, email_lookback_days: 7,
   recall_keeps_pattern: false,
+  enable_routines: false, enable_rituals: false,
   time_sense_enabled: false,
   focus_ritual_enabled: true, haptic_cues_enabled: true,
   ambient_color_enabled: true, calibration_loop_enabled: true,
@@ -238,6 +240,8 @@ export function Settings() {
       embed_model:                p.embed_model ?? '',
       llm_thinking_enabled:       p.llm_thinking_enabled ?? false,
       recall_keeps_pattern:       p.recall_keeps_pattern ?? false,
+      enable_routines:            p.enable_routines ?? false,
+      enable_rituals:             p.enable_rituals ?? false,
       time_sense_enabled:         p.time_sense_enabled ?? false,
       focus_ritual_enabled:       p.focus_ritual_enabled ?? true,
       haptic_cues_enabled:        p.haptic_cues_enabled ?? true,
@@ -348,6 +352,7 @@ export function Settings() {
       };
       await api.prefs.update(body);
       refetchPrefs();
+      refetchPatternTypes(); // the server hides the Ritual type unless enable_rituals is on
       showToast('Settings saved', 'success');
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
@@ -919,8 +924,9 @@ export function Settings() {
               <div class="flex items-center justify-between mb-3">
                 <div class="section-label flex items-center gap-1.5" title="Operators manage accounts, system jobs, and the Google connection. Members plan their own days. Viewers are read-only. Role changes sign the user out everywhere."><Users size={12} /> Team</div>
                 {/* A4: local accounts can be invited whenever local login is served — both
-                    sso sub-modes since A3 — not only under DISABLE_OIDC. */}
-                <Show when={authCfg()?.local && !acctFormOpen()}>
+                    sso sub-modes since A3 — not only under DISABLE_OIDC. The native shells leave
+                    this out: they do not create accounts (see the mobile section of the README). */}
+                <Show when={authCfg()?.local && !acctFormOpen() && !isNativeShell()}>
                   <button type="button" onClick={() => setAcctFormOpen(true)} class="btn-secondary text-xs px-3 py-1.5">
                     <Plus size={12} /> New account
                   </button>
@@ -1030,8 +1036,9 @@ export function Settings() {
 
               {/* B2 — invite codes (AUTH_SIGNUP=invite only; under `open` nobody needs one and
                   under `off` nobody can use one). Someone with a code creates their OWN
-                  account at /signup — you never see their password. */}
-              <Show when={signupReq()?.enabled && signupReq()?.codeRequired}>
+                  account at /signup — you never see their password. The native shells leave
+                  this out (see the mobile section of the README). */}
+              <Show when={signupReq()?.enabled && signupReq()?.codeRequired && !isNativeShell()}>
                 <div class="mt-4 pt-3 border-t border-border flex flex-col gap-2">
                   <div class="flex items-center justify-between gap-2 flex-wrap">
                     <div class="section-label flex items-center gap-1.5" title="Single-use codes that let someone create their own account at /signup. They pick their own username and password; you never handle it. Codes expire after 7 days.">
@@ -1112,13 +1119,16 @@ export function Settings() {
             <div class="section-label flex items-center gap-1.5 mb-3"><Database size={12} /> Backup &amp; Export</div>
             <div class="flex flex-col gap-4">
               <div class="flex items-center gap-3 flex-wrap">
-                <a
-                  href={apiUrl('/api/export')}
-                  download="companion-export.json"
-                  class="btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5"
-                >
-                  <Database size={12} /> Export JSON
-                </a>
+                {/* A download link saves nothing in the native WebView, so the shells leave it out. */}
+                <Show when={!isNativeShell()}>
+                  <a
+                    href={apiUrl('/api/export')}
+                    download="companion-export.json"
+                    class="btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5"
+                  >
+                    <Database size={12} /> Export JSON
+                  </a>
+                </Show>
                 <label class={`btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5 cursor-pointer ${importBusy() ? 'opacity-50 pointer-events-none' : ''}`}>
                   {importBusy() ? 'Importing…' : 'Import JSON'}
                   <input
@@ -1471,18 +1481,21 @@ export function Settings() {
               <button type="button" onClick={saveReminderDefaults} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
             </div>
             <div class="flex flex-col gap-3">
-              {/* Push notifications — opt-in browser delivery (Phase H). */}
-              <label class="flex items-start gap-2 cursor-pointer select-none">
-                <button type="button" role="switch" aria-checked={pushOn()} disabled={pushBusy()} onClick={togglePush}
-                  class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5 disabled:opacity-50"
-                  classList={{ 'bg-primary': pushOn(), 'bg-muted border border-border': !pushOn() }}>
-                  <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform" classList={{ 'translate-x-4': pushOn() }} />
-                </button>
-                <div>
-                  <div class="text-sm text-foreground leading-tight">Push notifications</div>
-                  <div class="text-[11px] text-muted-foreground">Deliver reminders to this device even when the app is closed.</div>
-                </div>
-              </label>
+              {/* Push notifications — opt-in browser delivery (Phase H). Web Push does not
+                  reach the native WebView, so the shells leave this switch out. */}
+              <Show when={!isNativeShell()}>
+                <label class="flex items-start gap-2 cursor-pointer select-none">
+                  <button type="button" role="switch" aria-checked={pushOn()} disabled={pushBusy()} onClick={togglePush}
+                    class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5 disabled:opacity-50"
+                    classList={{ 'bg-primary': pushOn(), 'bg-muted border border-border': !pushOn() }}>
+                    <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform" classList={{ 'translate-x-4': pushOn() }} />
+                  </button>
+                  <div>
+                    <div class="text-sm text-foreground leading-tight">Push notifications</div>
+                    <div class="text-[11px] text-muted-foreground">Deliver reminders to this device even when the app is closed.</div>
+                  </div>
+                </label>
+              </Show>
               {/* Start-time reminder */}
               <label class="flex items-start gap-2 cursor-pointer select-none">
                 <button type="button" role="switch" aria-checked={remStartOn()} onClick={() => setRemStartOn((v) => !v)}
@@ -1523,6 +1536,14 @@ export function Settings() {
               <div class="section-label">Routine Settings</div>
               <button type="button" onClick={doSave} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
             </div>
+            {/* Feature flags, off by default. Routines (0073) gate the Routine tile in the Add
+                dialog and the automatic placement of recurring Routines (engine/patterns-place.ts);
+                Rituals (0024) gate the Ritual pattern type (services/patterns.ts). */}
+            <Toggle field="enable_routines" label="Routines on the Planner"
+              hint="Show Routine in the Add dialog and place recurring Routines on the Planner on their own, within your repeat horizon. Off (default): a Routine can still be made and placed by hand from the Routines tab." />
+            <Toggle field="enable_rituals" label="Rituals"
+              hint="Show the Ritual type (habits and one-off tasks for an occasion, like board-meeting prep) in the Routines tab. Off (default) hides it; any Rituals you made are kept." />
+
             {/* Orphaned setting (see #392): NO Recall action exists anywhere in the UI
                 (api.tasks.recall has zero callers), so this toggle persists but
                 currently governs nothing. */}

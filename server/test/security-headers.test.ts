@@ -36,8 +36,8 @@ describe('D2 — security headers', () => {
     expect(csp).toContain("default-src 'self'");
     expect(csp).toContain("script-src 'self';"); // no inline scripts, no eval
     expect(csp).not.toMatch(/script-src[^;]*unsafe/);
-    expect(csp).toContain("style-src 'self' 'unsafe-inline' https://fonts.googleapis.com");
-    expect(csp).toContain('font-src \'self\' data: https://fonts.gstatic.com');
+    expect(csp).toContain("style-src 'self' 'unsafe-inline';");
+    expect(csp).toContain("font-src 'self' data:;");
     expect(csp).toContain("frame-ancestors 'none'");
     expect(csp).toContain("worker-src 'self'");
     expect(csp).toMatch(/connect-src 'self'(;|$)/); // nothing extra by default

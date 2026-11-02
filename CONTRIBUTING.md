@@ -21,9 +21,11 @@ the three app shapes `docker-publish.yml` smoke-tests and runs the Playwright sp
 each, without Docker; its header lists the one-time setup.
 
 All of it must be **green** on the PR's latest commit before you merge. A red result
-means `main` will not compile or will ship a broken build to everyone. When you want a
-second opinion from a clean runner, dispatch a workflow by hand: the commands are in
-[docs/CI.md](docs/CI.md).
+means `main` will not compile or will ship a broken build to everyone. Whether branch
+protection enforces this is set by the repository owner, so do not assume it does. For a
+second opinion from a clean runner, dispatch `ci.yml` by hand (its **Typecheck + Unit +
+Integration** job). Dispatching `docker-publish.yml` also publishes the image, so it is not a
+dry run. The commands are in [docs/CI.md](docs/CI.md).
 
 ### Watch out for autofix / suggestion commits
 
@@ -70,3 +72,32 @@ goes through a pipe (`pnpm install | tee …`, `2>&1 | tail`), so a wrapper scri
 checks `$?` reports a broken install as a success. Run it unpiped, or grep the log for
 `ERR_PNPM` / `supply chain` before trusting it. The symptom of a half-installed tree is a
 later `tsx`/`vite` run failing on a missing `@companionintelligence/…` module.
+
+## Attribution files (NOTICE, THIRD_PARTY, CREDITS)
+
+`NOTICE.md`, `THIRD_PARTY.md` and `CREDITS.md` are generated, not written by hand, by CI-Engineering's
+[`scripts/generate-attribution.mjs`](https://github.com/companionintelligence/CI-Engineering/blob/main/scripts/generate-attribution.mjs)
+(`node scripts/generate-attribution.mjs --repo <this checkout> --name CI-Planning`). It reads the
+`package.json` of the root and of the pnpm workspaces (`server/`, `client/`) and asks the npm registry
+about each package. Only a `NOTICE.md` block wrapped in `<!-- hand-authored: do not regenerate this
+section -->` … `<!-- end hand-authored -->` survives a regeneration; edits to the other two files are
+overwritten.
+
+What a regeneration gets wrong for this repo today, so check the output before committing it:
+
+- **Versions.** Each row shows the registry's `latest`, not what `pnpm-lock.yaml` resolves: `graphql` comes
+  out as 17.0.2 while the repo is pinned to 16.14.2 in `pnpm-workspace.yaml`. #635 corrected 42 rows to the
+  lockfile by hand; a regeneration puts them all back.
+- **Missing packages.** The Capacitor packages of the app shells (`mobile/ios`, `mobile/android`, outside
+  the pnpm workspace) are not listed, and neither are the private `@companionintelligence/config` and
+  `@companionintelligence/tokens` packages, which come from GitHub Packages. The tokens package ships a
+  `LICENSE.md` titled "Commercial Standard License" (CI-Commercial-1.0), not this repo's PolyForm licence;
+  nothing in the generated files says so.
+- **CREDITS "Core stack"** lists `react` and `react-dom`, which are devDependencies only (GraphiQL, in
+  `server/package.json`), and leaves out `solid-js` and `koa`.
+- The "Two caveats" paragraph at the top of `THIRD_PARTY.md` is hand-written and is dropped.
+
+The fix belongs in the generator: read versions from the lockfile when there is one, accept extra manifests
+such as `mobile/*`, and allow hand-authored blocks in all three files, as it already does for `NOTICE.md`.
+Until then, regenerate only to add or remove a dependency, and re-apply the lockfile versions and the
+caveat afterwards.

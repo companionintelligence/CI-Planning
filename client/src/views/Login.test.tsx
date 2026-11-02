@@ -26,9 +26,11 @@ vi.mock('../lib/api.js', () => ({
 
 const navigateMock = vi.fn();
 let currentParams: Record<string, string> = {};
+let currentState: unknown;
 vi.mock('@solidjs/router', () => ({
   useNavigate: () => navigateMock,
   useSearchParams: () => [currentParams],
+  useLocation: () => ({ state: currentState }),
 }));
 
 const toastMock = vi.fn();
@@ -66,8 +68,34 @@ beforeEach(() => {
   navigateMock.mockReset();
   toastMock.mockReset();
   currentParams = {};
+  currentState = undefined;
 });
 afterEach(() => { vi.unstubAllGlobals(); });
+
+describe('Login — returning to the page they asked for (Companion Memory parity)', () => {
+  // SessionGate sends an unauthenticated visit here with the page it was for in router state.
+  // The Portal sign-in carries it on, and the server checks it again when it sends them back.
+  it('the Portal sign-in carries the page SessionGate was sending them away from', async () => {
+    currentState = { from: '/shared/abc123?tab=notes' };
+    const { container } = await renderLogin(cfg({ portal: true, local: false, signup: 'off' }));
+    expect(portalButton(container)).toBeNull(); // the plain start URL would drop the page
+    const link = container.querySelector<HTMLAnchorElement>(`a.btn-primary[href^="${START}?redirect="]`);
+    expect(link).toBeTruthy();
+    expect(link!.getAttribute('href')).toBe(`${START}?redirect=${encodeURIComponent('/shared/abc123?tab=notes')}`);
+  });
+
+  it('a destination that is not a same-origin path is not carried', async () => {
+    currentState = { from: '//evil.example' };
+    const { container } = await renderLogin(cfg({ portal: true, local: false, signup: 'off' }));
+    expect(portalButton(container)).toBeTruthy();
+  });
+
+  it('the login screen itself is never a destination', async () => {
+    currentState = { from: '/login' };
+    const { container } = await renderLogin(cfg({ portal: true, local: false, signup: 'off' }));
+    expect(portalButton(container)).toBeTruthy();
+  });
+});
 
 describe('Login — portal + local (the Hub default after A2/A3)', () => {
   it('shows the Portal button first and folds the username form behind "Sign in with username instead"', async () => {

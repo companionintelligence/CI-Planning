@@ -1,0 +1,3 @@
+# Rust build output, and the schemas Tauri generates from the capability files on build.
+/target/
+/gen/

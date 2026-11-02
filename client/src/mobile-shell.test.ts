@@ -54,6 +54,12 @@ describe('iOS', () => {
     expect(manifest).toMatch(/<key>NSPrivacyTrackingDomains<\/key>\s*<array\/>/);
   });
 
+  it('declares no collected data and no required-reason API, which the build scan supports', () => {
+    const manifest = readFileSync(join(repo, 'mobile', 'ios', 'ios', 'App', 'App', 'PrivacyInfo.xcprivacy'), 'utf8');
+    expect(manifest).toMatch(/<key>NSPrivacyCollectedDataTypes<\/key>\s*<array\/>/);
+    expect(manifest).toMatch(/<key>NSPrivacyAccessedAPITypes<\/key>\s*<array\/>/);
+  });
+
   it('answers the export-compliance question, so TestFlight does not ask on every upload', () => {
     expect(infoPlist).toMatch(/<key>ITSAppUsesNonExemptEncryption<\/key>\s*<false\/>/);
   });
@@ -93,5 +99,52 @@ describe('Android', () => {
     expect(page).not.toMatch(/<script/i);
     expect(page).not.toMatch(/<link[^>]+stylesheet/i);
     expect(page).not.toMatch(/(oklch|color-mix|@layer|@property)/);
+  });
+
+  it('does not back the app up, so the sign-in session is not restored onto another device', () => {
+    expect(read('mobile', 'android', 'android', 'app', 'src', 'main', 'AndroidManifest.xml')).toMatch(
+      /android:allowBackup="false"/,
+    );
+  });
+
+  it('takes its build number and name from the build, not from the file', () => {
+    const gradle = read('mobile', 'android', 'android', 'app', 'build.gradle');
+    expect(gradle).toMatch(/findProperty\('appVersionCode'\)/);
+    expect(gradle).toMatch(/findProperty\('appVersionName'\)/);
+  });
+});
+
+describe('native dependencies', () => {
+  it('adds no Capacitor plugin without a new privacy review', () => {
+    // The privacy manifests declare nothing because there are no plugins. A plugin brings its own
+    // data types and required-reason APIs, so adding one must start by re-running the build scan
+    // that the manifest describes.
+    const core = new Set(['@capacitor/core', '@capacitor/android', '@capacitor/ios', '@capacitor/cli']);
+    for (const platform of ['ios', 'android'] as const) {
+      const pkg = JSON.parse(read('mobile', platform, 'package.json'));
+      const names = [...Object.keys(pkg.dependencies ?? {}), ...Object.keys(pkg.devDependencies ?? {})];
+      expect(names.filter((n) => n.startsWith('@capacitor/') && !core.has(n)), platform).toEqual([]);
+    }
+  });
+});
+
+describe('the bundle the apps load', () => {
+  it('is the build:mobile output that both native projects point at', async () => {
+    const script = JSON.parse(read('client', 'package.json')).scripts['build:mobile'] as string;
+    expect(script).toContain('--outDir dist');
+    for (const platform of ['ios', 'android'] as const) {
+      const { default: config } = await import(`../../mobile/${platform}/capacitor.config.ts`);
+      expect(join(repo, 'mobile', platform, config.webDir), platform).toBe(join(repo, 'client', 'dist'));
+    }
+  });
+
+  it('loads no font from a third-party host, because the shells cannot be told to stop a request', () => {
+    expect(read('client', 'index.html')).not.toMatch(/fonts\.(googleapis|gstatic)\.com/);
+  });
+
+  it('gives the web app and its install the same colour', () => {
+    const manifest = JSON.parse(read('client', 'public', 'manifest.webmanifest'));
+    expect(read('client', 'index.html')).toContain(`<meta name="theme-color" content="${manifest.theme_color}" />`);
+    expect(manifest.background_color).toBe(manifest.theme_color);
   });
 });

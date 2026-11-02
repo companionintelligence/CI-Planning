@@ -16,6 +16,7 @@ import { setSession, clearSession, setLoginState, consumeLoginState, bumpSession
 import { issueResetToken, consumeResetToken } from '../lib/auth/resetToken.js';
 import { claimSignupCode, bindSignupCode, releaseSignupCode } from '../lib/auth/signupCodes.js';
 import { setPortalIntent, readPortalIntent, clearPortalIntent, csrfMatches, type PortalIntent } from '../lib/auth/portalIntent.js';
+import { setPortalRedirect, readPortalRedirect, clearPortalRedirect } from '../lib/auth/safeRedirect.js';
 import { writeAudit } from '../lib/audit.js';
 import { sendMail } from '../lib/mail/index.js';
 
@@ -596,6 +597,8 @@ export function authRouter() {
     // Bind this login to the initiating browser (login-CSRF defense): the callback
     // will require the returned `state` to match this cookie before proceeding.
     setLoginState(ctx, state);
+    // The page to return to after sign-in (?redirect=, same-origin paths only): see safeRedirect.ts.
+    setPortalRedirect(ctx, ctx.query.redirect);
 
     // authorization_endpoint from discovery. redirect_uri is the configured value, or
     // the loopback form for a local-open browser — see loginRedirectUriFor for why an
@@ -631,6 +634,7 @@ export function authRouter() {
       // The portal itself declined (user cancelled, consent denied…) — bounce back
       // to the login screen with a displayable reason, mirroring Google's UX shape.
       logger.warn('CI-Portal callback returned provider error', { error });
+      clearPortalRedirect(ctx);
       ctx.redirect(`/login?sso_error=${encodeURIComponent(error)}`);
       return;
     }
@@ -770,7 +774,9 @@ export function authRouter() {
 
     await setSession(ctx, owner.id);
     logger.info('CI-Portal login established', { owner: owner.id });
-    ctx.redirect('/');
+    const next = readPortalRedirect(ctx);
+    clearPortalRedirect(ctx);
+    ctx.redirect(next ?? '/');
   });
 
   // ── B3: first-time portal sign-in confirmation (no-JS, CSRF-bound) ───────────
@@ -816,6 +822,7 @@ export function authRouter() {
     clearPortalIntent(ctx);
     if (body.decision !== 'create') {
       logger.info('CI-Portal account confirmation declined — nothing provisioned');
+      clearPortalRedirect(ctx);
       ctx.redirect('/login');
       return;
     }
@@ -833,7 +840,9 @@ export function authRouter() {
     }
     await setSession(ctx, outcome.id);
     logger.info('CI-Portal login established', { owner: outcome.id });
-    ctx.redirect('/');
+    const next = readPortalRedirect(ctx);
+    clearPortalRedirect(ctx);
+    ctx.redirect(next ?? '/');
   });
 
   return router;
