@@ -32,10 +32,14 @@ fn saved_server(app: AppHandle) -> Option<String> {
 #[tauri::command]
 async fn connect_server(app: AppHandle, input: String) -> Result<(), String> {
     let url = server::normalize(&input).ok_or_else(|| server::Problem::Invalid.message())?;
-    server::probe(&url).await.map_err(|problem| problem.message())?;
+    server::probe(&url)
+        .await
+        .map_err(|problem| problem.message())?;
     server::save(&app, &url)?;
     let target = Url::parse(&url).map_err(|error| error.to_string())?;
-    main_window(&app)?.navigate(target).map_err(|error| error.to_string())
+    main_window(&app)?
+        .navigate(target)
+        .map_err(|error| error.to_string())
 }
 
 fn show_connect_page(app: &AppHandle) {
@@ -85,7 +89,13 @@ fn build_menu(app: &tauri::App) -> tauri::Result<Menu<tauri::Wry>> {
         app,
         "Server",
         true,
-        &[&MenuItem::with_id(app, CHANGE_SERVER, "Change Server…", true, Some("CmdOrCtrl+Shift+O"))?],
+        &[&MenuItem::with_id(
+            app,
+            CHANGE_SERVER,
+            "Change Server…",
+            true,
+            Some("CmdOrCtrl+Shift+O"),
+        )?],
     )?;
     let window_menu = Submenu::with_items(
         app,
@@ -96,7 +106,16 @@ fn build_menu(app: &tauri::App) -> tauri::Result<Menu<tauri::Wry>> {
             &PredefinedMenuItem::close_window(app, None)?,
         ],
     )?;
-    Menu::with_items(app, &[&app_menu, &edit_menu, &view_menu, &server_menu, &window_menu])
+    Menu::with_items(
+        app,
+        &[
+            &app_menu,
+            &edit_menu,
+            &view_menu,
+            &server_menu,
+            &window_menu,
+        ],
+    )
 }
 
 fn main() {

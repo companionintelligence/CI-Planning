@@ -3,7 +3,11 @@
 //! `client/src/lib/server-config.ts`, so the desktop app and the phone shells accept the same
 //! addresses and refuse the same ones.
 
-use std::{fs, path::PathBuf, time::Duration};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -56,7 +60,11 @@ pub fn normalize(input: &str) -> Option<String> {
     let candidate = if has_scheme(raw) {
         raw.to_string()
     } else {
-        let scheme = if looks_local(&bare_host(raw)) { "http" } else { "https" };
+        let scheme = if looks_local(&bare_host(raw)) {
+            "http"
+        } else {
+            "https"
+        };
         format!("{scheme}://{raw}")
     };
     let url = Url::parse(&candidate).ok()?;
@@ -76,7 +84,9 @@ fn has_scheme(raw: &str) -> bool {
         Some(end) => {
             let scheme = &raw[..end];
             scheme.starts_with(|c: char| c.is_ascii_alphabetic())
-                && scheme.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+                && scheme
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
         }
         None => false,
     }
@@ -86,12 +96,18 @@ fn has_scheme(raw: &str) -> bool {
 fn bare_host(raw: &str) -> String {
     let authority = raw.split(['/', '?', '#']).next().unwrap_or_default();
     let without_port = match authority.rfind(':') {
-        Some(i) if i + 1 < authority.len() && authority[i + 1..].bytes().all(|b| b.is_ascii_digit()) => {
+        Some(i)
+            if i + 1 < authority.len()
+                && authority[i + 1..].bytes().all(|b| b.is_ascii_digit()) =>
+        {
             &authority[..i]
         }
         _ => authority,
     };
-    without_port.trim_start_matches('[').trim_end_matches(']').to_string()
+    without_port
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_string()
 }
 
 /// Hosts a person types without a scheme that are almost certainly on their own network.
@@ -137,7 +153,11 @@ pub async fn probe(base: &str) -> Result<(), Problem> {
 /// One GET. A transport failure or a 5xx means nothing Planning-shaped is there, so it is
 /// `Unreachable`. Any other answer comes back as whether it succeeded, with its body parsed as
 /// JSON (`Null` when it is not JSON).
-async fn get_json(client: &reqwest::Client, base: &str, path: &str) -> Result<(bool, Value), Problem> {
+async fn get_json(
+    client: &reqwest::Client,
+    base: &str,
+    path: &str,
+) -> Result<(bool, Value), Problem> {
     let response = client
         .get(format!("{base}{path}"))
         .send()
@@ -161,25 +181,44 @@ struct Saved {
     url: String,
 }
 
-fn saved_path(app: &AppHandle) -> Option<PathBuf> {
-    app.path().app_config_dir().ok().map(|dir| dir.join(SAVED_FILE))
+/// The file that holds the saved address inside the settings folder `dir`.
+fn saved_file(dir: &Path) -> PathBuf {
+    dir.join(SAVED_FILE)
 }
 
-/// The address saved on this machine. It goes through `normalize` again, so a hand-edited file
-/// cannot hold anything the connect page would have refused.
-pub fn load_saved(app: &AppHandle) -> Option<String> {
-    let text = fs::read_to_string(saved_path(app)?).ok()?;
+/// The address saved in the settings folder `dir`. It goes through `normalize` again, so a
+/// hand-edited file cannot hold anything the connect page would have refused.
+fn load_from(dir: &Path) -> Option<String> {
+    let text = fs::read_to_string(saved_file(dir)).ok()?;
     let saved: Saved = serde_json::from_str(&text).ok()?;
     normalize(&saved.url)
 }
 
+/// Save `url` in the settings folder `dir`, creating the folder if it is missing.
+fn save_to(dir: &Path, url: &str) -> Result<(), String> {
+    fs::create_dir_all(dir)
+        .map_err(|error| format!("Could not create the settings folder: {error}"))?;
+    let json = serde_json::to_string_pretty(&Saved {
+        url: url.to_string(),
+    })
+    .map_err(|error| error.to_string())?;
+    fs::write(saved_file(dir), json)
+        .map_err(|error| format!("Could not save the server address: {error}"))
+}
+
+fn settings_dir(app: &AppHandle) -> Option<PathBuf> {
+    app.path().app_config_dir().ok()
+}
+
+/// The address saved for this app, if one has been chosen and it still passes `normalize`.
+pub fn load_saved(app: &AppHandle) -> Option<String> {
+    load_from(&settings_dir(app)?)
+}
+
 pub fn save(app: &AppHandle, url: &str) -> Result<(), String> {
-    let path = saved_path(app).ok_or_else(|| String::from("This system has no settings folder for the app."))?;
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir).map_err(|error| format!("Could not create the settings folder: {error}"))?;
-    }
-    let json = serde_json::to_string_pretty(&Saved { url: url.to_string() }).map_err(|error| error.to_string())?;
-    fs::write(&path, json).map_err(|error| format!("Could not save the server address: {error}"))
+    let dir = settings_dir(app)
+        .ok_or_else(|| String::from("This system has no settings folder for the app."))?;
+    save_to(&dir, url)
 }
 
 #[cfg(test)]
@@ -188,20 +227,47 @@ mod tests {
 
     #[test]
     fn normalizes_the_documented_forms() {
-        assert_eq!(normalize("192.168.1.20:3848").as_deref(), Some("http://192.168.1.20:3848"));
-        assert_eq!(normalize("planning.example.com").as_deref(), Some("https://planning.example.com"));
-        assert_eq!(normalize("https://x.y/planning/").as_deref(), Some("https://x.y/planning"));
-        assert_eq!(normalize("http://localhost:3848/?q=1#frag").as_deref(), Some("http://localhost:3848"));
+        assert_eq!(
+            normalize("192.168.1.20:3848").as_deref(),
+            Some("http://192.168.1.20:3848")
+        );
+        assert_eq!(
+            normalize("planning.example.com").as_deref(),
+            Some("https://planning.example.com")
+        );
+        assert_eq!(
+            normalize("https://x.y/planning/").as_deref(),
+            Some("https://x.y/planning")
+        );
+        assert_eq!(
+            normalize("http://localhost:3848/?q=1#frag").as_deref(),
+            Some("http://localhost:3848")
+        );
         assert_eq!(normalize("myserver").as_deref(), Some("http://myserver"));
-        assert_eq!(normalize("nas.lan:3848").as_deref(), Some("http://nas.lan:3848"));
-        assert_eq!(normalize("[::1]:3848").as_deref(), Some("http://[::1]:3848"));
+        assert_eq!(
+            normalize("nas.lan:3848").as_deref(),
+            Some("http://nas.lan:3848")
+        );
+        assert_eq!(
+            normalize("[::1]:3848").as_deref(),
+            Some("http://[::1]:3848")
+        );
     }
 
     #[test]
     fn plain_http_without_a_scheme_is_only_for_the_local_network() {
-        assert_eq!(normalize("planning.ts.net").as_deref(), Some("https://planning.ts.net"));
-        assert_eq!(normalize("192.168.1.20").as_deref(), Some("http://192.168.1.20"));
-        assert_eq!(normalize("http://planning.example.com").as_deref(), Some("http://planning.example.com"));
+        assert_eq!(
+            normalize("planning.ts.net").as_deref(),
+            Some("https://planning.ts.net")
+        );
+        assert_eq!(
+            normalize("192.168.1.20").as_deref(),
+            Some("http://192.168.1.20")
+        );
+        assert_eq!(
+            normalize("http://planning.example.com").as_deref(),
+            Some("http://planning.example.com")
+        );
     }
 
     #[test]
@@ -248,9 +314,15 @@ mod tests {
     #[test]
     fn probe_refuses_a_web_server_that_is_not_planning() {
         let not_json = fake_server("<html>hello</html>", r#"{"mode":"standalone"}"#);
-        assert_eq!(tauri::async_runtime::block_on(probe(&not_json)), Err(Problem::NotPlanning));
+        assert_eq!(
+            tauri::async_runtime::block_on(probe(&not_json)),
+            Err(Problem::NotPlanning)
+        );
         let no_mode = fake_server(r#"{"ok":true}"#, "<html>sign in</html>");
-        assert_eq!(tauri::async_runtime::block_on(probe(&no_mode)), Err(Problem::NotPlanning));
+        assert_eq!(
+            tauri::async_runtime::block_on(probe(&no_mode)),
+            Err(Problem::NotPlanning)
+        );
     }
 
     #[test]
@@ -259,6 +331,33 @@ mod tests {
         let port = listener.local_addr().expect("local address").port();
         drop(listener); // the port is closed again before the probe runs
         let base = format!("http://127.0.0.1:{port}");
-        assert_eq!(tauri::async_runtime::block_on(probe(&base)), Err(Problem::Unreachable));
+        assert_eq!(
+            tauri::async_runtime::block_on(probe(&base)),
+            Err(Problem::Unreachable)
+        );
+    }
+
+    #[test]
+    fn a_saved_address_round_trips_and_is_checked_on_the_way_back() {
+        let dir =
+            std::env::temp_dir().join(format!("companion-planning-desktop-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(load_from(&dir), None);
+
+        save_to(&dir, "https://planning.example.com/app").expect("save the address");
+        assert_eq!(
+            load_from(&dir).as_deref(),
+            Some("https://planning.example.com/app")
+        );
+
+        // A hand-edited file goes through the same rules as the connect page.
+        fs::write(saved_file(&dir), r#"{"url":"ftp://files.example.com"}"#)
+            .expect("write a bad address");
+        assert_eq!(load_from(&dir), None);
+
+        fs::write(saved_file(&dir), "not json").expect("write a damaged file");
+        assert_eq!(load_from(&dir), None);
+
+        fs::remove_dir_all(&dir).expect("clean up the test folder");
     }
 }
