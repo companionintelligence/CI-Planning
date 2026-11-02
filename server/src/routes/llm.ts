@@ -31,6 +31,8 @@ export function llmRouter() {
         // with an un-pulled model produced a green light over dead features.
         available: ollama.available,
         ready: ollama.ready,
+        // Which API answered, so the client names the right one: Ollama, or the AI endpoint the Hub set up.
+        provider: ollama.provider,
         models: ollama.models,
         fastModel: ollama.fastModel,
         qualityModel: ollama.qualityModel,

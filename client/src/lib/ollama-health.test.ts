@@ -56,6 +56,12 @@ describe('ollamaHealth', () => {
 });
 
 describe('ollamaHealthDescription', () => {
+  it('says the AI endpoint is not answering, not Ollama, when the Hub provides the AI', () => {
+    const text = ollamaHealthDescription(base({ available: false, provider: 'openai' }));
+    expect(text).toMatch(/AI endpoint/);
+    expect(text).not.toMatch(/Ollama/);
+  });
+
   it('tells you how to start Ollama when it is down', () => {
     expect(ollamaHealthDescription(base({ available: false }))).toMatch(/start Ollama/i);
   });

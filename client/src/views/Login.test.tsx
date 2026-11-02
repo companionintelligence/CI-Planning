@@ -228,6 +228,17 @@ describe('Login — ?sso_error= from the Portal callback (B1)', () => {
     expect(alert.textContent).not.toMatch(/invite you to the organization/);
   });
 
+  it('unknown_account reads as the missing-account refusal, not the generic copy', async () => {
+    currentParams = { sso_error: 'unknown_account' };
+    const { container } = await renderLogin(cfg({}));
+    const alert = container.querySelector('[role="alert"]')!;
+    expect(alert.textContent).toContain('this server has no account for you yet');
+    expect(alert.textContent).toContain("Ask the server's operator to create one, then try again.");
+    expect(alert.textContent).toContain('unknown_account'); // the raw code stays visible for support
+    expect(alert.textContent).not.toMatch(/cancelled or failed/);
+    expect(alert.textContent).not.toMatch(/invite you to the organization/);
+  });
+
   it('no error, no banner', async () => {
     const { container } = await renderLogin(cfg({}));
     expect(container.querySelector('[role="alert"]')).toBeNull();

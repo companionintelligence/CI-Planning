@@ -1,4 +1,5 @@
 import { createSignal, createResource, createEffect, onMount, For, Show } from 'solid-js';
+import { editableOwnerName } from '../lib/owner-name.js';
 import { api } from '../lib/api.js';
 import {
   prefs, refetchPrefs, showToast, onboardingStep, setOnboardingStep, onboardingForceOpen, setOnboardingForceOpen,
@@ -69,7 +70,7 @@ export function OnboardingWizard() {
   const [email, setEmail] = createSignal('');
   createEffect(() => {
     const m = me();
-    if (m) { setName(m.name ?? ''); setEmail(m.email ?? ''); }
+    if (m) { setName(editableOwnerName(m.name)); setEmail(m.email ?? ''); }
   });
 
   /**

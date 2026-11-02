@@ -58,7 +58,7 @@ SQLite is the single source of truth for data.
 |---|---|
 | **Tasks and objectives** | Track owner-scoped tasks, recurrences, objectives and audit history. |
 | **Calendar and time blocks** | Plan work locally and optionally sync to Google Calendar. |
-| **Local AI assistance** | Use Ollama for briefings, task extraction, grooming and auto-scheduling. |
+| **Local AI assistance** | Use a local model (Ollama, or your CI Hub's AI) for briefings, task extraction, grooming and auto-scheduling. |
 | **Integration boundaries** | Add Companion OIDC, calendar sync, MCP and push without moving the local SQLite records. |
 
 ## How it fits together
@@ -1131,6 +1131,13 @@ below are current.
 
 ![Companion Planning — first-run walkthrough: create a task and auto-schedule it](docs/ftue.gif)
 
+The first-run walkthrough has five steps: your name, your time and place, connecting a
+source (Google, or sample data), your trust setting, and a first sync. The *Connect a
+source* step also shows **Your memory and AI**: whether Companion Memory is connected, or
+configured for this server through `CI_SERVER_URL`, and whether an AI model is ready. It
+reads that state and changes nothing. Connect or change either under **Settings →
+Connections**. Replay the walkthrough from **Settings → Profile**.
+
 ## Walkthrough video
 
 > 📹 A full video walkthrough is coming soon.
@@ -2149,42 +2156,36 @@ Publishing is manual: [`docker-publish.yml`](.github/workflows/docker-publish.ym
 `workflow_dispatch`-only. Dispatched on a release tag it pushes `:latest`, `:sha-<short>` and
 `:<tag>`; dispatched on any other ref it pushes `:latest` and `:sha-<short>`.
 
-There are three ways to sign in. A CI Hub install uses the first two together; a
-self-hoster without a Companion Portal uses the third.
+Sign-in on a CI Hub install is a username and password. A self-hosted install uses the same
+form with `DISABLE_OIDC=true`, and can add Companion Portal sign-in where Companion Portal is
+the sign-in host.
 
-**1. Companion Portal — the CI Hub install.** On a CI Hub appliance, install
+**1. Username and password — the CI Hub install.** On a CI Hub appliance, install
 **Companion Planning** from the marketplace and open it. The Hub has already done the
-wiring: it mounts `${APP_DATA_DIR}/data` at `/data`, points `OLLAMA_URL` at its own
-Ollama, sets `TRUST_PROXY=true` and `PUBLIC_BASE_URL`, and injects its paired portal's
-issuer into `CIPORTAL_ISSUER`. Sign in with your Companion Portal account:
+wiring: it mounts `${APP_DATA_DIR}/data` at `/data`, gives the app its AI endpoint
+(`APP_OLLAMA_URL` when the Hub runs Ollama, `APP_OPENAI_BASE_URL` when it runs vLLM or
+Lemonade), sets `TRUST_PROXY=true` and `PUBLIC_BASE_URL`, and sets `DISABLE_OIDC=true`. The
+install asks for an admin password, which seeds **one local operator** on first boot. Sign
+in on the login screen with that username and password. The operator creates further
+accounts from **Settings → Accounts**.
 
-- **The first person to sign in becomes the operator.** Everyone who signs in after that
-  is a **member** (the marketplace manifest sets `AUTH_AUTO_PROVISION=true`); the
-  operator promotes or invites people from **Settings → Accounts**.
-- **No Companion Portal account yet?** Create one at the portal
-  ([hub.ci.computer](https://hub.ci.computer)). The portal only redirects back to a Hub's
-  tunnel or tailnet address for members of the organization that owns that Hub, so **ask
-  the Hub's owner to invite you into their organization before your first sign-in** —
-  until then the portal refuses the redirect.
-
-**2. The install-time admin password — break-glass local login.** The username/password
-the marketplace asks for at install (`AUTH_DEFAULT_USERNAME` / `AUTH_DEFAULT_PASSWORD`)
-seeds **one local operator** on first boot. It is the login that still works when the
-portal is unreachable (tunnel down, portal outage, Hub not yet paired): use the
-username/password form on the login screen, or `POST /api/auth/login`. Leave the password
-unset and nothing is seeded — the first portal sign-in claims the operator role instead.
-
-**3. Password-only, no portal.** For a self-hosted install with no Companion Portal, add
+**2. Password-only, no portal.** For a self-hosted install with no Companion Portal, add
 `DISABLE_OIDC=true`: the login screen offers only username/password, the admin password
 is **required** (the container refuses to boot without a login path), and the operator
 creates further accounts from **Settings → Accounts** (each gets a set-password link —
 emailed when `SMTP_*` is configured, otherwise shown to the operator).
 
-Outside a Hub, option 1 works too, with one portal rule to know: the portal only redirects
-back to **on-device addresses** — `localhost`, `*.localhost`, `*.local`, a LAN (RFC 1918)
-IP — unless the host is a Hub's provisioned tunnel/tailnet name. So a plain `docker run`
-reachable at `http://<lan-ip>:3848` can use the portal; a public hostname cannot without
-a Hub.
+**Companion Portal sign-in** applies only where Companion Portal is the sign-in host for the
+install. The login screen then offers it alongside the form. The first Portal sign-in on an
+instance with no operator becomes the operator. `AUTH_AUTO_PROVISION` (off unless set)
+decides what happens to a new Portal account. When it is on, the person confirms the new
+Planning account on one short page first. When it is off, the sign-in returns to the login
+screen and says why, and the operator creates the account under **Settings → Accounts**.
+
+The portal only redirects back to **on-device addresses** — `localhost`, `*.localhost`,
+`*.local`, a LAN (RFC 1918) IP — unless the host is a Hub's provisioned tunnel/tailnet name.
+So a plain `docker run` reachable at `http://<lan-ip>:3848` can use the portal; a public
+hostname cannot without a Hub.
 
 ```bash
 docker run -d --name ci-planning \
@@ -2285,10 +2286,14 @@ starts it, and it is not a supported deployment option yet.
 | `TRUST_PROXY` | `false` | Set when behind a trusted TLS-terminating reverse proxy (e.g. CI-Hub's tunnel): honors `X-Forwarded-Proto` (⇒ Secure session cookies over HTTPS) and `X-Forwarded-For` (⇒ real client IP for login rate-limiting). |
 | `CORS_ALLOWED_ORIGINS` | (unset) | Comma-separated browser origins allowed to call `/api` cross-origin, echoed back exactly (never `*`). Empty by default: the web app is same-origin, and the [mobile app](#mobile-app-ios-and-android) needs no CORS setting either, since it calls the server through the native HTTP stack. Set it only if the web app is served from a different origin than the API. |
 | `CSP_EXTRA_CONNECT_SRC` | (unset) | Extra origins the browser may call, added to the Content-Security-Policy `connect-src` (space/comma-separated). The app's own origin and the Sentry DSN origin are always allowed. Every response carries security headers (CSP, `nosniff`, `Referrer-Policy`, `X-Frame-Options`, `Permissions-Policy`; HSTS over HTTPS). |
-| `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama endpoint. Unreachable ⇒ AI features degrade gracefully (template briefings, dedupe off). |
+| `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama endpoint. Unreachable ⇒ AI features degrade gracefully (template briefings, dedupe off). Read as `APP_OLLAMA_URL` when unset. When neither is set and `APP_OPENAI_BASE_URL` is, the AI endpoint answers instead. |
 | `OLLAMA_FAST` | `qwen2.5:0.5b` | Fast model for extraction/triage. A last-resort default: used when it is installed, otherwise the app auto-selects an installed model (see *5. Ollama* under Local development). Setting it **pins** the tier verbatim, and an unpulled pin fails with an `ollama pull …` error. Legacy alias: `OLLAMA_SMALL` (still accepted; `OLLAMA_FAST` wins when both are set). |
 | `OLLAMA_QUALITY` | `gemma3n:e4b` | Quality model for briefings. Same rule as `OLLAMA_FAST`: used when installed, otherwise auto-selected; setting it pins the tier. Legacy alias: `OLLAMA_MEDIUM` (still accepted; `OLLAMA_QUALITY` wins when both are set). |
 | `OLLAMA_EMBED` | `nomic-embed-text` | Embedding model for dedupe. Same rule: used when installed, otherwise an installed embedding model is auto-selected; setting it pins the tier. |
+| `APP_OPENAI_BASE_URL` | (unset) | An OpenAI-compatible endpoint (`…/v1`, added when missing) for AI, used when no Ollama URL is set. The CI Hub writes it when its AI runs on vLLM or Lemonade. Chat, embeddings and the model list all go through it. |
+| `APP_OPENAI_API_KEY` | (unset) | Bearer token for `APP_OPENAI_BASE_URL`, for an endpoint that takes one. Never written to logs or errors. |
+| `APP_CHAT_MODEL` | (unset) | Chat model on `APP_OPENAI_BASE_URL`. Pins both the fast and quality tiers. `auto` lets the endpoint choose a model it holds. |
+| `APP_EMBED_MODEL` | (unset) | Embedding model on `APP_OPENAI_BASE_URL`. When unset, an embedding model the endpoint lists by name (containing `embed`) is used if it has one. The CI Hub does not map an embedding model into this app, so operators set this themselves. |
 | `TZ` | UTC | Container timezone — set it so "today" and cron schedules match your day (the Compose file defaults it to `America/Los_Angeles`; set `TZ` in `.env`). Safety net: if the stored scheduling timezone is still the un-chosen UTC default, the web app adopts the browser's timezone on first load (once per browser). |
 | `AUTH_MODE` | `test` | Auth mode: `test` (dev/CI — system owner injected, **forbidden in production**), `standalone` (hashed `x-api-key` stored in the `api_keys` table; API clients only), `sso` (the browser login — **Companion Portal** sign-in and/or local username/password; both end in a signed httpOnly session cookie). The CI-Hub install and the Compose file run `sso`; the Docker image itself sets no default, so a plain `docker run` exits at boot unless you choose a mode. |
 | `AUTH_AUTO_PROVISION` | `false` | When `true`, an unknown Companion Portal `sub` provisions a new owner row instead of returning 403. The **first** such owner on an instance with no operator becomes the operator; later ones are members. The CI-Hub marketplace install sets it to `true` (the portal already limits sign-in to members of the Hub's organization). |
@@ -2516,7 +2521,7 @@ and the Simulator `.app` is unsigned. Nothing here is store-ready.
   version pinned in `package.json`, no global install. Node 26 no longer bundles Corepack,
   so run `npm install -g corepack` first (the Dockerfile does the same) or install pnpm 11
   another way
-- **Ollama** (optional) — only for the AI features; everything else runs without it
+- **An AI model** (optional) — Ollama, or your CI Hub's AI endpoint; only the AI features need it, and everything else runs without it
 
 The repo is a two-package pnpm workspace: `server/` (Koa + TypeScript API) and
 `client/` (SolidJS + Vite PWA).
