@@ -158,7 +158,7 @@ much smaller set. This glossary fixes the canon at **9 nouns** and demotes every
   · `saved` (a reusable template).
 - **Time Block kinds** (hidden by default): task · meeting · focus · break · buffer
   · container.
-- **Routine flavors:** routine · ritual (flagged off via `enable_rituals`).
+- **Routine flavors:** routine · ritual (flagged off via `enable_rituals`; Settings → Preferences → Routine Settings).
   **Habit is a Task subtype** surfaced in the Routines menu — *not* a Routine
   flavor or a “pattern type”.
 - **Tag levels (per-entity, dilution):** top-level (full match weight,
