@@ -8,6 +8,11 @@ version at `GET /api/health` (`release`).
 ## [Unreleased]
 
 ### Changed
+- **A new app icon:** a calendar with a check mark on the brand teal, for iOS, Android and the web. The desktop
+  app gets it with its own release.
+- **The iOS app is iPhone-only for now.** It has not been tested on iPad.
+- **iOS allows plain http to `.lan` and `.home.arpa` addresses**, as the app already allows for `.local` names and
+  IP addresses. Other names still need https.
 - **Companion Portal sign-in brings you back to the page you asked for**, as Companion Memory does. When the
   app sends you to the login screen it remembers where you were going (same-origin paths only, for ten
   minutes), and the Portal round trip, the first-time account confirmation and the username sign-in all
