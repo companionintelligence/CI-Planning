@@ -24,8 +24,19 @@ version at `GET /api/health` (`release`).
   or configured for this server, and whether an AI model is ready. Connecting stays in Settings.
 - **A Companion Portal sign-in by someone without an account here says so.** The sign-in screen explains that the
   account is not set up on this server, instead of showing a bare error.
+- **The app shows its own mark everywhere.** The navigation, the mobile top bar and the sign-in screens showed a
+  generic chip icon. They now show the calendar mark from the app icon.
+- **The web app opens on the mark, not a blank page.** The app's mark on its dark background shows from the first
+  paint and while it checks your sign-in. Before, the page was blank and then a bare spinner.
+- **The iOS and Android launch screens show the app's mark** on its dark background. Before, the framework's
+  placeholder showed while the app started.
+- **The app installs with a maskable icon**, so Android can crop it to the launcher's shape without clipping the mark.
+- **The Tasks page offers Add a task when it is empty**, as well as connecting a source.
 
 ### Fixed
+- **The name field no longer opens as "System".** A new owner is seeded with that placeholder, and the first-run
+  wizard and the profile showed it as the owner's name. Both now open empty and ask for one, and Save stays off
+  until you type a name.
 - **The Hub's Ollama address is read.** The CI Hub writes `APP_OLLAMA_URL` for the app; Planning now reads it, so an
   Ollama on the Hub is found without also setting `OLLAMA_URL`.
 - **Estimate calibration no longer learns from the schedule's own plan.** The close ritual sent its
