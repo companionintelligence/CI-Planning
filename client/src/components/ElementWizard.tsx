@@ -138,7 +138,8 @@ export function ElementWizard() {
   // Phase B (0134): 1–3 categories, tasks AND blocks; array order = stripe order.
   const [categoryIds, setCategoryIds] = createSignal<string[]>([]);
   // True once the owner used the picker themselves; every seed (an edit's own row, a parse,
-  // a fresh open) puts it back to false. An EDIT save sends the picker only when it is true.
+  // a fresh open) puts it back to false. A task or habit EDIT save sends the picker only when
+  // it is true; a Time Block edit sends it either way.
   const [categoriesTouched, setCategoriesTouched] = createSignal(false);
   // Phase B (0135): per-element texture override (on by default; null colour = derive).
   const [textureEnabled, setTextureEnabled] = createSignal(true);
@@ -912,12 +913,15 @@ export function ElementWizard() {
         // AF-9: time-block secondary tags live in `intentions` (round-tripped on
         // edit), so no separate blind-preserve set is passed.
         // Phase B: 1–3 category names (picker order = stripe order) + texture override.
-        // An EDIT sends the picker only if the owner used it (a Time Block edit too). The form
-        // seeds it from the row, so sending it back is no answer: it would close the task's
-        // learning row as accepted, and a series save opened from a generated instance (which
-        // carries no category rows) would send that empty set, wiping the template's
-        // categories and closing its row with a correction nobody made. Add sends the picker.
-        categories: isEdit() && !categoriesTouched() ? undefined : categoryNames(),
+        // A task or habit EDIT sends the picker only if the owner used it. The form seeds it
+        // from the row, so sending it back is no answer: it would close the task's learning
+        // row as accepted, and a series save opened from a generated instance (which carries
+        // no category rows) would send that empty set, wiping the template's categories and
+        // closing its row with a correction nobody made. Add sends the picker. A Time Block
+        // edit sends it always, as before: a block has no learning row, and its save re-stamps
+        // the block's frozen colour from the first category (services/blocks.ts updateBlock).
+        categories: isEdit() && (effectiveKind === 'task' || effectiveKind === 'habit') && !categoriesTouched()
+          ? undefined : categoryNames(),
         textureEnabled: textureEnabled(),
         textureColorToken: textureColorToken(),
         // Motivation (0141): only when the user touched the control this session.

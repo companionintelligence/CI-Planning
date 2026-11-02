@@ -23,9 +23,10 @@ import { createSignal } from 'solid-js';
  *   7. a habit Add (Repeat + Track as habit) carries it as well.
  *
  * And the other half of the evidence rule, on EDIT: the picker is seeded from the row, so
- * an edit sends `categories` only when the owner used the picker (a Time Block edit too);
- * a series save opened from a generated instance (which has no category rows) would
- * otherwise send that empty set and wipe the template's categories. Add always sends it.
+ * a task or habit edit sends `categories` only when the owner used the picker; a series
+ * save opened from a generated instance (which has no category rows) would otherwise send
+ * that empty set and wipe the template's categories. Add always sends it. A Time Block
+ * edit is outside the rule (a block has no learning row) and sends the picker as before.
  *
  * The REAL lib/element.ts runs (claimIfFaithful, saveElement), so `api.tasks.create` is
  * the wire seam. Mocked: `../lib/api.js` and `../stores/index.js` (plus three leaf
@@ -68,8 +69,8 @@ const TAGS = [
 ];
 
 type ModalState = {
-  open: boolean; mode: 'add' | 'edit'; kind: 'task' | 'timeblock' | null;
-  editTarget?: { kind: 'task' | 'timeblock'; id: string };
+  open: boolean; mode: 'add' | 'edit'; kind: 'task' | 'habit' | 'timeblock' | null;
+  editTarget?: { kind: 'task' | 'habit' | 'timeblock'; id: string };
 };
 const CLOSED: ModalState = { open: false, mode: 'add', kind: null };
 const [modal, setModal] = createSignal<ModalState>(CLOSED);
@@ -108,7 +109,7 @@ const parseOk = (categories: string[] | undefined, claim: { text: string; catego
 });
 
 const open = (kind: 'task' | 'timeblock' = 'task') => setModal({ open: true, mode: 'add', kind });
-const openEdit = (kind: 'task' | 'timeblock', id: string) => setModal({ open: true, mode: 'edit', kind, editTarget: { kind, id } });
+const openEdit = (kind: 'task' | 'habit' | 'timeblock', id: string) => setModal({ open: true, mode: 'edit', kind, editTarget: { kind, id } });
 const nlInput = () => screen.getByPlaceholderText(/^Describe it/) as HTMLInputElement;
 const titleInput = () => screen.getByPlaceholderText(/title…$/) as HTMLInputElement;
 const chip = (name: string) => screen.getByRole('button', { name });
@@ -336,7 +337,7 @@ describe('ElementWizard — what happens to the claim around the create', () => 
   });
 });
 
-describe('ElementWizard — an edit sends the category picker only if the owner used it', () => {
+describe('ElementWizard — a task or habit edit sends the category picker only if the owner used it', () => {
   const taskRow = (over: Record<string, unknown> = {}) => ({
     id: 'task-9', title: 'Gym session', status: 'open', tags: ['work'], secondary_tags: [],
     categories: ['leisure'], priority: 3, scheduled_for: '2026-11-03', task_time: '09:00',
@@ -425,7 +426,26 @@ describe('ElementWizard — an edit sends the category picker only if the owner 
     expect('categories' in updateCall(0).body).toBe(false);
   });
 
-  it('time block edit follows the same rule: untouched sends none, used sends the picker', async () => {
+  it('habit edit follows the task rule: untouched sends none, used sends the picker', async () => {
+    TASKS = [taskRow({ id: 'habit-1', title: 'Stretch', is_habit: true, recurrence_rule: 'FREQ=DAILY' })];
+    render(() => <ElementWizard />);
+    openEdit('habit', 'habit-1');
+    expect(chip('Leisure').className).toContain('border-primary');
+
+    await press('Save');
+    expect(updateCall(0).id).toBe('habit-1');
+    expect('categories' in updateCall(0).body).toBe(false);
+
+    setModal(CLOSED);
+    openEdit('habit', 'habit-1');
+    fireEvent.click(chip('Career'));
+    await press('Save', 2);
+    expect(updateCall(1).body.categories).toEqual(['leisure', 'career']);
+  });
+
+  it('time block edit is outside the rule: the picker is sent whether or not it was touched', async () => {
+    // A block has no learning row, and the server re-stamps its colour from the first
+    // category on any category-bearing save, so an untouched edit keeps sending what it shows.
     BLOCKS = [blockRow()];
     render(() => <ElementWizard />);
     openEdit('timeblock', 'blk-1');
@@ -434,13 +454,24 @@ describe('ElementWizard — an edit sends the category picker only if the owner 
     await press('Save');
     const untouched = blocksUpdateMock.mock.calls[0]![1] as Record<string, unknown>;
     expect(untouched.title).toBe('Deep work');
-    expect('categories' in JSON.parse(JSON.stringify(untouched))).toBe(false);
+    expect(untouched.categories).toEqual(['health']);
+    expect(tasksUpdateMock).not.toHaveBeenCalled();
 
     setModal(CLOSED);
     openEdit('timeblock', 'blk-1');
     fireEvent.click(chip('Career'));
     await press('Save', 2);
     expect((blocksUpdateMock.mock.calls[1]![1] as Record<string, unknown>).categories).toEqual(['health', 'career']);
+  });
+
+  it('time block edit, untouched with no categories: [] still goes out (the explicit clear it always sent)', async () => {
+    BLOCKS = [{ ...blockRow(), categories: [] }];
+    render(() => <ElementWizard />);
+    openEdit('timeblock', 'blk-1');
+
+    await press('Save');
+    const wire = JSON.parse(JSON.stringify(blocksUpdateMock.mock.calls[0]![1]));
+    expect(wire.categories).toEqual([]);
   });
 
   it('ADD always sends the picker, used or not (a new row has nothing to leave alone)', async () => {

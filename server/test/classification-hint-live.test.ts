@@ -32,6 +32,9 @@
  *                     Rewritten as the run proceeds.
  *   Offline self-check of the pure helpers below, no Ollama and no model time:
  *   LIVE_HINT=1 ./node_modules/.bin/vitest run test/classification-hint-live.test.ts -t "pure helpers"
+ *   It also builds the prompt with the real enrichQuick (a dry call, nothing reaches Ollama) and
+ *   checks both hint layouts against it, so a change to where enrichQuick puts the hints stops
+ *   the offline check before any model time is spent.
  *
  * WHAT IT DRIVES. The REAL routes through startTestServer, not a re-typed prompt. For the
  * evidence: POST /api/tasks/quick/parse (the real model, no hint yet because no index
@@ -65,9 +68,17 @@
  * A, B, C, S, A2, P so warm-up drift cannot favour one arm:
  *   A   baseline: enrichQuick(text, parse, vocab) with no hints (today's prompt)
  *   A2  a repeat of A: the noise floor
- *   B   SHIPPED: POST /api/tasks/quick/parse through the real route (frequency hints, accept filter)
- *   C   B's captured prompt with the hint blocks moved to just before 'Entry:' (hint last).
- *       NON-GATING diagnostic, so a null result can be explained.
+ *   B   SHIPPED: POST /api/tasks/quick/parse through the real route (frequency hints, accept
+ *       filter). Since 2026-11-02 the hint blocks sit LAST: after the 'Choose ... never invent.'
+ *       line and immediately before 'Entry:' (see the layout note under the gates).
+ *   C   ADJACENT, the layout B had in the first three live runs (NON-GATING diagnostic, kept
+ *       so the comparison with the layout that failed G3 on gemma3:1b stays on the page): B's
+ *       captured prompt with each hint block moved back to just after the field line it
+ *       governs, with the extra newline the old enrichQuick added (git show 96dbea90:
+ *       server/src/agents/quickadd.ts), so the prompt that version sent, byte for byte.
+ *       CHANGED MEANING: in the artifacts of the first three runs B is adjacent and C is hint
+ *       last; from the confirmation runs on it is the other way round. An artifact says which
+ *       in its `layouts` key; one without that key is from before the change.
  *   P   PLACEBO (added 2026-11-02, after the first runs; NON-GATING; run last in each cell so
  *       the registered order of the others is untouched): B's block, in B's place, built from
  *       real lessons about OTHER conventions: as many lessons as B shows, as close to B's
@@ -83,6 +94,8 @@
  *       (N0 is an addition to the plan: without it a gain of N over A could be the narrow
  *       prompt rather than the hint.)
  *   A0  not an arm of the comparison: the pre-training baseline on the targets that decides headroom.
+ *   S, B1 and P call enrichQuick themselves, so they carry the shipped layout; C is the only
+ *   arm whose layout the harness writes.
  *
  * METRICS. First-category accuracy, per model and arm, on TARGET titles and on CONTROL
  * titles, as per-ITEM majority over RUNS (strict: more than half the runs; at temperature
@@ -153,13 +166,23 @@
  *   FAIL mean exactly what was registered; the note says how much a PASS can be worth.
  *   2026-11-02: arm P, the answer-shape table and the provenance block are described above.
  *
+ * THE LAYOUT OF B CHANGED AFTER THE FIRST THREE LIVE RUNS. No gate, threshold or verdict word
+ * above is edited by it; what changed is the layout of the arm the gates are applied to.
+ *   2026-11-02, after the first three live runs: the shipped layout was changed from adjacent
+ *   to hint-last because adjacent failed G3 on gemma3:1b (all keys 99.2% -> 5.0%) while
+ *   hint-last passed G3 on both models and tied adjacent on the gemma3n:e4b targets (7/12 vs
+ *   7/12). The gates are applied unchanged to the new layout in confirmation runs; the first
+ *   three runs are kept as the record of the adjacent layout.
+ *
  * DECISION RULE (the ship rule, restated; the lead decides, the harness only reads it off).
  * Capture ships regardless. The hint half ships only if on the fast tier G2, G3 and G4 hold
  * AND G1 holds. G2 or G3 fails: re-run B with k: 1 (arm B1), then S; if both still fail,
  * drop the hint half. G1 fails with G2 and G3 passing: do not ship the hint half by default,
  * and put arm N in the evidence doc as the basis for a follow-up. If S shows a clear
  * accuracy edge over B AND no latency or residency damage, flip { embedFn: null } to {} in
- * enrichEntry and cite the doc.
+ * enrichEntry and cite the doc. Arm C (the adjacent layout) is never a remedy in this rule:
+ * the layout was changed once for failing G3, and C is only there to show whether it still
+ * does.
  *
  * LATENCY AND RESIDENCY. (a) GATING, G6 above. (b) REPORTED, not gated: POST
  * /api/tasks/quick/parse wall time for an owner without an index (A-style) versus with one
@@ -193,10 +216,14 @@
  * under format:"json", which reads exactly like "unchanged", see lib/models.ts), the first
  * model is the fast tier the app resolves, no completion of a baseline arm (A0, A, A2, N0)
  * is empty or errored, the hint is present exactly once in every B/C/S/B1/N prompt that had
- * a retrieval and in the right place, none in any A/A2/A0/N0 prompt, removing the hints from
- * a B prompt gives the stock prompt, the no-index prompts are byte-identical, the capture
- * wrote the rows it should; and for P, one placebo block in B's place that is additive over
- * the stock prompt and carries no lesson for the title's own value. REPORTED, never asserted:
+ * a retrieval and where its arm puts it (B, S, B1 and P: after the 'never invent.' line, with
+ * nothing but the hint blocks between that line and 'Entry:'; C: beside the field it governs,
+ * a blank line on both sides; N: its own narrow prompt, where only the count is checked),
+ * none in any A/A2/A0/N0 prompt, removing the hints from a B prompt gives the stock prompt
+ * (and from a C prompt too, with the extra newline each block carries there), the no-index
+ * prompts are byte-identical, the capture wrote the rows it should; and for P, one placebo
+ * block in B's place that is additive over the stock prompt and carries no lesson for the
+ * title's own value. REPORTED, never asserted:
  * every effect size, every gate verdict, the answer shape of every arm, how closely P matched
  * B's length, and any empty or errored completion in a hinted arm (that is G3's finding, and
  * asserting it would abort the very verdict the gate exists to give).
@@ -214,7 +241,10 @@ import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { parseQuick } from '../src/engine/quickadd.js';
 import { enrichQuick, type QuickHints } from '../src/agents/quickadd.js';
 import { constrainToVocabulary } from '../src/agents/constrain.js';
-import { MOTIVATION_VALUES } from '../src/agents/rubric.js';
+import {
+  MOTIVATION_VALUES, directionGuide,
+  PRIORITY_RUBRIC, DURATION_RUBRIC, TIME_OF_DAY_RUBRIC, COMPLEXITY_RUBRIC, MOTIVATION_RUBRIC,
+} from '../src/agents/rubric.js';
 import { generateJson, generate, embed, parseJsonLoose } from '../src/mcp/ollama.js';
 import {
   setInstalledModels, parseParamB, resolveModel, resolveEmbedModel, matchInstalled,
@@ -437,6 +467,10 @@ const PROBE_N = 10;
 
 // ── Pure helpers ──────────────────────────────────────────────────────────────
 
+/**
+ * C is the adjacent layout since 2026-11-02 (hint last in the first three runs); B, S, B1 and
+ * P carry the shipped layout, hint blocks last. See ARM_LAYOUTS.
+ */
 type Arm = 'A0' | 'A' | 'A2' | 'B' | 'C' | 'S' | 'B1' | 'N0' | 'N' | 'P';
 type Verdict =
   | 'IMPROVED' | 'HARMED' | 'NO MEASURABLE CHANGE' | 'INCONCLUSIVE: NO HEADROOM' | 'INCONCLUSIVE: NOISE';
@@ -460,6 +494,18 @@ const NARROW_KEYS = ['categories'] as const;
 const ARMS_REPORTED: readonly Arm[] = ['A0', 'A', 'A2', 'B', 'P', 'C', 'S', 'B1', 'N0', 'N'];
 /** The first line of exemplarPrompt's block; every hint contains it exactly once. */
 const HINT_MARKER = 'This user has corrected you before.';
+/**
+ * The end of enrichQuick's last rule line ('Choose direction/categories/tags ONLY from the
+ * given lists — never invent.'). In the shipped layout the hint blocks follow it directly.
+ * Once in the stock prompt: the rubrics say 'never invent a specific hour', not this.
+ */
+const RULES_END = 'never invent.\n';
+/** Opens the entry line, the last of the prompt; nothing follows the entry's text. */
+const ENTRY_OPEN = '\nEntry: "';
+/** The layouts a hint can have in a prompt. 'last' is the shipped one, 'adjacent' is arm C's. */
+type Layout = 'last' | 'adjacent' | 'narrow';
+/** Where each arm puts its hint blocks (arm C changed meaning on 2026-11-02, see the header). A, A2, A0 and N0 carry none. */
+const ARM_LAYOUTS = { B: 'last', C: 'adjacent', S: 'last', B1: 'last', P: 'last', N: 'narrow' } as const;
 
 interface CallRecord {
   arm: Arm;
@@ -568,12 +614,16 @@ function choosable(allowed: readonly string[]): (e: Exemplar) => boolean {
   };
 }
 
-/** The prompt with each hint block (the hint plus the one newline enrichQuick adds) taken out. */
-function withoutHints(prompt: string, hints: readonly string[]): string {
+/**
+ * The prompt with each hint block taken out. In the shipped layout ('last') a block is the
+ * hint itself: it opens and closes with a newline, which is all the separation it gets. In
+ * the adjacent layout (arm C) enrichQuick added one more newline after it.
+ */
+function withoutHints(prompt: string, hints: readonly string[], layout: 'last' | 'adjacent' = 'last'): string {
   let bare = prompt;
   for (const h of hints) {
     if (!h) continue;
-    const block = `${h}\n`;
+    const block = layout === 'adjacent' ? `${h}\n` : h;
     const at = bare.indexOf(block);
     if (at < 0 || bare.indexOf(block, at + 1) >= 0) throw new Error('withoutHints: the hint block is not in the prompt exactly once');
     bare = bare.slice(0, at) + bare.slice(at + block.length);
@@ -581,12 +631,34 @@ function withoutHints(prompt: string, hints: readonly string[]): string {
   return bare;
 }
 
-/** Arm C: the same prompt with the hint blocks moved from beside their fields to just before `Entry:`. */
-function hintLast(prompt: string, hints: readonly string[]): string {
-  const bare = withoutHints(prompt, hints);
-  const entryAt = bare.lastIndexOf('\nEntry: "') + 1;
-  if (entryAt <= 0) throw new Error('hintLast: no Entry: line in the prompt');
-  return bare.slice(0, entryAt) + hints.filter(Boolean).join('') + bare.slice(entryAt);
+/**
+ * Arm C: the layout the hint first shipped in, rebuilt from a prompt in the shipped one. Each
+ * block goes back to just after the field line it governs, with the extra newline the old
+ * enrichQuick added (git show 96dbea90:server/src/agents/quickadd.ts): motivation before the
+ * "categories" line (before "tags" when the owner has no categories), category before the
+ * "tags" line. The result is that enrichQuick's prompt for the same hints, byte for byte; the
+ * pure-helper self-check pins it against a literal of that prompt.
+ */
+function adjacentLayout(prompt: string, hints: { motivation: string; category: string }): string {
+  let out = withoutHints(prompt, [hints.motivation, hints.category]);
+  // The schema's key lines each start a line before the entry; the entry's own text is not searched.
+  const schema = (): string => out.slice(0, out.lastIndexOf(ENTRY_OPEN) + 1);
+  if (!schema()) throw new Error('adjacentLayout: no Entry: line in the prompt');
+  const has = (key: string): boolean => schema().includes(`\n"${key}": `);
+  const insertBefore = (key: string, block: string): void => {
+    const line = schema().indexOf(`\n"${key}": `);
+    if (line < 0) throw new Error(`adjacentLayout: no "${key}" line to put a hint before`);
+    out = out.slice(0, line + 1) + block + out.slice(line + 1);
+  };
+  if (hints.category) {
+    if (!has('categories')) throw new Error('adjacentLayout: a category hint but no "categories" line to put it beside');
+    insertBefore('tags', `${hints.category}\n`);
+  }
+  if (hints.motivation) {
+    if (!has('motivation')) throw new Error('adjacentLayout: a motivation hint but no "motivation" line to put it beside');
+    insertBefore(has('categories') ? 'categories' : 'tags', `${hints.motivation}\n`);
+  }
+  return out;
 }
 
 function flagsFor(recs: readonly CallRecord[], model: string, arm: Arm, title: string): boolean[] {
@@ -1157,21 +1229,125 @@ describe.skipIf(!LIVE)('classification hint · pure helpers', () => {
     expect(hintLatencyGate([], flat(1)).pass).toBe(false); // no data is not a pass
   });
 
-  it('hints go in once, come out again, and move to the end for arm C', () => {
-    const hintA = '\nThis user has corrected you before. Follow their vocabulary, not your own:\n- For "x" you said a; the user chose b.\n';
-    const hintB = '\nThis user has corrected you before. Follow their vocabulary, not your own:\n- For "y" you said c; the user chose d.\n';
-    const stock = '"motivation": m\n"categories": c\n"tags": t\nChoose ONLY from the lists.\nEntry: "gym"';
-    const hinted = '"motivation": m\n' + `${hintA}\n` + '"categories": c\n' + `${hintB}\n` + '"tags": t\nChoose ONLY from the lists.\nEntry: "gym"';
-    expect(occurrences(hinted, HINT_MARKER)).toBe(2);
-    expect(withoutHints(hinted, [hintA, hintB])).toBe(stock);
-    expect(withoutHints(stock, [''])).toBe(stock);
-    expect(() => withoutHints(stock, [hintA])).toThrow();
-    const last = hintLast(hinted, [hintA, hintB]);
-    expect(last.endsWith(`${hintA}${hintB}Entry: "gym"`)).toBe(true);
-    expect(last.replace(hintA + hintB, '')).toBe(stock); // moved, nothing else changed
-    expect(last.indexOf(hintA)).toBeGreaterThan(last.indexOf('Choose ONLY'));
-    expect(occurrences(last, hintA)).toBe(1);
-    expect(hintLast(stock, ['', ''])).toBe(stock); // nothing to move
+  // A miniature of enrichQuick's prompt: the key lines the layouts care about, the last rule line, the entry.
+  const hintA = '\nThis user has corrected you before. Follow their vocabulary, not your own:\n- For "x" you said a; the user chose b.\n';
+  const hintB = '\nThis user has corrected you before. Follow their vocabulary, not your own:\n- For "y" you said c; the user chose d.\n';
+  const mHead = 'Classify.\n"motivation": m\n';
+  const mCats = '"categories": c\n';
+  const mTail = '"tags": t\nChoose ONLY from the lists, never invent.\n';
+  const mEntry = 'Entry: "gym"';
+  const mStock = mHead + mCats + mTail + mEntry;
+  /** The shipped layout: the blocks are the last thing before the entry, with no separator of their own. */
+  const mShipped = mHead + mCats + mTail + hintA + hintB + mEntry;
+  /** The old enrichQuick's: each block beside its field, one more newline after it. */
+  const mAdjacent = mHead + `${hintA}\n` + mCats + `${hintB}\n` + mTail + mEntry;
+  const mHints = { motivation: hintA, category: hintB };
+
+  it('hints go in once and come out again in either layout, and arm C is the old layout rebuilt from the shipped one', () => {
+    expect(ARM_LAYOUTS).toMatchObject({ B: 'last', C: 'adjacent' }); // C changed meaning on 2026-11-02
+    expect(occurrences(mShipped, HINT_MARKER)).toBe(2);
+    expect(occurrences(mStock, RULES_END)).toBe(1);
+    expect(withoutHints(mShipped, [hintA, hintB])).toBe(mStock);
+    expect(withoutHints(mAdjacent, [hintA, hintB], 'adjacent')).toBe(mStock);
+    expect(withoutHints(mStock, [''])).toBe(mStock);
+    expect(() => withoutHints(mStock, [hintA])).toThrow();
+    // The layouts cannot be mistaken for each other: the wrong one throws or leaves the extra newlines behind.
+    expect(() => withoutHints(mShipped, [hintA, hintB], 'adjacent')).toThrow();
+    expect(withoutHints(mAdjacent, [hintA, hintB])).not.toBe(mStock);
+
+    // Rebuilt from the shipped prompt, whichever order its blocks come in.
+    expect(adjacentLayout(mShipped, mHints)).toBe(mAdjacent);
+    expect(adjacentLayout(mHead + mCats + mTail + hintB + hintA + mEntry, mHints)).toBe(mAdjacent);
+    expect(adjacentLayout(mStock, { motivation: '', category: '' })).toBe(mStock); // nothing to move
+    expect(adjacentLayout(mHead + mCats + mTail + hintA + mEntry, { motivation: hintA, category: '' }))
+      .toBe(mHead + `${hintA}\n` + mCats + mTail + mEntry);
+    expect(adjacentLayout(mHead + mCats + mTail + hintB + mEntry, { motivation: '', category: hintB }))
+      .toBe(mHead + mCats + `${hintB}\n` + mTail + mEntry);
+    // An owner with no categories: the motivation block goes before "tags", and a category hint has no line to sit beside.
+    expect(adjacentLayout(mHead + mTail + hintA + mEntry, { motivation: hintA, category: '' })).toBe(mHead + `${hintA}\n` + mTail + mEntry);
+    expect(() => adjacentLayout(mHead + mTail + hintB + mEntry, { motivation: '', category: hintB })).toThrow(/categories/);
+    expect(() => adjacentLayout(mHead + mCats + mTail, { motivation: '', category: '' })).toThrow(/Entry/);
+    // The entry's own text is not read for key lines, even one that looks like a schema line.
+    const odd = 'Entry: "a\n"tags": b"';
+    expect(adjacentLayout(mHead + mCats + mTail + hintB + odd, { motivation: '', category: hintB }))
+      .toBe(mHead + mCats + `${hintB}\n` + mTail + odd);
+  });
+
+  it('the layout check reads where the blocks sit and what else is around them', () => {
+    const problems = (prompt: string, hints: typeof mHints | null, layout: Layout) => promptProblems('x', 'gym', prompt, hints, layout).join('\n');
+    expect(problems(mShipped, mHints, 'last')).toBe('');
+    expect(problems(mAdjacent, mHints, 'adjacent')).toBe('');
+    expect(problems(mStock, null, 'last')).toBe('');
+    expect(problems(mStock, { motivation: '', category: '' }, 'last')).toBe(''); // a hinted arm with nothing retrieved is the stock prompt
+    expect(problems(mShipped, { motivation: '', category: hintB }, 'last')).toMatch(/2 hint blocks in the prompt, expected 1/); // hintA is a stray block
+    // The wrong layout is named, not passed.
+    expect(problems(mAdjacent, mHints, 'last')).toMatch(/not between the never-invent line and Entry/);
+    expect(problems(mShipped, mHints, 'adjacent')).toMatch(/not beside its field/);
+    // Nothing but the blocks between the rules and the entry: no rule line, no separator.
+    expect(problems(mHead + mCats + mTail + hintA + hintB + 'Remember: be brief.\n' + mEntry, mHints, 'last')).toMatch(/something besides the hint blocks/);
+    expect(problems(mHead + mCats + mTail + hintA + hintB + '\n' + mEntry, mHints, 'last')).toMatch(/something besides the hint blocks/);
+    expect(problems(mHead + mCats + hintA + hintB + mTail + mEntry, mHints, 'last')).toMatch(/not between the never-invent line and Entry/); // above the rules line
+    // Counts, strays and the entry.
+    expect(problems(mShipped, null, 'last')).toMatch(/must have none/);
+    expect(problems(mStock, mHints, 'last')).toMatch(/0 hint blocks in the prompt, expected 2/);
+    expect(problems(`${mShipped} and more`, mHints, 'last')).toMatch(/does not end with the entry/);
+    expect(problems(mStock.replace('never invent.\n', ''), mHints, 'last')).toMatch(/no never-invent line/);
+    expect(problems(mShipped, mHints, 'narrow')).toBe(''); // the narrow question checks the count only
+  });
+
+  /**
+   * enrichQuick's prompt as it was when the hint first shipped (git show
+   * 96dbea90:server/src/agents/quickadd.ts): each block beside its field, one extra newline
+   * after it. A literal on purpose, the way test/quickadd-hint-prompt.test.ts pins today's:
+   * arm C claims to be this prompt, so the claim is checked against this and not against the
+   * code that builds C. The rubric constants are substituted, not copied.
+   */
+  const formerLayoutPrompt = (text: string, vocab: Vocab, hints: QuickHints): string => {
+    const withHint = (hint?: string): string => (hint ? `${hint}\n` : '');
+    return `Classify this quick task entry. Reply with JSON with exactly these keys.\n` +
+      `"direction": REQUIRED — exactly one of ${JSON.stringify(vocab.directions)}. ` +
+      `Every task has a direction, always choose one.${directionGuide(vocab.directions)}\n` +
+      `"isComplex": true or false. ${COMPLEXITY_RUBRIC}\n` +
+      `"priority": 1-4. ${PRIORITY_RUBRIC}\n` +
+      `"estimatedMinutes": a number or null. ${DURATION_RUBRIC}\n` +
+      `"timeOfDay": one of "morning","afternoon","evening","any". ${TIME_OF_DAY_RUBRIC}\n` +
+      `"timeOfDayReason": a few words on why, or null.\n` +
+      `"motivation": one of "me","us","them", or null. ${MOTIVATION_RUBRIC}\n` +
+      withHint(hints.motivation) +
+      (vocab.categories.length
+        ? `"categories": 1-3 life areas from ${JSON.stringify(vocab.categories)}, best fit first.\n` + withHint(hints.category)
+        : '') +
+      `"tags": up to 2 from ${JSON.stringify(vocab.others.slice(0, 60))}, else [].\n` +
+      `Choose direction/categories/tags ONLY from the given lists — never invent.\n` +
+      `Entry: "${text}"`;
+  };
+
+  it('enrichQuick as it stands lays the hints out as the checks expect, and the former prompt is rebuilt from it byte for byte', async () => {
+    // The drift check for the layout: a dry call (nothing reaches Ollama) to the real enrichQuick, so a change
+    // to where it puts the blocks, or to the lines around them, fails here and not after model time is spent.
+    const text = 'Leg day at the gym';
+    const parsed = parseQuick(text);
+    const vocab: Vocab = { directions: DIRECTIONS, categories: CATEGORIES, others: OTHERS };
+    const category = exemplarPrompt([{ logId: 'a', inputText: 'Gym session', llmValue: 'health', correctValue: 'leisure' }]);
+    const motivation = exemplarPrompt([{ logId: 'b', inputText: 'Help mum move', llmValue: 'me', correctValue: 'them' }]);
+    const stock = await dryPrompt(() => enrichQuick(text, parsed, vocab));
+    expect(stock, 'enrichQuick put no prompt in front of the model').not.toBe('');
+    expect(stock).toBe(formerLayoutPrompt(text, vocab, {})); // the prompt around the blocks is the one the literal below is written for
+    expect(occurrences(stock, RULES_END)).toBe(1);
+    for (const hints of [{ motivation, category }, { motivation, category: '' }, { motivation: '', category }, { motivation: '', category: '' }]) {
+      const shipped = await dryPrompt(() => enrichQuick(text, parsed, vocab, hints));
+      const which = `motivation ${hints.motivation ? 'yes' : 'no'}, category ${hints.category ? 'yes' : 'no'}`;
+      expect(promptProblems(which, text, shipped, hints, 'last'), which).toEqual([]);
+      expect(withoutHints(shipped, [hints.motivation, hints.category]), which).toBe(stock);
+      expect(adjacentLayout(shipped, hints), which).toBe(formerLayoutPrompt(text, vocab, hints));
+    }
+    // An owner with no categories is not asked for them, so there is no line for a category hint.
+    const bare: Vocab = { ...vocab, categories: [] };
+    const bareStock = await dryPrompt(() => enrichQuick(text, parsed, bare));
+    const bareShipped = await dryPrompt(() => enrichQuick(text, parsed, bare, { motivation }));
+    expect(promptProblems('no categories', text, bareShipped, { motivation, category: '' }, 'last')).toEqual([]);
+    expect(withoutHints(bareShipped, [motivation])).toBe(bareStock);
+    expect(adjacentLayout(bareShipped, { motivation, category: '' })).toBe(formerLayoutPrompt(text, bare, { motivation }));
   });
 
   const lessonOf = (correctValue: string, logId = 'l'): Exemplar => ({ logId, inputText: 't', llmValue: 'x', correctValue });
@@ -1504,6 +1680,45 @@ describe.skipIf(!LIVE)('classification hint · pure helpers', () => {
     }
   });
 
+  it('C is labelled the adjacent layout and a diagnostic wherever it prints, and the rule reads B only', () => {
+    const before = records.length;
+    try {
+      const M = 'layout-model';
+      const scored = ['t1', 't2'];
+      const controls = ['c1', 'c2'];
+      const put = (arm: Arm, title: string, shape: string) =>
+        records.push(...rows(arm, title, shape, { model: M, kind: title.startsWith('c') ? 'control' : 'target' }));
+      for (const t of scored) { put('A', t, 'FFFFF'); put('A2', t, 'FFFFF'); put('B', t, 'TTTTT'); put('C', t, 'TTTTT'); }
+      for (const c of controls) { put('A', c, 'TTTTT'); put('B', c, 'TTTTT'); put('C', c, 'FFFFF'); } // the adjacent layout flips both controls
+      const [b, c] = (['B', 'C'] as Arm[]).map((arm) => evaluateTreatment(records, M, arm, scored, controls));
+      expect(renderEval(b)[0]).toBe('  B vs A');
+      expect(renderEval(c)[0]).toBe('  C vs A (diagnostic, not a gate: the adjacent layout, which is not the shipped one)');
+      const report = {
+        model: M, gating: true, status: 'ran', note: '', baseline: [], baselineShape: null, baselineKeys: null, placebo: null,
+        shapes: Object.fromEntries((['A', 'B', 'C'] as Arm[]).map((arm) => [arm, armShape(records, M, arm, scored, controls)!])),
+        capture: null, index: null, hintChars: null, retrieval: {}, evaluations: [b, c], summary: [], flips: [], narrow: null,
+        latency: null, residency: null, g4: { checked: 1, bad: 0 }, reading: [],
+      } as ModelReport;
+      const reading = readOff(report).join('\n');
+      expect(reading).toContain('Diagnostic, not part of the rule (C is the adjacent layout, the one B had in the first three runs): C: G1 IMPROVED (+2 titles net), G2 FAIL, G3 pass.');
+      expect(reading).toContain('B passes G1, G2 and G3.'); // C's G2 FAIL does not enter the rule
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      let printed = '';
+      try {
+        report.reading = readOff(report);
+        printReport(report);
+        printed = log.mock.calls.map((x) => String(x[0])).join('\n');
+      } finally {
+        log.mockRestore();
+      }
+      expect(printed).toContain('Layouts: B, S, B1 and P put the hint blocks last');
+      expect(printed).toContain('C is the adjacent layout');
+      expect(printed).toContain('C vs A (diagnostic, not a gate');
+    } finally {
+      records.length = before;
+    }
+  });
+
   it('provenance: only OLLAMA_* is read, credentials are redacted, and the command is the starter argv', () => {
     const env = {
       OLLAMA_FAST: 'gemma3n:e4b', OLLAMA_URL: 'http://user:pw@host:11434', OLLAMA_API_KEY: 'sekret', OLLAMA_MAX_LOADED_MODELS: '2',
@@ -1819,35 +2034,54 @@ function toRecord(
 }
 
 /**
- * Where a hint must sit in the prompt that carries it, and that nothing else was added.
- * 'adjacent' is enrichQuick's layout (beside the field it governs), 'last' is arm C's.
+ * What is wrong with where the hints sit in the prompt that carries them, and with the prompt
+ * around them; empty means nothing. 'last' is the shipped layout (B, S, B1, P): the blocks
+ * follow the 'never invent.' line and nothing but the blocks stands between it and 'Entry:'.
+ * 'adjacent' is arm C's (each block beside the field it governs, the layout of the old
+ * enrichQuick). 'narrow' is the one-field question of N, where only the count is checked.
  */
-function checkPrompt(
-  model: string, arm: Arm, item: FixtureItem, prompt: string, hints: Hints | null, layout: 'adjacent' | 'last' | 'narrow',
-): void {
-  const label = `${arm} "${item.title}"`;
+function promptProblems(label: string, title: string, prompt: string, hints: Hints | null, layout: Layout): string[] {
+  const problems: string[] = [];
   const markers = occurrences(prompt, HINT_MARKER);
   if (hints === null) {
-    if (markers !== 0) violate(model, `${label}: a hint reached a prompt that must have none`);
-    return;
+    if (markers !== 0) problems.push(`${label}: a hint reached a prompt that must have none`);
+    return problems;
   }
   const expected = (hints.category ? 1 : 0) + (hints.motivation ? 1 : 0);
-  if (markers !== expected) violate(model, `${label}: ${markers} hint blocks in the prompt, expected ${expected}`);
+  if (markers !== expected) problems.push(`${label}: ${markers} hint blocks in the prompt, expected ${expected}`);
+  const rulesAt = prompt.indexOf(RULES_END);
+  const entryAt = prompt.lastIndexOf(ENTRY_OPEN) + 1;
   for (const [field, hint] of [['motivation', hints.motivation], ['category', hints.category]] as const) {
     if (!hint) continue;
-    if (occurrences(prompt, hint) !== 1) { violate(model, `${label}: the ${field} hint is not in the prompt exactly once`); continue; }
+    if (occurrences(prompt, hint) !== 1) { problems.push(`${label}: the ${field} hint is not in the prompt exactly once`); continue; }
     const at = prompt.indexOf(hint);
     if (layout === 'adjacent') {
       const after = prompt.indexOf(field === 'category' ? '"categories":' : '"motivation":');
       const before = prompt.indexOf(field === 'category' ? '"tags":' : '"categories":');
-      if (!(after >= 0 && after < at && at < before)) violate(model, `${label}: the ${field} hint is not beside its field`);
+      if (!(after >= 0 && after < at && at < before)) problems.push(`${label}: the ${field} hint is not beside its field`);
     } else if (layout === 'last') {
-      if (!(at > prompt.lastIndexOf('never invent') && at < prompt.lastIndexOf('Entry: "'))) {
-        violate(model, `${label}: the ${field} hint is not just before Entry:`);
+      if (!(rulesAt >= 0 && entryAt > 0 && at >= rulesAt + RULES_END.length && at + hint.length <= entryAt)) {
+        problems.push(`${label}: the ${field} hint is not between the never-invent line and Entry:`);
       }
     }
   }
-  if (layout !== 'narrow' && !prompt.endsWith(`Entry: "${item.title}"`)) violate(model, `${label}: the prompt does not end with the entry`);
+  if (layout === 'last') {
+    if (rulesAt < 0 || entryAt <= 0) problems.push(`${label}: the prompt has no never-invent line or no Entry: line`);
+    else {
+      // The slot is the hint blocks and nothing else: no separator, no second line of rules.
+      let between = prompt.slice(rulesAt + RULES_END.length, entryAt);
+      for (const h of [hints.motivation, hints.category]) if (h) between = between.replace(h, '');
+      if (between !== '') problems.push(`${label}: something besides the hint blocks stands between the never-invent line and Entry:`);
+    }
+  }
+  if (layout !== 'narrow' && !prompt.endsWith(`Entry: "${title}"`)) problems.push(`${label}: the prompt does not end with the entry`);
+  return problems;
+}
+
+function checkPrompt(
+  model: string, arm: Arm, item: FixtureItem, prompt: string, hints: Hints | null, layout: Layout,
+): void {
+  for (const problem of promptProblems(`${arm} "${item.title}"`, item.title, prompt, hints, layout)) violate(model, problem);
 }
 
 // The retrieval each mode makes for a title is deterministic, so it is made once per title.
@@ -1906,7 +2140,7 @@ async function promptSweep(
       const hints = await prodHints(owner, vocab, text);
       const direct = await dryPrompt(() => enrichQuick(text, parseQuick(text), vocab, hints));
       if (viaRoute !== direct) violate(model, `${label}: "${text}" the route prompt differs from enrichQuick with the production hints`);
-      checkPrompt(model, 'B', item, viaRoute, hints, 'adjacent');
+      checkPrompt(model, 'B', item, viaRoute, hints, 'last');
       const stock = stockPrompts.get(text);
       try {
         if (stock !== undefined && withoutHints(viaRoute, [hints.motivation, hints.category]) !== stock) {
@@ -1914,6 +2148,17 @@ async function promptSweep(
         }
       } catch (err) {
         violate(model, `${label}: "${text}" ${(err as Error).message}`);
+      }
+      // Arm C is built from this prompt in the live arms. Build it here, dry, so a layout the
+      // builder cannot read stops the run before the arms spend model time on it.
+      try {
+        const adjacent = adjacentLayout(viaRoute, hints);
+        checkPrompt(model, 'C', item, adjacent, hints, 'adjacent');
+        if (stock !== undefined && withoutHints(adjacent, [hints.motivation, hints.category], 'adjacent') !== stock) {
+          violate(model, `${label}: "${text}" the adjacent rebuild (arm C) does not give the stock prompt without its hints`);
+        }
+      } catch (err) {
+        violate(model, `${label}: "${text}" arm C ${(err as Error).message}`);
       }
     }
   }
@@ -1944,7 +2189,7 @@ async function viaRoute(ctx: Ctx, item: FixtureItem, run: number, hints: Hints):
     violate(ctx.model, `B "${item.title}": the route returned ${routePick} but the raw completion says ${pickFromRaw(seam.raw, ctx.vocab)}`);
   }
   if (seam) {
-    checkPrompt(ctx.model, 'B', item, seam.prompt, hints, 'adjacent');
+    checkPrompt(ctx.model, 'B', item, seam.prompt, hints, 'last');
     // The route changed nothing but the hint: take it out and it is the prompt A sends.
     try {
       if (withoutHints(seam.prompt, [hints.motivation, hints.category]) !== stockPrompts.get(item.title)) {
@@ -1960,12 +2205,15 @@ async function viaRoute(ctx: Ctx, item: FixtureItem, run: number, hints: Hints):
   return { record, prompt: seam?.prompt ?? '' };
 }
 
-/** C: B's own prompt with the hint blocks moved to the end, sent straight to the seam. */
-async function viaHintLast(ctx: Ctx, item: FixtureItem, run: number, bPrompt: string, hints: Hints): Promise<CallRecord | null> {
+/**
+ * C: B's own prompt with the hint blocks moved back beside their fields (the layout the hint
+ * first shipped in), sent straight to the seam.
+ */
+async function viaAdjacent(ctx: Ctx, item: FixtureItem, run: number, bPrompt: string, hints: Hints): Promise<CallRecord | null> {
   if (!bPrompt) return null;
   let prompt: string;
   try {
-    prompt = hintLast(bPrompt, [hints.motivation, hints.category]);
+    prompt = adjacentLayout(bPrompt, hints);
   } catch (err) {
     violate(ctx.model, `C "${item.title}": ${(err as Error).message}`);
     return null;
@@ -1973,11 +2221,14 @@ async function viaHintLast(ctx: Ctx, item: FixtureItem, run: number, bPrompt: st
   const { calls, thrown } = await seamOf(() => generateJson(prompt, { purpose: 'classify' }));
   const seam = calls.find((c) => !c.dry);
   if (seam) {
-    checkPrompt(ctx.model, 'C', item, seam.prompt, hints, 'last');
-    // Moved, not changed: take the blocks out again and it is the stock prompt.
-    const stock = stockPrompts.get(item.title);
-    if (stock !== undefined && seam.prompt.replace(hints.motivation + hints.category, '') !== stock) {
-      violate(ctx.model, `C "${item.title}": moving the hints to the end changed something else in the prompt`);
+    checkPrompt(ctx.model, 'C', item, seam.prompt, hints, 'adjacent');
+    // Moved, not changed: take the blocks out again (each with its extra newline) and it is the stock prompt.
+    try {
+      if (withoutHints(seam.prompt, [hints.motivation, hints.category], 'adjacent') !== stockPrompts.get(item.title)) {
+        violate(ctx.model, `C "${item.title}": moving the hints beside their fields changed something else in the prompt`);
+      }
+    } catch (err) {
+      violate(ctx.model, `C "${item.title}": ${(err as Error).message}`);
     }
   }
   const record = toRecord('C', ctx.model, item, run, seam, ctx.vocab, {
@@ -1997,7 +2248,7 @@ async function viaSimilarity(ctx: Ctx, item: FixtureItem, run: number): Promise<
   const { record, prompt } = await viaEnrich('S', ctx, item, run, hints, {
     retrievalIds: idsOf(await retrieveFor('similarity', item.title, ctx.vocab)), embedMs,
   });
-  if (prompt) checkPrompt(ctx.model, 'S', item, prompt, hints, 'adjacent');
+  if (prompt) checkPrompt(ctx.model, 'S', item, prompt, hints, 'last');
   return record;
 }
 
@@ -2009,7 +2260,7 @@ async function viaSimilarity(ctx: Ctx, item: FixtureItem, run: number): Promise<
 async function viaPlacebo(ctx: Ctx, item: FixtureItem, run: number, hints: Hints, retrievalIds: string[]): Promise<CallRecord> {
   const { record, prompt } = await viaEnrich('P', ctx, item, run, hints, { retrievalIds });
   if (prompt) {
-    checkPrompt(ctx.model, 'P', item, prompt, hints, 'adjacent');
+    checkPrompt(ctx.model, 'P', item, prompt, hints, 'last');
     // Added, not rewritten: take the block out and it is the stock prompt, as for B.
     try {
       if (withoutHints(prompt, [hints.motivation, hints.category]) !== stockPrompts.get(item.title)) {
@@ -2095,7 +2346,7 @@ function renderEval(e: TreatmentEval): string[] {
   const { g1, g2, g3, g5 } = e;
   const signed = (x: number) => (x >= 0 ? `+${x}` : `${x}`);
   const lines = [
-    `  ${e.arm} vs A`,
+    `  ${e.arm} vs A${e.arm === 'C' ? ' (diagnostic, not a gate: the adjacent layout, which is not the shipped one)' : ''}`,
     `    G1 efficacy         ${g1.verdict}: ${g1.baseCorrect} -> ${g1.treatCorrect} of ${g1.n} scored targets correct `
       + `(${signed(g1.net)} net: ${g1.wins} wins, ${g1.losses} losses = ${fmt1(g1.deltaPoints)} points); `
       + `A vs A2 flipped ${g1.noiseFlips}; minimum detectable effect one title = ${fmt1(g1.mdePoints)} points`,
@@ -2188,6 +2439,9 @@ function flush(): void {
       liveHint: envWithPrefix(process.env, 'LIVE_HINT'),
     },
     provenance,
+    // Arm C changed meaning on 2026-11-02: an artifact without this key is from the first three runs,
+    // where B was adjacent and C was hint last.
+    layouts: ARM_LAYOUTS,
     gates: GATES,
     diagnostics: DIAGNOSTICS,
     fixture: { conventions: CONVENTIONS, controls: CONTROLS },
@@ -2225,7 +2479,7 @@ async function runModel(model: string, gating: boolean, partner: string | undefi
   for (const item of TARGET_ITEMS) {
     for (let run = 0; run < RUNS; run++) {
       const { record, prompt } = await viaEnrich('A0', ctx, item, run);
-      checkPrompt(model, 'A0', item, prompt, null, 'adjacent');
+      checkPrompt(model, 'A0', item, prompt, null, 'last');
       if (record.empty) violate(model, `A0 "${item.title}" run ${run}: empty or errored completion ${record.error ?? ''}`);
     }
     flush();
@@ -2290,7 +2544,7 @@ async function runModel(model: string, gating: boolean, partner: string | undefi
     capture.parsed++;
     const seam = calls.find((c) => !c.dry);
     if (seam) capture.shapes[categoriesTypeOf(seam.raw)]++;
-    if (seam) checkPrompt(model, 'A', item, seam.prompt, null, 'adjacent'); // no index yet: no hint
+    if (seam) checkPrompt(model, 'A', item, seam.prompt, null, 'last'); // no index yet: no hint
     if (seam && seam.prompt !== stockPrompts.get(item.title)) violate(model, `capture "${item.title}": the live prompt is not the stock prompt`);
     const claim = parsed?.body?.classification_claim as { text: string; categories: string[] } | undefined;
     const title = (parsed?.body?.parsed?.title as string | undefined) ?? item.title;
@@ -2434,12 +2688,12 @@ async function runModel(model: string, gating: boolean, partner: string | undefi
     const ph = placebo.get(item.title)!;
     for (let run = 0; run < RUNS; run++) {
       const a = await viaEnrich('A', ctx, item, run);
-      checkPrompt(model, 'A', item, a.prompt, null, 'adjacent');
+      checkPrompt(model, 'A', item, a.prompt, null, 'last');
       const b = await viaRoute(ctx, item, run, hints);
-      await viaHintLast(ctx, item, run, b.prompt, hints);
+      await viaAdjacent(ctx, item, run, b.prompt, hints);
       if (haveEmbedder) await viaSimilarity(ctx, item, run);
       const a2 = await viaEnrich('A2', ctx, item, run);
-      checkPrompt(model, 'A2', item, a2.prompt, null, 'adjacent');
+      checkPrompt(model, 'A2', item, a2.prompt, null, 'last');
       for (const r of [a.record, a2.record]) if (r.empty) violate(model, `${r.arm} "${item.title}" run ${run}: empty or errored completion ${r.error ?? ''}`);
       if (ph.meta.pLessons > 0) await viaPlacebo(ctx, item, run, { category: ph.hint, motivation: hints.motivation }, ph.meta.logIds);
     }
@@ -2456,7 +2710,7 @@ async function runModel(model: string, gating: boolean, partner: string | undefi
       const hints = await prodHints(OWNER, vocab, item.title, 1);
       for (let run = 0; run < RUNS; run++) {
         const { prompt } = await viaEnrich('B1', ctx, item, run, hints, { retrievalIds: idsOf(await retrieveFor('frequency', item.title, vocab, 1)) });
-        checkPrompt(model, 'B1', item, prompt, hints, 'adjacent');
+        checkPrompt(model, 'B1', item, prompt, hints, 'last');
       }
       flush();
     }
@@ -2705,6 +2959,8 @@ function readOff(report: ModelReport): string[] {
   out.push(shipReady
     ? 'Every gate the ship rule names holds on the fast tier for B: the hint half may ship.'
     : 'Not every gate the ship rule names holds for B on the fast tier: capture ships, the hint half does not by default.');
+  const c = report.evaluations.find((e) => e.arm === 'C');
+  if (c) out.push(`Diagnostic, not part of the rule (C is the adjacent layout, the one B had in the first three runs): ${brief(c)}.`);
   if (s) {
     const edge = compareArms(records, report.model, 'B', 'S', report.flips.filter((f) => f.kind === 'target').map((f) => String(f.title)));
     out.push(`S against B on the scored targets: ${edge.baseCorrect} -> ${edge.treatCorrect} of ${edge.n} (${edge.net >= 0 ? '+' : ''}${edge.net} net; `
@@ -2754,7 +3010,11 @@ function renderResidency(r: ResidencyReport): string[] {
 function printReport(report: ModelReport): void {
   const lines: string[] = [`\n--- ${report.model}: results (${RUNS} runs per title and arm) ---`];
   lines.push(`Scored targets: ${report.flips.filter((f) => f.kind === 'target').length} titles; controls: ${CONTROL_ITEMS.length}. A0 is the pre-training baseline on all 12 targets.`);
-  lines.push('arm  targets  controls  validJSON  allKeys  catArray  empty  err  meanMs  p95Ms');
+  lines.push(
+    'Layouts: B, S, B1 and P put the hint blocks last (after the never-invent line, before Entry:), the shipped layout; '
+      + 'C is the adjacent layout (blocks beside their fields), a non-gating diagnostic.',
+    'arm  targets  controls  validJSON  allKeys  catArray  empty  err  meanMs  p95Ms',
+  );
   for (const r of report.summary) {
     lines.push(`${String(r.arm).padEnd(4)} ${String(r.targets).padEnd(8)} ${String(r.controls).padEnd(9)} ${String(r.validJsonPct).padEnd(10)} ${String(r.allKeysPct).padEnd(8)} `
       + `${String(r.categoriesArrayPct).padEnd(9)} ${String(r.empty).padEnd(6)} ${String(r.errored).padEnd(4)} ${String(r.meanMs).padEnd(7)} ${r.p95Ms}`);

@@ -6,6 +6,7 @@ import { enrichQuick } from '../src/agents/quickadd.js';
 import { parseQuick } from '../src/engine/quickadd.js';
 import { suggestibleVocabulary } from '../src/services/tags.js';
 import { ollama } from '../src/mcp/ollama.js';
+import { exemplarPrompt } from '../src/services/classification-learning.js';
 
 /**
  * The classification hint, as the two quick-add ROUTES hand it to the real `enrichQuick`.
@@ -149,31 +150,51 @@ describe('an owner with corrections', () => {
   });
 
   for (const route of ROUTES) {
-    it(`sees each lesson right after the field it governs on ${route.name}`, async () => {
-      const prompt = await promptFrom(route.path, 'water the plants');
+    it(`sees each lesson after the never-invent rule, right before the entry, on ${route.name}`, async () => {
+      const entry = 'water the plants';
+      const prompt = await promptFrom(route.path, entry);
       const at = {
         motivation: prompt.indexOf('"motivation": one of'),
-        motivationLesson: prompt.indexOf('you said me; the user chose them.'),
         categories: prompt.indexOf('"categories": 1-3 life areas'),
-        categoryLesson: prompt.indexOf('you said leisure; the user chose health.'),
         tags: prompt.indexOf('"tags": up to 2'),
+        neverInvent: prompt.indexOf('never invent.'),
+        motivationLesson: prompt.indexOf('you said me; the user chose them.'),
+        categoryLesson: prompt.indexOf('you said leisure; the user chose health.'),
+        entry: prompt.indexOf(`Entry: "${entry}"`),
       };
       for (const [name, i] of Object.entries(at)) expect(i, name).toBeGreaterThan(-1);
-      expect(at.motivation).toBeLessThan(at.motivationLesson);
-      expect(at.motivationLesson).toBeLessThan(at.categories);
-      expect(at.categories).toBeLessThan(at.categoryLesson);
-      expect(at.categoryLesson).toBeLessThan(at.tags);
+      // Fields first, then the rule that follows them, then the lessons (motivation's block
+      // ahead of categories', the field order), then the entry. Every lesson has to come
+      // after '"tags"': a lesson beside its field would sit before it.
+      expect(at.motivation).toBeLessThan(at.categories);
+      expect(at.categories).toBeLessThan(at.tags);
+      expect(at.tags).toBeLessThan(at.neverInvent);
+      expect(at.neverInvent).toBeLessThan(at.motivationLesson);
+      expect(at.motivationLesson).toBeLessThan(at.categoryLesson);
+      expect(at.categoryLesson).toBeLessThan(at.entry);
+      expect(prompt.slice(0, at.neverInvent)).not.toContain('corrected you before');
 
-      // A blank line on both sides keeps a block from reading as a continuation of the next field.
-      expect(prompt).toContain('you said me; the user chose them.\n\n"categories"');
-      expect(prompt).toContain('you said leisure; the user chose health.\n\n"tags"');
+      // A blank line before each block, none before the entry: the last block runs straight
+      // into it, so the entry is still the tail.
+      expect(prompt).toContain('never invent.\n\nThis user has corrected you before');
+      expect(prompt).toContain('you said me; the user chose them.\n\nThis user has corrected you before');
+      expect(prompt).toContain(`you said leisure; the user chose health.\nEntry: "${entry}"`);
       expect(prompt.split('\n\nThis user has corrected you before')).toHaveLength(3);
+      expect(prompt).not.toContain('\n\n\n');
+      expect(prompt.endsWith(`the user chose health.\nEntry: "${entry}"`)).toBe(true);
 
-      // Each lesson once, the rule that follows the list stays last, and the entry is the tail.
+      // Each lesson once.
       expect(prompt.split('you said me; the user chose them.')).toHaveLength(2);
       expect(prompt.split('you said leisure; the user chose health.')).toHaveLength(2);
       expect(prompt.split('corrected you before')).toHaveLength(3);
-      expect(prompt.endsWith('never invent.\nEntry: "water the plants"')).toBe(true);
+
+      // And nothing else moved: the stock prompt with exactly the two hint strings in front of
+      // the entry, the rubrics and the field lines where they always were.
+      const stock = await stockPrompt(entry);
+      const lessons =
+        exemplarPrompt([{ logId: 'm', inputText: 'help mum with her taxes', llmValue: 'me', correctValue: 'them' }]) +
+        exemplarPrompt([{ logId: 'c', inputText: 'gym session before work', llmValue: 'leisure', correctValue: 'health' }]);
+      expect(prompt).toBe(stock.slice(0, stock.lastIndexOf('Entry: "')) + lessons + `Entry: "${entry}"`);
     });
   }
 

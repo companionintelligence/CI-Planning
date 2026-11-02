@@ -105,7 +105,7 @@ function choosable(allowed: readonly string[]): (e: Exemplar) => boolean {
 
 /**
  * The overlay both quick routes run: the owner's own past corrections go into the prompt
- * next to the field they teach (`enrichQuick` places them), and the rest is as it was.
+ * last, just before the entry (`enrichQuick` places them), and the rest is as it was.
  *
  * Frequency-only on purpose (`embedFn: null`): an embed here is an `embedReady` status read
  * plus an embed on a path a person is watching, and on a box that holds one model at a time
