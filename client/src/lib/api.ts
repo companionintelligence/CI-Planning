@@ -1674,6 +1674,8 @@ export interface Integrations {
   ollama: {
     available: boolean;
     ready?: boolean;
+    /** Which API answered: Ollama's native one, or the AI endpoint the CI-Hub set up. Absent on older servers, which were Ollama-only. */
+    provider?: 'ollama' | 'openai';
     models: string[];
     fastModel: string;
     qualityModel: string;

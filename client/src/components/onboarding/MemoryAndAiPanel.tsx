@@ -18,6 +18,16 @@ export function MemoryAndAiPanel() {
   });
   const ollama = () => integrations()?.ollama;
   const aiReady = () => (ollama()?.ready ?? ollama()?.available) === true;
+  /** The AI line. Names the endpoint the Hub set up when that is the provider, not Ollama. */
+  const aiLine = () => {
+    const endpoint = ollama()?.provider === 'openai';
+    if (aiReady()) {
+      return endpoint ? 'AI is ready on this server, through its configured AI endpoint.' : 'AI is ready on this server.';
+    }
+    return endpoint
+      ? 'No AI model is ready yet. Check the AI endpoint and its model, then check again.'
+      : 'No AI model is ready yet. Install Ollama and pull a model, then check again.';
+  };
 
   return (
     <section class="flex flex-col gap-1.5 rounded-md border border-border px-3 py-2 text-xs" aria-label="Your memory and AI">
@@ -47,7 +57,7 @@ export function MemoryAndAiPanel() {
         </Show>
       </Show>
       <p class="text-muted-foreground">
-        {aiReady() ? 'AI is ready on this server.' : 'No AI model is ready yet. Install Ollama and pull a model, then check again.'}
+        {aiLine()}
       </p>
       <p class="text-muted-foreground">
         Connect or change either in <a href="/settings" class="underline">Settings</a>.

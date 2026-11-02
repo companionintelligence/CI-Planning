@@ -688,6 +688,8 @@ export function Settings() {
 
   const ollamaModels = () => integrations()?.ollama.models ?? [];
   const ollamaUp = () => integrations()?.ollama.available ?? false;
+  /** What this card calls the backend: Ollama, or the AI endpoint the CI-Hub set up. */
+  const aiName = () => (integrations()?.ollama.provider === 'openai' ? 'AI endpoint' : 'Ollama');
   // The three-state decision lives in lib/ollama-health.ts, not in this markup: the same
   // choice drives an icon colour, a status glyph and a description string, and as three
   // inline ternaries a change could update one and not the others. Unit-tested there.
@@ -1609,7 +1611,9 @@ export function Settings() {
               when={aiAvailable()}
               fallback={
                 <div class="text-[11px] text-muted-foreground">
-                  AI day ordering needs Ollama — start it, then re-check under Connections → Integrations.
+                  {integrations()?.ollama.provider === 'openai'
+                    ? 'AI day ordering needs the AI endpoint to answer — check it, then re-check under Connections → Integrations.'
+                    : 'AI day ordering needs Ollama — start it, then re-check under Connections → Integrations.'}
                 </div>
               }
             >
@@ -1711,7 +1715,7 @@ export function Settings() {
                 <button type="button" onClick={doSave} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
               </div>
             </div>
-            <Show when={integrations()} fallback={<div class="text-xs text-muted-foreground animate-pulse2">Checking Ollama…</div>}>
+            <Show when={integrations()} fallback={<div class="text-xs text-muted-foreground animate-pulse2">Checking {aiName()}…</div>}>
               <div class="flex flex-col gap-4">
                 {/* Three states, not two. "Reachable" and "usable" are different: Ollama
                     answering while the selected model isn't pulled used to render a plain
@@ -1724,7 +1728,7 @@ export function Settings() {
                   }} />
                   <div class="flex-1">
                     <div class="text-sm text-slate-200 font-medium flex items-center gap-2">
-                      Ollama
+                      {aiName()}
                       <Show when={health() !== 'down'} fallback={<XCircle size={13} class="text-red-400" />}>
                         <Show when={health() === 'ready'} fallback={<AlertTriangle size={13} class="text-amber-400" />}>
                           <CheckCircle2 size={13} class="text-green-400" />

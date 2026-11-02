@@ -244,10 +244,14 @@ export interface Config {
    *  Postgres baseline, which stops at migration 0147. Requires databaseUrl; boot fails
    *  closed otherwise rather than silently serving a store the data is not in. */
   storeBackend: 'sqlite' | 'postgres';
+  /** Which API answers AI calls. See {@link llmBackendFromEnv}. */
+  llmBackend: LlmBackend;
   ollamaUrl: string;
   ollamaFastModel: string;
   ollamaQualityModel: string;
   ollamaEmbedModel: string;
+  /** The OpenAI-compatible endpoint the CI-Hub hands this app. See {@link openAiCompatFromEnv}. */
+  openAiCompat: OpenAiCompatConfig;
   staticDir: string;
   vapidPublicKey: string;
   vapidPrivateKey: string;
@@ -360,6 +364,60 @@ function memoryModeFromEnv(): ConnectorMode {
   return 'off';
 }
 
+/** An env value, or undefined when unset or blank. The CI-Hub writes its inference names into
+ *  the app's env even when they are empty, so a blank value must read as unset. */
+function envValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  const value = env[name]?.trim();
+  return value ? value : undefined;
+}
+
+/** Which API answers AI calls: Ollama's native API, or an OpenAI-compatible `/v1` endpoint. */
+export type LlmBackend = 'ollama' | 'openai';
+
+/**
+ * The backend, as the environment chooses it.
+ *
+ * A native Ollama URL wins when one is set: `OLLAMA_URL`, or `APP_OLLAMA_URL`, which the CI-Hub
+ * writes when its active backend is Ollama. The native API keeps the thinking-model filter, the
+ * capability-aware model list and `/api/embeddings`. Otherwise an OpenAI-compatible endpoint the
+ * CI-Hub writes as `APP_OPENAI_BASE_URL` answers (its vLLM and Lemonade backends write only that).
+ * With neither, this is the local Ollama the app has always used.
+ */
+export function llmBackendFromEnv(env: NodeJS.ProcessEnv = process.env): LlmBackend {
+  if (envValue(env, 'OLLAMA_URL') ?? envValue(env, 'APP_OLLAMA_URL')) return 'ollama';
+  return envValue(env, 'APP_OPENAI_BASE_URL') ? 'openai' : 'ollama';
+}
+
+/** The OpenAI-compatible endpoint's settings. Every field is '' when it is not configured. */
+export interface OpenAiCompatConfig {
+  /** The `…/v1` base, with no trailing slash. */
+  baseUrl: string;
+  /** Sent as a bearer token when set. The Hub's LAN and tailnet endpoints admit by origin and take none. */
+  apiKey: string;
+  /** The chat model the Hub or operator named. `auto` is the Hub's own picker. */
+  chatModel: string;
+  /** An embedding model an operator named. The CI-Hub maps none into this app, so it is usually ''. */
+  embedModel: string;
+}
+
+/**
+ * The OpenAI-compatible endpoint from `APP_*` env. These are the names the CI-Hub writes for this
+ * app: `hub_integration.inference` in its marketplace manifest maps `llm_base_url`, `llm_api_key`
+ * and `chat_model` onto them. `APP_EMBED_MODEL` is for an operator who runs their own endpoint.
+ *
+ * The base always ends in `/v1`, because the chat, embeddings and models routes live there on
+ * every server this talks to (vLLM, Lemonade, Ollama's `/v1`, the Hub's `/api/inference/v1`).
+ */
+export function openAiCompatFromEnv(env: NodeJS.ProcessEnv = process.env): OpenAiCompatConfig {
+  const raw = (envValue(env, 'APP_OPENAI_BASE_URL') ?? '').replace(/\/+$/, '');
+  return {
+    baseUrl: raw && !/\/v1$/.test(raw) ? `${raw}/v1` : raw,
+    apiKey: envValue(env, 'APP_OPENAI_API_KEY') ?? '',
+    chatModel: envValue(env, 'APP_CHAT_MODEL') ?? '',
+    embedModel: envValue(env, 'APP_EMBED_MODEL') ?? '',
+  };
+}
+
 /**
  * The three Ollama model tiers as env configures them.
  *
@@ -382,9 +440,14 @@ export function ollamaModelsFromEnv(env: NodeJS.ProcessEnv = process.env): {
   embedModel: string;
   pinned: { fast: boolean; quality: boolean; embed: boolean };
 } {
-  const fast = env.OLLAMA_FAST ?? env.OLLAMA_SMALL;
-  const quality = env.OLLAMA_QUALITY ?? env.OLLAMA_MEDIUM;
-  const embed = env.OLLAMA_EMBED;
+  // On the OpenAI-compatible backend the CI-Hub's chat model is the one model its endpoint is set
+  // up to run, so it stands in for both tiers as a pin. Only there: on native Ollama a chat tag
+  // would bypass the thinking-model filter that auto-selection applies.
+  const openAi = llmBackendFromEnv(env) === 'openai';
+  const chat = openAi ? envValue(env, 'APP_CHAT_MODEL') : undefined;
+  const fast = envValue(env, 'OLLAMA_FAST') ?? envValue(env, 'OLLAMA_SMALL') ?? chat;
+  const quality = envValue(env, 'OLLAMA_QUALITY') ?? envValue(env, 'OLLAMA_MEDIUM') ?? chat;
+  const embed = envValue(env, 'OLLAMA_EMBED') ?? (openAi ? envValue(env, 'APP_EMBED_MODEL') : undefined);
   return {
     fastModel: fast ?? 'qwen2.5:0.5b',
     qualityModel: quality ?? 'gemma3n:e4b',
@@ -408,12 +471,14 @@ export const config: Config = {
   dbPath,
   databaseUrl,
   storeBackend,
-  ollamaUrl: process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434',
+  llmBackend: llmBackendFromEnv(),
+  ollamaUrl: envValue(process.env, 'OLLAMA_URL') ?? envValue(process.env, 'APP_OLLAMA_URL') ?? 'http://127.0.0.1:11434',
   // Tier defaults, env pins and the legacy OLLAMA_SMALL/MEDIUM aliases — see
   // ollamaModelsFromEnv above.
   ollamaFastModel: ollamaModels.fastModel,
   ollamaQualityModel: ollamaModels.qualityModel,
   ollamaEmbedModel: ollamaModels.embedModel,
+  openAiCompat: openAiCompatFromEnv(),
   staticDir: join(packageRoot, 'public'),
   // Web Push (Phase H). Keys are AUTO-GENERATED on first boot and persisted to app_config
   // (services/vapid-config.ts hydrates them into this singleton after migrations), so push

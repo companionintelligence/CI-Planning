@@ -27,6 +27,13 @@ function memoryStatus(overrides: Partial<MemoryStatus> = {}): MemoryStatus {
   };
 }
 
+/** The AI endpoint the Hub set up, rather than a local Ollama. */
+function aiEndpoint(ready: boolean): Integrations {
+  return {
+    ollama: { available: ready, ready, provider: 'openai', models: [], fastModel: '', qualityModel: '', embedModel: '' },
+  } as unknown as Integrations;
+}
+
 function ollamaReady(ready: boolean): Integrations {
   return {
     ollama: { available: ready, ready, models: [], fastModel: '', qualityModel: '', embedModel: '' },
@@ -70,6 +77,21 @@ describe('MemoryAndAiPanel (FTUE connect step)', () => {
     render(() => <MemoryAndAiPanel />);
     expect(await screen.findByText('Companion Memory status is unavailable right now.')).toBeTruthy();
     expect(screen.getByText('AI is ready on this server.')).toBeTruthy();
+  });
+
+  it('names the AI endpoint, not Ollama, when the Hub provides the AI', async () => {
+    memoryStatusMock.mockResolvedValue(memoryStatus());
+    integrationsMock.mockReturnValue(aiEndpoint(true));
+    render(() => <MemoryAndAiPanel />);
+    expect(await screen.findByText('AI is ready on this server, through its configured AI endpoint.')).toBeTruthy();
+  });
+
+  it('asks the owner to check the endpoint, not to install Ollama, when no model is ready there', async () => {
+    memoryStatusMock.mockResolvedValue(memoryStatus());
+    integrationsMock.mockReturnValue(aiEndpoint(false));
+    render(() => <MemoryAndAiPanel />);
+    expect(await screen.findByText('No AI model is ready yet. Check the AI endpoint and its model, then check again.')).toBeTruthy();
+    expect(screen.queryByText(/Install Ollama/)).toBeNull();
   });
 
   it('links to Settings for connecting or changing either', async () => {
