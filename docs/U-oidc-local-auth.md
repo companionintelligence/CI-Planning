@@ -1,6 +1,6 @@
 # U — OIDC (hub.companionintelligence.com) + local username/password fallback — planning doc
 
-**Status:** Planning only. **Depends on:** Phase T (owners schema decisions). Companion to [I-identity-auth.md](I-identity-auth.md) — read that first; this phase **completes and redirects** work it already speced but never shipped, plus adds something it never speced at all (local username/password login).
+**Status:** Planning only. **Depends on:** Phase T (owners schema decisions). Companion to [I-identity-auth.md](archive/I-identity-auth.md) — read that first; this phase **completes and redirects** work it already speced but never shipped, plus adds something it never speced at all (local username/password login).
 
 > **Needs external input before this can go from draft to buildable — see RELEASE-READINESS.md.** I don't have hub.companionintelligence.com's OIDC discovery document, client registration process, or how CI-Import Tools/CI-Hub register as consumers today. Everything OIDC-specific below is standard-practice-shaped, not confirmed against your actual Hub.
 

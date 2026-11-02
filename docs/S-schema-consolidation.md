@@ -90,7 +90,7 @@ Reduce real table count where — and only where — tables share identical grai
 **Coupled removals (all four, or the build/cron breaks):**
 1. **Migration `0095_drop_plan_outcomes.ts`** (non-`manual`): `DROP TABLE IF EXISTS plan_outcomes;` **and** `DELETE FROM scheduled_jobs WHERE kind='aggregate_plan_outcomes';` — the cron seed lives in *already-applied* `0083` (`INSERT OR IGNORE`); editing `0083` can't un-seed existing DBs, so a new migration must delete the row or [`startCronJobs`](../server/src/jobs/index.ts) keeps firing a job whose table is gone.
 2. Remove the `case 'aggregate_plan_outcomes'` dispatcher (~`jobs/index.ts:193-200`) + its module import (~`:19`).
-3. Delete [`jobs/aggregate-plan-outcomes.ts`](../server/src/jobs/aggregate-plan-outcomes.ts).
+3. Delete `jobs/aggregate-plan-outcomes.ts` (done in 4f910ddc, so the file is gone).
 4. Delete the `describe('aggregatePlanOutcomes', …)` block (~`:112-206`) in [`learning-loops.test.ts`](../server/test/learning-loops.test.ts) — it imports the deleted module (file won't compile otherwise) and `SELECT`s `plan_outcomes`. **Keep the independent `calibrateEstimates` block.**
 
 **Also:** remove the `DELETE FROM plan_outcomes` line from `resetDb`; regenerate the baseline golden (§0.6); docs (§0.10 — README schema-table row + enumeration; ARCHITECTURE §5.2 row + cron-table row `aggregate_plan_outcomes | daily 01:30` + sequence-diagram step `Cron->>DB: aggregate_plan_outcomes (01:30)` + ER node `PO["plan_outcomes"]`).

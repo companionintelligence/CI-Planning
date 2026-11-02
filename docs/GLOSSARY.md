@@ -1,6 +1,6 @@
 # Companion Planning — Canonical Vocabulary (GLOSSARY)
 
-> **Status:** canonical, 2026-07-07 (updated: `kind='direction'` for the grouping axis — 0038/0043 briefly renamed it `'pattern'`, reverted in 0105 / Phase Z W2; Phase N adds Objective — noun budget raised to 9; Phase O renames the Today "Goals" card → **FOCUS** with source-linked focus (0088), adds a one-per-day note reusing the same `reflections` table with no new migration, and adds a derived five-star day score cached in `day_stars` + a nightly freeze job (0089/0090); Phase O also retires the standalone Morning Briefing section. Phase P adds a `recurrence_horizon_days` Setting and a "Clear Date Range" Settings tool; Objectives joined the multi-device sync layer (0087). Phase T makes multi-tenant real (`owner_id` scoping across time_blocks/tags/sync_events, 0098–0100) and ratifies **owner ≡ user** (decision #1); Phase U adds auth-identity columns to `owners` (U0 / 0101). Phase Z "Time-Sense" (Focus Ritual + Calibration Loop) adds only **non-noun support state**: `reflections(kind='evening')`, the scope columns on `estimate_calibration` + `calibration_combo_pins` (0107), the per-cue prefs matrix + experiment arm on `scheduling_prefs` (Z5 / 0108), the Focus-Ritual `reminders` rows, and the Voice loop's `copy_history` anti-repetition memory (Z7 / 0109). Phases **AA–AE** (2026-07) likewise add **no noun**: the CI-Server `companion-memory` link is another **Connection** (a Setting, like a connected Google account — its data surfaces as existing nouns: memory events → **Inbox** suggestions / **Time Block** placements); natural scheduling (AB), the Today/Tasks UI overhaul (AC), calendar reliability (AD), and reflow correctness (AE) are behavior/UI/engine changes over the existing nouns. **None of Phase O/P/T/U/Z/AA–AE adds a noun** — owner is an internal model concept, budget stays 9. **Triality** (2026-07-30, migs 0139–0143, behind `triality_enabled`) likewise adds **no noun**: its three picks are a derived ranking over existing nouns, and its new vocabulary is slots (Habitual · Contextual · Novel) plus a per-Task **motivation** axis (me/us/them) — both demoted below, both with a mandatory disambiguation; budget stays 9). The single source of truth for user-facing
+> **Status:** canonical, 2026-07-07; checked against the code 2026-11-01 (updated: `kind='direction'` for the grouping axis — 0038/0043 briefly renamed it `'pattern'`, reverted in 0105 / Phase Z W2; Phase N adds Objective — noun budget raised to 9; Phase O renames the Today "Goals" card → **FOCUS** with source-linked focus (0088), adds a one-per-day note reusing the same `reflections` table with no new migration, and adds a derived five-star day score cached in `day_stars` (since folded into `daily_recap`, 0096) + a nightly freeze job (0089/0090); Phase O also retires the standalone Morning Briefing section. Phase P adds a `recurrence_horizon_days` Setting and a "Clear Date Range" Settings tool; Objectives joined the multi-device sync layer (0087). Phase T makes multi-tenant real (`owner_id` scoping across time_blocks/tags/sync_events, 0098–0100) and ratifies **owner ≡ user** (decision #1); Phase U adds auth-identity columns to `owners` (U0 / 0101). Phase Z "Time-Sense" (Focus Ritual + Calibration Loop) adds only **non-noun support state**: `reflections(kind='evening')`, the scope columns on `estimate_calibration` + `calibration_combo_pins` (0107), the per-cue prefs matrix + experiment arm on `scheduling_prefs` (Z5 / 0108), the Focus-Ritual `reminders` rows, and the Voice loop's `copy_history` anti-repetition memory (Z7 / 0109). Phases **AA–AE** (2026-07) likewise add **no noun**: the CI-Server `companion-memory` link is another **Connection** (a Setting, like a connected Google account — its data surfaces as existing nouns: memory events → **Inbox** suggestions / **Time Block** placements); natural scheduling (AB), the Today/Tasks UI overhaul (AC), calendar reliability (AD), and reflow correctness (AE) are behavior/UI/engine changes over the existing nouns. **None of Phase O/P/T/U/Z/AA–AE adds a noun** — owner is an internal model concept, budget stays 9. **Triality** (2026-07-30, migs 0139–0144, behind `triality_enabled`) likewise adds **no noun**: its three picks are a derived ranking over existing nouns, and its new vocabulary is slots (Habitual · Contextual · Novel) plus a per-Task **motivation** axis (me/us/them) — both demoted below, both with a mandatory disambiguation; budget stays 9). Work since then likewise adds **no noun**: Responsible & Beneficiaries (the people-sets on a Task or Time Block, migs 0151–0154 — see *People* below), the Balance view and life priorities (0127/0128, with the Categories re-seeded to its six dimensions in 0134), the Plan-my-week assistant (`planning_sessions`, 0131), the close ritual (0137/0161), the classification, dismissal, plan-loop and placement learning loops (0149–0167), Open Time, and invite-code sign-up (0172) are states, settings or derived views over the existing nouns. The single source of truth for user-facing
 > nouns. Companion to [ROADMAP.md](ROADMAP.md) (consolidation history in [archive/consolidation-plan.md](archive/consolidation-plan.md)). Every label
 > in the UI and every entity in the data model must map to a term here.
 
@@ -36,10 +36,10 @@ much smaller set. This glossary fixes the canon at **9 nouns** and demotes every
 
 | # | Noun | Definition |
 |---|------|------------|
-| 5 | **Inbox** *(retired surface — Phase AF)* | Ingested "possible tasks" are deduplicated inline and **auto-promoted into Tasks** at the end of each run (AF-3) — no manual triage gate remains, and the standalone Inbox view is removed (AF-7). Newly created tasks (including auto-promoted suggestions) surface in the **New Today** section at the top of the Tasks view until the owner-local midnight rollover. (internal: `possible_tasks`, kept as the audit/dedup trail) |
+| 5 | **Inbox** *(retired surface — Phase AF)* | Ingested "possible tasks" are deduplicated inline and **auto-promoted into Tasks** at the end of each run (AF-3) — no manual triage gate remains for calendar, text or memory sources, and the standalone Inbox view is removed (AF-7; `/inbox` redirects to `/tasks`). **Exception:** Gmail-sourced suggestions are review-gated (`services/review-gate.ts`) — they wait in a "Suggested from email" section at the top of the Tasks view until the owner approves or dismisses them, so an email that merely mentions a commitment never silently becomes a task. Newly created tasks (including auto-promoted suggestions) surface in the **New Today** section of the Tasks view until the owner-local midnight rollover. (internal: `possible_tasks`, kept as the audit/dedup trail) |
 | 6 | **Flight-plan** | The day’s staging tray — what Auto runs over. |
 | 7 | **Planner** | The single-day, date-navigable cockpit board where Time Blocks live. The multi-day day/week/month view over the same Time Blocks is the **Calendar** (`/calendar`). |
-| 8 | **Pattern-block** | A named availability window tying a direction to a time range on a given day type. Constrains auto-placement and shades the Planner. | Workday (Mon–Fri) · Weekend (Sat–Sun) *(day types)* |
+| 8 | **Pattern-block** | A named availability window tying a direction to a time range on a given day type. Constrains auto-placement and shades the Planner. Day types: Workday (Mon–Fri) · Weekend (Sat–Sun) *(built in; owners can add their own)*. |
 
 ## States, subtypes & kinds (demoted — not nouns)
 
@@ -49,7 +49,8 @@ much smaller set. This glossary fixes the canon at **9 nouns** and demotes every
   `owner_id` references `owners(id)`. Phase U adds the auth-identity columns directly to
   `owners` — `external_subject` (OIDC/CI-Portal token `sub`, U1), `username` +
   `password_hash` (local login, U2) — so there is **no separate `users` table**. All
-  three are nullable; which are set implies the auth mode. The `SYSTEM_OWNER` sentinel
+  three are nullable; which are set implies the auth mode. `owners.role` (`operator` ·
+  `member` · `viewer`, Phase AG, mig 0125) sets the session's scopes. The `SYSTEM_OWNER` sentinel
   is the single owner in dev/test/standalone mode and is auth-inert (all three NULL).
 - **Connection / Integration (e.g. a connected Google account, or the CI-Server
   companion-memory link):** **not a noun** — it is a **Setting** (managed under Settings →
@@ -63,7 +64,9 @@ much smaller set. This glossary fixes the canon at **9 nouns** and demotes every
   **link** to a Task (today) or an Objective (weekly) via `source_kind`/`source_ref`, or hold
   freeform text (`source_kind='manual'`) — a reference, not ownership; completing a linked task
   auto-checks its focus. They are a feature of the Today cockpit / **Planner** surface, not
-  a standalone entity with its own CRUD lifecycle.
+  a standalone entity with its own CRUD lifecycle. (The **Focus** view, `/focus`, is a
+  separate thing: the simple day-list plus Time-Sense surface that sits before Today in the
+  nav.)
 - **Day note:** **not a noun** — one free-text note per day, reusing the same `reflections`
   table as the FOCUS card (a dedicated `kind='day_note'`; the composite primary key enforces
   the one-per-day rule, no application logic required). A header affordance and a calendar
@@ -79,14 +82,14 @@ much smaller set. This glossary fixes the canon at **9 nouns** and demotes every
   local arithmetic over nouns that already exist: a pick is a Task (flagged when it is already
   staged in the Flight-plan), a Routine, or a *saved* Time Block (a block template) —
   Triality creates no entity of its own. Behind `triality_enabled`
-  (`scheduling_prefs`, default 0; migs 0139–0143). Surfaces: a dismissable **suggestion**
+  (`scheduling_prefs`, default 0; migs 0139–0144). Surfaces: a dismissable **suggestion**
   banner on Focus and **measurement** tiles on Balance → Metrics — **no new routed view, so
   the nine-view count is unchanged**. Internal: `services/triality.ts`, `triality_log`
   (append-only outcomes), `triality_weights` (learned weights). No generative model chooses,
   writes, or re-orders a pick; a local **embedding** model contributes half the novelty term
   when Ollama is reachable, with a pure-arithmetic fallback when it is not — so the ranking is
-  reproducible against a fixed embedding availability, not unconditionally. Design record:
-  [triality-design.md](triality-design.md).
+  reproducible against a fixed embedding availability, not unconditionally. Design records:
+  [triality-design.md](triality-design.md), [triality-v2-design.md](triality-v2-design.md).
 - **Slots — Habitual · Contextual · Novel:** **not nouns** — the three scoring postures a
   Triality pick is chosen under, one pick each. Canonical spelling in the UI *and* in
   storage (`triality_log.slot`, the weight keys) — one spelling everywhere except GraphQL's
@@ -104,7 +107,9 @@ much smaller set. This glossary fixes the canon at **9 nouns** and demotes every
   legacy) · *us* (genuinely shared) · *them* (other people). `NULL` = **unlabeled**, and
   unlabeled is never read as *us* — "shared" is a positive claim, "never asked" is the
   absence of one. `tasks.motivation_source` records `user` vs `llm` (a local-model or
-  keyword label); a user's own label wins permanently and is never re-tagged.
+  keyword label); a user's own label wins permanently and is never re-tagged. Since the
+  people-sets (0151) it is a **projection of the Beneficiaries set**, recomputed on every
+  write, not a hand-set control (see *People* below).
 
   > **Disambiguation (mandatory):** **us** *(a motivation — who benefits)* is **not**
   > **Community** *(a direction Tag — which life sphere the work happens in;
@@ -121,12 +126,30 @@ much smaller set. This glossary fixes the canon at **9 nouns** and demotes every
   decided outcomes for a slot, and shown on Balance → Metrics with the sample count behind
   each slot (never
   hand-editable: there is no weights pref).
-- **Pattern-block day types:** `workday` (Mon–Fri) · `weekend` (Sat–Sun). Each direction has
-  0–N time ranges per day type. direction-less tasks fall back to the general `workday_start`/
-  `workday_end` window from scheduling\_prefs.
+- **People — Responsible & Beneficiaries:** **not a noun** — two peer sets of *Person* rows
+  that a Task or Time Block carries (internal: `people`, `person_emails`, `entity_people`,
+  `possible_task_people`; migs 0151–0154). *Responsible* = who does the work (position 0 is
+  the lead); *Beneficiaries* = who the work is for. A Person is anyone in the owner's world and
+  need not have an account; an *account* is a sign-in identity (a row in `owners`). The
+  directory is managed as a Setting (Settings → People), like a Connection, and a Time Block
+  with no people of its own inherits its task's. `tasks.owner_id` is the tenant, never "the
+  person responsible". Design record: [people-on-work.md](people-on-work.md).
+- **Balance / life priorities:** **not a noun** — the `/balance` view and the `/priorities`
+  setup wizard over six fixed dimensions (health · career · relationships · growth · leisure ·
+  finance; internal `life_priorities`, one row per owner and dimension). The same six are the
+  base `tags.kind='category'` Tags (mig 0134), so a Category *is* a tracked Balance dimension.
+- **Open Time (Today's card):** **not a noun** — a derived summary of the hours still free
+  inside the day's Pattern-block windows with busy Time Blocks subtracted, per direction
+  (`tag_prefs.show_open_time`, mig 0170), within the *Open Time range* setting.
+- **Pattern-block day types:** built-in `workday` (Mon–Fri) · `weekend` (Sat–Sun), plus any
+  the owner adds (`day_types`). Each direction has 0–N time ranges per day type. Auto's
+  fallback fill, for tasks no direction window claims, uses the `work` + `community`
+  windows for the day type; `scheduling_prefs.workday_start`/`workday_end` still exist as
+  columns but have not been read since mig 0156.
 
-- **Task states:** `open` · `TBD` (title + ≥1 tag, nothing else) · `scheduled` ·
-  `deferred` · `done` · `missed` · `past` (the shelf).
+- **Task states:** `open` · `TBD` (informal: a task captured as Someday with only a title and tags — it is not a stored `status` value) · `scheduled` ·
+  `in_progress` · `deferred` · `done` · `missed` · `cancelled` (the soft-delete state; it
+  archives with `done`).
 - **Task subtypes** — `tasks.subtype`, **mutually exclusive**, default `standard`:
   `standard` · `habit` (recurring) · `quick` (lightweight). Replaces the old
   `is_habit` / `is_fast_task` booleans.
@@ -146,9 +169,12 @@ much smaller set. This glossary fixes the canon at **9 nouns** and demotes every
   `is_base` & undeletable, plus user-added; canonical DB value: `tags.kind = 'direction'`) ·
   **intention** (every other tag, grouped under one or more directions via the
   `tag_directions` junction table; ungrouped = *Unsorted*) ·
-  **category** (a third `tags.kind` axis; base set **Personal / Professional / Social**
-  seeded `is_base` per owner — mig 0126 / owner ruling 2026-07-12; exposed via
-  `/api/category-prefs`, grouped through `tag_categories`). A tag may be **muted**
+  **category** (a third `tags.kind` axis; the fixed base set is the six Balance dimensions
+  **health / career / relationships / growth / leisure / finance**, seeded `is_base` per
+  owner by mig 0134 — it replaced the earlier Personal / Professional / Social set of
+  mig 0126. A task or time block carries 1–3 via `entity_categories`; adding or removing
+  categories is switched off by `CATEGORIES_EDITABLE` in `client/src/lib/flags.ts`; exposed
+  via `/api/category-prefs`, grouped through `tag_categories`). A tag may be **muted**
   (a per-tag state, not a noun). directions/intentions/categories are Tag sub-levels,
   **not** new nouns.
 
@@ -173,7 +199,7 @@ much smaller set. This glossary fixes the canon at **9 nouns** and demotes every
 | Habit (pattern type) | Task subtype `habit` (shown in Routines) |
 | Ritual | Routine flavor (flagged off) |
 | Fast Task | Task subtype `quick` |
-| Possible Task | Inbox item |
+| Possible Task | Suggestion (formerly an *Inbox* item) |
 | Open Tasks | Task · *open* state |
 | Subtask | Task with a parent |
 | Concept-Tag | Tag (with a default duration) |

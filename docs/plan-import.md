@@ -16,6 +16,35 @@
 > coexistence, the `account` backfill reality, the **0062 number collision with Phase M**, and the
 > baseline-snapshot test carve-out — all inline below.
 
+> ## ⚠️ Status 2026-11-01: NOT BUILT, and several premises have moved (re-checked at head 0172)
+>
+> None of PI-1 … PI-5 exists. There is no `possible_task_sources` table and no
+> `merged_into_id`, `account` or `duplicate_of_task_id` column on `possible_tasks`
+> (its columns end at `proposed_task_time`; `server/src/db/migrations/`), no
+> `server/src/services/dedup.ts`, and no `compareAndMerge` or `stageIncomingTasks` in
+> `agents/groom.ts` or `agents/ingest.ts`. What reads below as "today" is head `0061`, and
+> the following no longer holds:
+>
+> - **The Inbox is gone.** Phase AF (AF-3, AF-7) retired the view (`client/src/views/Inbox.tsx`
+>   no longer exists; `/inbox` redirects to `/tasks`) and now promotes every possible task on
+>   ingest. The one review queue left is Gmail's: `services/review-gate.ts` holds email
+>   suggestions `pending` in a "Suggested from email" section at the top of the Tasks view. PI-5
+>   would have to target that section and the Details Drawer's suggestion panel, not an Inbox
+>   view. The no-auto-write rule in §1 is therefore true only for Gmail now.
+> - **Migration numbers.** Head is `0172_signup_codes`. Every `0062` below must be read as "the
+>   next free number" (`0173`); `0062`–`0064` are `0062_daily_plan`, `0063_rename_planning_mode_values`
+>   and `0064_last_moved_at`, and `0159`/`0160` are also unused. Phase M's `sqlite-vec` KNN
+>   dedupe is the other premise to re-check before building.
+> - **Noun budget is 9** (Objective was added), not 8 — [GLOSSARY.md](GLOSSARY.md).
+> - **Node version:** root `package.json` `engines.node` is `>=22` (not `>=26 <27`), matching
+>   the `22` in `.github/workflows/ci.yml` (which is manual-dispatch only now).
+> - **Still true:** `possible_tasks` keeps its baseline `UNIQUE(source_kind, source_ref)`;
+>   `dedupePossibles` (`agents/groom.ts:166`, default threshold `0.92`) and
+>   `promotePossibles` (`:48`) exist; `GET /api/possible-tasks`, `POST …/:id/promote` and
+>   `POST …/:id/dismiss` are in `routes/possibles.ts`; `server/src/scripts/import-plan.ts`
+>   is the admin seed for hierarchical plans. The `file:line` citations in the body are from
+>   head `0061` and were not re-verified.
+
 ---
 
 ## 0. Goal
@@ -34,7 +63,7 @@ subtasks) are out of scope — see Non-goals.
 - **No-auto-write (hard rule).** README: "Nothing reaches your task list without
   your say-so." Everything this plan stages lands as `possible_tasks.status='pending'`;
   promotion is the only path to a `tasks` row.
-- **Noun budget = 8** ([GLOSSARY.md](GLOSSARY.md)). This plan adds **no noun**:
+- **Noun budget = 8** (now 9; see the status box above and [GLOSSARY.md](GLOSSARY.md)). This plan adds **no noun**:
   the surface is the existing **Inbox** (`possible_tasks`); the work is a **Groom**
   step (`compare_and_merge`) and a staging entry — operations, not nouns.
 - **Canonical vocabulary.** *Inbox* = `possible_tasks`. *Task* `status` is **free-text (no DB

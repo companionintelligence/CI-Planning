@@ -3,7 +3,9 @@
 > **This document describes the OLD agent-bridge model** (an external agent POSTs events
 > to `/api/calendar/events`; **no OAuth in the server**). That model is **replaced** by a
 > native **standalone Google OAuth 2.1** flow built into the app, with tokens encrypted in
-> the `connection_tokens` store and a single canonical inbound calendar reconciler.
+> the `connection_tokens` store and a single canonical inbound calendar reconciler. The
+> `POST /api/calendar/events` and `POST /api/reconcile` endpoints described below no longer
+> exist.
 >
 > **Current docs:**
 > - Setup runbook → [docs/google-cloud-setup.md](../../docs/google-cloud-setup.md)
