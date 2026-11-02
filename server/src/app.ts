@@ -131,7 +131,7 @@ export async function buildApp(): Promise<Koa> {
  * its own scripts (the theme-bootstrap script moved out of index.html into
  * /theme-init.js so no inline-script allowance is needed), its own styles plus inline
  * `style=` attributes (SolidJS sets them; hence 'unsafe-inline' for STYLES only), the
- * Manrope stylesheet from Google Fonts, same-origin fetch/SSE, the service worker, and
+ * Manrope font files it bundles (no third-party font host), same-origin fetch/SSE, the service worker, and
  * — only when crash reporting is on — the Sentry ingest origin. Anything else an
  * operator needs goes in CSP_EXTRA_CONNECT_SRC.
  *
@@ -166,8 +166,8 @@ function securityHeaders(): Koa.Middleware {
       "frame-src 'none'",
       "form-action 'self'",
       "script-src 'self'",
-      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-      "font-src 'self' data: https://fonts.gstatic.com",
+      "style-src 'self' 'unsafe-inline'",
+      "font-src 'self' data:",
       "img-src 'self' data: blob:",
       `connect-src ${connectSrc()}`,
       "worker-src 'self'",
