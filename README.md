@@ -1114,7 +1114,7 @@ numbering skips 0009, 0119, 0159 and 0160).
 | `possible_dismissal_rate` | One noise-rate reading per owner per calibration run, so "is the loop working" is a number (0157) |
 | `plan_loop_runs` | One row per AI plan-ordering loop run (generate → judge → revise): `stage`, `passed` / `escaped` (+ `escape_reason`), best `score`, `iterations` (0162) |
 | `plan_revision_log` | Append-only evidence — one row per candidate the loop scored (`iter`, `score`, `reason`, JSON `defects`, `critique`); `run_id` is deliberately not an FK, so the evidence survives a crash mid-run (0162) |
-| `plan_loop_stats` | Measurement — one row per (owner, stage, `computed_date`) written by the weekly `calibrate_plan_loop` job; `avg_iterations` / `pass_rate` are `NULL` for a week with no runs (0162) |
+| `plan_loop_stats` | Measurement — one row per (owner, stage, `computed_date`) written by the weekly `calibrate_plan_loop` job; a stage with no runs in the week gets no row; `avg_iterations` / `pass_rate` allow `NULL`, but the weekly job never writes one (0162) |
 | `placement_log` | Append-only evidence — one row per engine placement with the free gaps `pickGap` weighed (`candidates`) and, once the owner drags it, where it was moved; no FKs to blocks or tasks (0166) |
 | `placement_preferences` | Regenerable rollup — the learned hour band (`p25_hour`–`p75_hour`) per owner × direction slot that biases gap choice, rebuilt by the weekly `calibrate_placement` job (0166, 0167) |
 | `placement_survival` | One reading per owner per calibration run — placements accepted vs. corrected; `survival_rate` is `NULL` when nothing was decided (0166) |
@@ -1177,7 +1177,7 @@ Connections**. Replay the walkthrough from **Settings → Profile**.
 | Settings |
 |---|
 | [![Settings view](docs/screenshots/settings.png)](docs/screenshots/settings.png) |
-| Four tabs (Profile shown). **Profile**: your profile, team and invite codes (operators), backup & export, replay of the first-time experience · **Preferences**: schedule patterns and day types, planner display, pattern tags, time block categories, people, time-block and routine settings, reminders, recurrence duration, Clear Date Range · **Connections**: models, Companion Memory, email suggestions, Google · **Logs**: planning-session logs |
+| Five tabs (Profile shown; this screenshot was taken before the **Learning** tab was added and still shows four). **Profile**: your profile, team and invite codes (operators), backup & export, replay of the first-time experience · **Preferences**: schedule patterns and day types, planner display, pattern tags, time block categories, people, time-block and routine settings, reminders, recurrence duration, Clear Date Range · **Connections**: models, Companion Memory, email suggestions, Google · **Learning**: what the four weekly learning passes have measured about the app's own guesses, suggestions, placements and day-ordering checks, with the number of cases behind each figure and a clear button for the first three · **Logs**: planning-session logs |
 
 ## What you get
 
@@ -1284,23 +1284,27 @@ Connections**. Replay the walkthrough from **Settings → Profile**.
   rebuilds a per-owner few-shot exemplar index from that history — the same batch-only,
   never-mid-request contract Triality's learning uses, and read/written through raw SQL
   only (`classification_log` / `classification_exemplars` / `classification_accuracy`).
-  `GET /api/classification/accuracy` exposes the held-out accuracy trend so "the model got
-  better" is a measured number rather than a claim, and `DELETE /api/classification/exemplars`
-  resets the adaptation without touching the correction log underneath it. No feature flag —
-  an owner who has never corrected anything simply sees an empty trend
+  `GET /api/classification/accuracy` exposes the held-out accuracy trend, a score over
+  held-back corrections that shows what the model got right and cannot show that the examples
+  caused it, and `DELETE /api/classification/exemplars` resets the adaptation without
+  touching the correction log underneath it. Settings → Learning shows the trend with the
+  number of cases behind each figure and has the clear button. No feature flag — an owner who
+  has never corrected anything simply sees an empty trend
 - **Dismissal learning** — what you dismiss or approve from the suggestion stream is logged
   (`possible_outcome_log`); once you have 5 settled dismissals a weekly `calibrate_dismissals`
   job keeps a per-owner rollup of them, and up to 3 relevant ones are shown to the extraction
   prompt as history. It influences what is proposed and never suppresses a suggestion. One
-  noise-rate reading per run makes "fewer junk suggestions" a number
-  (`GET /api/dismissal-learning/trend`); `DELETE /api/dismissal-learning/exemplars` resets the
-  rollup and leaves the log alone
+  noise-rate reading per run puts a number on how many of the suggestions you decide on you
+  dismiss (`GET /api/dismissal-learning/trend`); `DELETE /api/dismissal-learning/exemplars`
+  resets the rollup and leaves the log alone. Settings → Learning shows the readings, the
+  decisions behind each, and the clear button
 - **Placement learning** — Auto records which gap it chose and the gaps it passed over, and
   logs it as a correction when you move an auto-placed block. A weekly `calibrate_placement`
   job turns 5 or more corrections for a direction into a preferred hour band (never one wider
   than 6 hours), and gap choice leans toward that band by at most an hour of extra
   fragmentation. `GET /api/placement/survival` shows whether placements are surviving the day
-  untouched; `DELETE /api/placement/preferences` resets the bands
+  untouched; `DELETE /api/placement/preferences` resets the bands. Settings → Learning shows the
+  readings with the settled blocks behind each, and the clear button
 - **Balance targets in planning** — with `balance_bias_enabled` (default on), a life dimension
   that is at least 2 hours behind its weekly target leads the Fill candidates and the day's
   order (the two furthest behind at most); a weekly `snapshot_balance` job freezes each
@@ -1910,7 +1914,8 @@ than a false dip) and `DELETE /api/classification/exemplars` ("reset learning" �
 `DELETE /api/triality/weights`; the correction log survives, and the next weekly run
 re-earns the adaptation from it rather than losing it). Unlike `routes/triality.ts`, there is
 no feature flag here — an owner who has never corrected anything just has an empty trend and
-an empty exemplar index, which is exactly what a fresh install reports anyway.
+an empty exemplar index, which is exactly what a fresh install reports anyway. The client for both
+endpoints is Settings → Learning, which prints the number of scored cases beside every reading.
 
 The original three-part narrative below (ingestion windows, the Tasks-view section-ordering
 swap, and the `CURRENT_TIMESTAMP` local-time bug) shipped in migration 0147 and is kept as
@@ -2104,7 +2109,7 @@ are in [CHANGELOG.md](CHANGELOG.md).
 - **Today + Tasks UI** (Phase AC) — Today's single header row (Brief · Focus · Note popovers + FAB, collapsible DUE); Tasks task-chip redesign, Routine grouping with end-of-day archive and a midnight `reset_routines` job
 - **Memory integration** (Phase AA, opt-in) — a pull-first, read-only link to the CI-Server `companion-memory` graph behind `memory_pull_enabled`: the `memory_suggest` job stages upcoming events as task suggestions (auto-promoted since Phase AF), the Daily Brief folds in a memory excerpt, the Hands-off trust tier's day ordering favors memory-related tasks, and memory-drafted tasks get a history-based default estimate; a one-way `push_memory` job (behind `memory_sync_enabled`) mirrors completions/habits/reflections back
 - **People on work** (0151–0154) — Responsible and Beneficiaries sets on tasks and time blocks, a per-owner people directory, and people detected on suggestions; see [docs/people-on-work.md](docs/people-on-work.md)
-- **Learning from what you do** — weekly, batch-only passes over per-owner evidence logs, never run mid-request: `calibrate_classification` (category and motivation picks), `calibrate_dismissals` (suggestion noise), `calibrate_placement` (preferred hours for auto-placed blocks), `calibrate_plan_loop` (authoring-loop stats) and the flagged `calibrate_triality`. All but the plan-loop stats have a reset endpoint
+- **Learning from what you do** — weekly, batch-only passes over per-owner evidence logs, never run mid-request: `calibrate_classification` (category and motivation picks), `calibrate_dismissals` (suggestion noise), `calibrate_placement` (preferred hours for auto-placed blocks), `calibrate_plan_loop` (authoring-loop stats) and the flagged `calibrate_triality`. All but the plan-loop stats have a reset endpoint. Settings → Learning shows what the first four measured, with the number of cases behind every figure, and offers a clear button for all but the plan-loop stats (Triality's readout is on Balance, Metrics)
 - **Balance targets in planning** (0164–0165, 0168) — `balance_bias_enabled` (default on) puts life dimensions that are behind their weekly target first in Fill and in the day's order; `snapshot_balance` freezes each closed week into `balance_week_log`
 - **Accounts** — Companion Portal sign-in and local username/password; invite-code self-serve sign-up (0172, `AUTH_SIGNUP`); operator / member / viewer roles
 - **Mobile** — Capacitor iOS and Android shells in `mobile/` that connect to a server you run (see [Mobile app](#mobile-app-ios-and-android)); on `main`, not yet in a tagged release
@@ -2804,12 +2809,12 @@ This table lists the notable endpoints, not every route; the routers are in
 | POST | `/api/triality/feedback` | `{log_id, outcome}` — stamp `opened` / `staged` / `dismissed` on a shown suggestion, at most once (this is the learning evidence). 404 while the flag is off |
 | DELETE | `/api/triality/weights` | Reset learning — drops this owner's learned slot weights, so scoring returns to the shipped defaults. The outcome log is untouched, and the next weekly pass re-derives weights from it: this is a recompute, not a permanent opt-out. 404 while the flag is off |
 | GET | `/api/metrics/triality?days=` | Balance → Metrics: acceptance per slot (a suggestion undecided for **less than 24h** is pending and excluded from the denominator; once it is 24h old and still untouched it counts as *ignored* — a decision, and a weak negative), the Novel uptake trend against the prior window, how under-served categories responded, and the learned weights with their sample counts (`null` until learning has run). 404 while the flag is off |
-| GET | `/api/classification/accuracy?limit=` | The classify/parse LLM's held-out accuracy trend, newest run first, per field (`category`/`motivation`). `accuracy: null` on a run that measured nothing — never a `0`. No feature flag |
-| DELETE | `/api/classification/exemplars` | Reset classification learning — drops this owner's learned few-shot index; the correction log survives and the next weekly `calibrate_classification` pass re-earns it |
-| GET · DELETE | `/api/placement/survival?limit=` · `/api/placement/preferences` | Placement learning: the weekly trend of whether auto-placed blocks survive the day untouched, newest run first (`survival_rate: null` = nothing was decided that period; `limit` defaults to 12, max 100); and reset this owner's learned hour bands (the placement log survives). No feature flag |
-| GET | `/api/plan-loop/trend?limit=` | The §A0 authoring loop's measured trend per stage — pass rate, first-try pass rate, escapes and average iterations — newest run first. `limit` defaults to 26, clamped to 1–365. `avg_iterations` / `pass_rate` are `null` when a period had no runs — never a `0`. No feature flag, and no reset endpoint: nothing in this wave influences the loop's behavior |
-| GET | `/api/dismissal-learning/trend?limit=` | The `possible_dismissal_rate` noise-rate trend, oldest → newest, defaulting to 90 rows — answers "is the review queue actually getting quieter?" `rate: null` on a period with `decided = 0` — never a `0` |
-| DELETE | `/api/dismissal-learning/exemplars` | Reset dismissal learning — drops this owner's learned exemplar rollup only (`{ok: true, cleared: <n>}`); `possible_outcome_log` survives and the next weekly `calibrate_dismissals` pass re-earns it from that evidence |
+| GET | `/api/classification/accuracy?limit=` | The classify/parse LLM's held-out accuracy trend, newest run first, per field (`category`/`motivation`). `accuracy: null` on a run that measured nothing — never a `0`. A field with fewer than 2 corrections in 90 days writes no row at all (not a null row), and `limit` counts rows across both fields, so the default of 12 is about six weeks. No feature flag. Settings → Learning is the client |
+| DELETE | `/api/classification/exemplars` | Reset classification learning — drops this owner's learned few-shot index; the correction log survives and the next weekly `calibrate_classification` pass re-earns it. Settings → Learning has the button |
+| GET · DELETE | `/api/placement/survival?limit=` · `/api/placement/preferences` | Placement learning: the weekly trend of whether auto-placed blocks survive the day untouched, newest run first (`survival_rate: null` = nothing was decided that period; `limit` defaults to 12, max 100); and reset this owner's learned hour bands (the placement log survives). No feature flag. Settings → Learning is the client |
+| GET | `/api/plan-loop/trend?limit=` | The §A0 authoring loop's measured trend per stage — pass rate, first-try pass rate, escapes and average iterations — newest run first. `limit` defaults to 26, clamped to 1–365. A week with no runs has no row, so a chart draws a gap; the rate columns are real numbers on any row that exists. `limit` counts rows across stages. No feature flag, and no reset endpoint: nothing in this wave influences the loop's behavior. Settings → Learning is the client |
+| GET | `/api/dismissal-learning/trend?limit=` | The `possible_dismissal_rate` noise-rate trend, oldest → newest, defaulting to 90 rows — answers "is the review queue actually getting quieter?" `rate: null` on a period with `decided = 0` — never a `0`. Settings → Learning is the client |
+| DELETE | `/api/dismissal-learning/exemplars` | Reset dismissal learning — drops this owner's learned exemplar rollup only (`{ok: true, cleared: <n>}`); `possible_outcome_log` survives and the next weekly `calibrate_dismissals` pass re-earns it from that evidence. Settings → Learning has the button |
 | POST | `/api/sync` | Apply offline op-log entries from a device (Phase L) |
 | GET | `/api/export` | Download all owner data as a JSON file (import-compatible) |
 | POST | `/api/import` | Restore owner data from an export JSON body |
