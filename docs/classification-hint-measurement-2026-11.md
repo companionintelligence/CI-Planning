@@ -1,21 +1,5 @@
 # Classification hint in quick add: live measurement (2 Nov 2026)
 
-> **Status, 2 Nov 2026: the hint half was removed. This is the record of what was tried.**
->
-> The quick-add hint this document measures (the owner's most common corrections shown to the model on
-> the Describe-it line and `POST /api/tasks/quick`) was merged in #652 (commit `96009f91`) and then
-> removed again, by the owner's decision, in the pull request that follows it. The capture half
-> (the wizard's Add recording the model's category pick) stayed. The live harness this document
-> describes, `server/test/classification-hint-live.test.ts`, was removed with the hint and can be
-> recovered with `git show 96009f91:server/test/classification-hint-live.test.ts`.
->
-> The measurements stay valid as a record of what was tried, including the finding that the default
-> fast model, `qwen2.5:0.5b`, answers `categories` as a bare string and so never produces a category
-> pick, and the layout finding (the hint beside its field made `gemma3:1b` stop its JSON early; last
-> in the prompt it kept every key). The present-tense statements below about what the code does (the Ship
-> decision, `enrichEntry`, "the shipped route", "ships" and "shipped") describe the code at
-> `96009f91`, not `main`. The body is unchanged.
-
 Evidence for `feat(classification): show quick-add the owner's corrections; record the wizard's
 category pick` (branch `feat/classification-hint-quick-add`, commits `96dbea90`, `0121a543` and
 `92854927`, on `origin/main` `9dce59ae`). The change has two halves with different standing.

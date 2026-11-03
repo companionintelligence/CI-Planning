@@ -70,28 +70,40 @@ const MEANING =
   'Cases behind it: the held-back count printed in every line, often 1 to 5 early on. ' +
   'Direction: higher is better.';
 
-// The examples reach a prompt in exactly one place: the fill-in from memory
-// (services/task-enrich.ts, the sparkle button and the nightly enrich_tasks job). Guesses
-// made while a task is added by typing (routes/tasks.ts) are LOGGED so they can be
-// corrected, but they are not given examples. Saying "when the model guesses" would claim
-// more than the code does.
-// The one switch that decides whether the examples ever reach a prompt (services/task-enrich.ts):
-// enrichTaskFromMemory returns early when memory is off ("Memory is off") and again when the search
-// finds nothing ("No related memory found"), both BEFORE it reads the examples. The score does not
-// depend on it, so an owner without Companion Memory can get a weekly score for a loop that
-// never changes an answer in their app. Said in the card, not left to be guessed.
-const MEMORY_CONDITION =
-  'The examples are shown only when the app fills in details from Companion Memory and finds something related to the task. ' +
-  'With Companion Memory off or not connected, they are built and scored every Monday but never shown to the model.';
+// The examples reach a prompt in THREE places, and the copy keeps them apart because they
+// differ in what picks the examples and in what they need:
+//   - the Describe-it line in the Add dialog (routes/tasks.ts enrichEntry; POST /api/tasks/quick,
+//     which no screen calls, gets the same prompt): the owner's most frequent corrections, never
+//     picked by similarity (embedFn: null), at the end of the prompt (agents/quickadd.ts). No
+//     Companion Memory. It only does anything for categories when the model names one of the
+//     owner's categories, as a list or as one word: quick-add's merge reads a bare string as one
+//     name (since 2026-11-02; before that a small model that answers one word, qwen2.5:0.5b,
+//     yielded no pick and nothing to learn from).
+//   - the fill-in from memory (services/task-enrich.ts): similarity when an embedder answers,
+//     else frequency. It returns early when memory is off ("Memory is off") and again when the
+//     search finds nothing ("No related memory found"), both BEFORE it reads the examples.
+//   - Monday's test (services/classification-score.ts): a narrow one-field question with the
+//     examples retrieved by similarity. It is not quick-add's prompt, so the score is not a
+//     score of the Describe-it line, and the copy says so.
+// Learning is batch for all three: a correction changes no prompt until the next Monday run,
+// and a field needs CORRECTION_FLOOR learnable corrections (a cleared category is logged but not
+// learned from). "Exactly one place" or "never shown to the model" would claim less than the
+// code does; "when the model guesses" would claim more.
+const MEMORY_FILL_IN = 'It runs only when Companion Memory is connected and finds something related to the task.';
 
 const CHANGES =
-  'What it changes: when the app fills in a blank category or me/us/them label on a task from your memory ' +
-  '(the "Fill in details from memory" button and the nightly fill-in), ' +
-  `up to ${F.retrieveK} of your past corrections that look like the task are shown to the model as examples. ` +
-  'Without an embedding model, your most frequent corrections stand in. ' +
-  'Guesses made while you add a task by typing are logged so you can correct them, but they are not shown examples. ' +
-  `A field starts after ${F.correctionFloor} corrections and the model never overwrites a value you already filled in. ` +
-  MEMORY_CONDITION;
+  'What it changes: your past corrections reach the model in three places. ' +
+  `The Describe-it line in the Add dialog (and quick add through the API) shows up to ${F.retrieveK} of the corrections you make most often, ` +
+  'for each field, at the end of its prompt, whatever you typed. ' +
+  'This needs no Companion Memory. The category part needs the model to name one of your categories, as a list or as one word; ' +
+  'an answer that names none of them gives nothing to learn from. ' +
+  `The fill-in from memory (the "Fill in details from memory" button and the nightly fill-in) shows up to ${F.retrieveK} corrections that look like the task, ` +
+  'or your most frequent ones with no embedding model. ' +
+  `${MEMORY_FILL_IN} ` +
+  "The third is Monday's test, described above. " +
+  `Nothing changes before the next Monday run, and a field starts after ${F.correctionFloor} corrections it can learn from; ` +
+  'a category you clear is kept but not learned from. ' +
+  'The model never overwrites a value you already filled in.';
 
 // Deliberately NOT "the stock model got it wrong the first time". The model that made the
 // first guess is not always a stock one: services/task-enrich.ts puts the current examples
@@ -102,7 +114,8 @@ const PRIMARY_CAVEAT =
   "Every held-back case is a task where the model's first guess was not what you chose, so these are the hard ones. " +
   'A high score means the model now answers the way you corrected it. ' +
   'It cannot show that the examples helped, because nothing was measured without them, ' +
-  'and it does not show the model is right in general.';
+  'and it does not show the model is right in general. ' +
+  'It is also not a score of the Describe-it line, which asks the model a longer question.';
 
 // Built from wilsonRange, never typed, so the example cannot drift from the maths.
 const SMALL_NUMBERS_RANGE = formatRange(wilsonRange(3, 4) ?? { lo: 0, hi: 1 });
@@ -112,8 +125,10 @@ const MORE_CAVEATS: readonly string[] = [
     'A call that failed or returned nothing is skipped, not counted as wrong, ' +
     'so the count behind a reading can be lower than the number of corrections held back. ' +
     'A category answer counts only when it matches your whole choice, in the same order.',
-  'The test asks only the category or me/us/them question, without the memory context the real fill-in has. ' +
-    'It stands in for what the app does on your tasks. It is not a recording of it.',
+  'The test asks one narrow question for each held-back correction, the category or me/us/them, in the same words every time, ' +
+    'with examples picked by how closely they match the task (your most frequent ones with no embedding model). ' +
+    'The Describe-it line asks a longer question with your most frequent corrections at the end, and the memory fill-in adds what Companion Memory found. ' +
+    'So this number is not a score of either, and it is not a recording of what the app did on your tasks.',
   'Answers it already gets right are not tested, so this cannot show whether the examples made any of those worse. ' +
     'The same question asked twice can also come out differently, so one weekly score has some noise of its own.',
   `The test questions change. Each week's test is every ${ordinal(F.heldOutStride)} correction from the last ${F.windowDays} days; ` +
@@ -127,14 +142,14 @@ const MORE_CAVEATS: readonly string[] = [
 ];
 
 const HOW_TO_START =
-  'Change a category or a me/us/them label on a task where the app filled it in ' +
-  '(a value you typed yourself on a task the app did not guess is not a correction). ' +
-  'The category the Describe-it line suggests counts too, if you change it before you press Add. ' +
+  'Change a category the Describe-it line picked (before you press Add, or later on the task), ' +
+  'or a category or me/us/them label the app filled in from memory. ' +
+  'A value you typed yourself on a task the app did not guess is not a correction, and the Add dialog does not record who a task is for. ' +
   `Within ${F.windowDays} days, ${F.correctionFloor} corrections of one kind start the examples. ` +
-  'A category you clear is kept but not learned from, so it does not count toward that. ' +
   `With ${F.heldOutStride}, the weekly test can hold one back and score it. ` +
+  "Nothing reaches a prompt until Monday's run has built the examples. " +
   'The score also needs your local model (Ollama) running early on Monday; the examples themselves do not. ' +
-  `${MEMORY_CONDITION} Companion Memory is connected under Settings → Connections. ` +
+  'The Describe-it line needs no Companion Memory. The fill-in from memory does, and Companion Memory is connected under Settings → Connections. ' +
   'There is no switch to start it earlier and no setting that turns it off.';
 
 const NO_VERDICT =

@@ -26,9 +26,20 @@ version at `GET /api/health` (`release`).
   answer, and a category you clear is kept in the log but not learned from. Learning is still weekly: a
   correction you make changes no prompt until the next Monday `calibrate_classification` run (or the first
   start after it, if the server was down), and a field
-  needs at least 2 corrections first. The examples built from corrections reach a prompt only where they
-  already did: Companion Memory's fill-in (off unless `MEMORY_MODE` is set) and the Monday run's own
-  scoring. The Describe-it line does not read them.
+  needs at least 2 corrections first.
+- **The Describe-it line shows the AI your most common category corrections again, for the models that can use
+  them.** The prompt carries up to 3 of the corrections you make most often, last, just before your text; with
+  fewer than 2 corrections it is exactly what it was. It is sent only when the model answering is one measured
+  to use it: `gemma3n:e4b` (the default quality model, which quick add asks), `qwen2.5:3b` and `gemma3:4b`. On
+  any other model quick add leaves it out, because in the same test `qwen2.5:0.5b`, `gemma3:1b` and
+  `llama3.2:3b` all answered worse with it (one answered a number for the category, one lost its valid
+  direction, one answered nothing). Names in `QUICK_ADD_HINT_MODELS` (comma separated) add models. In a test
+  with an invented owner the three that can use it gained 3 of 12 held-out titles by the third correction
+  and kept every natural title; more corrections did not add to that, and none learned the owner's
+  exercise rule. Learning is still weekly: the Monday `calibrate_classification` run builds what the prompt
+  shows, and a field needs at least 2 corrections first. The who-it's-for part was not measured, and the Add
+  dialog does not record those picks, so on a default install it stays empty. See
+  `docs/quick-add-hint-learning-curve-2026-11.md` and `docs/quickadd-hint-guard-2026-11.md`.
 - **Describe-it reads a one-word category answer.** The smallest default AI model, `qwen2.5:0.5b`,
   answers the category question with one word (`"leisure"`) where the prompt asks for a list, and
   `gemma3:1b` does on about 4 calls in 5. Describe-it kept lists only, so on those models it never
