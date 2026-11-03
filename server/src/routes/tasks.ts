@@ -11,7 +11,7 @@ import { getDependencies, blockedTaskIds } from '../engine/deps.js';
 import { parseQuick, type ParsedQuick } from '../engine/quickadd.js';
 import { enrichQuick } from '../agents/quickadd.js';
 import { constrainToVocabulary } from '../agents/constrain.js';
-import { isMotivation } from '../agents/rubric.js';
+import { isMotivation, MOTIVATION_VALUES } from '../agents/rubric.js';
 import { suggestTags } from '../agents/tags.js';
 import { tagUntaggedTasks } from '../services/auto-tag.js';
 import { suggestSubtasks } from '../agents/subtasks.js';
@@ -31,7 +31,9 @@ import {
 } from '../services/tasks.js';
 import { writeAudit } from '../lib/audit.js';
 import { closeTask, isScore, DECLINED_SCORE, MIN_SCORE, MAX_SCORE } from '../services/task-close.js';
-import { classificationInput, logAnsweredAssignment, logAssignment } from '../services/classification-learning.js';
+import {
+  classificationHint, classificationInput, logAnsweredAssignment, logAssignment, type Exemplar,
+} from '../services/classification-learning.js';
 import { getEntityPeople, getEntityPeopleBulk } from '../services/people.js';
 
 // Task business logic lives in services/tasks.ts (Phase W step 3.1, shared with the
@@ -64,6 +66,83 @@ const DEFAULT_TASKS_LIMIT = 20_000;
 async function peopleFor(taskId: string): Promise<{ responsible: unknown[]; beneficiaries: unknown[] }> {
   const { responsible, beneficiaries } = await getEntityPeople('task', taskId);
   return { responsible, beneficiaries };
+}
+
+/**
+ * Keeps an exemplar only when the owner's lesson names values the model may answer with
+ * NOW: `correctValue` (a category pick is stored as its names joined by ', ', see
+ * `canonicalValue`) must be consumed whole as a sequence of `allowed` names, case-insensitive.
+ * A category since renamed, deleted or muted, or a cleared value, would otherwise appear as
+ * "the user chose X" in a prompt whose list lacks X; the model would pick it and
+ * `constrainToVocabulary` would drop it.
+ *
+ * A cleared value is dropped for motivation too, although that prompt allows null: quick-add
+ * does not teach null, and the wizard records no motivation (its rows come only from
+ * `POST /api/tasks/quick`, which no screen calls, and memory enrichment, which is off unless
+ * MEMORY_MODE is set), so a "(nothing)" motivation lesson here would be one nobody has
+ * measured. Memory enrichment, whose prompt allows null as well, passes no `accept` and still
+ * sees those rows as "the user chose (nothing)".
+ *
+ * Whole names, not a split on ',': nothing keeps a comma out of a category name
+ * (`normalizeTagName` leaves it, `createTag` only refuses an empty one, and a rename in
+ * Settings reaches it), so "Health, Fitness" is stored as `health,-fitness` and a split
+ * would cut it in two and drop every lesson that names it.
+ */
+function choosable(allowed: readonly string[]): (e: Exemplar) => boolean {
+  const names = [...new Set(allowed.map((a) => a.toLowerCase()).filter(Boolean))];
+  const SEP = ', ';
+  return (e) => {
+    const value = e.correctValue.toLowerCase();
+    // Positions already tried: one that had led to a match would have ended the walk.
+    const tried = new Set<number>();
+    // Whether `value` from `at` to its end is one name, or a name, ', ' and then more of the
+    // same. Every step eats a non-empty name, so a doubled or trailing separator cannot match.
+    const walk = (at: number): boolean => {
+      if (tried.has(at)) return false;
+      tried.add(at);
+      return names.some((n) => {
+        if (!value.startsWith(n, at)) return false;
+        const end = at + n.length;
+        return end === value.length || (value.startsWith(SEP, end) && walk(end + SEP.length));
+      });
+    };
+    return value.length > 0 && walk(0);
+  };
+}
+
+/**
+ * The overlay both quick routes run: the owner's own past corrections go into the prompt
+ * last, just before the entry (`enrichQuick` places them), and the rest is as it was.
+ *
+ * Frequency-only on purpose (`embedFn: null`): an embed here is an `embedReady` status read
+ * plus an embed on a path a person is watching, and on a box with few model slots it can push
+ * the classify model out. The live runs came after that choice and fit it without proving it:
+ * generate calls slower than 3x the warm median came with all or nearly all of the similarity
+ * lookups in three of the four runs (120 of 120 in runs 2 and 5, 109 of 120 in run 6) and
+ * with 11 of 120 in run 3, where the embedder stayed resident. They record the slowdown, not
+ * which model was evicted, and no eviction was observed
+ * (docs/classification-hint-measurement-2026-11.md). So the whole cost is one indexed read per
+ * field, an owner below the correction floor pays only that, and an install with no embedder
+ * pulled behaves the same. The text is still computed; the day the hint should be about THIS
+ * input, the change is `{ embedFn: null, accept }` to `{ accept }` here and nowhere else.
+ *
+ * Keyed on the title, the string the log records: `mergeEnrichment` never changes it, so
+ * the enriched title is the parsed one. Never throws on the hint side (`classificationHint`
+ * degrades to ''), and an owner with no usable corrections gets the stock prompt. A throw
+ * from the vocabulary read is the caller's, exactly as it was.
+ */
+async function enrichEntry(text: string, parsed: ParsedQuick): Promise<ParsedQuick> {
+  const owner = currentOwnerId();
+  const vocab = await suggestibleVocabulary(owner);
+  const input = classificationInput(parsed.title, null);
+  const [category, motivation] = await Promise.all([
+    // No categories ⇒ the question is not asked, so there is nothing for a lesson to govern.
+    vocab.categories.length
+      ? classificationHint(owner, 'category', input, { embedFn: null, accept: choosable(vocab.categories) })
+      : '',
+    classificationHint(owner, 'motivation', input, { embedFn: null, accept: choosable(MOTIVATION_VALUES) }),
+  ]);
+  return enrichQuick(text, parsed, vocab, { category, motivation });
 }
 
 /**
@@ -103,8 +182,8 @@ function modelPicks(
  * caller can choose the claimed value (the model's side of the lesson), which is acceptable
  * because they already own the corrections they could make by hand. Nothing here reaches
  * another owner. Contrast `motivation_source`, which the route strips because a forged 'llm'
- * would relabel task data other systems read; a claim only ever becomes a row in the
- * caller's own log, which only the caller's own exemplar index is built from.
+ * would relabel task data other systems read; a claim only ever feeds the caller's own
+ * prompt hints.
  *
  * Nothing about the claim is ever an error. A claim that fails a check is dropped, the task
  * is created as it would be without one, and the reason is debug-logged. Debug lines print
@@ -354,7 +433,7 @@ export function tasksRouter() {
     let enriched = parsed;
     let llm = false;
     try {
-      enriched = await enrichQuick(text, parsed, await suggestibleVocabulary(currentOwnerId())); // additive overlay
+      enriched = await enrichEntry(text, parsed); // additive overlay
       llm = true;
     } catch {
       /* OllamaUnavailable / bad JSON → keep the deterministic parse */
@@ -382,7 +461,7 @@ export function tasksRouter() {
     let enriched = parsed;
     let llm = false;
     try {
-      enriched = await enrichQuick(text, parsed, await suggestibleVocabulary(currentOwnerId())); // additive overlay
+      enriched = await enrichEntry(text, parsed); // additive overlay
       llm = true;
     } catch {
       /* OllamaUnavailable / bad JSON → keep the deterministic parse */
