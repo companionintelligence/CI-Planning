@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER, runWithOwner, ALL_SCOPES } from '../src/lib/context.js';
 import { runJob } from '../src/jobs/index.js';
@@ -489,6 +489,41 @@ describe('the calibrate_dismissals job', () => {
     expect(r.status).toBe('done');
     expect(r.log.toLowerCase()).toContain('floor');
     expect(lastRun('calibrate_dismissals')?.status).toBe('done');
+  });
+
+  // The fixtures are dated from the frozen NOW; runJob reads the clock itself, so fake Date
+  // and nothing else (promises keep running for real) to put the rows inside the window.
+  describe('the noise rate in the log', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(NOW);
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('puts the noise rate in the log, rounded, with the counts behind it', async () => {
+      await dismiss();
+      await dismiss();
+      await promote();
+      const r = await runJob('calibrate_dismissals');
+      expect(r.log).toContain('noise rate 67% (2 of 3 decided dismissed, last 7 days)');
+      expect(lastRun('calibrate_dismissals')?.log).toContain('noise rate 67%');
+      expect(rateRows()[0].rate).toBeCloseTo(2 / 3); // the same reading the log quotes
+    });
+
+    it('says the rate is not measured, not 0%, when nothing was decided', async () => {
+      const r = await runJob('calibrate_dismissals');
+      expect(r.log).toContain('noise rate not measured (nothing decided in the last 7 days)');
+      expect(r.log).not.toContain('0%');
+    });
+
+    it('reports 0% when everything decided was promoted', async () => {
+      await promote();
+      await promote();
+      const r = await runJob('calibrate_dismissals');
+      expect(r.log).toContain('noise rate 0% (0 of 2 decided dismissed, last 7 days)');
+    });
   });
 
   it('finishes done and does not throw when possible_outcome_log is missing', async () => {

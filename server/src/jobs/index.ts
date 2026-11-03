@@ -457,7 +457,12 @@ async function execute(kind: string): Promise<JobOutcome> {
       const log = r.indexed === 0
         ? `${r.settled} settled dismissal(s), under the ${r.floor} floor — no exemplars written`
         : `${r.indexed} exemplar(s) from ${r.settled} settled dismissal(s)`;
-      return { itemsCreated: 0, itemsUpdated: r.indexed, log: `Dismissal calibration — ${log}` };
+      // The rate row this run just wrote, so the Jobs view says how noisy the suggestion
+      // stream was without opening Settings → Learning. Null is "nothing decided", not 0%.
+      const rate = r.rate.rate == null
+        ? `noise rate not measured (nothing decided in the last ${r.rate.periodDays} days)`
+        : `noise rate ${Math.round(r.rate.rate * 100)}% (${r.rate.dismissed} of ${r.rate.decided} decided dismissed, last ${r.rate.periodDays} days)`;
+      return { itemsCreated: 0, itemsUpdated: r.indexed, log: `Dismissal calibration — ${log}; ${rate}` };
     }
     case 'calibrate_estimates': {
       const r = await calibrateEstimates();
