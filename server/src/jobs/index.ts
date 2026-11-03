@@ -510,7 +510,10 @@ async function execute(kind: string): Promise<JobOutcome> {
       // with a misleading 0%/0.0 that would otherwise look like a real measurement.
       const parts = r.stages.map((s) =>
         `${s.stage}: ${s.runs} run(s), ${Math.round(s.passRate! * 100)}% pass, ` +
-          `${s.escaped} escape(s), avg ${s.avgIterations!.toFixed(1)} iteration(s)`,
+          `${s.escaped} escape(s), avg ${s.avgIterations!.toFixed(1)} iteration(s)` +
+          (s.topDefects.length > 0
+            ? `; most flagged: ${s.topDefects.map((d) => `${d.rule} (${d.revisions} of ${s.revisions} revision(s))`).join(', ')}`
+            : '; no rule flagged'),
       );
       const label = parts.length > 0 ? parts.join('; ') : 'no runs in the last 7 days — nothing to measure';
       return { itemsCreated: 0, itemsUpdated: r.stages.length, log: `Plan-loop stats — ${label}` };

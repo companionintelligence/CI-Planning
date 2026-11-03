@@ -168,14 +168,60 @@ export interface PlanLoopCalibrationResult {
     firstTryPass: number;
     avgIterations: number | null;
     passRate: number | null;
+    /** Revisions the checker graded for this stage in the window (the denominator below). */
+    revisions: number;
+    /** The rules it flagged most often, most first: how many revisions each appeared in. */
+    topDefects: { rule: string; revisions: number }[];
   }[];
+}
+
+/** How many flagged rules the job's log line names. */
+export const TOP_DEFECTS = 3;
+
+/**
+ * Which rules the checker flagged most often for one stage in the window, read from
+ * `plan_revision_log.defects` (a JSON array of rule codes per revision). This is the only
+ * reader that table has: it was write-only until the weekly pass started naming the top
+ * rules in its log line. A rule is counted once per revision it appears in; ties break on
+ * the rule name so the order never depends on row order. A row whose `defects` is not a
+ * JSON array of strings (hand-edited, truncated) is counted as a revision with no defects
+ * rather than failing the pass.
+ */
+async function readTopDefects(
+  ownerId: string,
+  stage: string,
+  windowStart: string,
+): Promise<{ revisions: number; topDefects: { rule: string; revisions: number }[] }> {
+  const rows = await store()
+    .prepare(`SELECT defects FROM plan_revision_log WHERE owner_id = ? AND stage = ? AND at >= ?`)
+    .all<{ defects: string }>(ownerId, stage, windowStart);
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    let rules: unknown;
+    try {
+      rules = JSON.parse(row.defects);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(rules)) continue;
+    for (const rule of new Set(rules.filter((r): r is string => typeof r === 'string' && r !== ''))) {
+      counts.set(rule, (counts.get(rule) ?? 0) + 1);
+    }
+  }
+  const topDefects = [...counts.entries()]
+    .map(([rule, revisions]) => ({ rule, revisions }))
+    .sort((a, b) => b.revisions - a.revisions || a.rule.localeCompare(b.rule))
+    .slice(0, TOP_DEFECTS);
+  return { revisions: rows.length, topDefects };
 }
 
 /**
  * Roll one owner's trailing {@link STATS_WINDOW_DAYS} of `plan_loop_runs` into one
- * `plan_loop_stats` row per stage present in the window. Pure SQL aggregation over
- * evidence already paid for — no Ollama, no `audit_log` read, no adjustment of any
- * loop option from what it measures. Deterministic given the same rows and clock:
+ * `plan_loop_stats` row per stage present in the window, and read the same window of
+ * `plan_revision_log` for the rules flagged most often (returned for the job's log line,
+ * not stored: `plan_loop_stats` has no column for it). Pure SQL over evidence already
+ * paid for — no Ollama, no `audit_log` read, no adjustment of any loop option from what
+ * it measures. Deterministic given the same rows and clock:
  * fixed window, one GROUP BY, no sampling.
  *
  * A stage with zero runs in the window gets no row, in either direction: nothing is
@@ -247,6 +293,7 @@ export async function calibratePlanLoop(
       firstTryPass: row.first_try_pass,
       avgIterations: row.avg_iterations,
       passRate,
+      ...(await readTopDefects(ownerId, row.stage, windowStart)),
     });
   }
 

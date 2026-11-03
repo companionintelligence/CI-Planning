@@ -8,6 +8,11 @@ version at `GET /api/health` (`release`).
 ## [Unreleased]
 
 ### Changed
+- **The weekly plan-loop job's log now names the rules the checker flagged most often.** The Jobs view line for
+  `calibrate_plan_loop` ends each stage with, for example, "most flagged: priority_inversion (9 of 21
+  revision(s)), overlap (4 of 21 revision(s))", or "no rule flagged". The revision log behind it was written on
+  every run and never read; this is its first reader. Nothing about how plans are made changes, and the list is
+  not stored, so Settings → Learning does not show it yet.
 - **The weekly dismissal job's log now says the noise rate.** The Jobs view line for `calibrate_dismissals` ends
   with how many of the suggestions you decided on in the last 7 days you dismissed, for example "noise rate 42%
   (21 of 50 decided dismissed, last 7 days)", or "noise rate not measured" when nothing was decided. It is the
