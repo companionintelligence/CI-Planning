@@ -3,16 +3,19 @@
 # window, then check that the app is still running and still showing that window after a settle
 # period. Used by the smoke-linux job in .github/workflows/desktop-build.yml.
 #
-#   scripts/smoke-linux-appimage.sh <path-to.AppImage> [window-title] [process-name]
+#   scripts/smoke-linux-appimage.sh <path-to.AppImage> [window-title]
 #
 # Needs xvfb-run, xdotool and pgrep. The AppImage runs with --appimage-extract-and-run, so FUSE is
-# not needed. SMOKE_WINDOW_TIMEOUT (default 120 seconds) and SMOKE_SETTLE_SECONDS (default 15)
-# set the two waits.
+# not needed. SMOKE_WINDOW_TIMEOUT (default 120 seconds) and SMOKE_SETTLE_SECONDS (default 15) set
+# the two waits. SMOKE_PROCESS (default companion-planning-desktop) names the process to look for.
+# It is read from the environment on purpose: a name passed as an argument would appear in this
+# script's own command line, and pgrep -f matches command lines, so the check could pass with the
+# app gone.
 set -euo pipefail
 
-appimage="${1:?usage: smoke-linux-appimage.sh <path-to.AppImage> [window-title] [process-name]}"
+appimage="${1:?usage: smoke-linux-appimage.sh <path-to.AppImage> [window-title]}"
 title="${2:-Companion Planning}"
-process="${3:-companion-planning-desktop}"
+process="${SMOKE_PROCESS:-companion-planning-desktop}"
 window_timeout="${SMOKE_WINDOW_TIMEOUT:-120}"
 settle_seconds="${SMOKE_SETTLE_SECONDS:-15}"
 

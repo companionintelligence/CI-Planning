@@ -140,4 +140,4 @@ jobs:
         run: |
           appimage="$(find bundles/appimage -maxdepth 1 -name '*.AppImage' | head -n 1)"
           test -n "$appimage" || { echo "No AppImage in the artifact" >&2; exit 1; }
-          bash scripts/smoke-linux-appimage.sh "$appimage" "Companion Planning" companion-planning-desktop
+          bash scripts/smoke-linux-appimage.sh "$appimage" "Companion Planning"
