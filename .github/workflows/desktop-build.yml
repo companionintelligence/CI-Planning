@@ -82,6 +82,19 @@ jobs:
       - name: Build the desktop app
         run: pnpm --filter desktop build
 
+      # Linux only. A SHA-256 manifest of the AppImage, .deb and .rpm, written into the bundle
+      # folder so that it is uploaded with them. The paths are relative to that folder, so a
+      # download can be checked from its own root with: sha256sum -c SHA256SUMS
+      - name: Write SHA256SUMS for the Linux bundles
+        if: runner.os == 'Linux'
+        shell: bash
+        working-directory: desktop/src-tauri/target/release/bundle
+        run: |
+          list="$(find . -type f \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) | sed 's|^\./||' | sort)"
+          test -n "$list" || { echo "No Linux bundles were found" >&2; exit 1; }
+          printf '%s\n' "$list" | tr '\n' '\0' | xargs -0 sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
       - name: Upload the bundles
         uses: actions/upload-artifact@v7
         with:
