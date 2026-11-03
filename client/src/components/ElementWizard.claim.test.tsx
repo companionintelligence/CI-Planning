@@ -411,9 +411,73 @@ describe('ElementWizard — a task or habit edit sends the category picker only 
 
     await press('Save');
     const { id, body, scope } = updateCall(0);
-    expect(id).toBe('inst-1');
+    expect(id).toBe('tmpl-1');          // a series save is addressed to the template
     expect(scope).toBe('series');
     expect('categories' in body).toBe(false);
+    expect('tags' in body).toBe(false);  // the direction and intention chips were only seeded
+    expect('secondary_tags' in body).toBe(false);
+  });
+
+  describe('"This & future" on a generated instance shows the template’s sets', () => {
+    const instance = () => taskRow({ id: 'inst-1', tags: [], secondary_tags: [], categories: [], recurrence_parent_id: 'tmpl-1' });
+    const template = () => taskRow({ id: 'tmpl-1', status: 'recurring', tags: ['work'], secondary_tags: [], categories: ['leisure'], recurrence_rule: 'FREQ=DAILY' });
+
+    it('seeds the pickers from the template, and back from the instance on "This task"', () => {
+      TASKS = [instance(), template()];
+      render(() => <ElementWizard />);
+      openEdit('task', 'inst-1');
+      expect(chip('Leisure').className).not.toContain('border-primary');
+
+      fireEvent.click(screen.getByRole('button', { name: 'This & future' }));
+      expect(chip('Leisure').className).toContain('border-primary');
+
+      fireEvent.click(screen.getByRole('button', { name: 'This task' }));
+      expect(chip('Leisure').className).not.toContain('border-primary');
+    });
+
+    it('saves nothing about tags or categories when the seeded sets were left alone', async () => {
+      TASKS = [instance(), template()];
+      render(() => <ElementWizard />);
+      openEdit('task', 'inst-1');
+      fireEvent.click(screen.getByRole('button', { name: 'This & future' }));
+
+      await press('Save');
+      const { id, body, scope } = updateCall(0);
+      expect([id, scope]).toEqual(['tmpl-1', 'series']);
+      expect('categories' in body).toBe(false);
+      expect('tags' in body).toBe(false);
+    });
+
+    it('sends the whole edited set when the owner changes the template’s categories', async () => {
+      TASKS = [instance(), template()];
+      render(() => <ElementWizard />);
+      openEdit('task', 'inst-1');
+      fireEvent.click(screen.getByRole('button', { name: 'This & future' }));
+      fireEvent.click(chip('Career'));
+
+      await press('Save');
+      expect(updateCall(0).body.categories).toEqual(['leisure', 'career']); // the template's set plus the new one
+    });
+
+    it('does not replace a picker the owner already used when the scope is switched', () => {
+      TASKS = [instance(), template()];
+      render(() => <ElementWizard />);
+      openEdit('task', 'inst-1');
+      fireEvent.click(chip('Career'));
+      fireEvent.click(screen.getByRole('button', { name: 'This & future' }));
+      expect(chip('Career').className).toContain('border-primary');
+      expect(chip('Leisure').className).not.toContain('border-primary');
+    });
+
+    it('an instance-scope save still goes to the instance and leaves tags out', async () => {
+      TASKS = [instance(), template()];
+      render(() => <ElementWizard />);
+      openEdit('task', 'inst-1');
+      await press('Save');
+      const { id, body, scope } = updateCall(0);
+      expect([id, scope]).toEqual(['inst-1', undefined]);
+      expect('tags' in body).toBe(false);
+    });
   });
 
   it('series save from an instance where the owner picked a category: it is sent', async () => {
@@ -424,8 +488,8 @@ describe('ElementWizard — a task or habit edit sends the category picker only 
     fireEvent.click(chip('Career'));
 
     await press('Save');
-    const { scope, body } = updateCall(0);
-    expect(scope).toBe('series');
+    const { id, scope, body } = updateCall(0);
+    expect([id, scope]).toEqual(['tmpl-1', 'series']);
     expect(body.categories).toEqual(['career']);
   });
 

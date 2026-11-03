@@ -200,6 +200,11 @@ export interface ElementForm {
   deferUntil?: string;        // YYYY-MM-DD
   dependsOn?: string[];
   editScope?: 'instance' | 'series';  // recurring-task edits
+  /** The template of a generated instance being edited: a series save goes to this id. */
+  editTemplateId?: string;
+  /** Edit only. false = the owner left the direction and intention chips as seeded, so tags
+   *  are left out of the PATCH. undefined/true = send them (a new task always does). */
+  tagsTouched?: boolean;
   parentId?: string;          // subtask parent
   /** D5 — titles the user picked from the suggest-only brainstorm; created as children
    *  of this task on add. Empty/absent unless the user actually tapped a chip. */
@@ -268,8 +273,7 @@ export async function saveElement(
     const { tags: taskTags, secondary_tags } = taskTagPayload(form, categoryNames);
     const body: TaskInput = {
       title: form.title.trim() || 'Untitled',
-      tags: taskTags,
-      secondary_tags,
+      ...(form.tagsTouched === false ? {} : { tags: taskTags, secondary_tags }),
       notes: form.note || undefined,
       parent_id: form.parentId,
       // Someday = capture title/tags only (no schedule) → lands in TBD.
@@ -302,7 +306,7 @@ export async function saveElement(
       form.onCreated?.();
     } else if (form.editScope === 'series') {
       // Series edit → applies to the template; a rule change regenerates the window.
-      await api.tasks.update(editId!, { ...body, recurrence_rule: rule ?? null, is_habit: kind === 'habit' }, 'series');
+      await api.tasks.update(form.editTemplateId ?? editId!, { ...body, recurrence_rule: rule ?? null, is_habit: kind === 'habit' }, 'series');
     } else {
       await api.tasks.update(editId!, body);
     }
