@@ -1300,9 +1300,9 @@ Connections**. Replay the walkthrough from **Settings → Profile**.
   frequent ones when not), and the Monday run's held-out scoring prompts use them. The quick-add
   routes (`/api/tasks/quick/parse`, which the Describe-it line calls, and `/api/tasks/quick`) do not
   read them, so nothing you correct changes the Describe-it line's prompt. The loop is batch: a
-  correction you make changes no prompt until the next Monday `calibrate_classification` run (an
-  admin can run the job early from the Jobs page, for their own account), a field needs at least 2
-  corrections first, and corrections on guesses made more than 90 days ago stop counting. The
+  correction you make changes no prompt until the next Monday `calibrate_classification` run (or the first
+  start after it, if the server was down; an admin can run the job early from the Jobs page, for their
+  own account), a field needs at least 2 corrections first, and corrections on guesses made more than 90 days ago stop counting. The
   Describe-it preview records a category pick only when the AI model names one of your categories,
   as a list or as one word. The built-in fast model, `qwen2.5:0.5b`, answers one word, and quick add
   reads that as one category (`docs/classification-shape-fix-2026-11.md`); most of its suggestions

@@ -24,7 +24,8 @@ version at `GET /api/health` (`release`).
   category names no longer match what the AI saw. This covers new tasks and habits, not Time Blocks or
   edits. Two related changes: an edit that does not change a task's categories no longer counts as an
   answer, and a category you clear is kept in the log but not learned from. Learning is still weekly: a
-  correction you make changes no prompt until the next Monday `calibrate_classification` run, and a field
+  correction you make changes no prompt until the next Monday `calibrate_classification` run (or the first
+  start after it, if the server was down), and a field
   needs at least 2 corrections first. The examples built from corrections reach a prompt only where they
   already did: Companion Memory's fill-in (off unless `MEMORY_MODE` is set) and the Monday run's own
   scoring. The Describe-it line does not read them.
