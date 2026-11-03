@@ -41,8 +41,10 @@ import { constrainToVocabulary, constrainOne, type EnrichOut } from './constrain
  * qwen2.5:0.5b, returned a category that was right on 20 of 60 answers for obvious titles and three of
  * the nine requested keys, while gemma3n:e4b, the quality default every default install already pulls,
  * was right on 60 of 60 and returned all nine. A pick that is mostly wrong is worse than none: the
- * owner has to correct it. The cost is a slower Describe-it preview; the numbers are in the doc.
- * Only this agent moves: the fast tier stays what it was for every other caller, so planning's
+ * owner has to correct it. The cost is a slower Describe-it preview: through the real route a call took
+ * a median 1.4 to 1.8 s against 0.09 s, and the first one after the model was unloaded about 5.1 s
+ * (this box, the model warm or unloaded; Ollama unloads an idle model after 5 minutes unless
+ * OLLAMA_KEEP_ALIVE says otherwise). Only this agent moves: the fast tier stays what it was for every other caller, so planning's
  * generator (fast) is still not its own judge (quality).
  */
 const QUICK_ADD_TIER: ModelTier = 'quality';

@@ -183,6 +183,18 @@
  * real owner's data. The quality of the fields other than category (priority, minutes, time of day, who-it's-for) is
  * not scored, only whether the model returns them. The shape measurement's gemma3n:e4b numbers came from a model
  * injected into every call; this one lets the app resolve it.
+ *
+ * NOTES ADDED AFTER THE FIRST RUN (2026-11-02, 16:05 to 16:19 PST). Nothing below edits a gate; R1 to R3 read as
+ * registered (all PASS, D1: recommended).
+ *   - R3 watches quick add's own route calls, as registered. The MIX probe also timed the two other calls of each
+ *     cycle, and they paid for a server with two model slots (OLLAMA_MAX_LOADED_MODELS=2, three models rotating): the
+ *     fast-tier call took a median 1,483 ms where a warm qwen2.5:0.5b call is about 94 ms, and the embed took 6 ms
+ *     when nomic-embed-text was resident and 290 to 555 ms when it was not. GET /api/ps shows qwen2.5:0.5b and
+ *     nomic-embed-text taking turns in the slot gemma3n:e4b does not hold; once (cycle 10) gemma3n:e4b itself was
+ *     evicted and the next route call paid its reload (5,441 ms). So an R3 PASS means quick add's own calls mostly
+ *     stayed warm, not that three models fit in two slots: the cost moved to the other calls.
+ *   - Q and Q2, the same arm twice, differ in route wall p50 by 29% (1,430 and 1,839 ms). That is the noise of this
+ *     box on this run; the gates' margins are wider than it, and it is the reason to quote a range, not a point.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { createHash } from 'node:crypto';

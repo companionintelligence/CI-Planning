@@ -207,7 +207,7 @@ graph TB
     subgraph AI["AI — optional"]
         Ollama[Ollama<br/>local LLM]
         Small["Fast tier — default qwen2.5:0.5b<br/>extraction / triage"]
-        Medium["Quality tier — default gemma3n:e4b<br/>briefings"]
+        Medium["Quality tier — default gemma3n:e4b<br/>briefings, quick-add classification"]
         Embed["Embedding tier — default nomic-embed-text<br/>dedupe embeddings"]
     end
 
@@ -1304,9 +1304,9 @@ Connections**. Replay the walkthrough from **Settings → Profile**.
   admin can run the job early from the Jobs page, for their own account), a field needs at least 2
   corrections first, and corrections on guesses made more than 90 days ago stop counting. The
   Describe-it preview records a category pick only when the AI model names one of your categories,
-  as a list or as one word. The built-in fast model, `qwen2.5:0.5b`, answers one word, and quick add
-  reads that as one category (`docs/classification-shape-fix-2026-11.md`); most of its suggestions
-  are wrong on obvious titles, so they will need your correction. The measurement of the removed
+  as a list or as one word (`docs/classification-shape-fix-2026-11.md`). Quick add asks the quality
+  model, `gemma3n:e4b` by default, for it (`docs/quickadd-quality-tier-2026-11.md`); the built-in fast
+  model, `qwen2.5:0.5b`, answered one word and was right on 1 obvious title in 3. The measurement of the removed
   Describe-it hint is kept in `docs/classification-hint-measurement-2026-11.md`, the record of an experiment that showed the
   Describe-it line these examples and was then removed; its statements about what the code does
   describe the code before the removal
@@ -2315,7 +2315,7 @@ starts it, and it is not a supported deployment option yet.
 | `CSP_EXTRA_CONNECT_SRC` | (unset) | Extra origins the browser may call, added to the Content-Security-Policy `connect-src` (space/comma-separated). The app's own origin and the Sentry DSN origin are always allowed. Every response carries security headers (CSP, `nosniff`, `Referrer-Policy`, `X-Frame-Options`, `Permissions-Policy`; HSTS over HTTPS). |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama endpoint. Unreachable ⇒ AI features degrade gracefully (template briefings, dedupe off). Read as `APP_OLLAMA_URL` when unset. When neither is set and `APP_OPENAI_BASE_URL` is, the AI endpoint answers instead. |
 | `OLLAMA_FAST` | `qwen2.5:0.5b` | Fast model for extraction/triage. A last-resort default: used when it is installed, otherwise the app auto-selects an installed model (see *5. Ollama* under Local development). Setting it **pins** the tier verbatim, and an unpulled pin fails with an `ollama pull …` error. Legacy alias: `OLLAMA_SMALL` (still accepted; `OLLAMA_FAST` wins when both are set). |
-| `OLLAMA_QUALITY` | `gemma3n:e4b` | Quality model for briefings. Same rule as `OLLAMA_FAST`: used when installed, otherwise auto-selected; setting it pins the tier. Legacy alias: `OLLAMA_MEDIUM` (still accepted; `OLLAMA_QUALITY` wins when both are set). |
+| `OLLAMA_QUALITY` | `gemma3n:e4b` | Quality model for briefings, planning, and the classification behind quick add and the Add dialog's Describe-it line. Same rule as `OLLAMA_FAST`: used when installed, otherwise auto-selected; setting it pins the tier. Legacy alias: `OLLAMA_MEDIUM` (still accepted; `OLLAMA_QUALITY` wins when both are set). |
 | `OLLAMA_EMBED` | `nomic-embed-text` | Embedding model for dedupe. Same rule: used when installed, otherwise an installed embedding model is auto-selected; setting it pins the tier. |
 | `APP_OPENAI_BASE_URL` | (unset) | An OpenAI-compatible endpoint (`…/v1`, added when missing) for AI, used when no Ollama URL is set. The CI Hub writes it when its AI runs on vLLM or Lemonade. Chat, embeddings and the model list all go through it. |
 | `APP_OPENAI_API_KEY` | (unset) | Bearer token for `APP_OPENAI_BASE_URL`, for an endpoint that takes one. Never written to logs or errors. |
