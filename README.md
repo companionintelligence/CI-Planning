@@ -1300,9 +1300,9 @@ Connections**. Replay the walkthrough from **Settings → Profile**.
   frequent ones when not), and the Monday run's held-out scoring prompts use them. The quick-add
   routes (`/api/tasks/quick/parse`, which the Describe-it line calls, and `/api/tasks/quick`) do not
   read them, so nothing you correct changes the Describe-it line's prompt. The loop is batch: a
-  correction you make changes no prompt until the next Monday `calibrate_classification` run (an
-  admin can run the job early from the Jobs page, for their own account), a field needs at least 2
-  corrections first, and corrections on guesses made more than 90 days ago stop counting. The
+  correction you make changes no prompt until the next Monday `calibrate_classification` run (or the first
+  start after it, if the server was down; an admin can run the job early from the Jobs page, for their
+  own account), a field needs at least 2 corrections first, and corrections on guesses made more than 90 days ago stop counting. The
   Describe-it preview records a category pick only when the AI model names one of your categories,
   as a list or as one word (`docs/classification-shape-fix-2026-11.md`). Quick add asks the quality
   model, `gemma3n:e4b` by default, for it (`docs/quickadd-quality-tier-2026-11.md`); the built-in fast
@@ -1803,6 +1803,48 @@ touching the underlying rule.
 (enumerated at run time, so a fresh account is picked up on the next tick); a kind still
 running is never started again by the next tick. Every run writes a `job_runs` row, and
 all of them are listed and manually runnable from the **Jobs** view.
+
+**Missed runs.** The schedule only fires while the server is running. A run that fell while
+it was off (a restart, a redeploy, a self-hosted machine that was switched off) is not made
+up later on its own: a server that was down through Monday's learning passes (03:50 to
+04:50) skipped them for that week, and a correction made the day before waited a further
+week. Seven jobs are made up: `calibrate_estimates`, `calibrate_triality`,
+`calibrate_classification`, `calibrate_dismissals`, `calibrate_plan_loop`,
+`snapshot_balance` and `calibrate_placement`. About a minute after the next start, the
+server checks them one at a time, in schedule order, and runs once each job whose scheduled
+time passed since it last ran. Several missed weeks (or nights) still cost one run, and
+`snapshot_balance` freezes only the latest closed week. A job whose next scheduled time is
+10 minutes away or less is left to that run. A job with no recorded run, or one dated more
+than five minutes ahead of the server's clock, counts as never run, so a first start runs
+all seven once, over empty data. A run that ended in an error counts as having run and is
+not retried. A run cut short by a restart is tried again at the next start; after two
+cut-short tries it waits for its next scheduled time. A disabled job (`enabled = 0` on its
+`scheduled_jobs` row) is not scheduled and not made up. The Jobs view marks a made-up run
+with "Caught up" at the start of its log, for example `Caught up (missed 2026-11-02 04:10)`,
+in the server's clock.
+
+The server keeps one last-run time per job, not one per account. A run by any account
+counts for the whole server: if one account presses **Run now** (or **Run all**) after the
+missed time, or the server stops part-way through the accounts of a scheduled run, the
+accounts not reached are read as caught up too. They wait for the next scheduled time, as
+they did before. Five of the other jobs are not made up, because a late run is not the
+same as a run on time:
+
+- `reset_routines` reopens every finished Routine task with no cut-off on when it was
+  finished, so a run at 09:00 would reopen what you ticked off that morning.
+- `review_day` defers every planned task block that has already ended, so a run at 09:00
+  would also defer this morning's blocks.
+- `auto_schedule` marks every auto-placed block that ended today without being started as
+  skipped and stages it again, which rewrites the day before you have seen it.
+- `nightly_grooming` moves every overdue task up one priority step each time it runs, so
+  a second run is not the same as one.
+- `advance_objectives` stamps each objective with the time it ran, so a run on a Thursday
+  would make the next Monday see less than a week and skip a weekly objective.
+
+The jobs that run every minute to every six hours do the work they missed at their next
+run anyway. `freeze_stars`, `generate_recurrences`, `snapshot_db`, `push_memory`,
+`prune_sync_events` and `enrich_tasks` are left out for now; they are not learning passes.
+A server that is off every night still loses the whole nightly set.
 
 | Job | Cron | What it does |
 |---|---|---|

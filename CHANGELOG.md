@@ -24,7 +24,8 @@ version at `GET /api/health` (`release`).
   category names no longer match what the AI saw. This covers new tasks and habits, not Time Blocks or
   edits. Two related changes: an edit that does not change a task's categories no longer counts as an
   answer, and a category you clear is kept in the log but not learned from. Learning is still weekly: a
-  correction you make changes no prompt until the next Monday `calibrate_classification` run, and a field
+  correction you make changes no prompt until the next Monday `calibrate_classification` run (or the first
+  start after it, if the server was down), and a field
   needs at least 2 corrections first. The examples built from corrections reach a prompt only where they
   already did: Companion Memory's fill-in (off unless `MEMORY_MODE` is set) and the Monday run's own
   scoring. The Describe-it line does not read them.
@@ -84,6 +85,12 @@ version at `GET /api/health` (`release`).
   reopening brings the same item back. The close button still clears the selection.
 
 ### Fixed
+- **The dismissal pass keeps the similarity data it already has when the model is unreachable.** Each weekly
+  `calibrate_dismissals` run rebuilt its examples and embedded every one again, so a run that found Ollama down
+  replaced a working index with empty vectors until a later run found it up. It now reuses the vector already
+  stored for each dismissal, as the classification pass does: an outage costs only the examples added since, and
+  a normal run embeds only the new ones. A changed embedding model is not noticed straight away; old vectors stay
+  until their dismissals age out, as in the classification pass.
 - **The name field no longer opens as "System".** A new owner is seeded with that placeholder, and the first-run
   wizard and the profile showed it as the owner's name. Both now open empty and ask for one, and Save stays off
   until you type a name.
@@ -108,6 +115,26 @@ version at `GET /api/health` (`release`).
   stored VAPID pair so a pair sealed by an earlier test file cannot leave push dormant.
 
 ### Added
+- **Learning passes that were missed while the server was off now run once, about a minute after the next
+  start.** The scheduler never re-fires a time that passed while the server was down, so a restart, a
+  redeploy or a self-hosted machine that was off through Monday's block (03:50 to 04:50) skipped that
+  week's passes, and a correction made the day before waited a further week. Seven jobs are now made up:
+  `calibrate_estimates` (nightly) and the six Monday passes (`calibrate_triality`,
+  `calibrate_classification`, `calibrate_dismissals`, `calibrate_plan_loop`, `snapshot_balance` and
+  `calibrate_placement`). Each runs at most once, one after another, however many runs it missed, and
+  `snapshot_balance` freezes only the latest closed week. A job whose next scheduled time is 10 minutes away
+  or less waits for it. A job with no recorded run counts as never run, so a first start runs all seven once,
+  over empty data. A run that ended in an error is not retried; a run cut short by a restart is tried again at
+  the next start, and after two cut-short runs the job waits for its next scheduled time. A disabled job is not
+  made up. The Jobs view starts the log of a made-up run
+  with "Caught up", for example "Caught up (missed 2026-11-02 04:10)". The server keeps one last-run time per
+  job, not one per account, so a run by any account counts for the whole server: if one account presses
+  **Run now** after the missed time, the other accounts wait for the next scheduled time, as before. The other
+  jobs are not made up. `reset_routines`, `review_day`, `auto_schedule`, `nightly_grooming` and
+  `advance_objectives` would change today's tasks and blocks, or move the next cadence, if they ran late; the
+  jobs that run every few minutes or hours do their missed work at the next run anyway; the rest of the
+  nightly set is left out for now, so a server that is off every night still loses it. The Learning tiles
+  still say "early on Monday"; read that as usually the first start after it.
 - **Accessibility checks run in the test suite.** axe-core checks the login screen and the boot screen, so a rule
   that breaks in jsdom fails CI. Colour contrast needs a real browser and is not checked yet.
 - **`pnpm snapshot` works from the repo root.** The backup script only existed in `server/`, but
