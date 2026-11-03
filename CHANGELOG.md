@@ -34,9 +34,10 @@ version at `GET /api/health` (`release`).
   any other model quick add leaves it out, because in the same test `qwen2.5:0.5b`, `gemma3:1b` and
   `llama3.2:3b` all answered worse with it (one answered a number for the category, one lost its valid
   direction, one answered nothing). Names in `QUICK_ADD_HINT_MODELS` (comma separated) add models. In a test
-  with an invented owner the three that can use it gained 3 of 12 held-out titles by the third correction
-  and kept every natural title; more corrections did not add to that, and none learned the owner's
-  exercise rule. Learning is still weekly: the Monday `calibrate_classification` run builds what the prompt
+  with an invented owner, run twice, the three that can use it ended 2 to 3 of 12 held-out titles ahead
+  and kept their natural titles; most of that came by the third correction, more corrections did not add to
+  it, and none learned the owner's exercise rule. With the guard on, the other three models were flat,
+  as they were before the hint, instead of worse. Learning is still weekly: the Monday `calibrate_classification` run builds what the prompt
   shows, and a field needs at least 2 corrections first. The who-it's-for part was not measured, and the Add
   dialog does not record those picks, so on a default install it stays empty. See
   `docs/quick-add-hint-learning-curve-2026-11.md` and `docs/quickadd-hint-guard-2026-11.md`.

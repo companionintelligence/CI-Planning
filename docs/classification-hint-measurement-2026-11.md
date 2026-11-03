@@ -1,5 +1,17 @@
 # Classification hint in quick add: live measurement (2 Nov 2026)
 
+> **Status, 2 Nov 2026 (later): this is the record of the first measurement; the code has moved on.** The hint
+> half was removed in #659 and has come back with a guard: it is shown only to the models it was measured on
+> (`gemma3n:e4b`, `qwen2.5:3b`, `gemma3:4b`), and every other model gets the stock prompt. Quick add also no
+> longer runs on the fast tier, and a one-word category answer is now read as one category, so the statements
+> below that the default fast model answers a bare string and never produces a pick, and that the hint ships on the
+> evidence of one tier, describe the code at the time. What replaced them:
+> [classification-shape-fix-2026-11.md](classification-shape-fix-2026-11.md) (the bare string),
+> [quickadd-quality-tier-2026-11.md](quickadd-quality-tier-2026-11.md) (the tier),
+> [quick-add-hint-learning-curve-2026-11.md](quick-add-hint-learning-curve-2026-11.md) (six models, three harmed
+> by the hint) and [quickadd-hint-guard-2026-11.md](quickadd-hint-guard-2026-11.md) (the guard). The harness this
+> document describes, `classification-hint-live.test.ts`, is in the tree again.
+
 Evidence for `feat(classification): show quick-add the owner's corrections; record the wizard's
 category pick` (branch `feat/classification-hint-quick-add`, commits `96dbea90`, `0121a543` and
 `92854927`, on `origin/main` `9dce59ae`). The change has two halves with different standing.

@@ -78,7 +78,9 @@ const MEANING =
 //     Companion Memory. It only does anything for categories when the model names one of the
 //     owner's categories, as a list or as one word: quick-add's merge reads a bare string as one
 //     name (since 2026-11-02; before that a small model that answers one word, qwen2.5:0.5b,
-//     yielded no pick and nothing to learn from).
+//     yielded no pick and nothing to learn from). And only for the models it was measured on
+//     (agents/quickadd-hint-models.ts: gemma3n:e4b, qwen2.5:3b, gemma3:4b, plus QUICK_ADD_HINT_MODELS):
+//     three other models answered worse with the examples, so any other model gets the usual prompt.
 //   - the fill-in from memory (services/task-enrich.ts): similarity when an embedder answers,
 //     else frequency. It returns early when memory is off ("Memory is off") and again when the
 //     search finds nothing ("No related memory found"), both BEFORE it reads the examples.
@@ -95,7 +97,9 @@ const CHANGES =
   'What it changes: your past corrections reach the model in three places. ' +
   `The Describe-it line in the Add dialog (and quick add through the API) shows up to ${F.retrieveK} of the corrections you make most often, ` +
   'for each field, at the end of its prompt, whatever you typed. ' +
-  'This needs no Companion Memory. The category part needs the model to name one of your categories, as a list or as one word; ' +
+  'This needs no Companion Memory, and it is sent only when the model answering is one that was tested with it ' +
+  '(gemma3n:e4b, qwen2.5:3b and gemma3:4b; the others tried answered worse), so on any other model the prompt is the usual one. ' +
+  'The category part needs the model to name one of your categories, as a list or as one word; ' +
   'an answer that names none of them gives nothing to learn from. ' +
   `The fill-in from memory (the "Fill in details from memory" button and the nightly fill-in) shows up to ${F.retrieveK} corrections that look like the task, ` +
   'or your most frequent ones with no embedding model. ' +

@@ -742,7 +742,9 @@ describe('ClassificationTile: what the card says about itself', () => {
       'The Describe-it line in the Add dialog (and quick add through the API) shows up to 3 of the corrections you make most often, ' +
         'for each field, at the end of its prompt, whatever you typed.',
     );
-    expect(about).toContain('This needs no Companion Memory. The category part needs the model to name one of your categories, as a list or as one word;');
+    expect(about).toContain('This needs no Companion Memory, and it is sent only when the model answering is one that was tested with it ');
+    expect(about).toContain('(gemma3n:e4b, qwen2.5:3b and gemma3:4b; the others tried answered worse), so on any other model the prompt is the usual one.');
+    expect(about).toContain('The category part needs the model to name one of your categories, as a list or as one word;');
     expect(about).toContain('an answer that names none of them gives nothing to learn from.');
     // 2. The memory fill-in: look-alikes (or the most frequent with no embedder), and only with memory.
     expect(about).toContain('the "Fill in details from memory" button and the nightly fill-in');
