@@ -1315,7 +1315,8 @@ Connections**. Replay the walkthrough from **Settings → Profile**.
   job keeps a per-owner rollup of them, and up to 3 relevant ones are shown to the extraction
   prompt as history. It influences what is proposed and never suppresses a suggestion. One
   noise-rate reading per run puts a number on how many of the suggestions you decide on you
-  dismiss (`GET /api/dismissal-learning/trend`); `DELETE /api/dismissal-learning/exemplars`
+  dismiss (`GET /api/dismissal-learning/trend`, and the weekly job's line in the Jobs view);
+  `DELETE /api/dismissal-learning/exemplars`
   resets the rollup and leaves the log alone. Settings → Learning shows the readings, the
   decisions behind each, and the clear button
 - **Placement learning** — Auto records which gap it chose and the gaps it passed over, and
