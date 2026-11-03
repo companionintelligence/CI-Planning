@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from 'vites
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { startTestServer, resetDb, api, createOwner, SECOND_OWNER_ID, type TestServer } from './helpers.js';
-import { enrichQuick } from '../src/agents/quickadd.js';
+import { enrichQuick, quickAddModel } from '../src/agents/quickadd.js';
 import { parseQuick } from '../src/engine/quickadd.js';
 import { suggestibleVocabulary } from '../src/services/tags.js';
 import { ollama } from '../src/mcp/ollama.js';
@@ -348,4 +348,74 @@ describe('two owners', () => {
       expect(second).not.toContain('help mum with her taxes');
     });
   }
+});
+
+describe('the guard: the hint goes only to a model it was measured on', () => {
+  const setQuality = (model: string | null) =>
+    sqlite.prepare('UPDATE scheduling_prefs SET quality_model = ? WHERE owner_id = ?').run(model, OWNER);
+  /** What the route would send an owner who HAS corrections, to compare with the stock prompt. */
+  beforeEach(() => {
+    exemplar({ field: 'category', text: 'gym session before work', llm: 'leisure', correct: 'health' });
+    exemplar({ field: 'category', text: 'go for a run along the river', llm: 'leisure', correct: 'health' });
+    exemplar({ field: 'motivation', text: 'help mum with her taxes', llm: 'me', correct: 'them' });
+    setQuality(null);
+  });
+
+  it('asks for the model quick add will really use: the quality tier, the owner\'s choice first', async () => {
+    expect(await quickAddModel(OWNER)).toBe('gemma3n:e4b'); // the built-in quality default, no Ollama probed under test
+    setQuality('qwen2.5:3b');
+    expect(await quickAddModel(OWNER)).toBe('qwen2.5:3b');
+  });
+
+  for (const route of ROUTES) {
+    it(`shows the hint to the default quality model on ${route.name}`, async () => {
+      const prompt = await promptFrom(route.path, 'water the plants');
+      expect(prompt).toContain('This user has corrected you before.');
+      expect(prompt).toContain('you said leisure; the user chose health.');
+    });
+
+    for (const model of ['qwen2.5:3b', 'gemma3:4b']) {
+      it(`shows it to ${model}, the other measured models, on ${route.name}`, async () => {
+        setQuality(model);
+        const prompt = await promptFrom(route.path, 'water the plants');
+        expect(prompt).toContain('you said leisure; the user chose health.');
+      });
+    }
+
+    for (const model of ['qwen2.5:0.5b', 'gemma3:1b', 'llama3.2:3b', 'qwen3-coder:30b', 'someone-else:latest']) {
+      it(`leaves it out for ${model} on ${route.name}: the prompt is the stock prompt, byte for byte`, async () => {
+        setQuality(model);
+        const entry = 'water the plants';
+        const viaRoute = await promptFrom(route.path, entry);
+        const stock = await stockPrompt(entry);
+        expect(viaRoute).toBe(stock);
+        expect(viaRoute).not.toContain('corrected you before');
+        // Not vacuous: the owner does have corrections in the index, so only the guard held the hint back.
+        const rows = sqlite.prepare(`SELECT COUNT(*) AS n FROM classification_exemplars WHERE owner_id = ?`).get(OWNER) as { n: number };
+        expect(rows.n).toBe(3);
+      });
+    }
+  }
+
+  it('lets QUICK_ADD_HINT_MODELS add a model, and only the one it names', async () => {
+    const before = process.env.QUICK_ADD_HINT_MODELS;
+    try {
+      setQuality('llama3.2:3b');
+      process.env.QUICK_ADD_HINT_MODELS = 'llama3.2:3b';
+      expect(await promptFrom('/api/tasks/quick/parse', 'water the plants')).toContain('you said leisure; the user chose health.');
+      setQuality('qwen2.5:0.5b');
+      expect(await promptFrom('/api/tasks/quick/parse', 'water the plants')).not.toContain('corrected you before');
+    } finally {
+      if (before === undefined) delete process.env.QUICK_ADD_HINT_MODELS; else process.env.QUICK_ADD_HINT_MODELS = before;
+    }
+  });
+
+  it('changes nothing for the direction retry, which never carries a hint', async () => {
+    setQuality('qwen2.5:0.5b');
+    reply.value = { categories: ['leisure'], motivation: 'me', tags: [] }; // no usable direction: the retry fires
+    prompts.length = 0;
+    await api(srv.url, '/api/tasks/quick/parse', { method: 'POST', json: { text: 'water the plants' } });
+    expect(retries()).toHaveLength(1);
+    expect(retries()[0]).not.toContain('corrected you before');
+  });
 });

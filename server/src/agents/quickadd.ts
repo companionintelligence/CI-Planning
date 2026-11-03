@@ -1,4 +1,5 @@
 import { generateJson, type ModelTier } from '../mcp/ollama.js';
+import { resolveModel } from '../lib/models.js';
 import type { ParsedQuick } from '../engine/quickadd.js';
 import {
   directionGuide, isTimeOfDay, titleSuggestsComplex, isMotivation,
@@ -62,6 +63,16 @@ import { constrainToVocabulary, constrainOne, type EnrichOut } from './constrain
  * generator (fast) is still not its own judge (quality).
  */
 const QUICK_ADD_TIER: ModelTier = 'quality';
+
+/**
+ * The model quick add will ask for this owner: the same resolution `generateJson` does for the tier
+ * (the owner's Settings choice, an env pin, the built-in default if installed, else auto-selected). The
+ * route needs the name to decide whether the model is one the hint was measured on
+ * (agents/quickadd-hint-models.ts); this is where the tier is known.
+ */
+export async function quickAddModel(owner?: string): Promise<string> {
+  return resolveModel(QUICK_ADD_TIER, owner);
+}
 
 export interface QuickVocab {
   /** The owner's direction-tag names (kind='direction'): Work / Home / Community. */

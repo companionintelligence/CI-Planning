@@ -9,7 +9,8 @@ import { taskToApi } from '../lib/serialize.js';
 import { currentOwnerId } from '../lib/context.js';
 import { getDependencies, blockedTaskIds } from '../engine/deps.js';
 import { parseQuick, type ParsedQuick } from '../engine/quickadd.js';
-import { enrichQuick } from '../agents/quickadd.js';
+import { enrichQuick, quickAddModel } from '../agents/quickadd.js';
+import { modelUsesHint } from '../agents/quickadd-hint-models.js';
 import { constrainToVocabulary } from '../agents/constrain.js';
 import { isMotivation, MOTIVATION_VALUES } from '../agents/rubric.js';
 import { suggestTags } from '../agents/tags.js';
@@ -130,10 +131,22 @@ function choosable(allowed: readonly string[]): (e: Exemplar) => boolean {
  * the enriched title is the parsed one. Never throws on the hint side (`classificationHint`
  * degrades to ''), and an owner with no usable corrections gets the stock prompt. A throw
  * from the vocabulary read is the caller's, exactly as it was.
+ *
+ * The guard (2026-11-02): the hint is fetched and shown only when the model quick add will ask is
+ * one it was measured on (`modelUsesHint`, agents/quickadd-hint-models.ts); any other model gets the
+ * stock prompt, as an owner with no corrections does. Of six models measured, three used the hint and
+ * three answered worse with it, and size did not tell them apart (docs/quick-add-hint-learning-curve-2026-11.md).
  */
 async function enrichEntry(text: string, parsed: ParsedQuick): Promise<ParsedQuick> {
   const owner = currentOwnerId();
   const vocab = await suggestibleVocabulary(owner);
+  // The guard: the hint goes only to a model it was measured on (agents/quickadd-hint-models.ts). Any other
+  // model, one that cannot be resolved included, is asked the stock prompt, byte for byte, as an owner with
+  // no corrections is. Three of the six models measured answered worse with the hint, so this is a default
+  // of "no", not "yes unless known bad".
+  let useHint = false;
+  try { useHint = modelUsesHint(await quickAddModel(owner)); } catch { /* unresolvable: no hint */ }
+  if (!useHint) return enrichQuick(text, parsed, vocab);
   const input = classificationInput(parsed.title, null);
   const [category, motivation] = await Promise.all([
     // No categories ⇒ the question is not asked, so there is nothing for a lesson to govern.
