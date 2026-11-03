@@ -1,4 +1,4 @@
-import { generateJson } from '../mcp/ollama.js';
+import { generateJson, type ModelTier } from '../mcp/ollama.js';
 import type { ParsedQuick } from '../engine/quickadd.js';
 import {
   directionGuide, isTimeOfDay, titleSuggestsComplex, isMotivation,
@@ -32,6 +32,22 @@ import { constrainToVocabulary, constrainOne, type EnrichOut } from './constrain
  * All three remain preview-only: /api/tasks/quick/parse writes nothing, so the wizard
  * shows them for approval before anything is created.
  */
+
+/**
+ * The tier quick add's classification runs on (the overlay call and its direction retry).
+ *
+ * QUALITY, not the fast tier every other `classify` caller uses (explicit `tier` beats the purpose's,
+ * see `resolveCall`). Measured 2026-11-02 (docs/quickadd-quality-tier-2026-11.md): the fast default,
+ * qwen2.5:0.5b, returned a category that was right on 20 of 60 answers for obvious titles and three of
+ * the nine requested keys, while gemma3n:e4b, the quality default every default install already pulls,
+ * was right on 60 of 60 and returned all nine. A pick that is mostly wrong is worse than none: the
+ * owner has to correct it. The cost is a slower Describe-it preview: through the real route a call took
+ * a median 1.4 to 1.8 s against 0.09 s, and the first one after the model was unloaded about 5.1 s
+ * (this box, the model warm or unloaded; Ollama unloads an idle model after 5 minutes unless
+ * OLLAMA_KEEP_ALIVE says otherwise). Only this agent moves: the fast tier stays what it was for every other caller, so planning's
+ * generator (fast) is still not its own judge (quality).
+ */
+const QUICK_ADD_TIER: ModelTier = 'quality';
 
 export interface QuickVocab {
   /** The owner's direction-tag names (kind='direction'): Work / Home / Community. */
@@ -182,7 +198,7 @@ export async function enrichQuick(
       `"tags": up to 2 from ${JSON.stringify(vocab.others.slice(0, 60))}, else [].\n` +
       `Choose direction/categories/tags ONLY from the given lists — never invent.\n` +
       `Entry: "${text}"`,
-    { purpose: 'classify' }
+    { purpose: 'classify', tier: QUICK_ADD_TIER }
   );
 
   let merged = mergeEnrichment(parsed, out, vocab);
@@ -197,7 +213,7 @@ export async function enrichQuick(
       `Which area of life does this task belong to? Answer with JSON ` +
         `{"direction": <exactly one of ${JSON.stringify(vocab.directions)}>}.${directionGuide(vocab.directions)} ` +
         `Task: "${text}"`,
-      { purpose: 'classify' }
+      { purpose: 'classify', tier: QUICK_ADD_TIER }
     );
     merged = mergeEnrichment(merged, { direction: retry.direction }, vocab);
   }

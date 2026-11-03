@@ -128,6 +128,74 @@
  * are near-identical (titles, not runs, are the sample); three models; a yield is a pick the model made,
  * not a pick the owner would have made; no real owner's data.
  */
+
+/**
+ * THE QUALITY-TIER MEASUREMENT (LIVE_TIER=1). PRE-REGISTERED 2026-11-02, written and committed BEFORE its first
+ * live run, with the same discipline as the shape measurement above: no gate, threshold or rule below is edited
+ * after a result; a dated note goes under it.
+ *
+ * THE QUESTION. The shape measurement found the default fast model (qwen2.5:0.5b) gives a category that is
+ * mostly wrong (right on 20 of 60 answers for obvious titles) and returns 3 of the 9 requested keys, while
+ * gemma3n:e4b, the quality-tier default that every default install already pulls (docker-compose.yml), was right
+ * on 60 of 60 and returned all nine. Should quick add's classification (enrichQuick: the overlay call and its
+ * direction retry) run on the QUALITY tier? Not the whole fast tier: planning's generator (plan_generate, fast) must
+ * not be its own judge (plan_judge, quality), and every other fast-tier call would get slower.
+ *
+ * WHAT CHANGES. agents/quickadd.ts passes tier 'quality' on both of its generateJson calls. The purpose
+ * ('classify': temperature 0.1, ceiling 15 s) and the prompt, byte for byte, are as they were.
+ *
+ * WHAT RUNS. The REAL parse route (POST /api/tasks/quick/parse) end to end for an owner with no corrections, with NO
+ * model injected: the app resolves its own tiers, and the fast tier must resolve to qwen2.5:0.5b and the quality tier
+ * to gemma3n:e4b (asserted; the run is not valid otherwise). The 42 fixture titles x LIVE_SHAPE_RUNS (5), in BLOCKS
+ * (not interleaved, so each block sees its own model warm), in this order:
+ *   B    BEFORE: the seam forces tier 'fast' on every call, which is what production sent before the change.
+ *   Q    AFTER: the shipped code, untouched (tier 'quality').
+ *   Q2   a repeat of Q: the noise floor.
+ * Then COLD: 3 trials of: unload gemma3n:e4b (POST /api/generate with keep_alive 0, then wait up to 15 s for GET
+ * /api/ps to stop listing it), then ONE route call. The unload is the only thing done to the server. Default Ollama
+ * unloads an idle model after 5 minutes (docker-compose.yml sets no OLLAMA_KEEP_ALIVE), so a cold call is what the
+ * first quick add after a quiet spell pays. Then MIX: 20 cycles of [a route parse (Q)] [one fast-tier generateJson
+ * (purpose brainstorm, a two-line prompt)] [one embed], which is what a quick add followed by a subtask suggestion
+ * and a dedupe embedding asks of the models, with GET /api/ps after every call, on a server whose slot count
+ * (OLLAMA_MAX_LOADED_MODELS) is recorded beside the result. Three models rotate through it.
+ * Per route call: wall time, the first model call's own time, whether the model overlay ran (`llm` true), the raw
+ * first completion, strict-JSON validity, all nine keys, a valid direction, and the categories the route returned.
+ *
+ * GATES (on arm Q; B is reported beside it and never gated):
+ *   R1 QUALITY    Of Q's 210 calls: the route returned a category on at least 95%; on the 12 obvious (control)
+ *                 titles the first category is the right one on at least 90% of calls (54 of 60); all nine keys
+ *                 are present on at least 90%; the direction names one of the owner's on at least 90%.
+ *   R2 LATENCY    WARM: Q's route wall time p50 <= 2,500 ms and p95 <= 5,000 ms, and every call ran the overlay (a
+ *                 timeout or a failure leaves `llm` false). COLD: each of the 3 first calls after an unload ran the
+ *                 overlay, inside the 15 s ceiling.
+ *   R3 RESIDENCY  In MIX, at most 10% of the route calls take longer than 3 x Q's warm route median, and every one
+ *                 ran the overlay.
+ *   R4 NO COLLATERAL  Not live: a unit test asserts that enrichQuick sends tier 'quality' on both calls and that
+ *                 every other purpose's tier is unchanged.
+ *
+ * RULE (the lead decides; the harness reads it off and prints each line).
+ *   D1  R1 and R2 hold: the change is recommended. R3 is reported with the slot count as a condition.
+ *   D2  R1 or R2 fails: not recommended; the verdict and the numbers are the PR's whole content.
+ *   D3  R3 fails with R1 and R2 holding: still D1, and the PR and the CHANGELOG say that on a box with fewer model
+ *       slots than models in rotation quick add then pays a model swap.
+ * NOT SHOWN, whatever the result: one box (AMD Strix Halo, unified memory, the server settings of docs/classification-
+ * shape-fix-2026-11.md), one invented owner, 42 titles; no typical laptop, no CPU-only box, no concurrent users, no
+ * real owner's data. The quality of the fields other than category (priority, minutes, time of day, who-it's-for) is
+ * not scored, only whether the model returns them. The shape measurement's gemma3n:e4b numbers came from a model
+ * injected into every call; this one lets the app resolve it.
+ *
+ * NOTES ADDED AFTER THE FIRST RUN (2026-11-02, 16:05 to 16:19 PST). Nothing below edits a gate; R1 to R3 read as
+ * registered (all PASS, D1: recommended).
+ *   - R3 watches quick add's own route calls, as registered. The MIX probe also timed the two other calls of each
+ *     cycle, and they paid for a server with two model slots (OLLAMA_MAX_LOADED_MODELS=2, three models rotating): the
+ *     fast-tier call took a median 1,483 ms where a warm qwen2.5:0.5b call is about 94 ms, and the embed took 6 ms
+ *     when nomic-embed-text was resident and 290 to 555 ms when it was not. GET /api/ps shows qwen2.5:0.5b and
+ *     nomic-embed-text taking turns in the slot gemma3n:e4b does not hold; once (cycle 10) gemma3n:e4b itself was
+ *     evicted and the next route call paid its reload (5,441 ms). So an R3 PASS means quick add's own calls mostly
+ *     stayed warm, not that three models fit in two slots: the cost moved to the other calls.
+ *   - Q and Q2, the same arm twice, differ in route wall p50 by 29% (1,430 and 1,839 ms). That is the noise of this
+ *     box on this run; the gates' margins are wider than it, and it is the reason to quote a range, not a point.
+ */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -140,7 +208,7 @@ import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { parseQuick } from '../src/engine/quickadd.js';
 import { enrichQuick, mergeEnrichment, type QuickVocab } from '../src/agents/quickadd.js';
 import { constrainToVocabulary, constrainOne, type EnrichOut } from '../src/agents/constrain.js';
-import { generateJson, generate, parseJsonLoose } from '../src/mcp/ollama.js';
+import { generateJson, generate, embed, parseJsonLoose, type ModelTier } from '../src/mcp/ollama.js';
 import {
   setInstalledModels, parseParamB, resolveModel, matchInstalled, explainModel, explainModelDefault, type ResolvedModel,
 } from '../src/lib/models.js';
@@ -150,6 +218,7 @@ import { startTestServer, resetDb, api, type TestServer } from './helpers.js';
 
 const LIVE = process.env.LIVE_SHAPE === '1';
 const CAPTURE = process.env.LIVE_CAPTURE === '1';
+const TIER = process.env.LIVE_TIER === '1';
 const REPLAY = process.env.LIVE_SHAPE_REPLAY ?? '';
 function envPositiveInt(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -188,6 +257,8 @@ const rec = vi.hoisted(() => ({
    * drive the real enrichQuick through chosen answers). Null in every live run.
    */
   script: null as string[] | null,
+  /** The quality-tier measurement's BEFORE arm: forces this tier on every call, as production sent before. '' = leave the call's own. */
+  tier: '' as '' | ModelTier,
 }));
 
 vi.mock('../src/mcp/ollama.js', async (importOriginal) => {
@@ -211,7 +282,7 @@ vi.mock('../src/mcp/ollama.js', async (importOriginal) => {
       const t0 = performance.now();
       let raw: string;
       try {
-        raw = await real.generate(prompt, { ...opts, model: model || undefined, json: true });
+        raw = await real.generate(prompt, { ...opts, ...(rec.tier ? { tier: rec.tier } : {}), model: model || undefined, json: true });
       } catch (err) {
         rec.calls.push({ prompt, raw: '', ms: performance.now() - t0, model, dry: false, error: (err as Error).message });
         throw err;
@@ -1088,6 +1159,218 @@ describe.skipIf(!CAPTURE)('classification shape · capture on a real model', () 
   });
 });
 
+// ── The quality-tier measurement, live (LIVE_TIER=1; the gates are pre-registered in the header) ──────
+
+type TierArm = 'B' | 'Q' | 'Q2' | 'COLD' | 'MIX_Q' | 'MIX_F' | 'MIX_E';
+const TIER_GATES = {
+  /** R1, on arm Q. */
+  r1MinPickPct: 95,
+  r1MinObviousPct: 90,
+  r1MinAllKeysPct: 90,
+  r1MinDirectionPct: 90,
+  /** R2: warm route wall time, ms. */
+  r2WarmP50Ms: 2_500,
+  r2WarmP95Ms: 5_000,
+  /** The ceiling a call is held to (CALL_POLICY.classify.timeoutMs); also the cold limit. */
+  ceilingMs: 15_000,
+  /** R3: the share of MIX route calls slower than r3SlowFactor x Q's warm median, at most. */
+  r3MaxSlowPct: 10,
+  r3SlowFactor: 3,
+  coldTrials: 3,
+  mixCycles: 20,
+} as const;
+
+interface TierCall {
+  arm: TierArm;
+  title: string;
+  kind: FixtureItem['kind'] | 'probe';
+  expected: string;
+  run: number;
+  /** The whole call: the route's, or for MIX_F and MIX_E the one model call's. */
+  wallMs: number;
+  /** The first model call's own time inside a route call (the seam); null elsewhere. */
+  modelMs: number | null;
+  /** Whether the model overlay ran (the route's `llm`); null for a probe. */
+  llm: boolean | null;
+  status: number | null;
+  raw: string;
+  validJson: boolean;
+  allKeys: boolean;
+  directionValid: boolean;
+  /** The categories the route returned. */
+  categories: string[];
+  /** GET /api/ps after the call; null when it could not be read. */
+  resident: string[] | null;
+}
+const tierCalls: TierCall[] = [];
+
+/** Nearest-rank percentile, p in 0..100; NaN for an empty sample. */
+function percentileOf(sample: readonly number[], p: number): number {
+  if (sample.length === 0) return NaN;
+  const sorted = [...sample].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length, Math.max(1, Math.ceil((p / 100) * sorted.length))) - 1];
+}
+
+interface ArmSummary {
+  n: number;
+  pickPct: number;
+  obviousPct: number;
+  allKeysPct: number;
+  directionPct: number;
+  overlayPct: number;
+  p50: number;
+  p95: number;
+  max: number;
+}
+function summariseArm(calls: readonly TierCall[]): ArmSummary {
+  const obvious = calls.filter((c) => c.kind === 'control');
+  const right = obvious.filter((c) => (c.categories[0] ?? '').toLowerCase() === c.expected.toLowerCase()).length;
+  const wall = calls.map((c) => c.wallMs);
+  return {
+    n: calls.length,
+    pickPct: pct(calls.filter((c) => c.categories.length > 0).length, calls.length),
+    obviousPct: pct(right, obvious.length),
+    allKeysPct: pct(calls.filter((c) => c.allKeys).length, calls.length),
+    directionPct: pct(calls.filter((c) => c.directionValid).length, calls.length),
+    overlayPct: pct(calls.filter((c) => c.llm === true).length, calls.length),
+    p50: percentileOf(wall, 50), p95: percentileOf(wall, 95), max: wall.length ? Math.max(...wall) : NaN,
+  };
+}
+
+/** Reads R1 to R3 and the rule (D1 to D3) off the calls. The lead decides; this prints what the rule says. */
+function tierReadOff(calls: readonly TierCall[]) {
+  const arm = (a: TierArm): TierCall[] => calls.filter((c) => c.arm === a);
+  const q = summariseArm(arm('Q'));
+  const r1 = {
+    pass: q.n > 0 && q.pickPct >= TIER_GATES.r1MinPickPct && q.obviousPct >= TIER_GATES.r1MinObviousPct
+      && q.allKeysPct >= TIER_GATES.r1MinAllKeysPct && q.directionPct >= TIER_GATES.r1MinDirectionPct,
+  };
+  const cold = arm('COLD');
+  const warmOk = q.n > 0 && q.p50 <= TIER_GATES.r2WarmP50Ms && q.p95 <= TIER_GATES.r2WarmP95Ms && q.overlayPct === 100;
+  const coldOk = cold.length === TIER_GATES.coldTrials && cold.every((c) => c.llm === true && c.wallMs <= TIER_GATES.ceilingMs);
+  const r2 = { pass: warmOk && coldOk, warmOk, coldOk };
+  const mix = arm('MIX_Q');
+  const slowAbove = TIER_GATES.r3SlowFactor * q.p50;
+  const slow = mix.filter((c) => c.wallMs > slowAbove).length;
+  const slowPct = pct(slow, mix.length);
+  const r3 = { pass: mix.length > 0 && slowPct <= TIER_GATES.r3MaxSlowPct && mix.every((c) => c.llm === true), slow, slowPct, of: mix.length, slowAbove };
+  const lines: string[] = [];
+  const f = (x: number): string => (Number.isFinite(x) ? x.toFixed(1) : 'n/a');
+  for (const a of ['B', 'Q', 'Q2'] as const) {
+    const s = summariseArm(arm(a));
+    if (s.n === 0) continue;
+    lines.push(`${a.padEnd(2)} n ${s.n}: pick ${f(s.pickPct)}%, obvious titles right ${f(s.obviousPct)}%, all nine keys ${f(s.allKeysPct)}%, direction ok ${f(s.directionPct)}%, overlay ran ${f(s.overlayPct)}%, `
+      + `route wall p50 ${f(s.p50)} / p95 ${f(s.p95)} / max ${f(s.max)} ms`);
+  }
+  lines.push(`R1 QUALITY ${r1.pass ? 'PASS' : 'FAIL'} (Q: pick ${f(q.pickPct)}% of >= ${TIER_GATES.r1MinPickPct}, obvious ${f(q.obviousPct)}% of >= ${TIER_GATES.r1MinObviousPct}, `
+    + `keys ${f(q.allKeysPct)}% of >= ${TIER_GATES.r1MinAllKeysPct}, direction ${f(q.directionPct)}% of >= ${TIER_GATES.r1MinDirectionPct})`);
+  lines.push(`R2 LATENCY ${r2.pass ? 'PASS' : 'FAIL'} (warm p50 ${f(q.p50)} ms of <= ${TIER_GATES.r2WarmP50Ms}, p95 ${f(q.p95)} ms of <= ${TIER_GATES.r2WarmP95Ms}, overlay on ${f(q.overlayPct)}% of calls; `
+    + `cold ${cold.length} trials ${cold.map((c) => `${c.wallMs.toFixed(0)} ms${c.llm === true ? '' : ' NO OVERLAY'}`).join(', ') || 'none'}, limit ${TIER_GATES.ceilingMs} ms)`);
+  lines.push(`R3 RESIDENCY ${r3.pass ? 'PASS' : 'FAIL'} (${r3.slow} of ${r3.of} MIX route calls over ${f(r3.slowAbove)} ms = ${TIER_GATES.r3SlowFactor} x Q's warm median, ${f(r3.slowPct)}% of <= ${TIER_GATES.r3MaxSlowPct}%)`);
+  const decision = !(r1.pass && r2.pass) ? 'D2: not recommended (R1 or R2 failed)'
+    : r3.pass ? 'D1: recommended' : 'D1 with D3: recommended, and R3 failed, so on a box with fewer model slots than models in rotation quick add pays a model swap';
+  lines.push(`D the rule says: ${decision}.`);
+  return { q, r1, r2, r3, lines, decision };
+}
+
+function tierFlush(): void {
+  if (!OUT) return;
+  writeFileSync(OUT, JSON.stringify({
+    harness: 'classification-shape-live', mode: 'quality-tier', startedAt, writtenAt: new Date().toISOString(),
+    command: provenance.command ?? null,
+    env: { runs: RUNS, models: MODELS, ollamaUrl: redactUrl(config.ollamaUrl), ollamaVersion, ollamaInTestProcess: envWithPrefix(process.env, 'OLLAMA_'), liveShape: envWithPrefix(process.env, 'LIVE_') },
+    provenance, tierGates: TIER_GATES, fixture: { conventions: CONVENTIONS, controls: CONTROLS },
+    violations, prompts: Object.fromEntries(distinctPrompts), calls: tierCalls,
+  }, null, 2));
+}
+
+async function residentNames(): Promise<string[] | null> {
+  try {
+    const res = await fetch(`${config.ollamaUrl}/api/ps`);
+    const body = (await res.json()) as { models?: { name: string }[] };
+    return (body.models ?? []).map((m) => m.name).sort();
+  } catch {
+    return null;
+  }
+}
+
+/** One route call, timed, with what the seam saw of its first model call. */
+async function routeCall(arm: TierArm, item: { title: string; kind: TierCall['kind']; expected: string }, run: number, record = true): Promise<TierCall> {
+  const t0 = performance.now();
+  const { value: res, calls } = await seamOf(() => parseViaRoute(item.title));
+  const wallMs = performance.now() - t0;
+  const seam = calls.find((c) => !c.dry);
+  const raw = seam?.raw ?? '';
+  if (seam?.prompt) distinctPrompts.set(sha12(seam.prompt), seam.prompt);
+  let strict: Record<string, unknown> | null = null;
+  try {
+    const j: unknown = JSON.parse(raw);
+    if (j && typeof j === 'object' && !Array.isArray(j)) strict = j as Record<string, unknown>;
+  } catch { /* not strict JSON */ }
+  const call: TierCall = {
+    arm, title: item.title, kind: item.kind, expected: item.expected, run, wallMs, modelMs: seam ? seam.ms : null,
+    llm: typeof res?.body?.llm === 'boolean' ? res.body.llm : null, status: res?.status ?? null,
+    raw, validJson: strict !== null, allKeys: strict !== null && WIDE_KEYS.every((k) => k in strict!),
+    directionValid: directionOf(raw, DIRECTIONS).valid,
+    categories: Array.isArray(res?.body?.parsed?.categories) ? (res!.body.parsed.categories as string[]) : [],
+    resident: await residentNames(),
+  };
+  if (record) tierCalls.push(call);
+  return call;
+}
+
+/** Unload the quality model, then wait up to 15 s for /api/ps to stop listing it. True when it is gone. */
+async function unloadQuality(model: string): Promise<boolean> {
+  await fetch(`${config.ollamaUrl}/api/generate`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model, keep_alive: 0 }),
+  });
+  const gone = (names: string[] | null): boolean => names !== null && !names.some((n) => matchInstalled(n)?.name === matchInstalled(model)?.name);
+  for (let i = 0; i < 30; i++) {
+    if (gone(await residentNames())) return true;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return false;
+}
+
+async function runTier(): Promise<void> {
+  rec.model = '';
+  resetWorld();
+  const quality = await resolveModel('quality');
+  say(`\n=== quality-tier measurement: fast ${await resolveModel('fast')}, quality ${quality} ===`);
+  for (const arm of ['B', 'Q', 'Q2'] as const) {
+    rec.tier = arm === 'B' ? 'fast' : '';
+    for (const w of ITEMS.slice(0, 2)) await routeCall(arm, w, -1, false); // load this block's model, unrecorded
+    for (const item of ITEMS) {
+      for (let run = 0; run < RUNS; run++) await routeCall(arm, item, run);
+    }
+    tierFlush();
+    const s = summariseArm(tierCalls.filter((c) => c.arm === arm));
+    say(`${arm}: ${s.n} route calls, pick ${s.pickPct.toFixed(1)}%, obvious right ${s.obviousPct.toFixed(1)}%, keys ${s.allKeysPct.toFixed(1)}%, route wall p50 ${s.p50.toFixed(0)} / p95 ${s.p95.toFixed(0)} ms`);
+  }
+  rec.tier = '';
+  for (let trial = 0; trial < TIER_GATES.coldTrials; trial++) {
+    const gone = await unloadQuality(quality);
+    if (!gone) violate('tier', `cold trial ${trial}: ${quality} was still listed by /api/ps 15 s after the unload`);
+    const item = ITEMS[trial];
+    const c = await routeCall('COLD', item, trial);
+    say(`cold ${trial}: unloaded ${gone}, first route call ${c.wallMs.toFixed(0)} ms (model ${c.modelMs?.toFixed(0)} ms), overlay ${c.llm}`);
+  }
+  for (let cycle = 0; cycle < TIER_GATES.mixCycles; cycle++) {
+    const item = ITEMS[cycle % ITEMS.length];
+    const qc = await routeCall('MIX_Q', item, cycle);
+    const t1 = performance.now();
+    await seamOf(() => generateJson('Give two short subtasks for "Plan a trip". Reply with JSON {"subtasks": ["...", "..."]}.', { purpose: 'brainstorm' }));
+    const fMs = performance.now() - t1;
+    tierCalls.push({ arm: 'MIX_F', title: 'fast-tier probe', kind: 'probe', expected: '', run: cycle, wallMs: fMs, modelMs: null, llm: null, status: null, raw: '', validJson: false, allKeys: false, directionValid: false, categories: [], resident: await residentNames() });
+    const t2 = performance.now();
+    try { await embed('Plan the quarterly review', 20_000); } catch { /* the call is timed either way */ }
+    const eMs = performance.now() - t2;
+    tierCalls.push({ arm: 'MIX_E', title: 'embed probe', kind: 'probe', expected: '', run: cycle, wallMs: eMs, modelMs: null, llm: null, status: null, raw: '', validJson: false, allKeys: false, directionValid: false, categories: [], resident: await residentNames() });
+    if (cycle % 5 === 4) say(`mix ${cycle + 1}/${TIER_GATES.mixCycles}: last route ${qc.wallMs.toFixed(0)} ms, fast-tier ${fMs.toFixed(0)} ms, embed ${eMs.toFixed(0)} ms, resident ${JSON.stringify(tierCalls[tierCalls.length - 1].resident)}`);
+  }
+  tierFlush();
+}
+
 // ── The shape-fix measurement, suite ─────────────────────────────────────────
 
 describe.skipIf(!LIVE)('classification shape · shape-fix measurement', () => {
@@ -1108,6 +1391,34 @@ describe.skipIf(!LIVE)('classification shape · shape-fix measurement', () => {
     say(`\n[live-shape] shape-fix: ${shapeCalls.length} model calls recorded${OUT ? `, artifact at ${OUT}` : ' (set LIVE_SHAPE_OUT to keep them)'}.`);
     const decision = shapeDecision(shapeCalls, MODELS);
     for (const line of decision.lines) say(line);
+    expect(violations, `mechanism violations:\n${violations.join('\n')}`).toEqual([]);
+  });
+});
+
+describe.skipIf(!TIER)('classification shape · quality-tier measurement', () => {
+  beforeAll(async () => {
+    await prepareLive();
+    // The run is not valid unless the app itself resolves the tiers the question is about.
+    const fast = await resolveModel('fast');
+    const quality = await resolveModel('quality');
+    say(`[live-shape] the app resolved fast ${fast}, quality ${quality}`);
+    if (matchInstalled(fast)?.name !== matchInstalled('qwen2.5:0.5b')?.name) violate('tier', `the fast tier resolved to ${fast}, not qwen2.5:0.5b`);
+    if (matchInstalled(quality)?.name !== matchInstalled('gemma3n:e4b')?.name) violate('tier', `the quality tier resolved to ${quality}, not gemma3n:e4b`);
+  });
+
+  afterAll(async () => {
+    await srv?.close();
+  });
+
+  it('blocks B, Q and Q2, the cold calls and the mix, on the real route', async () => {
+    expect(violations, 'the app did not resolve the tiers this run is about').toEqual([]);
+    await runTier();
+  }, 3 * 60 * 60_000);
+
+  it('the rule, read off the calls (the lead decides; nothing here is asserted but the mechanism)', () => {
+    tierFlush();
+    say(`\n[live-shape] quality tier: ${tierCalls.length} calls recorded${OUT ? `, artifact at ${OUT}` : ' (set LIVE_SHAPE_OUT to keep them)'}.`);
+    for (const line of tierReadOff(tierCalls).lines) say(line);
     expect(violations, `mechanism violations:\n${violations.join('\n')}`).toEqual([]);
   });
 });
@@ -1136,6 +1447,87 @@ describe.skipIf(!REPLAY)('classification shape · replay of a recorded run', () 
 // ── The pure parts: they run in every test run, no model ─────────────────────
 
 describe('classification shape · pure parts', () => {
+  describe('the quality-tier rule, on invented calls', () => {
+    const tc = (arm: TierArm, over: Partial<TierCall> = {}): TierCall => ({
+      arm, title: 't', kind: 'control', expected: 'health', run: 0, wallMs: 1500, modelMs: 1400, llm: true, status: 200, raw: '{}',
+      validJson: true, allKeys: true, directionValid: true, categories: ['health'], resident: ['gemma3n:e4b'], ...over,
+    });
+    const many = (n: number, arm: TierArm, over: (i: number) => Partial<TierCall> = () => ({})): TierCall[] =>
+      Array.from({ length: n }, (_, i) => tc(arm, { run: i, ...over(i) }));
+    const cold = (...ms: number[]): TierCall[] => ms.map((wallMs, i) => tc('COLD', { run: i, wallMs }));
+    const good = (): TierCall[] => [...many(20, 'Q'), ...cold(6000, 7000, 6500), ...many(20, 'MIX_Q')];
+    const verdicts = (calls: TierCall[]) => {
+      const r = tierReadOff(calls);
+      return { r1: r.r1.pass, r2: r.r2.pass, r3: r.r3.pass, decision: r.decision, lines: r.lines };
+    };
+
+    it('recommends the change when quality and latency hold, and says what each gate read', () => {
+      const v = verdicts(good());
+      expect([v.r1, v.r2, v.r3]).toEqual([true, true, true]);
+      expect(v.decision).toBe('D1: recommended');
+      expect(v.lines.filter((l) => /^R[123] /.test(l)).map((l) => l.split(' ')[1])).toEqual(['QUALITY', 'LATENCY', 'RESIDENCY']);
+    });
+
+    it('R1 reads the pick share, the obvious titles, the keys and the direction at their marks', () => {
+      // 20 calls: 19 picks = 95%, 18 = 90%.
+      const picks = (k: number) => [...many(20, 'Q', (i) => (i < k ? {} : { categories: [] })), ...cold(1, 1, 1), ...many(20, 'MIX_Q')];
+      expect(verdicts(picks(19)).r1).toBe(true);
+      expect(verdicts(picks(18)).r1).toBe(false);
+      // 10 obvious titles: 9 right = 90%, 8 right = 80%.
+      const obvious = (k: number) => [...many(10, 'Q', (i) => (i < k ? {} : { categories: ['finance'] })), ...cold(1, 1, 1), ...many(20, 'MIX_Q')];
+      expect(verdicts(obvious(9)).r1).toBe(true);
+      expect(verdicts(obvious(8)).r1).toBe(false);
+      const keys = (k: number) => [...many(10, 'Q', (i) => (i < k ? {} : { allKeys: false })), ...cold(1, 1, 1), ...many(20, 'MIX_Q')];
+      expect([verdicts(keys(9)).r1, verdicts(keys(8)).r1]).toEqual([true, false]);
+      const dir = (k: number) => [...many(10, 'Q', (i) => (i < k ? {} : { directionValid: false })), ...cold(1, 1, 1), ...many(20, 'MIX_Q')];
+      expect([verdicts(dir(9)).r1, verdicts(dir(8)).r1]).toEqual([true, false]);
+      // Only the control titles count as obvious: a wrong pick on a target title does not move that figure.
+      const targets = [...many(10, 'Q'), ...many(10, 'Q', () => ({ kind: 'target', categories: ['finance'] })), ...cold(1, 1, 1), ...many(20, 'MIX_Q')];
+      expect(verdicts(targets).r1).toBe(true);
+    });
+
+    it('R2 holds the warm p50 and p95, every overlay, and every cold call inside the ceiling', () => {
+      const warm = (slow: number, ms: number) => [...many(100, 'Q', (i) => ({ wallMs: i < 100 - slow ? 1500 : ms })), ...cold(1, 1, 1), ...many(20, 'MIX_Q')];
+      expect(verdicts(warm(5, 6000)).r2).toBe(true); // the 95th of 100 is still a fast one
+      expect(verdicts(warm(6, 6000)).r2).toBe(false); // p95 6000 > 5000
+      expect(verdicts([...many(20, 'Q', () => ({ wallMs: 2600 })), ...cold(1, 1, 1), ...many(20, 'MIX_Q')]).r2).toBe(false); // p50 over
+      expect(verdicts([...many(20, 'Q', (i) => (i === 0 ? { llm: false } : {})), ...cold(1, 1, 1), ...many(20, 'MIX_Q')]).r2).toBe(false); // one call without the overlay
+      expect(verdicts([...many(20, 'Q'), ...cold(1, 1), ...many(20, 'MIX_Q')]).r2).toBe(false); // two cold trials, not three
+      expect(verdicts([...many(20, 'Q'), ...cold(1, 1, 15_001), ...many(20, 'MIX_Q')]).r2).toBe(false); // over the ceiling
+      expect(verdicts([...many(20, 'Q'), ...cold(1, 1, 15_000), ...many(20, 'MIX_Q')]).r2).toBe(true); // at it
+      const coldNoOverlay = [...many(20, 'Q'), ...cold(1, 1, 1).map((c, i) => (i === 2 ? { ...c, llm: false } : c)), ...many(20, 'MIX_Q')];
+      expect(verdicts(coldNoOverlay).r2).toBe(false);
+    });
+
+    it('R3 counts MIX route calls over three warm medians, 10% allowed, and a miss is D1 with D3 when R1 and R2 hold', () => {
+      const mix = (slow: number) => [...many(20, 'Q'), ...cold(1, 1, 1), ...many(20, 'MIX_Q', (i) => (i < slow ? { wallMs: 4501 } : { wallMs: 4500 }))];
+      expect(verdicts(mix(0)).r3).toBe(true); // 4500 is not over 3 x 1500
+      expect(verdicts(mix(2)).r3).toBe(true); // 10%
+      const three = verdicts(mix(3));
+      expect(three.r3).toBe(false);
+      expect(three.decision).toMatch(/^D1 with D3: recommended, and R3 failed/);
+      expect(verdicts([...many(20, 'Q'), ...cold(1, 1, 1)]).r3).toBe(false); // no MIX calls, nothing to read
+      expect(verdicts([...many(20, 'Q'), ...cold(1, 1, 1), ...many(20, 'MIX_Q', (i) => (i === 0 ? { llm: false } : {}))]).r3).toBe(false);
+    });
+
+    it('is not recommended when R1 or R2 fails, whatever R3 says', () => {
+      const r1Fails = [...many(20, 'Q', () => ({ categories: [] })), ...cold(1, 1, 1), ...many(20, 'MIX_Q')];
+      expect(verdicts(r1Fails).decision).toBe('D2: not recommended (R1 or R2 failed)');
+      const r2Fails = [...many(20, 'Q', () => ({ wallMs: 9000 })), ...cold(1, 1, 1), ...many(20, 'MIX_Q', () => ({ wallMs: 99_999 }))];
+      expect(verdicts(r2Fails).decision).toBe('D2: not recommended (R1 or R2 failed)');
+      expect(verdicts([]).decision).toBe('D2: not recommended (R1 or R2 failed)');
+    });
+
+    it('reports B and Q2 beside Q and never gates on them, and the percentile is nearest-rank', () => {
+      const withB = [...good(), ...many(20, 'B', () => ({ categories: [], allKeys: false, wallMs: 90 })), ...many(20, 'Q2', () => ({ wallMs: 1600 }))];
+      expect(verdicts(withB).decision).toBe('D1: recommended');
+      expect(verdicts(withB).lines.filter((l) => /^(B|Q|Q2) /.test(l))).toHaveLength(3);
+      expect(percentileOf([5, 1, 3, 2, 4], 50)).toBe(3);
+      expect(percentileOf(Array.from({ length: 100 }, (_, i) => i + 1), 95)).toBe(95);
+      expect(Number.isNaN(percentileOf([], 50))).toBe(true);
+    });
+  });
+
   it('the fixture is well formed against the real parser', () => {
     expect(fixtureProblems()).toEqual([]);
     expect(TRAIN_ITEMS).toHaveLength(18);

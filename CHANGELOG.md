@@ -41,6 +41,22 @@ version at `GET /api/health` (`release`).
   `gemma3n:e4b` in 60 of 60, so on the smallest model most suggestions will need your correction.
   Learning is still weekly: the Monday `calibrate_classification` run folds corrections in, and a field
   needs at least 2 first. See `docs/classification-shape-fix-2026-11.md`.
+- **Describe-it asks your quality model, not the fast one.** Quick add and the Add dialog's Describe-it line
+  filled in a category, priority, minutes and the rest from the fast model (`qwen2.5:0.5b` by default). On
+  the 12 titles with an obvious category it named the right category in 20 of 60 answers and returned 3 of
+  the 9 fields it was asked for, so the dialog came pre-filled with a category that was mostly wrong. It
+  now asks the quality model (`gemma3n:e4b` by default, which a default install already pulls): 60 of 60
+  right and all 9 fields on every answer, in a test with an invented owner and 42 titles. The price is
+  speed. Through the app's own route the preview took a median 1.4 to 1.8 seconds, against 0.09 with
+  the fast model, and the first one after the model had been unloaded about 5 seconds (Ollama unloads an
+  idle model after 5 minutes unless `OLLAMA_KEEP_ALIVE` says otherwise). On an Ollama server that holds
+  only two models at once, quick add, the fast model and the embedding model take turns in the slots: the
+  other two were reloaded on most calls in the test (the fast model's calls took 1.5 seconds instead of
+  0.09), and once quick add's own model was pushed out and the next preview paid 5.4 seconds. Nothing
+  changes for installs that pin `OLLAMA_FAST` and `OLLAMA_QUALITY` to the same model. If the quality
+  model is not installed the app uses the largest installed model for it, and quick add then runs on
+  that one; that was not measured. Only quick add moved: the fast model still does everything else it did.
+  See `docs/quickadd-quality-tier-2026-11.md`.
 - **AI works through your CI Hub when the Hub is not running Ollama.** On a Hub whose AI runs on vLLM or
   Lemonade, Planning uses the Hub's OpenAI-compatible endpoint for chat, and for embeddings when one is named.
   An Ollama address always wins when one is set.

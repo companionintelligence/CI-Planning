@@ -10,7 +10,7 @@ import { CALL_POLICY, resolveCall, type CallPurpose, type CallPolicy } from '../
  * Each row's `site` is where the numbers came from at the commit that introduced the table.
  */
 const EXPECTED: { purpose: CallPurpose; site: string; policy: CallPolicy }[] = [
-  { purpose: 'classify', site: 'agents/tags.ts, agents/quickadd.ts ×2, services/motivation.ts', policy: { tier: 'fast', temperature: 0.1, timeoutMs: 15_000 } },
+  { purpose: 'classify', site: 'agents/tags.ts, services/motivation.ts (agents/quickadd.ts ×2 started here and now passes tier quality, see quickadd-tier.test.ts)', policy: { tier: 'fast', temperature: 0.1, timeoutMs: 15_000 } },
   { purpose: 'classify_wide', site: 'services/task-enrich.ts', policy: { tier: 'fast', temperature: 0.2, timeoutMs: 20_000 } },
   { purpose: 'brainstorm', site: 'agents/subtasks.ts', policy: { tier: 'fast', temperature: 0.3, timeoutMs: 20_000 } },
   { purpose: 'extract', site: 'agents/extract.ts', policy: { tier: 'quality', temperature: 0.1, timeoutMs: 60_000 } },
