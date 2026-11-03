@@ -171,7 +171,9 @@ date: it said the default model answers a bare word and never learns. What is no
 - Category only (the wizard records no motivation). The weekly cycle compressed to one calibrate per level. One box,
   one server setting (`OLLAMA_MAX_LOADED_MODELS=2`), models switched between runs. Latency noise was large: the
   reference's level-0 p50 was 1,958 ms and 1,694 ms in its repeat, and 1,470 to 1,592 ms for every hinted level;
-  `gemma3:4b`'s was 1,646 and 2,546 ms. L4's speed criterion passed against the 1,958 and would not against 1,490
+  `gemma3:4b`'s was 1,646 and 2,546 ms. The machine is shared with other sessions (a headless browser and another
+  Ollama model were running, load average 11 to 16, when I re-ran the test suites afterwards), and I did not record load
+  during the live run, so some of that noise may be theirs. L4's speed criterion passed against the 1,958 and would not against 1,490
   (937 over 1,490 is 0.63): read the speed-up as about 1.6 times, 1.5 to 2.1.
 - Whether any model keeps improving past 18 corrections, and whether any model in the harmed group would be fixed
   by a different hint wording or layout.
