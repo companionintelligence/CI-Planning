@@ -29,7 +29,10 @@ import { ollama } from '../mcp/ollama.js';
  * while serving a request.
  *
  * Degradation is silent and total. No Ollama ⇒ the rollup is still rebuilt from
- * durable evidence, just with `embedding = NULL` on every row — learning does not
+ * durable evidence, with `embedding = NULL` on every row that has no vector yet. A row
+ * an earlier run already embedded keeps its vector (reused by `log_id`, see
+ * `calibrateDismissals`), so an outage costs only the rows added since — a rebuild with
+ * the embedder down never blanks an index that was good last week. Learning does not
  * require the model, only similarity RETRIEVAL does (ticket 4). Below the floor, the
  * rollup is emptied rather than left stale, and the job still reports success: an
  * owner with too little evidence is exactly today's behaviour, and that must never
@@ -153,7 +156,8 @@ export interface DismissalCalibrationResult {
   settled: number;
   /** Exemplar rows written (0 when the floor was not cleared). */
   indexed: number;
-  /** Exemplars written WITH a vector; below `indexed` when no embedder answered. */
+  /** Exemplars written WITH a vector, freshly embedded or carried over from the previous
+   *  run; below `indexed` when no embedder answered for the rows that had none. */
   embedded: number;
   /** The floor constant, echoed for the job's log line. */
   floor: number;
@@ -176,6 +180,11 @@ const SELECT_CREATED_COUNT = `
 
 const SELECT_EXEMPLAR_COUNT = `
   SELECT COUNT(*) n FROM possible_dismissal_exemplars WHERE owner_id = ?`;
+
+/** The owner's rollup as the last run left it, read once before the rebuild so a vector
+ *  already computed for a log_id can be carried over instead of re-embedded. */
+const SELECT_PRIOR_EXEMPLARS = `
+  SELECT log_id, input_text, embedding FROM possible_dismissal_exemplars WHERE owner_id = ?`;
 
 const DELETE_EXEMPLARS = `DELETE FROM possible_dismissal_exemplars WHERE owner_id = ?`;
 
@@ -376,12 +385,34 @@ export async function calibrateDismissals(
     // survives — a dismissal from three months ago should not outrank last week's.
     const capped = [...evidence].reverse().slice(0, MAX_EXEMPLARS);
 
+    // Reuse a vector by log_id rather than re-embedding it. `possible_outcome_log` is
+    // append-only (possibles.ts only ever INSERTs), so a log row's `input_text` never
+    // changes and a vector embedded for a given log_id in an earlier run is STILL that
+    // log_id's correct vector today. Without this, every run re-embedded the WHOLE index
+    // from scratch, and — because the rebuild below is delete-then-insert — a run that
+    // found the embedder down replaced a good index with NULL vectors, taking similarity
+    // retrieval away until the next run that happened to find it up.
+    const priorRows = await store()
+      .prepare(SELECT_PRIOR_EXEMPLARS)
+      .all<{ log_id: string; input_text: string; embedding: Buffer | null }>(ownerId);
+    const priorByLogId = new Map(priorRows.map((r) => [r.log_id, r] as const));
+
     // Embed BEFORE the write transaction. These are network calls, and holding a
     // write open across up to MAX_EXEMPLARS of them would block every other writer
     // for minutes — the index is worth rebuilding, never at the cost of the whole DB.
     const embed = await resolveEmbed(ownerId, opts.embedFn);
     const prepared: { row: DismissalEvidence; vec: Buffer | null }[] = [];
     for (const row of capped) {
+      // input_text can never actually change for a given log_id (see above) — this
+      // equality check is defensive, not load-bearing, so a future write path that DID
+      // start editing it fails safe here (falls through and re-embeds) instead of
+      // silently serving a vector for text it no longer matches.
+      const prior = priorByLogId.get(row.logId);
+      if (prior?.embedding && prior.input_text === row.inputText) {
+        prepared.push({ row, vec: prior.embedding });
+        embedded++; // `embedded` stays "written with a vector", carried over or fresh
+        continue;
+      }
       let vec: Buffer | null = null;
       if (embed) {
         try {

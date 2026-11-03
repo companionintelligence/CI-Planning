@@ -75,6 +75,30 @@ const exemplarRows = (owner = OWNER) =>
     log_id: string; input_text: string; source_kind: string | null; embedding: Buffer | null;
   }[];
 
+/** The stored vector per log id, as hex, so a mismatch prints a readable diff and a
+ *  NULL stays distinguishable from an empty string. */
+const vectorsByLog = (owner = OWNER) =>
+  new Map(exemplarRows(owner).map((e) => [e.log_id, e.embedding ? e.embedding.toString('hex') : null] as const));
+
+/** Shared by every `countingEmbed()` in a test, so no two calls in one test ever answer
+ *  with the same vector, even from different embedder instances. */
+let embedSeq = 0;
+
+/**
+ * A fake embedder that records every text it is asked for and answers with a DIFFERENT
+ * vector on every call (small integers and halves, exact in float32). A row that was
+ * re-embedded rather than carried over therefore cannot compare equal to the vector it
+ * had before, and `texts` shows exactly which rows the embedder was asked about.
+ */
+function countingEmbed() {
+  const texts: string[] = [];
+  const fn = async (text: string): Promise<number[]> => {
+    texts.push(text);
+    return [++embedSeq, 0.5, 0.25];
+  };
+  return { fn, texts };
+}
+
 const rateRows = (owner = OWNER) =>
   sqlite.prepare(`SELECT * FROM possible_dismissal_rate WHERE owner_id = ? ORDER BY computed_date`).all(owner) as {
     computed_date: string; period_days: number; created: number; decided: number;
@@ -93,6 +117,7 @@ function lastRun(kind: string) {
 beforeEach(() => {
   resetDb();
   seq = 0;
+  embedSeq = 0;
 });
 
 // ── What counts as settled evidence ────────────────────────────────────────────
@@ -268,6 +293,148 @@ describe('the batch rebuild', () => {
     const r = await calibrateDismissals(OWNER, NOW, { embedFn: fakeEmbed });
     expect(r.embedded).toBe(r.indexed);
     expect(exemplarRows().every((e) => e.embedding !== null)).toBe(true);
+  });
+});
+
+// ── Vector reuse across runs ──────────────────────────────────────────────────
+//
+// The rebuild is delete-then-insert, so what a run does not carry over is gone. A vector
+// already stored for a log_id is carried over rather than re-embedded, which is what
+// keeps a run that finds the embedder down from blanking an index that was good before.
+
+describe('vector reuse across runs', () => {
+  const SEEDED = DISMISSAL_FLOOR + 1;
+
+  async function seedAndEmbed(count = SEEDED) {
+    for (let i = 0; i < count; i++) await dismiss({ text: `noise ${i}` });
+    const embedder = countingEmbed();
+    const result = await calibrateDismissals(OWNER, NOW, { embedFn: embedder.fn });
+    return { embedder, result };
+  }
+
+  it('keeps every stored vector when a later run has no embedder', async () => {
+    const { result: first } = await seedAndEmbed();
+    expect(first.embedded).toBe(first.indexed);
+    const before = vectorsByLog();
+    expect([...before.values()].every((v) => v !== null)).toBe(true);
+
+    const second = await calibrateDismissals(OWNER, NOW, { embedFn: null });
+
+    expect(second.indexed).toBe(first.indexed);
+    expect(second.embedded).toBe(second.indexed); // "written with a vector", reused or fresh
+    expect(vectorsByLog()).toEqual(before);
+  });
+
+  it('gives dismissals added since the last run NULL, and leaves the old rows their vectors', async () => {
+    await seedAndEmbed();
+    const before = vectorsByLog();
+    // Logged after the first run, so they have no stored row to take a vector from.
+    const addedA = await dismiss({ text: 'added after the run A' });
+    const addedB = await dismiss({ text: 'added after the run B' });
+
+    const r = await calibrateDismissals(OWNER, NOW, { embedFn: null });
+
+    expect(r.indexed).toBe(SEEDED + 2);
+    expect(r.embedded).toBe(SEEDED); // only the reused rows have a vector
+    const after = vectorsByLog();
+    for (const [logId, hex] of before) expect(after.get(logId)).toBe(hex);
+    expect(after.get(addedA)).toBeNull();
+    expect(after.get(addedB)).toBeNull();
+  });
+
+  it('calls the embedder only for rows without a stored vector', async () => {
+    const { embedder: first } = await seedAndEmbed();
+    expect(first.texts).toHaveLength(SEEDED); // a cold index embeds everything
+    const before = vectorsByLog();
+    await dismiss({ text: 'added after the run A' });
+    await dismiss({ text: 'added after the run B' });
+
+    const second = countingEmbed();
+    const r = await calibrateDismissals(OWNER, NOW, { embedFn: second.fn });
+
+    expect(second.texts.sort()).toEqual(['added after the run A', 'added after the run B']);
+    expect(r.indexed).toBe(SEEDED + 2);
+    expect(r.embedded).toBe(r.indexed);
+    const after = vectorsByLog();
+    for (const [logId, hex] of before) expect(after.get(logId)).toBe(hex); // not re-embedded
+    expect([...after.values()].every((v) => v !== null)).toBe(true);
+  });
+
+  it('calls the embedder for nothing when every row already has a vector', async () => {
+    await seedAndEmbed();
+    const before = vectorsByLog();
+
+    const second = countingEmbed();
+    const r = await calibrateDismissals(OWNER, NOW, { embedFn: second.fn });
+
+    expect(second.texts).toEqual([]);
+    expect(r.embedded).toBe(r.indexed);
+    expect(vectorsByLog()).toEqual(before);
+  });
+
+  it('retries a stored NULL embedding when the embedder answers', async () => {
+    await seedAndEmbed();
+    // An earlier run found the embedder down for this one row.
+    const [target] = exemplarRows();
+    sqlite
+      .prepare(`UPDATE possible_dismissal_exemplars SET embedding = NULL WHERE owner_id = ? AND log_id = ?`)
+      .run(OWNER, target.log_id);
+    const before = vectorsByLog();
+    expect(before.get(target.log_id)).toBeNull();
+
+    const second = countingEmbed();
+    const r = await calibrateDismissals(OWNER, NOW, { embedFn: second.fn });
+
+    expect(second.texts).toEqual([target.input_text]); // asked about that row and no other
+    expect(r.embedded).toBe(r.indexed);
+    const after = vectorsByLog();
+    expect(after.get(target.log_id)).not.toBeNull();
+    for (const [logId, hex] of before) {
+      if (logId !== target.log_id) expect(after.get(logId)).toBe(hex);
+    }
+  });
+
+  it('re-embeds a row whose stored text no longer matches its log row', async () => {
+    // Defensive: input_text is write-once today, so this path is not reachable through the
+    // app. It pins that a future edit path fails safe (re-embeds) instead of serving a
+    // vector computed for other text.
+    await seedAndEmbed();
+    const [target] = exemplarRows();
+    sqlite
+      .prepare(`UPDATE possible_dismissal_exemplars SET input_text = 'stale text' WHERE owner_id = ? AND log_id = ?`)
+      .run(OWNER, target.log_id);
+    const before = vectorsByLog();
+
+    const second = countingEmbed();
+    await calibrateDismissals(OWNER, NOW, { embedFn: second.fn });
+
+    expect(second.texts).toEqual([target.input_text]);
+    const after = vectorsByLog();
+    expect(after.get(target.log_id)).not.toBeNull();
+    expect(after.get(target.log_id)).not.toBe(before.get(target.log_id));
+    expect(exemplarRows().find((e) => e.log_id === target.log_id)?.input_text).toBe(target.input_text);
+  });
+
+  it('leaves reused rows intact and still resolves when the embedder throws', async () => {
+    await seedAndEmbed();
+    const before = vectorsByLog();
+    const addedA = await dismiss({ text: 'added after the run A' });
+    const addedB = await dismiss({ text: 'added after the run B' });
+
+    const asked: string[] = [];
+    const broken = async (text: string): Promise<number[]> => {
+      asked.push(text);
+      throw new Error('embedder fell over');
+    };
+    const r = await calibrateDismissals(OWNER, NOW, { embedFn: broken });
+
+    expect(asked.sort()).toEqual(['added after the run A', 'added after the run B']); // reused rows never reach it
+    expect(r.indexed).toBe(SEEDED + 2);
+    expect(r.embedded).toBe(SEEDED);
+    const after = vectorsByLog();
+    for (const [logId, hex] of before) expect(after.get(logId)).toBe(hex);
+    expect(after.get(addedA)).toBeNull();
+    expect(after.get(addedB)).toBeNull();
   });
 });
 

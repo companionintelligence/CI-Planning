@@ -6,6 +6,7 @@ import { config } from './lib/config.js';
 import { logger } from './lib/logger.js';
 import { buildApp } from './app.js';
 import { startCronJobs, failInterruptedJobRuns } from './jobs/index.js';
+import { scheduleCatchUp, cancelCatchUp } from './jobs/catch-up.js';
 import { pushEnabled } from './lib/push.js';
 import { status as ollamaStatus } from './mcp/ollama.js';
 
@@ -94,6 +95,10 @@ void ollamaStatus().then((s) => {
 // in flight that nothing is doing.
 await failInterruptedJobRuns();
 await startCronJobs();
+// croner never re-fires a tick that fell while the server was down. This makes up, once and
+// about a minute after boot, the learning passes that are safe to run late. The cron is armed
+// first, so a real tick inside that minute runs as usual (jobs/catch-up.ts).
+scheduleCatchUp();
 
 // Phase H: VAPID keys are now auto-provisioned at boot (services/vapid-config.ts), so push
 // is normally live out of the box. It only stays dormant in two deliberate cases: a
@@ -152,6 +157,9 @@ function shutdown(): void {
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.on(signal, () => {
     logger.info(`${signal} received — shutting down`);
+    // Ahead of server.close, so a catch-up pass starts no further kind. The kind already
+    // running is cut with the process like any other job.
+    cancelCatchUp();
     server.close(() => shutdown());
     // Open SSE streams keep the server alive; don't wait on them forever. Still
     // checkpoint on this path — it is the one systemd/docker actually hits.

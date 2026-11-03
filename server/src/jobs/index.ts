@@ -47,6 +47,15 @@ export interface JobRunResult extends JobOutcome {
   status: string;
 }
 
+/** Options on a single run that leave what the job does untouched. */
+export interface RunOpts {
+  /**
+   * Put in front of the run's log line, whether it finished or failed, so the Jobs view
+   * says why a run happened off schedule. jobs/catch-up.ts is the only caller that sets it.
+   */
+  logPrefix?: string;
+}
+
 /**
  * TM-5 — best-effort auto-block after a promote. In the Hands-off trust mode this stages
  * the newly-promoted, estimate-bearing tasks and places them (zero-click); a no-op in
@@ -531,7 +540,7 @@ async function execute(kind: string): Promise<JobOutcome> {
  * refusal opens no run row and emits no SSE, exactly like the tick-level skip: a run that
  * did not happen must not appear in the Jobs view as one that did.
  */
-export async function runJob(kind: string): Promise<JobRunResult> {
+export async function runJob(kind: string, opts: RunOpts = {}): Promise<JobRunResult> {
   const owner = currentOwnerId();
   const runKey = `${kind}:${owner}`;
   if (runInFlight.has(runKey)) {
@@ -540,13 +549,13 @@ export async function runJob(kind: string): Promise<JobRunResult> {
   }
   runInFlight.add(runKey);
   try {
-    return await runJobInner(kind);
+    return await runJobInner(kind, opts);
   } finally {
     runInFlight.delete(runKey);
   }
 }
 
-async function runJobInner(kind: string): Promise<JobRunResult> {
+async function runJobInner(kind: string, opts: RunOpts): Promise<JobRunResult> {
   const startedAt = new Date().toISOString();
   const run = await store()
     .prepare(
@@ -570,6 +579,9 @@ async function runJobInner(kind: string): Promise<JobRunResult> {
     outcome.log = (err as Error).message;
     logger.error(`Job ${kind} failed`, { err: outcome.log });
   }
+  // Prefixed here, after the try/catch, so the done and the error path both carry it and
+  // the row, the job:run payload and the return value all agree without a second UPDATE.
+  if (opts.logPrefix) outcome.log = opts.logPrefix + outcome.log;
 
   const finishedAt = new Date().toISOString();
   if (run) {
@@ -596,6 +608,10 @@ async function runJobInner(kind: string): Promise<JobRunResult> {
  *  (incl. admin) inside their runWithOwner binding (W12). */
 const JOB_SCOPES = [SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN];
 
+// A new job kind also needs a decision in jobs/catch-up.ts: either it joins CATCH_UP_KINDS
+// (run once after the server was down at its tick) or it gets a reason in NOT_CAUGHT_UP.
+// The default for a kind nobody classified is "never caught up", and the test over the
+// seeded kinds fails until someone chooses.
 const OWNER_SCOPED_KINDS = new Set([
   'ingest_gmail',
   'ingest_gcal',
@@ -668,6 +684,15 @@ async function allOwnerIds(): Promise<string[]> {
 const tickInFlight = new Set<string>();
 
 /**
+ * True while a scheduled fan-out of this kind is running. The boot catch-up asks first, so
+ * a kind whose real tick is already going is left alone quietly instead of being refused
+ * by `runScheduledJob` with its "previous run is still going" warning.
+ */
+export function isScheduledJobBusy(kind: string): boolean {
+  return tickInFlight.has(kind);
+}
+
+/**
  * `kind:owner` pairs with a run in progress — the lock on an INDIVIDUAL run, held by
  * `runJob` itself and therefore by every path that starts one.
  *
@@ -689,24 +714,33 @@ function skippedRun(kind: string, log: string): JobRunResult {
 }
 
 /**
+ * The log `failInterruptedJobRuns` writes. A shared constant because jobs/catch-up.ts reads
+ * it back: it counts these rows to stop a job that keeps killing the process from being
+ * caught up on every boot. An inline literal in each place would let the two drift.
+ */
+export const INTERRUPTED_RUN_LOG = 'interrupted — server restarted';
+
+/**
  * Mark job_runs left `running` by a previous process as errored.
  *
  * A run row is only ever finished by the process that created it, so any `running` row at
  * startup belongs to a process that is gone. Left alone they accumulate forever and make
  * the Jobs view claim work is in progress that nothing is doing. Called once at boot.
+ *
+ * The rows get `INTERRUPTED_RUN_LOG` as their log, and the boot catch-up counts them.
  */
 export async function failInterruptedJobRuns(): Promise<number> {
   const { changes } = await store()
     .prepare(
-      `UPDATE job_runs SET status = 'error', finished_at = ?, log = 'interrupted — server restarted'
+      `UPDATE job_runs SET status = 'error', finished_at = ?, log = ?
         WHERE status = 'running'`,
     )
-    .run(new Date().toISOString());
+    .run(new Date().toISOString(), INTERRUPTED_RUN_LOG);
   if (changes > 0) logger.warn('Cleared interrupted job runs from a previous process', { count: changes });
   return changes;
 }
 
-export async function runScheduledJob(kind: string): Promise<void> {
+export async function runScheduledJob(kind: string, opts: RunOpts = {}): Promise<void> {
   // Skip rather than queue: these are periodic refreshes, so the next tick is a better
   // answer than a backlog of identical runs racing each other.
   if (tickInFlight.has(kind)) {
@@ -715,17 +749,17 @@ export async function runScheduledJob(kind: string): Promise<void> {
   }
   tickInFlight.add(kind);
   try {
-    await runScheduledJobInner(kind);
+    await runScheduledJobInner(kind, opts);
   } finally {
     tickInFlight.delete(kind);
   }
 }
 
-async function runScheduledJobInner(kind: string): Promise<void> {
+async function runScheduledJobInner(kind: string, opts: RunOpts): Promise<void> {
   if (OWNER_SCOPED_KINDS.has(kind)) {
     for (const ownerId of await allOwnerIds()) {
       try {
-        await runWithOwner(ownerId, JOB_SCOPES, () => runJob(kind));
+        await runWithOwner(ownerId, JOB_SCOPES, () => runJob(kind, opts));
       } catch (err) {
         logger.error(`Scheduled job ${kind} failed for owner ${ownerId}`, {
           err: err instanceof Error ? err.message : String(err),
@@ -736,7 +770,7 @@ async function runScheduledJobInner(kind: string): Promise<void> {
   }
 
   try {
-    await runWithOwner(SYSTEM_OWNER, JOB_SCOPES, () => runJob(kind));
+    await runWithOwner(SYSTEM_OWNER, JOB_SCOPES, () => runJob(kind, opts));
   } catch (err) {
     logger.error(`Scheduled job ${kind} failed`, {
       err: err instanceof Error ? err.message : String(err),
