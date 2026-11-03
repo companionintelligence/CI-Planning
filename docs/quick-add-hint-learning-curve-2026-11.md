@@ -3,10 +3,11 @@
 Follow-up to [quickadd-quality-tier-2026-11.md](quickadd-quality-tier-2026-11.md). Quick add now asks the
 quality model (`gemma3n:e4b`), which is accurate but 15 to 20 times slower than the fast model it replaced.
 The owner asked whether the hint could come back so the model learns from corrections, and whether a smaller
-model would eventually learn enough to be both faster and accurate. This measures that. **The hint is not in
-`main`**: #659 removed it, and the run was made on a branch with that removal reverted
-(`exp/hint-learning-curve`, commit `4b3c15b7`). This change adds the measurement and nothing else; it does not
-bring the hint back.
+model would eventually learn enough to be both faster and accurate. This measures that. **When the run was made the hint was not in
+`main`**: #659 had removed it, and the run was made on a branch with that removal reverted
+(`exp/hint-learning-curve`, commit `4b3c15b7`). The measurement landed without the hint; the hint then came back,
+guarded to the models this measurement found it helps, and the guard was measured in turn:
+[quickadd-hint-guard-2026-11.md](quickadd-hint-guard-2026-11.md).
 
 ## Result in brief
 
@@ -145,6 +146,8 @@ with an obvious category.
   browser check, so it is a separate piece of work whose benefit is perceived latency only.
 
 ## Bringing the hint back
+
+*(Done since, with the guard: see [quickadd-hint-guard-2026-11.md](quickadd-hint-guard-2026-11.md). What follows is what was written before.)*
 
 The hint is one revert: `git revert d0692e47` (#659) on a branch off `main`. On the current `main` the code applies
 without conflict: `enrichQuick(text, parsed, vocab, hints)`, `enrichEntry` in `routes/tasks.ts`, the Learning card's

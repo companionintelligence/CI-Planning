@@ -1,20 +1,16 @@
 # Classification hint in quick add: live measurement (2 Nov 2026)
 
-> **Status, 2 Nov 2026: the hint half was removed. This is the record of what was tried.**
->
-> The quick-add hint this document measures (the owner's most common corrections shown to the model on
-> the Describe-it line and `POST /api/tasks/quick`) was merged in #652 (commit `96009f91`) and then
-> removed again, by the owner's decision, in the pull request that follows it. The capture half
-> (the wizard's Add recording the model's category pick) stayed. The live harness this document
-> describes, `server/test/classification-hint-live.test.ts`, was removed with the hint and can be
-> recovered with `git show 96009f91:server/test/classification-hint-live.test.ts`.
->
-> The measurements stay valid as a record of what was tried, including the finding that the default
-> fast model, `qwen2.5:0.5b`, answers `categories` as a bare string and so never produces a category
-> pick, and the layout finding (the hint beside its field made `gemma3:1b` stop its JSON early; last
-> in the prompt it kept every key). The present-tense statements below about what the code does (the Ship
-> decision, `enrichEntry`, "the shipped route", "ships" and "shipped") describe the code at
-> `96009f91`, not `main`. The body is unchanged.
+> **Status, 2 Nov 2026 (later): this is the record of the first measurement; the code has moved on.** The hint
+> half was removed in #659 and has come back with a guard: it is shown only to the models it was measured on
+> (`gemma3n:e4b`, `qwen2.5:3b`, `gemma3:4b`), and every other model gets the stock prompt. Quick add also no
+> longer runs on the fast tier, and a one-word category answer is now read as one category, so the statements
+> below that the default fast model answers a bare string and never produces a pick, and that the hint ships on the
+> evidence of one tier, describe the code at the time. What replaced them:
+> [classification-shape-fix-2026-11.md](classification-shape-fix-2026-11.md) (the bare string),
+> [quickadd-quality-tier-2026-11.md](quickadd-quality-tier-2026-11.md) (the tier),
+> [quick-add-hint-learning-curve-2026-11.md](quick-add-hint-learning-curve-2026-11.md) (six models, three harmed
+> by the hint) and [quickadd-hint-guard-2026-11.md](quickadd-hint-guard-2026-11.md) (the guard). The harness this
+> document describes, `classification-hint-live.test.ts`, is in the tree again.
 
 Evidence for `feat(classification): show quick-add the owner's corrections; record the wizard's
 category pick` (branch `feat/classification-hint-quick-add`, commits `96dbea90`, `0121a543` and

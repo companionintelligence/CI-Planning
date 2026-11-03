@@ -721,9 +721,7 @@ describe('ClassificationTile: what the card says about itself', () => {
       more: screen.getByTestId('learning-more-classification'),
     };
   };
-  const MEMORY =
-    'The examples are shown only when the app fills in details from Companion Memory and finds something related to the task. ' +
-    'With Companion Memory off or not connected, they are built and scored every Monday but never shown to the model.';
+  const MEMORY_FILL_IN = 'It runs only when Companion Memory is connected and finds something related to the task.';
 
   it('what it counts: the window, the stride, the cap and the typical count', async () => {
     const { about } = await open();
@@ -736,22 +734,43 @@ describe('ClassificationTile: what the card says about itself', () => {
     expect(about).toContain(`up to ${F.maxScored} of the held-back`);
   });
 
-  it('what it changes: names the fill-in from memory and says the examples need Companion Memory to be shown at all', async () => {
+  it('what it changes: the three places the examples reach a prompt, each with what it needs', async () => {
     const { about } = await open();
+    expect(about).toContain('your past corrections reach the model in three places.');
+    // 1. The Describe-it line: most frequent, last in the prompt, no Companion Memory, needs a category the model names (list or one word).
+    expect(about).toContain(
+      'The Describe-it line in the Add dialog (and quick add through the API) shows up to 3 of the corrections you make most often, ' +
+        'for each field, at the end of its prompt, whatever you typed.',
+    );
+    expect(about).toContain('This needs no Companion Memory, and it is sent only when the model answering is one that was tested with it ');
+    expect(about).toContain('(gemma3n:e4b, qwen2.5:3b and gemma3:4b; the others tried answered worse), so on any other model the prompt is the usual one.');
+    expect(about).toContain('The category part needs the model to name one of your categories, as a list or as one word;');
+    expect(about).toContain('an answer that names none of them gives nothing to learn from.');
+    // 2. The memory fill-in: look-alikes (or the most frequent with no embedder), and only with memory.
     expect(about).toContain('the "Fill in details from memory" button and the nightly fill-in');
-    expect(about).toContain('up to 3 of your past corrections that look like the task are shown to the model as examples');
-    expect(about).toContain('A field starts after 2 corrections and the model never overwrites a value you already filled in.');
-    expect(about).toContain(MEMORY);
+    expect(about).toContain('shows up to 3 corrections that look like the task, or your most frequent ones with no embedding model.');
+    expect(about).toContain(MEMORY_FILL_IN);
+    // 3. Monday's test.
+    expect(about).toContain("The third is Monday's test, described above.");
+    // The batch lag, the floor, and what is not learned from.
+    expect(about).toContain('Nothing changes before the next Monday run, and a field starts after 2 corrections it can learn from;');
+    expect(about).toContain('a category you clear is kept but not learned from.');
+    expect(about).toContain('The model never overwrites a value you already filled in.');
+    // The figures come from the facts the server test checks.
+    expect(about).toContain(`up to ${F.retrieveK} of the corrections`);
+    expect(about).toContain(`after ${F.correctionFloor} corrections it can learn from`);
   });
 
-  it('how it starts: the floor, the stride, the memory condition, and that nothing turns it off', async () => {
+  it('how it starts: what counts as a correction, the floor, the stride, the Monday lag, and which part needs Companion Memory', async () => {
     const { more } = await open();
     const steps = more.textContent ?? '';
-    expect(steps).toContain('The category the Describe-it line suggests counts too, if you change it before you press Add.');
+    expect(steps).toContain('Change a category the Describe-it line picked (before you press Add, or later on the task),');
+    expect(steps).toContain('or a category or me/us/them label the app filled in from memory.');
+    expect(steps).toContain('the Add dialog does not record who a task is for.');
     expect(steps).toContain('Within 90 days, 2 corrections of one kind start the examples.');
-    expect(steps).toContain('A category you clear is kept but not learned from, so it does not count toward that.');
     expect(steps).toContain('With 4, the weekly test can hold one back and score it.');
-    expect(steps).toContain(MEMORY);
+    expect(steps).toContain("Nothing reaches a prompt until Monday's run has built the examples.");
+    expect(steps).toContain('The Describe-it line needs no Companion Memory. The fill-in from memory does,');
     expect(steps).toContain('Companion Memory is connected under Settings → Connections.');
     expect(steps).toContain('There is no switch to start it earlier and no setting that turns it off.');
   });
@@ -761,7 +780,11 @@ describe('ClassificationTile: what the card says about itself', () => {
     const items = [...more.querySelectorAll('li')].map((li) => li.textContent ?? '');
     expect(items).toHaveLength(7);
     expect(items[0]).toContain('A call that failed or returned nothing is skipped, not counted as wrong');
-    expect(items[1]).toContain('without the memory context the real fill-in has');
+    // The score is of a narrow question with similarity-picked examples, not of any screen's prompt.
+    expect(items[1]).toContain('one narrow question for each held-back correction, the category or me/us/them, in the same words every time');
+    expect(items[1]).toContain('with examples picked by how closely they match the task (your most frequent ones with no embedding model)');
+    expect(items[1]).toContain('The Describe-it line asks a longer question with your most frequent corrections at the end');
+    expect(items[1]).toContain('So this number is not a score of either, and it is not a recording of what the app did on your tasks.');
     expect(items[2]).toContain('Answers it already gets right are not tested');
     expect(items[3]).toContain('Each week\'s test is every 4th correction from the last 90 days');
     expect(items[3]).toContain('they are never added together or compared');
@@ -839,6 +862,7 @@ describe('ClassificationTile: wording the card must carry', () => {
     expect(caveat.textContent).toContain("first guess was not what you chose");
     expect(caveat.textContent).toContain('cannot show that the examples helped');
     expect(caveat.textContent).toContain('does not show the model is right in general');
+    expect(caveat.textContent).toContain('not a score of the Describe-it line');
     // Deliberately not "the stock model": once an index exists the first guess was made WITH examples.
     expect(caveat.textContent).not.toMatch(/stock model/i);
     d.resolve(MEASURED);
@@ -846,15 +870,17 @@ describe('ClassificationTile: wording the card must carry', () => {
     expect(screen.getByTestId('learning-primary-caveat-classification').textContent).toBe(caveat.textContent);
   });
 
-  it('says where the examples are used, and that typed quick-add guesses are not given any', async () => {
+  it('says where the examples are used: the Describe-it line, the memory fill-in and the Monday test', async () => {
     accuracyMock.mockResolvedValue(MEASURED);
     mount();
     await screen.findByTestId('learning-headline-classification-category');
     const text = cardText();
     expect(text).toContain('Fill in details from memory');
-    expect(text).toContain('Guesses made while you add a task by typing are logged so you can correct them, but they are not shown examples.');
+    expect(text).toContain('your past corrections reach the model in three places.');
+    expect(text).toContain('The Describe-it line in the Add dialog');
+    expect(text).toContain('The third is Monday\'s test, described above.');
     expect(text).toContain('Direction: higher is better.');
-    expect(text).toContain('A field starts after 2 corrections and the model never overwrites a value you already filled in.');
+    expect(text).toContain('a field starts after 2 corrections it can learn from');
     // The remaining caveats and the start steps are inside the details block.
     const more = screen.getByTestId('learning-more-classification').textContent ?? '';
     expect(more).toContain('A call that failed or returned nothing is skipped, not counted as wrong');
@@ -863,6 +889,38 @@ describe('ClassificationTile: wording the card must carry', () => {
     expect(more).toContain(formatRange(wilsonRange(3, 4)!));
     expect(more).toContain('Within 90 days, 2 corrections of one kind start the examples.');
     expect(more).toContain('There is no switch to start it earlier and no setting that turns it off.');
+  });
+
+  // The card was first written when the examples reached a prompt in exactly one place (the
+  // memory fill-in). They now reach three, so each of these claims is false and must not come
+  // back, in any state the card can be in. The positive half pins the replacements, so deleting
+  // the sentences cannot satisfy the first half by itself.
+  it('never says the examples reach one place, or that without Companion Memory they are never shown', async () => {
+    const STALE: ReadonlyArray<[RegExp, string]> = [
+      [/exactly one place/i, 'exactly one place'],
+      [/only one place/i, 'only one place'],
+      [/never shown to the model/i, 'never shown to the model'],
+      [/built and scored every Monday but/i, 'built and scored ... but never shown'],
+      [/shown only when the app fills in details/i, 'shown only when the app fills in details'],
+      [/not shown examples/i, 'not shown examples'],
+      [/while you add a task by typing/i, 'typed guesses are not given examples'],
+      // True until 2026-11-02, when quick add began reading a one-word category answer as one category.
+      [/only works when the model answers categories as a list/i, 'categories only work from a list answer'],
+      [/answers with one word picks no category/i, 'a one-word answer picks no category'],
+    ];
+    for (const r of [NONE, MEASURED, NOT_MEASURED]) {
+      accuracyMock.mockResolvedValue(r);
+      const { unmount } = mount({ aiAvailable: false });
+      await waitFor(() => expect(screen.getByTestId('learning-more-classification')).toBeTruthy());
+      const text = cardText();
+      expect(STALE.filter(([re]) => re.test(text)).map(([, what]) => what)).toEqual([]);
+      // Present in every state, because the explanation does not depend on the readings.
+      expect(text).toContain('your past corrections reach the model in three places.');
+      expect(text).toContain('The Describe-it line needs no Companion Memory.');
+      expect(text).toContain('needs the model to name one of your categories, as a list or as one word');
+      expect(text).toContain('not a score of the Describe-it line');
+      unmount();
+    }
   });
 
   it('nothing the card renders overclaims or uses a dash', async () => {

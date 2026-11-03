@@ -5,10 +5,11 @@ import {
   calibrateClassification, canonicalValue, classificationHint, classificationInput,
   decidedRows, exemplarPrompt, logAnsweredAssignment, logAssignment, recordCorrection, retrieveExemplars, rowOutcome,
   CORRECTION_FLOOR, HELD_OUT_STRIDE, LEARNING_WINDOW_DAYS, MAX_EXEMPLARS, PENDING_MS, RETRIEVE_K,
-  type ClassifiedField,
+  type ClassifiedField, type Exemplar,
 } from '../src/services/classification-learning.js';
 import { createOwner, resetDb, SECOND_OWNER_ID } from './helpers.js';
 import { ollama } from '../src/mcp/ollama.js';
+import { packVector } from '../src/lib/vector.js';
 
 /**
  * Phase 8 — the parse/classify LLM learns from the owner's corrections.
@@ -476,19 +477,6 @@ describe('what a live classification reads', () => {
     expect(got.map((e) => e.correctValue)).toContain('Finance');
   });
 
-  it('on the frequency path, hands back the NEWEST lesson of each value', async () => {
-    // Written directly so the log ids, which decide "newest", ascend with the calls.
-    const put = (logId: string, text: string, correct: string) => sqlite.prepare(
-      `INSERT INTO classification_exemplars (owner_id, field, log_id, input_text, llm_value, correct_value, embedding, computed_date)
-       VALUES (?, 'category', ?, ?, 'Leisure', ?, NULL, '2026-08-14')`,
-    ).run(OWNER, logId, text, correct);
-    put('ex-0001', 'old gym note', 'Health');
-    put('ex-0002', 'new gym note', 'Health');
-    put('ex-0003', 'tax note', 'Finance');
-    const got = await retrieveExemplars(OWNER, 'category', 'anything', { embedFn: null });
-    expect(got.map((e) => e.inputText)).toEqual(['new gym note', 'tax note']);
-  });
-
   it('falls back rather than failing when the embedder is there but does not answer', async () => {
     await indexed([
       { text: 'gym workout monday', llm: 'Leisure', final: 'Health' },
@@ -511,6 +499,34 @@ describe('what a live classification reads', () => {
     // still usable exemplars, and nothing throws.
     const got = await retrieveExemplars(OWNER, 'category', 'gym run', { embedFn: fakeEmbed });
     expect(got.length).toBeGreaterThan(0);
+  });
+
+  it('on the frequency path, never reads the vectors at all', async () => {
+    // The interactive path asks for `embedFn: null` precisely so that it costs one small
+    // read. Hide the embedding column: any SELECT that names it now throws, and retrieval
+    // turns a throw into "no exemplars". So an answer proves the column was not read.
+    await indexed([
+      { text: 'gym workout monday', llm: 'Leisure', final: 'Health' },
+      { text: 'gym workout tuesday', llm: 'Leisure', final: 'Health' },
+      { text: 'gym workout friday', llm: 'Leisure', final: 'Health' },
+      { text: 'quarterly invoice', llm: 'Career', final: 'Finance' },
+      { text: 'invoice the client', llm: 'Career', final: 'Finance' },
+      { text: 'file the taxes', llm: 'Career', final: 'Finance' },
+      { text: 'gym workout sunday', llm: 'Leisure', final: 'Health' },
+    ]);
+    expect(exemplarRows().every((e) => e.embedding !== null)).toBe(true); // vectors ARE stored
+    const plain = await retrieveExemplars(OWNER, 'category', 'gym run', { embedFn: null });
+    expect(plain.length).toBeGreaterThan(0);
+
+    sqlite.exec(`ALTER TABLE classification_exemplars RENAME COLUMN embedding TO embedding_hidden`);
+    try {
+      expect(await retrieveExemplars(OWNER, 'category', 'gym run', { embedFn: null })).toEqual(plain);
+      expect(await classificationHint(OWNER, 'category', 'gym run', { embedFn: null })).toBe(exemplarPrompt(plain));
+      // The poison bites where vectors are wanted, so the assertions above are not vacuous.
+      expect(await retrieveExemplars(OWNER, 'category', 'gym run', { embedFn: fakeEmbed })).toEqual([]);
+    } finally {
+      sqlite.exec(`ALTER TABLE classification_exemplars RENAME COLUMN embedding_hidden TO embedding`);
+    }
   });
 
   it('does not touch a live embedder that is not installed', async () => {
@@ -669,6 +685,158 @@ describe('embed reuse by log_id', () => {
   });
 });
 
+// ── The accept filter (what quick-add can actually use) ───────────────────────
+//
+// Quick-add asks for a category from the owner's CURRENT list, so an exemplar whose value
+// is no longer on that list (renamed, deleted, muted, or a cleared answer) must never
+// reach its prompt as "the user chose X". Retrieval hands back at most k, so the filter
+// has to run BEFORE the cut: dropping afterwards would leave the slot empty instead of
+// giving it to the next valid lesson.
+
+describe('the accept filter', () => {
+  let exSeq = 0;
+  beforeEach(() => { exSeq = 0; });
+
+  /**
+   * Write one index row directly, so a test controls exactly how often each value was
+   * corrected and which row is newest (the frequency path picks the highest log_id of
+   * each value, and the ids here ascend with the call order).
+   */
+  async function exemplar(o: {
+    correct: string; text?: string; llm?: string; field?: ClassifiedField; owner?: string; vec?: boolean;
+  }): Promise<void> {
+    const logId = `ex-${String(exSeq++).padStart(4, '0')}`;
+    const text = o.text ?? `${o.correct} chore ${logId}`;
+    sqlite.prepare(
+      `INSERT INTO classification_exemplars (owner_id, field, log_id, input_text, llm_value, correct_value, embedding, computed_date)
+       VALUES (?, ?, ?, ?, ?, ?, ?, '2026-08-14')`,
+    ).run(
+      o.owner ?? OWNER, o.field ?? 'category', logId, text, o.llm ?? 'Leisure', o.correct,
+      o.vec ? packVector(await fakeEmbed(text)) : null,
+    );
+  }
+
+  /** Gardening 3x, Cleaning 2x, Cooking 2x, then one each of Career, Finance, Health:
+   *  without a filter the top three by frequency are Gardening, Cleaning, Cooking. */
+  async function frequencyIndex(): Promise<void> {
+    for (const c of ['Gardening', 'Gardening', 'Gardening', 'Cleaning', 'Cleaning', 'Cooking', 'Cooking', 'Health', 'Finance', 'Career']) {
+      await exemplar({ correct: c });
+    }
+  }
+
+  /** Two Gardening rows sit nearest to the query 'gym run'; three valid values trail them. */
+  async function similarityIndex(): Promise<void> {
+    await exemplar({ text: 'gym run', correct: 'Gardening', vec: true });
+    await exemplar({ text: 'gym workout monday', correct: 'Gardening', vec: true });
+    await exemplar({ text: 'gym workout tuesday', correct: 'Health', vec: true });
+    await exemplar({ text: 'invoice taxes budget', correct: 'Finance', vec: true });
+    await exemplar({ text: 'read book', correct: 'Leisure', vec: true });
+  }
+
+  const values = (xs: Exemplar[]) => xs.map((e) => e.correctValue);
+  const notGardening = (e: Exemplar) => !['Gardening', 'Cleaning', 'Cooking'].includes(e.correctValue);
+
+  it('changes nothing for a caller that passes no filter, or one that keeps everything', async () => {
+    await frequencyIndex();
+    const plain = await retrieveExemplars(OWNER, 'category', 'anything', { embedFn: null });
+    expect(values(plain)).toEqual(['Gardening', 'Cleaning', 'Cooking']);
+    expect(await retrieveExemplars(OWNER, 'category', 'anything', { embedFn: null, accept: undefined })).toEqual(plain);
+    expect(await retrieveExemplars(OWNER, 'category', 'anything', { embedFn: null, accept: () => true })).toEqual(plain);
+
+    resetIndex();
+    await similarityIndex();
+    const nearest = await retrieveExemplars(OWNER, 'category', 'gym run', { embedFn: fakeEmbed });
+    expect(nearest).toHaveLength(RETRIEVE_K);
+    expect(nearest[0].inputText).toBe('gym run');
+    expect(await retrieveExemplars(OWNER, 'category', 'gym run', { embedFn: fakeEmbed, accept: () => true })).toEqual(nearest);
+  });
+
+  it('on the frequency path, a lower-ranked valid value takes the slot of a dropped one', async () => {
+    await frequencyIndex();
+    const got = await retrieveExemplars(OWNER, 'category', 'anything', { embedFn: null, accept: notGardening });
+    // Filtering AFTER the cut would have returned nothing: all three slots belonged to
+    // the dropped values. Ties among the one-offs break by name.
+    expect(values(got)).toEqual(['Career', 'Finance', 'Health']);
+  });
+
+  it('still returns the NEWEST lesson of each value it keeps', async () => {
+    await exemplar({ correct: 'Health', text: 'old gym note' });
+    await exemplar({ correct: 'Health', text: 'new gym note' });
+    await exemplar({ correct: 'Gardening' });
+    const got = await retrieveExemplars(OWNER, 'category', 'anything', { embedFn: null, accept: notGardening });
+    expect(got.map((e) => e.inputText)).toEqual(['new gym note']);
+  });
+
+  it('on the similarity path, filters before the cut too', async () => {
+    await similarityIndex();
+    const unfiltered = await retrieveExemplars(OWNER, 'category', 'gym run', { embedFn: fakeEmbed, k: 1 });
+    expect(values(unfiltered)).toEqual(['Gardening']); // the nearest row is a value we are about to refuse
+
+    const top = await retrieveExemplars(OWNER, 'category', 'gym run', {
+      embedFn: fakeEmbed, k: 1, accept: (e) => e.correctValue !== 'Gardening',
+    });
+    expect(values(top)).toEqual(['Health']); // the nearest VALID row, not an empty answer
+
+    const three = await retrieveExemplars(OWNER, 'category', 'gym run', {
+      embedFn: fakeEmbed, accept: (e) => e.correctValue !== 'Gardening',
+    });
+    expect([...values(three)].sort()).toEqual(['Finance', 'Health', 'Leisure']);
+  });
+
+  it('says nothing when the filter refuses everything', async () => {
+    await frequencyIndex();
+    expect(await retrieveExemplars(OWNER, 'category', 'anything', { embedFn: null, accept: () => false })).toEqual([]);
+    expect(await classificationHint(OWNER, 'category', 'anything', { embedFn: null, accept: () => false })).toBe('');
+
+    resetIndex();
+    await similarityIndex();
+    expect(await retrieveExemplars(OWNER, 'category', 'gym run', { embedFn: fakeEmbed, accept: () => false })).toEqual([]);
+    expect(await classificationHint(OWNER, 'category', 'gym run', { embedFn: fakeEmbed, accept: () => false })).toBe('');
+  });
+
+  it('offers the filter each of the OWNER’s stored rows for the field, and no one else’s', async () => {
+    createOwner(SECOND_OWNER_ID);
+    await exemplar({ correct: 'Health' });
+    await exemplar({ correct: 'Finance' });
+    await exemplar({ correct: 'Zebra', owner: SECOND_OWNER_ID });
+    await exemplar({ correct: 'them', field: 'motivation' });
+
+    const offered: Exemplar[] = [];
+    await retrieveExemplars(OWNER, 'category', 'anything', {
+      embedFn: null, accept: (e) => { offered.push(e); return true; },
+    });
+    expect(offered.map((e) => e.correctValue).sort()).toEqual(['Finance', 'Health']);
+    // The filter sees the lesson itself, which is what a vocabulary check needs.
+    expect(offered[0]).toMatchObject({ llmValue: 'Leisure' });
+    expect(typeof offered[0].inputText).toBe('string');
+  });
+
+  it('is passed through by classificationHint, so the rendered text honours it', async () => {
+    await frequencyIndex();
+    const hint = await classificationHint(OWNER, 'category', 'anything', { embedFn: null, accept: notGardening });
+    expect(hint).toContain('the user chose Career.');
+    expect(hint).toContain('the user chose Finance.');
+    expect(hint).toContain('the user chose Health.');
+    for (const dropped of ['Gardening', 'Cleaning', 'Cooking']) expect(hint).not.toContain(`the user chose ${dropped}`);
+    // …and without it the same owner is shown exactly what they were shown before.
+    const before = await classificationHint(OWNER, 'category', 'anything', { embedFn: null });
+    expect(before).toContain('the user chose Gardening.');
+    expect(before).not.toContain('Career');
+  });
+
+  it('never throws when the filter does', async () => {
+    await frequencyIndex();
+    const boom = () => { throw new Error('bad predicate'); };
+    await expect(retrieveExemplars(OWNER, 'category', 'anything', { embedFn: null, accept: boom })).resolves.toEqual([]);
+    await expect(classificationHint(OWNER, 'category', 'anything', { embedFn: null, accept: boom })).resolves.toBe('');
+  });
+
+  function resetIndex() {
+    sqlite.exec('DELETE FROM classification_exemplars');
+    exSeq = 0;
+  }
+});
+
 // ── The prompt fragment, exactly ─────────────────────────────────────────────
 
 describe('the rendered lesson', () => {
@@ -683,8 +851,8 @@ describe('the rendered lesson', () => {
   });
 
   it('is byte-identical for every non-empty value', () => {
-    // Pinned as a literal: this text is model-facing in memory enrichment, so an edit
-    // here is a retune, never a tidy-up.
+    // Pinned as a literal: this text is model-facing in memory enrichment as well as
+    // quick-add, so an edit here is a retune, never a tidy-up.
     expect(exemplarPrompt([
       { logId: 'l1', inputText: 'gym workout monday', llmValue: 'Leisure', correctValue: 'Health' },
       { logId: 'l2', inputText: '  quarterly\n invoice ', llmValue: 'Career, Growth', correctValue: 'Finance, Career' },

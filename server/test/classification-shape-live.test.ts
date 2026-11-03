@@ -265,6 +265,44 @@
  *     and route p50 by up to 900 ms (gemma3:4b 1,646 to 2,546): both are this box's noise.
  */
 
+/**
+ * THE GUARD MEASUREMENT (LIVE_GUARD=1). PRE-REGISTERED 2026-11-02, written and committed BEFORE its first live run, with
+ * the same discipline as the measurements above: no gate, threshold or rule below is edited after a result; a dated
+ * note goes under it.
+ *
+ * THE QUESTION. The hint is back (a revert of #659), with a guard: enrichEntry shows it only when the model quick add will
+ * ask is on an allow-list of models the learning-curve measurement found it helps (gemma3n:e4b, qwen2.5:3b, gemma3:4b;
+ * agents/quickadd-hint-models.ts), and sends the stock prompt, byte for byte, to every other model. Does the guard do what
+ * it is for: stop the harm to the models the hint broke, without costing the models it helps anything?
+ *
+ * WHAT RUNS. The learning-curve run again (the same levels 0, 3, 6, 9, 12 and 18 corrections, the same owner and fixture,
+ * the same noise pass, the same 12 target and 12 control titles x 3 runs, the real routes, one calibrate per level) with ONE
+ * change: no model is injected. The app resolves the model itself, the way an owner chooses it. gemma3n:e4b runs with no
+ * override anywhere, so the default path is exercised; every other model is set as the owner's quality-tier model in
+ * Settings (scheduling_prefs.quality_model), and the run asserts the app resolved it. Quick add asks the quality tier, so
+ * the guard sees that model. Models not on the allow-list (qwen2.5:0.5b, gemma3:1b, llama3.2:3b) are the harmed ones of the
+ * learning-curve run; models on it (gemma3n:e4b, qwen2.5:3b, gemma3:4b) are the ones that learned. Per call, beside the
+ * learning-curve fields: whether the prompt the route sent is the stock prompt for that title (compared with what
+ * enrichQuick builds for it with no hints).
+ *
+ * GATES (per model; L1 to L3 as registered under the learning-curve measurement, applied to this run's calls):
+ *   G1 NO HARM    For every model NOT on the allow-list: no call at any level carried a hint block, every call's prompt
+ *                 was the stock prompt for its title, and L2 and L3 hold (controls at 18 no more than 1 title under
+ *                 controls at 0; all nine keys no more than 5 points and valid direction no more than 10 points under).
+ *   G2 NO LOSS    For every model ON the allow-list: the hint block was in at least 95% of the calls at every level at which
+ *                 the index held at least 2 corrections, and L1, L2 and L3 hold (INCONCLUSIVE: NOISE when L1 is, which is
+ *                 not a pass).
+ *   G3 DEFAULT    gemma3n:e4b, run with no override, meets G2: the default install gets the hint.
+ *   Reported, never gated: the whole curve per model next to the learning-curve run's; route p50 per level.
+ * RULE (the lead decides; the harness reads it off and prints each line).
+ *   D1  The guard is recommended when G1 holds for every unlisted model and G2 and G3 hold for every listed one.
+ *   D2  Otherwise it is not, and the failing model, gate and numbers are the PR's whole content.
+ * NOT SHOWN, whatever the result: whether a model that is on neither list is helped or harmed (the guard's answer for it is
+ * "no", chosen for being the safe side, not measured); one owner, three conventions, 12 + 12 titles, one box and one
+ * server setting; the allow-list's names are three models, not a rule about models; a model's answer shape on another
+ * Ollama version.
+ */
+
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -276,6 +314,7 @@ import { config } from '../src/lib/config.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { parseQuick } from '../src/engine/quickadd.js';
 import { enrichQuick, mergeEnrichment, type QuickVocab } from '../src/agents/quickadd.js';
+import { HINT_MODELS, modelUsesHint } from '../src/agents/quickadd-hint-models.js';
 import { constrainToVocabulary, constrainOne, type EnrichOut } from '../src/agents/constrain.js';
 import { generateJson, generate, embed, parseJsonLoose, type ModelTier } from '../src/mcp/ollama.js';
 import {
@@ -289,6 +328,7 @@ const LIVE = process.env.LIVE_SHAPE === '1';
 const CAPTURE = process.env.LIVE_CAPTURE === '1';
 const TIER = process.env.LIVE_TIER === '1';
 const LEARN = process.env.LIVE_LEARN === '1';
+const GUARD = process.env.LIVE_GUARD === '1';
 const REPLAY = process.env.LIVE_SHAPE_REPLAY ?? '';
 function envPositiveInt(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -1478,6 +1518,8 @@ interface LearnCall {
   directionValid: boolean;
   hinted: boolean;
   llm: boolean | null;
+  /** The guard measurement only: the prompt sent is the stock prompt for the title (null when not checked). */
+  stock: boolean | null;
 }
 interface LearnLevel { model: string; level: number; captured: number; claims: number; corrections: number; indexed: number }
 const learnCalls: LearnCall[] = [];
@@ -1549,6 +1591,42 @@ function learnReadOff(calls: readonly LearnCall[], models: readonly string[]) {
   return { per, lines, learners, small };
 }
 
+/** Reads G1 to G3 and the rule (D1, D2) off a guard run's calls and levels. The lead decides; this prints what the rule says. */
+function guardReadOff(calls: readonly LearnCall[], levels: readonly LearnLevel[], models: readonly string[]) {
+  const lines: string[] = [];
+  const base = learnReadOff(calls, models);
+  const g1 = new Map<string, boolean>();
+  const g2 = new Map<string, boolean | 'INCONCLUSIVE: NOISE'>();
+  for (const model of models) {
+    const r = base.per.get(model);
+    const own = calls.filter((c) => c.model === model);
+    if (!r || own.length === 0) { lines.push(`${model}: no data`); continue; }
+    if (!modelUsesHint(model, {})) {
+      const hinted = own.filter((c) => c.hinted).length;
+      const notStock = own.filter((c) => c.stock !== true).length;
+      const ok = hinted === 0 && notStock === 0 && r.l2 && r.l3;
+      g1.set(model, ok);
+      lines.push(`${model} (not on the allow-list): G1 ${ok ? 'PASS' : 'FAIL'} (hint blocks in ${hinted} of ${own.length} calls, ${notStock} calls not the stock prompt, `
+        + `L2 ${r.l2 ? 'holds' : 'FAILS'} controls ${r.k0.controls} to ${r.top.controls}, L3 ${r.l3 ? 'holds' : 'FAILS'} keys ${r.k0.keysPct.toFixed(1)} to ${r.top.keysPct.toFixed(1)}%, direction ${r.k0.directionPct.toFixed(1)} to ${r.top.directionPct.toFixed(1)}%)`);
+    } else {
+      const indexed = levels.filter((l) => l.model === model && l.indexed >= 2);
+      const shares = indexed.map((l) => ({ level: l.level, share: learnPoint(learnSet(calls, model, l.level, 'curve')).hintedPct }));
+      const reaches = indexed.length > 0 && shares.every((x) => x.share >= 95);
+      const verdict: boolean | 'INCONCLUSIVE: NOISE' = r.l1 === 'INCONCLUSIVE: NOISE' ? 'INCONCLUSIVE: NOISE' : reaches && r.l1 === 'PASS' && r.l2 && r.l3;
+      g2.set(model, verdict);
+      lines.push(`${model} (on the allow-list): G2 ${verdict === true ? 'PASS' : verdict === false ? 'FAIL' : verdict} (hint in the prompt at levels with an index of 2 or more: ${shares.map((x) => `k${x.level} ${x.share.toFixed(0)}%`).join(', ') || 'none'}; `
+        + `L1 ${r.l1} targets ${r.k0.targets} to ${r.top.targets}, L2 ${r.l2 ? 'holds' : 'FAILS'}, L3 ${r.l3 ? 'holds' : 'FAILS'})`);
+    }
+  }
+  const g3 = g2.get(DEFAULT_QUALITY);
+  lines.push(`G3 DEFAULT (${DEFAULT_QUALITY} with no override gets the hint): ${g3 === undefined ? 'NOT RUN' : g3 === true ? 'PASS' : g3 === false ? 'FAIL' : g3}`);
+  const unlisted = [...g1.values()], listed = [...g2.values()];
+  const recommended = unlisted.length > 0 && listed.length > 0 && unlisted.every((x) => x) && listed.every((x) => x === true) && g3 === true;
+  lines.push(recommended ? 'D1 the guard is recommended: G1 holds for every unlisted model, G2 and G3 for every listed one.'
+    : 'D2 the guard is not recommended: ' + [...g1].filter(([, v]) => !v).map(([m]) => `G1 fails for ${m}`).concat([...g2].filter(([, v]) => v !== true).map(([m, v]) => `G2 ${v === false ? 'fails' : 'is inconclusive'} for ${m}`)).concat(g3 === true ? [] : ['G3 is not met']).join('; ') + '.');
+  return { lines, g1, g2, g3, recommended };
+}
+
 function learnFlush(): void {
   if (!OUT) return;
   writeFileSync(OUT, JSON.stringify({
@@ -1564,7 +1642,7 @@ function learnFlush(): void {
 const LEARN_ORDER: FixtureItem[] = Array.from({ length: 6 }, (_, i) =>
   CONVENTIONS.map((c) => TRAIN_ITEMS.find((t) => t.title === c.train[i])!)).flat();
 
-async function learnMeasure(model: string, level: number, pass: 'curve' | 'noise'): Promise<void> {
+async function learnMeasure(model: string, level: number, pass: 'curve' | 'noise', stockByTitle?: ReadonlyMap<string, string>): Promise<void> {
   for (const item of [...TARGET_ITEMS, ...CONTROL_ITEMS]) {
     for (let run = 0; run < LEARN_RUNS; run++) {
       const t0 = performance.now();
@@ -1585,6 +1663,7 @@ async function learnMeasure(model: string, level: number, pass: 'curve' | 'noise
         raw, validJson: strict !== null, allKeys: strict !== null && WIDE_KEYS.every((k) => k in strict!),
         directionValid: directionOf(raw, DIRECTIONS).valid, hinted: prompt.includes(HINT_MARKER),
         llm: typeof res?.body?.llm === 'boolean' ? res.body.llm : null,
+        stock: stockByTitle ? prompt === stockByTitle.get(item.title) : null,
       });
     }
   }
@@ -1604,12 +1683,25 @@ async function learnCapture(model: string, item: FixtureItem): Promise<boolean> 
   return claim !== undefined;
 }
 
-async function runLearn(model: string): Promise<void> {
-  rec.model = model;
+/** The built-in quality default: the guard run leaves the owner's override empty for it, so the default path is exercised. */
+const DEFAULT_QUALITY = 'gemma3n:e4b';
+
+async function runLearn(model: string, resolve = false): Promise<void> {
+  // The guard measurement lets the app resolve the model (no injection); the learning curve injects it.
+  rec.model = resolve ? '' : model;
   rec.tier = '';
-  say(`\n=== ${model} (learning curve) ===`);
+  say(`\n=== ${model} (${resolve ? 'guard' : 'learning curve'}) ===`);
   await warm(model);
   resetWorld();
+  let stockByTitle: Map<string, string> | undefined;
+  if (resolve) {
+    if (model !== DEFAULT_QUALITY) sqlite.prepare('UPDATE scheduling_prefs SET quality_model = ? WHERE owner_id = ?').run(model, OWNER);
+    const resolved = await resolveModel('quality');
+    if (matchInstalled(resolved)?.name !== matchInstalled(model)?.name) violate(model, `the app resolved the quality tier to ${resolved}, not ${model}`);
+    const vocab = await suggestibleVocabulary(OWNER);
+    stockByTitle = new Map();
+    for (const item of [...TARGET_ITEMS, ...CONTROL_ITEMS]) stockByTitle.set(item.title, await dryPrompt(() => enrichQuick(item.title, parseQuick(item.title), vocab)));
+  }
   let captured = 0;
   let claims = 0;
   for (const level of LEARN_LEVELS) {
@@ -1626,14 +1718,15 @@ async function runLearn(model: string): Promise<void> {
       indexed = cat?.indexed ?? 0;
     }
     learnLevels.push({ model, level, captured, claims, corrections, indexed });
-    await learnMeasure(model, level, 'curve');
+    await learnMeasure(model, level, 'curve', stockByTitle);
     learnFlush();
     const q = learnPoint(learnSet(learnCalls, model, level, 'curve'));
     say(`${model} k${level}: captured ${captured}, claims ${claims}, corrections ${corrections}, indexed ${indexed}; targets ${q.targets}/12, controls ${q.controls}/12, keys ${q.keysPct.toFixed(1)}%, direction ${q.directionPct.toFixed(1)}%, hinted ${q.hintedPct.toFixed(1)}%, route p50 ${q.p50.toFixed(0)} ms`);
   }
   // The noise floor: a clean owner again (no corrections, no index), level 0 measured a second time.
   resetWorld();
-  await learnMeasure(model, 0, 'noise');
+  if (resolve && model !== DEFAULT_QUALITY) sqlite.prepare('UPDATE scheduling_prefs SET quality_model = ? WHERE owner_id = ?').run(model, OWNER);
+  await learnMeasure(model, 0, 'noise', stockByTitle);
   learnFlush();
 }
 
@@ -1706,6 +1799,29 @@ describe.skipIf(!LEARN)('classification shape · learning-curve measurement', ()
     learnFlush();
     say(`\n[live-shape] learning curve: ${learnCalls.length} calls recorded${OUT ? `, artifact at ${OUT}` : ' (set LIVE_SHAPE_OUT to keep them)'}.`);
     for (const line of learnReadOff(learnCalls, MODELS).lines) say(line);
+    expect(violations, `mechanism violations:\n${violations.join('\n')}`).toEqual([]);
+  });
+});
+
+describe.skipIf(!GUARD)('classification shape · guard measurement', () => {
+  beforeAll(prepareLive);
+
+  afterAll(async () => {
+    await srv?.close();
+  });
+
+  for (const model of MODELS) {
+    it(`${model}: ${LEARN_LEVELS.join(', ')} corrections through the app's own model resolution`, async () => {
+      await runLearn(model, true);
+    }, 3 * 60 * 60_000);
+  }
+
+  it('the rule, read off the calls (the lead decides; nothing here is asserted but the mechanism)', () => {
+    learnFlush();
+    say(`\n[live-shape] guard: ${learnCalls.length} calls recorded${OUT ? `, artifact at ${OUT}` : ' (set LIVE_SHAPE_OUT to keep them)'}; allow-list ${HINT_MODELS.join(', ')}.`);
+    const out = guardReadOff(learnCalls, learnLevels, MODELS);
+    for (const line of learnReadOff(learnCalls, MODELS).lines.filter((l) => l.includes('curve'))) say(line);
+    for (const line of out.lines) say(line);
     expect(violations, `mechanism violations:\n${violations.join('\n')}`).toEqual([]);
   });
 });
@@ -1823,7 +1939,7 @@ describe('classification shape · pure parts', () => {
       (['target', 'control'] as const).flatMap((kind) => Array.from({ length: 12 }, (_, i) => i).flatMap((i) =>
         [0, 1, 2].map((run): LearnCall => ({
           model, level: k, pass, title: `${kind}-${i}`, kind, expected: 'leisure', run, wallMs: 500, categories: [i < (kind === 'target' ? t : c) ? 'leisure' : 'health'],
-          raw: '{}', validJson: true, allKeys: true, directionValid: true, hinted: k >= 3, llm: true, ...over,
+          raw: '{}', validJson: true, allKeys: true, directionValid: true, hinted: k >= 3, llm: true, stock: null, ...over,
         }))));
     /** A model's whole run: level 0 (and its repeat) then the top level, the middle levels copying level 0 unless given. */
     const run = (model: string, k0: [number, number], top: [number, number], over: { k0?: Partial<LearnCall>; top?: Partial<LearnCall>; repeat?: [number, number] } = {}): LearnCall[] => [
@@ -1895,6 +2011,82 @@ describe('classification shape · pure parts', () => {
       expect(LEARN_ORDER).toHaveLength(18);
       expect(new Set(LEARN_ORDER.map((i) => i.title)).size).toBe(18);
       expect(LEARN_ORDER.slice(0, 6).map((i) => i.convention)).toEqual(['exercise-leisure', 'invoices-career', 'inner-work-growth', 'exercise-leisure', 'invoices-career', 'inner-work-growth']);
+    });
+  });
+
+  describe('the guard rule, on invented calls', () => {
+    const lc = (model: string, k: number, t: number, c: number, over: Partial<LearnCall> = {}, pass: 'curve' | 'noise' = 'curve'): LearnCall[] =>
+      (['target', 'control'] as const).flatMap((kind) => Array.from({ length: 12 }, (_, i) => i).flatMap((i) =>
+        [0, 1, 2].map((run): LearnCall => ({
+          model, level: k, pass, title: `${kind}-${i}`, kind, expected: 'leisure', run, wallMs: 500, categories: [i < (kind === 'target' ? t : c) ? 'leisure' : 'health'],
+          raw: '{}', validJson: true, allKeys: true, directionValid: true, hinted: false, llm: true, stock: true, ...over,
+        }))));
+    const lv = (model: string, level: number, indexed: number): LearnLevel => ({ model, level, captured: level, claims: level, corrections: indexed, indexed });
+    /** A model's levels 0, 3 and 18 and the noise pass; `hinted` says whether the hint reached its prompts from level 3. */
+    const model = (name: string, k0: [number, number], top: [number, number], hinted: boolean, over: Partial<LearnCall> = {}) => ({
+      calls: [
+        ...lc(name, 0, k0[0], k0[1]), ...lc(name, 0, k0[0], k0[1], {}, 'noise'),
+        ...lc(name, 3, top[0], top[1], { hinted, stock: !hinted, ...over }), ...lc(name, LEARN_TOP, top[0], top[1], { hinted, stock: !hinted, ...over }),
+      ],
+      levels: [lv(name, 0, 0), lv(name, 3, 3), lv(name, LEARN_TOP, 7)],
+    });
+    const read = (...ms: ReturnType<typeof model>[]) => {
+      const names = [...new Set(ms.flatMap((m) => m.calls.map((c) => c.model)))];
+      return guardReadOff(ms.flatMap((m) => m.calls), ms.flatMap((m) => m.levels), names);
+    };
+    const E4B = 'gemma3n:e4b', Q3 = 'qwen2.5:3b', Q05 = 'qwen2.5:0.5b', L3 = 'llama3.2:3b';
+
+    it('is recommended when unlisted models get the stock prompt and listed ones still learn', () => {
+      const r = read(model(Q05, [5, 4], [5, 4], false), model(L3, [1, 7], [1, 7], false), model(E4B, [3, 12], [6, 12], true), model(Q3, [5, 9], [8, 11], true));
+      expect(r.recommended).toBe(true);
+      expect(r.lines.at(-1)).toMatch(/^D1 the guard is recommended/);
+      expect([...r.g1.values()]).toEqual([true, true]);
+      expect(r.g3).toBe(true);
+    });
+
+    it('G1 fails when an unlisted model is shown a hint, is not sent the stock prompt, or is still harmed', () => {
+      const shown = read(model(Q05, [5, 4], [5, 4], true), model(E4B, [3, 12], [6, 12], true));
+      expect(shown.g1.get(Q05)).toBe(false);
+      expect(shown.recommended).toBe(false);
+      const notStock = read(model(Q05, [5, 4], [5, 4], false, { stock: false }), model(E4B, [3, 12], [6, 12], true));
+      expect(notStock.g1.get(Q05)).toBe(false);
+      // No hint and the stock prompt, but its controls fell by two anyway (not the hint's doing, still not "no harm").
+      const fell = read(model(Q05, [5, 4], [5, 2], false), model(E4B, [3, 12], [6, 12], true));
+      expect(fell.g1.get(Q05)).toBe(false);
+    });
+
+    it('G2 fails when a listed model gets no hint, or the hint no longer helps, and G3 follows the default model', () => {
+      const none = read(model(Q05, [5, 4], [5, 4], false), model(E4B, [3, 12], [6, 12], false));
+      expect(none.g2.get(E4B)).toBe(false); // the hint never reached the prompt
+      expect(none.g3).toBe(false);
+      expect(none.recommended).toBe(false);
+      const flat = read(model(Q05, [5, 4], [5, 4], false), model(E4B, [3, 12], [4, 12], true));
+      expect(flat.g2.get(E4B)).toBe(false); // +1 title is not learning
+      const other = read(model(Q05, [5, 4], [5, 4], false), model(Q3, [5, 9], [8, 11], true));
+      expect(other.g3).toBeUndefined(); // the default model was not run
+      expect(other.recommended).toBe(false);
+    });
+
+    it('needs the hint in at least 95% of the calls at the levels with an index', () => {
+      const e = model(E4B, [3, 12], [6, 12], true);
+      // 4 of the 72 calls at the top level lose the hint: 94.4%.
+      let dropped = 0;
+      const calls = e.calls.map((c) => (c.level === LEARN_TOP && dropped++ < 4 ? { ...c, hinted: false } : c));
+      expect(guardReadOff(calls, e.levels, [E4B]).g2.get(E4B)).toBe(false);
+      dropped = 0;
+      const ok = e.calls.map((c) => (c.level === LEARN_TOP && dropped++ < 3 ? { ...c, hinted: false } : c));
+      expect(guardReadOff(ok, e.levels, [E4B]).g2.get(E4B)).toBe(true); // 95.8%
+    });
+
+    it('treats a noisy level 0 as inconclusive, not as a pass', () => {
+      const e = model(E4B, [3, 12], [9, 12], true);
+      const noisy = [...e.calls.filter((c) => c.pass === 'curve'), ...lc(E4B, 0, 7, 12, {}, 'noise')]; // the repeat moved 4 target titles
+      expect(guardReadOff(noisy, e.levels, [E4B]).g2.get(E4B)).toBe('INCONCLUSIVE: NOISE');
+    });
+
+    it('reads the allow-list from the product module, with no environment', () => {
+      for (const m of HINT_MODELS) expect(modelUsesHint(m, {})).toBe(true);
+      expect(modelUsesHint(Q05, {})).toBe(false);
     });
   });
 
