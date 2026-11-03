@@ -137,6 +137,12 @@ version at `GET /api/health` (`release`).
   stored VAPID pair so a pair sealed by an earlier test file cannot leave push dormant.
 
 ### Added
+- **Time Blocks now teach the category learning too.** When the Describe-it line picks categories for a Time
+  Block and you change them before pressing Add, or change them on the block later, that is recorded as a
+  correction, the way it already was for tasks and habits. The log now says whether a row is about a task or a Time
+  Block (`classification_log.entity_kind`, new migration 0173; existing rows are tasks), and the two kinds feed
+  the same examples. Settings → Learning shows how many of the corrections it counts are about tasks and how many
+  about Time Blocks. Edits to a Time Block that do not change its categories record nothing.
 - **Learning passes that were missed while the server was off now run once, about a minute after the next
   start.** The scheduler never re-fires a time that passed while the server was down, so a restart, a
   redeploy or a self-hosted machine that was off through Monday's block (03:50 to 04:50) skipped that

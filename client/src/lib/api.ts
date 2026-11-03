@@ -422,6 +422,18 @@ export interface ClassificationAccuracyRun {
 export interface ClassificationAccuracyResponse {
   fields: ClassifiedField[];
   runs: ClassificationAccuracyRun[];
+  /** What the weekly pass has to work with now, by field and by what the guess was about. Optional
+   *  on the wire only because a cached or older response predates it; absent shows nothing. */
+  evidence?: ClassificationEvidence[];
+}
+
+/** One field's decided rows and learnable corrections for one kind of thing (a task or a Time Block),
+ *  over the days the pass reads, counted from when each guess was made. */
+export interface ClassificationEvidence {
+  field: ClassifiedField;
+  entity_kind: string;
+  decided: number;
+  corrections: number;
 }
 
 export interface DismissalTrendRow {

@@ -1,6 +1,6 @@
 # Companion Planning — Architecture Reference
 
-**Status:** Living document · last updated 2026-11-01 · migration head `0172` in `main` (authoritative list: `server/src/db/migrations/index.ts`)
+**Status:** Living document · last updated 2026-11-01 · migration head `0173` in `main` (authoritative list: `server/src/db/migrations/index.ts`)
 
 > This document describes the **as-built** system — what is actually running, not what was planned. For future phases, see [docs/ROADMAP.md](docs/ROADMAP.md).
 >
@@ -211,7 +211,7 @@ and the new fill order cannot disagree about the set: `sqliteUtcToISO()` (`lib/t
 folded into `localDateInTZ`, and the same normalization in `isCreatedOnDay` client-side. A
 no-op for the proper ISO strings every other caller passes.
 
-**After 0147.** §1 stops narrating at migration 0147. Migrations 0148–0172 are recorded elsewhere: the "Added" columns of §5.2 and the classes of §5.3 (people on work 0151–0154 · the classification, dismissal, plan-loop and placement learning loops 0149–0150, 0157–0158, 0162–0163 and 0166–0167 · the 1–5 close-ritual score 0161 · the balance-targets wave 0164–0165 · sign-up codes 0172), the job list in §7.1, the per-wave ticket plans under `docs/factory/`, `docs/people-on-work.md`, `docs/AH-focus-timeblocks.md` (0148) and `CHANGELOG.md`.
+**After 0147.** §1 stops narrating at migration 0147. Migrations 0148–0173 are recorded elsewhere: the "Added" columns of §5.2 and the classes of §5.3 (people on work 0151–0154 · the classification, dismissal, plan-loop and placement learning loops 0149–0150, 0157–0158, 0162–0163 and 0166–0167 · the 1–5 close-ritual score 0161 · the balance-targets wave 0164–0165 · sign-up codes 0172 · the classification log's entity kind 0173), the job list in §7.1, the per-wave ticket plans under `docs/factory/`, `docs/people-on-work.md`, `docs/AH-focus-timeblocks.md` (0148) and `CHANGELOG.md`.
 
 ---
 
@@ -325,7 +325,7 @@ CI-Planning/
 │   ├── test/                 Vitest suites
 │   └── src/
 │       ├── db/
-│       │   ├── migrations/   0001_baseline → 0172 (168 files), ordered in index.ts (0009, 0119,
+│       │   ├── migrations/   0001_baseline → 0173 (169 files), ordered in index.ts (0009, 0119,
 │       │   │                 0159 and 0160 have no file; 0119 is an intentional gap — do not
 │       │   │                 "fix" it)
 │       │   ├── index.ts      openDb (open.ts) + uuid7 UDF + sqlite-vec + runMigrations (migrate.ts)
@@ -507,7 +507,7 @@ Who does an item and who it is for — see `docs/people-on-work.md`.
 | `calibration_combo_pins` | Pinned scope combos for the calibration UI, one row per (owner, scope_ref) | raw | 0107 |
 | `triality_log` | Append-only Triality outcome log — one row per suggestion shown (`slot`, `action_kind`/`action_ref`, the full `scores` JSON breakdown), stamped once more on `opened`/`staged`/`dismissed`. The learning corpus, not a cache: two requests log two sets of rows. Enums in code; raw SQL only (not in `schema.ts`); indexed on `(owner_id, local_date)`. `confidence` (0144) is a TEXT JSON band stamped at show time, reported and never fed back into ranking; NULL = shown before it existed, and readers exclude those rows from confidence aggregates | raw | 0140, 0144 |
 | `triality_weights` | Learned Triality weights per `(owner_id, slot)` PK — `weights` JSON, `sample_count`, `computed_date`. Regenerable rollup replaced wholesale by `calibrate_triality`; **absence means "the default weights"**, so deleting an owner's rows is the reset switch. Raw SQL only | raw | 0142 |
-| `classification_log` | Append-only evidence for the parse/classify LLM's per-owner vocabulary — one row per assignment (`field`, `input_text`, `llm_value`, `final_value` null until corrected, `assigned_at`/`corrected_at`). Written by `POST /api/tasks/quick`, by the wizard's Add settling the echoed `classification_claim` on `POST /api/tasks` (born closed when the saved category list, in order, differs from the model's pick), and by memory enrichment; closed by `updateTask` when the saved categories change, and for `motivation` whenever a `motivation` is sent. Never online, never mid-request: a bad afternoon of corrections can't bend a live answer | raw | 0149 |
+| `classification_log` | Append-only evidence for the parse/classify LLM's per-owner vocabulary — one row per assignment (`field`, `input_text`, `llm_value`, `final_value` null until corrected, `assigned_at`/`corrected_at`). Written by `POST /api/tasks/quick`, by the wizard's Add settling the echoed `classification_claim` on `POST /api/tasks` (born closed when the saved category list, in order, differs from the model's pick), and by memory enrichment; closed by `updateTask` when the saved categories change, and for `motivation` when a `motivation` is sent or a beneficiary set changes it. A Time Block created from a Describe-it claim is logged the same way with `entity_kind = 'time_block'` (the id column is still called `task_id`) and closed by `updateBlock` when its own categories change; the learner reads both kinds as one body of evidence. Never online, never mid-request: a bad afternoon of corrections can't bend a live answer | raw | 0149, 0173 |
 | `classification_exemplars` | Regenerable few-shot retrieval index the classify prompts read (quick-add and the wizard's preview by frequency, last in the prompt; memory enrichment and the Monday scorer by similarity), rebuilt wholesale per owner by the weekly `calibrate_classification` job; deleting an owner's rows resets the adaptation without losing the log above | raw | 0149 |
 | `classification_accuracy` | Held-out measured trend per `(owner, field, computed_date)` — `heldOut`/`correct`/`accuracy`; `accuracy` NULL when nothing was measured, never 0 | raw | 0149 |
 | `possible_outcome_log` | Close-loop wave (ticket 1) — durable evidence for dismissal learning. Append-only, one row per decided `possible_tasks` suggestion: `source_kind`, `input_text`, `outcome` (`dismissed`\|`promoted`), `decided_at` (load-bearing — `possible_tasks` itself has no decision timestamp), `local_date`. `possible_task_id` deliberately NOT a foreign key: the evidence must outlive the suggestion | raw | 0157 |
@@ -677,7 +677,7 @@ class plan_loop_stats { +«PK» owner_id, stage, computed_date : runs, passed, f
 class estimate_calibration { +«PK» owner_id, scope_kind, scope_ref : bias_ratio, p25/p50/p75 }
 class calibration_history { +«PK» owner_id, scope_kind, scope_ref, computed_date }
 class calibration_combo_pins { +«PK» owner_id, scope_ref }
-class classification_log { +TEXT id «PK» : field, input_text, llm_value, final_value, assigned_at, corrected_at }
+class classification_log { +TEXT id «PK» : task_id, entity_kind, field, input_text, llm_value, final_value, assigned_at, corrected_at }
 class classification_exemplars { +«PK» owner_id, field, log_id : llm_value, correct_value, embedding }
 class classification_accuracy { +«PK» owner_id, field, computed_date : held_out, correct, accuracy }
 class triality_log { +TEXT id «PK» : slot, action_kind/_ref, scores, outcome, confidence }

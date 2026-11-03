@@ -923,6 +923,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
     "columns": [
       "assigned_at",
       "corrected_at",
+      "entity_kind",
       "field",
       "final_value",
       "id",

@@ -545,9 +545,10 @@ export function ElementWizard() {
       // first = position 0 = first stripe) — reviewable chips, like every NL field.
       if (parsed.categories?.length) seedCategories(parsed.categories);
       // Every successful parse REPLACES the claim, so one where the model abstained clears a
-      // stale one. A Time Block parse is about a block (no task row to settle against), and
-      // categoryNames() is read after the seed: the claim holds only if the picker shows it.
-      setNlClaim(isBlock ? null : claimIfFaithful(classification_claim, categoryNames()));
+      // stale one. A Time Block parse keeps its claim as well (the server settles it against
+      // the block, with its own kind), and categoryNames() is read after the seed: the claim
+      // holds only if the picker shows it.
+      setNlClaim(claimIfFaithful(classification_claim, categoryNames()));
       // Motivation (0141): the overlay's pick seeds as SUGGESTED (source 'llm', not
       // touched) — the user's Add is approval of the task, not testimony about who
       // it's for; only tapping the control itself makes it user's.
@@ -971,7 +972,8 @@ export function ElementWizard() {
         // D5 — only the chips the user tapped; an untouched suggestion never gets here.
         subtaskTitles: pickedSubtasks(),
         // The preview's category pick, so Add records the owner's answer to it. saveElement
-        // sends it on the add-mode task/habit create only; the server decides if it counts.
+        // sends it on the add-mode task, habit and Time Block create only; the server decides
+        // if it counts.
         classificationClaim: nlClaim() ?? undefined,
         // Spent once the task exists: a later failing step (routine chip) leaves the modal
         // open, and Add again would otherwise send the same claim for a second task.

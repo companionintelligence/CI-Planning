@@ -200,6 +200,34 @@ const RESET: ResetSpec = {
 const FIELD_LABEL: Record<string, string> = { category: 'Category', motivation: 'Motivation (me, us, them)' };
 const FIELD_SHORT: Record<string, string> = { category: 'Category', motivation: 'Motivation' };
 const labelOf = (field: string): string => FIELD_LABEL[field] ?? field;
+
+/** What a guess was about, as the line under the card names it. Order is the order printed. */
+const KIND_ORDER = ['task', 'time_block'] as const;
+const KIND_LABEL: Readonly<Record<string, string>> = { task: 'tasks', time_block: 'Time Blocks' };
+const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+
+/**
+ * The corrections the weekly pass can learn from, split by what each guess was about. Null when
+ * the response carries none (an older server, a quiet account, or nothing counted), so the card
+ * says nothing rather than "0". Fields print in the response's order, kinds in KIND_ORDER, and a
+ * kind with no corrections is left out of its field's sentence. The days count from when the
+ * guess was made, as the rest of the card says; a count that is not a whole non-negative number
+ * is ignored.
+ */
+export function evidenceLine(res: ClassificationAccuracyResponse): string | null {
+  const parts: string[] = [];
+  for (const field of res.fields) {
+    const byKind = KIND_ORDER.flatMap((kind) => {
+      const n = (res.evidence ?? [])
+        .filter((e) => e.field === field && e.entity_kind === kind)
+        .reduce((sum, e) => sum + (isCount(e.corrections) ? Math.floor(e.corrections) : 0), 0);
+      return n > 0 ? [`${n} to ${KIND_LABEL[kind]}`] : [];
+    });
+    if (byKind.length > 0) parts.push(`${shortOf(field)}: ${byKind.join(', ')}.`);
+  }
+  if (parts.length === 0) return null;
+  return `Corrections the examples are built from, by what the guess was about (guesses made in the last ${F.windowDays} days). ${parts.join(' ')}`;
+}
 const shortOf = (field: string): string => FIELD_SHORT[field] ?? field;
 
 /** Only readingValue decides "measured": it re-checks the counts, so a corrupt row is never a number. */
@@ -328,6 +356,7 @@ export function classificationView(res: ClassificationAccuracyResponse, ctx: Lea
   const latestAnywhere = dates.reduce((a, b) => (daysBetween(a, b) > 0 ? b : a), dates[0] ?? '');
   const clearedOn = ctx.clearedOn?.classification;
   const cleared = anyReading && clearedSince(clearedOn, latestAnywhere);
+  const evidence = evidenceLine(res);
 
   const series = fields.map((fs, i) =>
     // With no rows at all the long explanation is said once, on the first block, instead of
@@ -338,7 +367,7 @@ export function classificationView(res: ClassificationAccuracyResponse, ctx: Lea
   return {
     series,
     // Only an exact false: null means "not known yet" and must show nothing.
-    contextLines: ctx.aiAvailable === false ? [AI_OFF] : [],
+    contextLines: [...(ctx.aiAvailable === false ? [AI_OFF] : []), ...(evidence ? [evidence] : [])],
     // The wire does not say how many examples are stored, so there is no status line, except
     // after a clear made this session, which it can state as a fact of its own.
     status: cleared
