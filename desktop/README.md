@@ -33,7 +33,7 @@ The bundles are not code-signed or notarised, so a bundle copied to another Mac 
 
 ## CI
 
-`.github/workflows/desktop-build.yml` builds the macOS, Windows and Linux bundles. It is manual only (`gh workflow run desktop-build.yml --repo companionintelligence/CI-Planning --ref <branch>`), and it publishes nothing.
+`.github/workflows/desktop-build.yml` builds the macOS, Windows and Linux bundles. It is manual only (`gh workflow run desktop-build.yml --repo companionintelligence/CI-Planning --ref <branch>`), and it publishes nothing. The Linux job writes `SHA256SUMS` for the AppImage, `.deb` and `.rpm` into the bundle folder. The `smoke-linux` job then checks those sums and starts the AppImage under a virtual display with `scripts/smoke-linux-appimage.sh`: its window must appear, and the app must still be running and showing it 15 seconds later.
 
 ## Icons
 
@@ -43,7 +43,7 @@ The bundles are not code-signed or notarised, so a bundle copied to another Mac 
 
 - An offline indicator in the UI. The client does not show when it is serving kept answers.
 - Typing into the app and the other UI: no UI automation was run, because macOS blocks keystrokes from scripts without Accessibility access. The launch check was a process check and a clean start, not a screenshot.
-- Windows and Linux builds. The workflow has not been dispatched.
+- Windows: the bundle is built in CI, but nothing launches or installs it. The `smoke-linux` job has not run yet.
 - Companion Portal sign-in, and offline use against a real server beyond the unit tests of the routing.
 - File uploads through the native path (FormData request bodies). They are not tested.
 
