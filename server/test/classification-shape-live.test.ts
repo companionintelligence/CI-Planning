@@ -196,6 +196,75 @@
  *   - Q and Q2, the same arm twice, differ in route wall p50 by 29% (1,430 and 1,839 ms). That is the noise of this
  *     box on this run; the gates' margins are wider than it, and it is the reason to quote a range, not a point.
  */
+
+/**
+ * THE LEARNING-CURVE MEASUREMENT (LIVE_LEARN=1). PRE-REGISTERED 2026-11-02, written and committed BEFORE its first live
+ * run, with the same discipline as the measurements above: no gate, threshold or rule below is edited after a result; a
+ * dated note goes under it.
+ *
+ * THE QUESTION. The quick-add hint (the owner's most-corrected category lessons, shown last in the prompt, read from
+ * the weekly calibrate run) was removed in #659: the one model it was measured on that could use it was gemma3n:e4b,
+ * because the default model answered a bare string and the loop never started. With the one-word reading (#660) it can
+ * start on small models. Does a SMALL model learn the owner's conventions from corrections, how many corrections does it
+ * need, and does it end up both faster than and as accurate as the quality model? The hint is back for this experiment
+ * only (a revert of #659 on a branch off main); nothing here restores it to main.
+ *
+ * WHAT RUNS. For each model in LIVE_SHAPE_MODELS (the model is injected into every call; the first must be the fast
+ * tier the app resolves), through the REAL routes, on a fresh owner with the fixture's six categories and three
+ * conventions (exercise to leisure, freelance invoices and tax to career, therapy and journaling to growth):
+ *   LEVELS k = 0, 3, 6, 9, 12, 18 corrections. The 18 training titles are taken in a fixed order that interleaves the
+ *   three conventions. To reach a level, the new training titles go through POST /api/tasks/quick/parse (the model's own
+ *   pick, with whatever hint last week's index gives it), then POST /api/tasks with the owner's category and the claim
+ *   echoed (the wizard's Add), then ONE calibrateClassification with no embedder: a compressed weekly cycle in which
+ *   this week's parses use last week's index. The model's own misses are the corrections.
+ *   MEASURE at each level: the 12 target titles (held out from training, same conventions) and the 12 control titles
+ *   (natural answer is not a convention value) x 3 runs, through POST /api/tasks/quick/parse, so the prompt is the one
+ *   the route really sends, hint included once the index holds at least 2 corrections.
+ *   NOISE: after the top level the owner is reset to nothing learned (no corrections, no index) and level 0 is measured
+ *   again on the same titles: the repeat of level 0, which is what an unchanged prompt does from one pass to the next.
+ * Per call: route wall time, the categories returned, the raw first completion, strict-JSON validity, all nine keys, a
+ * valid direction, and whether the prompt carried a hint block. Per level: corrections, indexed.
+ * Scoring is by TITLE: a title is right when a strict majority of its 3 runs name the owner's category first.
+ *
+ * GATES (per model; the quality model, gemma3n:e4b, is the reference for L4):
+ *   L1 LEARNS      targets right at k=18 minus targets right at k=0 is at least +2 titles. If level 0 against its repeat
+ *                  moves more than 2 target titles, L1 is INCONCLUSIVE: NOISE.
+ *   L2 NO OVER-APPLICATION  controls right at k=18 are at least controls right at k=0 minus 1.
+ *   L3 SCHEMA SAFETY        all nine keys at k=18 no more than 5 points below k=0, and a valid direction no more than 10
+ *                  points below k=0.
+ *   L4 FASTER AND ACCURATE  (not for the reference itself) titles right of the 24 (12 targets + 12 controls) at k=18 at
+ *                  least those of the reference at k=0 (what the quality tier does today with no hint), and the route
+ *                  wall p50 over this model's k=18 calls at most half the reference's p50 over its k=0 calls.
+ *   Reported, never gated: the whole curve (targets, controls, keys, direction, hinted share, p50 per level); the
+ *   smallest level at which targets are +2 over k=0 ("needs k corrections"); the reference at k=18.
+ * RULE (the lead decides; the harness reads it off and prints each line).
+ *   D1  A model LEARNS when L1, L2 and L3 hold.
+ *   D2  A model other than the reference is SMALL AND LEARNED when it LEARNS and L4 holds.
+ *   D3  No model other than the reference is SMALL AND LEARNED: say that no small model reaches the quality model
+ *       through the hint on this fixture, with the nearest one's numbers.
+ * NOT SHOWN, whatever the result: one invented owner with exactly three conventions and three lessons (the hint can be a
+ * complete convention table here and a real owner has more values and skewed counts); 12 target and 12 control titles,
+ * 3 runs at temperature 0.1 (titles, not runs, are the sample; one title is 8 points); category only (no motivation);
+ * the weekly cycle compressed to one calibrate per level; one box and one server setting; whether any model keeps
+ * improving past 18 corrections.
+ *
+ * NOTES ADDED AFTER THE FIRST RUN (2026-11-02, 19:37 to 20:28 PST, made from commit 4b3c15b7 on exp/hint-learning-curve,
+ * which is main with #659's hint removal reverted). Nothing below edits a gate. The rule read D1: qwen2.5:3b, gemma3:4b
+ * and gemma3n:e4b learn; D2: qwen2.5:3b is small and learned.
+ *   - L4's speed criterion rests on the reference's level-0 route p50 (1,958 ms; its repeat 1,694 ms), the slowest of its
+ *     levels. From level 3 to 18 it ran 1,470 to 1,592 ms, and in the quality-tier run 1,430 and 1,839 ms. Against
+ *     1,490 ms, qwen2.5:3b's 937 ms is 0.63, not the half the gate asks for. The PASS is real as registered and does not
+ *     survive a quieter reference; the honest speed-up is about 1.6 times, 1.5 to 2.1 depending on which p50 is used.
+ *   - The hinted prompt broke three models, each in its own way: qwen2.5:0.5b answered a number for "categories" on 53
+ *     of 72 calls at level 18; gemma3:1b's valid direction fell from 58% to 17 to 42%; llama3.2:3b answered null on 20 of
+ *     72 and its controls fell from 7 to 1. The one at 3.2B failed where the one at 3.1B worked: size does not predict
+ *     whether a model can use the hint.
+ *   - The gain arrived at level 3 (the first with a hint) and did not grow with more corrections (qwen2.5:3b targets at
+ *     levels 3 to 18: 7, 8, 8, 6, 8; gemma3n:e4b: 7, 7, 8, 6, 6). No model learned the exercise convention (qwen2.5:3b
+ *     one title of four, the others none). Level 0 against its repeat moved a control by two titles on gemma3:1b (11 to 9)
+ *     and route p50 by up to 900 ms (gemma3:4b 1,646 to 2,546): both are this box's noise.
+ */
+
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -219,6 +288,7 @@ import { startTestServer, resetDb, api, type TestServer } from './helpers.js';
 const LIVE = process.env.LIVE_SHAPE === '1';
 const CAPTURE = process.env.LIVE_CAPTURE === '1';
 const TIER = process.env.LIVE_TIER === '1';
+const LEARN = process.env.LIVE_LEARN === '1';
 const REPLAY = process.env.LIVE_SHAPE_REPLAY ?? '';
 function envPositiveInt(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -1371,6 +1441,202 @@ async function runTier(): Promise<void> {
   tierFlush();
 }
 
+// ── The learning-curve measurement, live (LIVE_LEARN=1; the gates are pre-registered in the header) ──────
+
+const LEARN_LEVELS = [0, 3, 6, 9, 12, 18] as const;
+const LEARN_RUNS = 3;
+const LEARN_GATES = {
+  /** L1: targets right at the top level over level 0, titles. */
+  l1MinNetTitles: 2,
+  /** L1: level 0 against its repeat may move at most this many target titles. */
+  l1NoiseTitles: 2,
+  /** L2: controls may lose at most this many titles. */
+  l2MaxLostControls: 1,
+  /** L3: points the all-nine-keys and valid-direction shares may fall. */
+  l3MaxKeysDropPoints: 5,
+  l3MaxDirectionDropPoints: 10,
+  /** L4: the model's p50 over the reference's p50 at most. */
+  l4MaxP50Share: 0.5,
+} as const;
+/** The first line of exemplarPrompt's block: present in a prompt exactly when a hint reached it. */
+const HINT_MARKER = 'This user has corrected you before.';
+const LEARN_TOP = LEARN_LEVELS[LEARN_LEVELS.length - 1];
+
+interface LearnCall {
+  model: string;
+  level: number;
+  pass: 'curve' | 'noise';
+  title: string;
+  kind: 'target' | 'control';
+  expected: string;
+  run: number;
+  wallMs: number;
+  categories: string[];
+  raw: string;
+  validJson: boolean;
+  allKeys: boolean;
+  directionValid: boolean;
+  hinted: boolean;
+  llm: boolean | null;
+}
+interface LearnLevel { model: string; level: number; captured: number; claims: number; corrections: number; indexed: number }
+const learnCalls: LearnCall[] = [];
+const learnLevels: LearnLevel[] = [];
+
+const learnSet = (calls: readonly LearnCall[], model: string, level: number, pass: 'curve' | 'noise'): LearnCall[] =>
+  calls.filter((c) => c.model === model && c.level === level && c.pass === pass);
+
+/** Titles of `kind` whose strict majority of runs named the owner's category first. */
+function learnTitlesRight(set: readonly LearnCall[], kind: 'target' | 'control'): string[] {
+  const titles = [...new Set(set.filter((c) => c.kind === kind).map((c) => c.title))];
+  return titles.filter((t) => {
+    const runs = set.filter((c) => c.title === t);
+    const right = runs.filter((c) => (c.categories[0] ?? '').toLowerCase() === c.expected.toLowerCase()).length;
+    return 2 * right > runs.length;
+  });
+}
+
+interface LearnPoint { targets: number; controls: number; keysPct: number; directionPct: number; hintedPct: number; p50: number; n: number }
+function learnPoint(set: readonly LearnCall[]): LearnPoint {
+  return {
+    targets: learnTitlesRight(set, 'target').length, controls: learnTitlesRight(set, 'control').length,
+    keysPct: pct(set.filter((c) => c.allKeys).length, set.length), directionPct: pct(set.filter((c) => c.directionValid).length, set.length),
+    hintedPct: pct(set.filter((c) => c.hinted).length, set.length), p50: percentileOf(set.map((c) => c.wallMs), 50), n: set.length,
+  };
+}
+
+/** Reads L1 to L4 and the rule (D1 to D3) off the calls. The lead decides; this prints what the rule says. */
+function learnReadOff(calls: readonly LearnCall[], models: readonly string[]) {
+  const lines: string[] = [];
+  const f = (x: number): string => (Number.isFinite(x) ? x.toFixed(1) : 'n/a');
+  const per = new Map<string, {
+    k0: LearnPoint; top: LearnPoint; l1: 'PASS' | 'FAIL' | 'INCONCLUSIVE: NOISE'; l2: boolean; l3: boolean; learns: boolean; needs: number | null; noiseFlips: number;
+  }>();
+  for (const model of models) {
+    const at = (level: number, pass: 'curve' | 'noise' = 'curve') => learnSet(calls, model, level, pass);
+    const k0 = learnPoint(at(0)), top = learnPoint(at(LEARN_TOP));
+    if (k0.n === 0 || top.n === 0) { lines.push(`${model}: no data at level 0 and ${LEARN_TOP}`); continue; }
+    const right0 = new Set(learnTitlesRight(at(0), 'target'));
+    const repeat = new Set(learnTitlesRight(at(0, 'noise'), 'target'));
+    const noiseFlips = at(0, 'noise').length === 0 ? 0 : [...new Set([...right0, ...repeat])].filter((t) => right0.has(t) !== repeat.has(t)).length;
+    const net = top.targets - k0.targets;
+    const l1 = noiseFlips > LEARN_GATES.l1NoiseTitles ? 'INCONCLUSIVE: NOISE' : net >= LEARN_GATES.l1MinNetTitles ? 'PASS' : 'FAIL';
+    const l2 = top.controls >= k0.controls - LEARN_GATES.l2MaxLostControls;
+    const l3 = top.keysPct >= k0.keysPct - LEARN_GATES.l3MaxKeysDropPoints && top.directionPct >= k0.directionPct - LEARN_GATES.l3MaxDirectionDropPoints;
+    const needs = LEARN_LEVELS.find((k) => k > 0 && learnPoint(at(k)).n > 0 && learnPoint(at(k)).targets - k0.targets >= LEARN_GATES.l1MinNetTitles) ?? null;
+    per.set(model, { k0, top, l1, l2, l3, learns: l1 === 'PASS' && l2 && l3, needs, noiseFlips });
+    lines.push(`${model}: curve (targets/12, controls/12, all-nine-keys %, valid direction %, hinted %, route p50 ms) ${LEARN_LEVELS.map((k) => {
+      const q = learnPoint(at(k));
+      return q.n === 0 ? `k${k} -` : `k${k} ${q.targets}/${q.controls}/${f(q.keysPct)}/${f(q.directionPct)}/${f(q.hintedPct)}/${f(q.p50)}`;
+    }).join('  ')}`);
+    lines.push(`${model}: L1 ${l1} (targets ${k0.targets} to ${top.targets}, net ${net}, level 0 against its repeat moved ${noiseFlips}), L2 ${l2 ? 'PASS' : 'FAIL'} (controls ${k0.controls} to ${top.controls}), `
+      + `L3 ${l3 ? 'PASS' : 'FAIL'} (keys ${f(k0.keysPct)} to ${f(top.keysPct)}%, direction ${f(k0.directionPct)} to ${f(top.directionPct)}%), needs ${needs === null ? 'more than ' + LEARN_TOP + ' corrections or never' : needs + ' corrections'}`);
+  }
+  const ref = per.get(REFERENCE_TIER);
+  const refTotal0 = ref ? ref.k0.targets + ref.k0.controls : NaN;
+  const small: string[] = [];
+  for (const [model, r] of per) {
+    if (model === REFERENCE_TIER) continue;
+    const total = r.top.targets + r.top.controls;
+    const l4 = ref !== undefined && total >= refTotal0 && r.top.p50 <= LEARN_GATES.l4MaxP50Share * ref.k0.p50;
+    lines.push(`${model}: L4 ${ref === undefined ? 'NOT RUN (no reference)' : l4 ? 'PASS' : 'FAIL'} (${total}/24 right at k${LEARN_TOP} against the reference's ${f(refTotal0)}/24 at k0; route p50 ${f(r.top.p50)} ms against ${ref ? f(ref.k0.p50) : 'n/a'} ms, limit ${LEARN_GATES.l4MaxP50Share} of it)`);
+    if (r.learns && l4) small.push(model);
+  }
+  if (ref) lines.push(`${REFERENCE_TIER} (the reference) at k${LEARN_TOP}: ${ref.top.targets + ref.top.controls}/24 right, p50 ${f(ref.top.p50)} ms`);
+  const learners = [...per].filter(([, r]) => r.learns).map(([m]) => m);
+  lines.push(`D1 learns (L1, L2, L3): ${learners.join(', ') || 'none'}.`);
+  lines.push(small.length ? `D2 small and learned (learns and L4): ${small.join(', ')}.` : 'D3 no model other than the reference is small and learned: none reaches the quality model through the hint on this fixture.');
+  return { per, lines, learners, small };
+}
+
+function learnFlush(): void {
+  if (!OUT) return;
+  writeFileSync(OUT, JSON.stringify({
+    harness: 'classification-shape-live', mode: 'learning-curve', startedAt, writtenAt: new Date().toISOString(),
+    command: provenance.command ?? null,
+    env: { models: MODELS, runs: LEARN_RUNS, ollamaUrl: redactUrl(config.ollamaUrl), ollamaVersion, ollamaInTestProcess: envWithPrefix(process.env, 'OLLAMA_'), liveShape: envWithPrefix(process.env, 'LIVE_') },
+    provenance, learnGates: LEARN_GATES, levels: LEARN_LEVELS, fixture: { conventions: CONVENTIONS, controls: CONTROLS },
+    violations, prompts: Object.fromEntries(distinctPrompts), levelsRun: learnLevels, calls: learnCalls,
+  }, null, 2));
+}
+
+/** The 18 training titles, the three conventions interleaved. */
+const LEARN_ORDER: FixtureItem[] = Array.from({ length: 6 }, (_, i) =>
+  CONVENTIONS.map((c) => TRAIN_ITEMS.find((t) => t.title === c.train[i])!)).flat();
+
+async function learnMeasure(model: string, level: number, pass: 'curve' | 'noise'): Promise<void> {
+  for (const item of [...TARGET_ITEMS, ...CONTROL_ITEMS]) {
+    for (let run = 0; run < LEARN_RUNS; run++) {
+      const t0 = performance.now();
+      const { value: res, calls } = await seamOf(() => parseViaRoute(item.title));
+      const wallMs = performance.now() - t0;
+      const seam = calls.find((c) => !c.dry);
+      const raw = seam?.raw ?? '';
+      const prompt = seam?.prompt ?? '';
+      if (prompt) distinctPrompts.set(sha12(prompt), prompt);
+      let strict: Record<string, unknown> | null = null;
+      try {
+        const j: unknown = JSON.parse(raw);
+        if (j && typeof j === 'object' && !Array.isArray(j)) strict = j as Record<string, unknown>;
+      } catch { /* not strict JSON */ }
+      learnCalls.push({
+        model, level, pass, title: item.title, kind: item.kind === 'control' ? 'control' : 'target', expected: item.expected, run, wallMs,
+        categories: Array.isArray(res?.body?.parsed?.categories) ? (res!.body.parsed.categories as string[]) : [],
+        raw, validJson: strict !== null, allKeys: strict !== null && WIDE_KEYS.every((k) => k in strict!),
+        directionValid: directionOf(raw, DIRECTIONS).valid, hinted: prompt.includes(HINT_MARKER),
+        llm: typeof res?.body?.llm === 'boolean' ? res.body.llm : null,
+      });
+    }
+  }
+}
+
+/** The wizard's path for one training title: the model's own pick, then the owner's category with the claim echoed. */
+async function learnCapture(model: string, item: FixtureItem): Promise<boolean> {
+  const { value: parsed, calls } = await seamOf(() => parseViaRoute(item.title));
+  const seam = calls.find((c) => !c.dry);
+  if (seam) distinctPrompts.set(sha12(seam.prompt), seam.prompt);
+  const claim = parsed?.body?.classification_claim as { text: string; categories: string[] } | undefined;
+  const title = (parsed?.body?.parsed?.title as string | undefined) ?? item.title;
+  const created = await api(srv.url, '/api/tasks', {
+    method: 'POST', json: { title, categories: [item.expected], ...(claim ? { classification_claim: claim } : {}) },
+  });
+  if (created.status !== 201) violate(model, `learn capture "${item.title}": POST /api/tasks answered ${created.status}`);
+  return claim !== undefined;
+}
+
+async function runLearn(model: string): Promise<void> {
+  rec.model = model;
+  rec.tier = '';
+  say(`\n=== ${model} (learning curve) ===`);
+  await warm(model);
+  resetWorld();
+  let captured = 0;
+  let claims = 0;
+  for (const level of LEARN_LEVELS) {
+    while (captured < level) {
+      if (await learnCapture(model, LEARN_ORDER[captured])) claims++;
+      captured++;
+    }
+    let corrections = 0;
+    let indexed = 0;
+    if (level > 0) {
+      const cal = await calibrateClassification(OWNER, new Date(), { embedFn: null });
+      const cat = cal.fields.find((f) => f.field === 'category');
+      corrections = cat?.corrections ?? 0;
+      indexed = cat?.indexed ?? 0;
+    }
+    learnLevels.push({ model, level, captured, claims, corrections, indexed });
+    await learnMeasure(model, level, 'curve');
+    learnFlush();
+    const q = learnPoint(learnSet(learnCalls, model, level, 'curve'));
+    say(`${model} k${level}: captured ${captured}, claims ${claims}, corrections ${corrections}, indexed ${indexed}; targets ${q.targets}/12, controls ${q.controls}/12, keys ${q.keysPct.toFixed(1)}%, direction ${q.directionPct.toFixed(1)}%, hinted ${q.hintedPct.toFixed(1)}%, route p50 ${q.p50.toFixed(0)} ms`);
+  }
+  // The noise floor: a clean owner again (no corrections, no index), level 0 measured a second time.
+  resetWorld();
+  await learnMeasure(model, 0, 'noise');
+  learnFlush();
+}
+
 // ── The shape-fix measurement, suite ─────────────────────────────────────────
 
 describe.skipIf(!LIVE)('classification shape · shape-fix measurement', () => {
@@ -1419,6 +1685,27 @@ describe.skipIf(!TIER)('classification shape · quality-tier measurement', () =>
     tierFlush();
     say(`\n[live-shape] quality tier: ${tierCalls.length} calls recorded${OUT ? `, artifact at ${OUT}` : ' (set LIVE_SHAPE_OUT to keep them)'}.`);
     for (const line of tierReadOff(tierCalls).lines) say(line);
+    expect(violations, `mechanism violations:\n${violations.join('\n')}`).toEqual([]);
+  });
+});
+
+describe.skipIf(!LEARN)('classification shape · learning-curve measurement', () => {
+  beforeAll(prepareLive);
+
+  afterAll(async () => {
+    await srv?.close();
+  });
+
+  for (const model of MODELS) {
+    it(`${model}: ${LEARN_LEVELS.join(', ')} corrections, ${LEARN_RUNS} runs on 24 held-out titles`, async () => {
+      await runLearn(model);
+    }, 3 * 60 * 60_000);
+  }
+
+  it('the rule, read off the calls (the lead decides; nothing here is asserted but the mechanism)', () => {
+    learnFlush();
+    say(`\n[live-shape] learning curve: ${learnCalls.length} calls recorded${OUT ? `, artifact at ${OUT}` : ' (set LIVE_SHAPE_OUT to keep them)'}.`);
+    for (const line of learnReadOff(learnCalls, MODELS).lines) say(line);
     expect(violations, `mechanism violations:\n${violations.join('\n')}`).toEqual([]);
   });
 });
@@ -1525,6 +1812,89 @@ describe('classification shape · pure parts', () => {
       expect(percentileOf([5, 1, 3, 2, 4], 50)).toBe(3);
       expect(percentileOf(Array.from({ length: 100 }, (_, i) => i + 1), 95)).toBe(95);
       expect(Number.isNaN(percentileOf([], 50))).toBe(true);
+    });
+  });
+
+  describe('the learning-curve rule, on invented calls', () => {
+    const M = 'small-model';
+    const REF = REFERENCE_TIER;
+    /** 12 target and 12 control titles x 3 runs at one level: the first `t` targets and `c` controls are right on every run. */
+    const level = (model: string, k: number, t: number, c: number, over: Partial<LearnCall> = {}, pass: 'curve' | 'noise' = 'curve'): LearnCall[] =>
+      (['target', 'control'] as const).flatMap((kind) => Array.from({ length: 12 }, (_, i) => i).flatMap((i) =>
+        [0, 1, 2].map((run): LearnCall => ({
+          model, level: k, pass, title: `${kind}-${i}`, kind, expected: 'leisure', run, wallMs: 500, categories: [i < (kind === 'target' ? t : c) ? 'leisure' : 'health'],
+          raw: '{}', validJson: true, allKeys: true, directionValid: true, hinted: k >= 3, llm: true, ...over,
+        }))));
+    /** A model's whole run: level 0 (and its repeat) then the top level, the middle levels copying level 0 unless given. */
+    const run = (model: string, k0: [number, number], top: [number, number], over: { k0?: Partial<LearnCall>; top?: Partial<LearnCall>; repeat?: [number, number] } = {}): LearnCall[] => [
+      ...level(model, 0, k0[0], k0[1], over.k0), ...level(model, LEARN_TOP, top[0], top[1], over.top),
+      ...level(model, 0, (over.repeat ?? k0)[0], (over.repeat ?? k0)[1], over.k0, 'noise'),
+    ];
+    const read = (calls: LearnCall[], models: string[]) => learnReadOff(calls, models);
+
+    it('a model that gains two target titles and keeps the rest LEARNS, and one that gains one does not', () => {
+      expect(read(run(M, [3, 12], [5, 12]), [M]).learners).toEqual([M]);
+      expect(read(run(M, [3, 12], [4, 12]), [M]).learners).toEqual([]);
+      const r = read(run(M, [3, 12], [7, 12]), [M]).per.get(M)!;
+      expect([r.l1, r.l2, r.l3, r.learns]).toEqual(['PASS', true, true, true]);
+    });
+
+    it('L1 is inconclusive when level 0 moves more than two target titles against its repeat', () => {
+      // k0 right on targets 0-2 (3 titles); the repeat right on targets 0-5 (6): the sets differ by 3 titles.
+      const r = read(run(M, [3, 12], [9, 12], { repeat: [6, 12] }), [M]).per.get(M)!;
+      expect(r.noiseFlips).toBe(3);
+      expect(r.l1).toBe('INCONCLUSIVE: NOISE');
+      expect(r.learns).toBe(false);
+      expect(read(run(M, [3, 12], [9, 12], { repeat: [5, 12] }), [M]).per.get(M)!.l1).toBe('PASS'); // two flips are within the noise allowance
+    });
+
+    it('L2 lets controls lose one title and no more', () => {
+      expect(read(run(M, [3, 12], [8, 11]), [M]).per.get(M)!.l2).toBe(true);
+      expect(read(run(M, [3, 12], [8, 10]), [M]).per.get(M)!.l2).toBe(false);
+      expect(read(run(M, [3, 12], [8, 10]), [M]).learners).toEqual([]);
+    });
+
+    it('L3 lets the keys fall 5 points and the direction 10, and no more', () => {
+      // 72 calls at the top level (12 + 12 titles x 3 runs): 3 calls is 4.2 points, 4 calls 5.6; 7 calls is 9.7 points, 8 calls 11.1.
+      const drop = (field: 'allKeys' | 'directionValid', n: number): LearnCall[] =>
+        run(M, [3, 12], [8, 12]).map((c, i) => (c.level === LEARN_TOP && i % 72 < n ? { ...c, [field]: false } : c));
+      expect(read(drop('allKeys', 3), [M]).per.get(M)!.l3).toBe(true);
+      expect(read(drop('allKeys', 4), [M]).per.get(M)!.l3).toBe(false);
+      expect(read(drop('directionValid', 7), [M]).per.get(M)!.l3).toBe(true);
+      expect(read(drop('directionValid', 8), [M]).per.get(M)!.l3).toBe(false);
+    });
+
+    it('reads "needs k corrections" off the smallest level that is two titles up', () => {
+      const calls = [...level(M, 0, 3, 12), ...level(M, 3, 4, 12), ...level(M, 6, 5, 12), ...level(M, 9, 7, 12), ...level(M, 12, 7, 12), ...level(M, LEARN_TOP, 8, 12), ...level(M, 0, 3, 12, {}, 'noise')];
+      expect(read(calls, [M]).per.get(M)!.needs).toBe(6);
+      expect(read(run(M, [3, 12], [4, 12]), [M]).per.get(M)!.needs).toBeNull();
+    });
+
+    it('L4 and D2: a model is small and learned only when it learns, matches the reference at level 0 and is twice as fast', () => {
+      const ref = run(REF, [3, 12], [7, 12], { k0: { wallMs: 1500 }, top: { wallMs: 1500 } }); // reference: 15/24 at k0, p50 1500
+      const fast = run(M, [3, 4], [7, 11], { k0: { wallMs: 100 }, top: { wallMs: 700 } }); // 18/24 at the top, p50 700 <= 750
+      const r1 = read([...ref, ...fast], [M, REF]);
+      expect(r1.small).toEqual([M]);
+      expect(r1.lines.some((l) => l.startsWith('D2 small and learned'))).toBe(true);
+      const slow = run(M, [3, 4], [7, 11], { k0: { wallMs: 100 }, top: { wallMs: 800 } }); // p50 800 > 750
+      const r2 = read([...ref, ...slow], [M, REF]);
+      expect(r2.small).toEqual([]);
+      expect(r2.lines.some((l) => l.startsWith('D3 no model other than the reference'))).toBe(true);
+      const weak = run(M, [3, 1], [7, 3], { top: { wallMs: 100 } }); // learns targets, but 10/24 < the reference's 15/24
+      expect(read([...ref, ...weak], [M, REF]).small).toEqual([]);
+      expect(read(fast, [M]).lines.some((l) => l.includes('L4 NOT RUN (no reference)'))).toBe(true); // no reference, no verdict
+    });
+
+    it('the reference is never judged against itself', () => {
+      const r = read(run(REF, [3, 12], [7, 12]), [REF]);
+      expect(r.lines.filter((l) => l.includes('L4'))).toHaveLength(0);
+      expect(r.learners).toEqual([REF]);
+    });
+
+    it('LEARN_ORDER is the 18 training titles with the three conventions interleaved', () => {
+      expect(LEARN_ORDER).toHaveLength(18);
+      expect(new Set(LEARN_ORDER.map((i) => i.title)).size).toBe(18);
+      expect(LEARN_ORDER.slice(0, 6).map((i) => i.convention)).toEqual(['exercise-leisure', 'invoices-career', 'inner-work-growth', 'exercise-leisure', 'invoices-career', 'inner-work-growth']);
     });
   });
 
