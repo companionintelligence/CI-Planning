@@ -85,6 +85,12 @@ version at `GET /api/health` (`release`).
   reopening brings the same item back. The close button still clears the selection.
 
 ### Fixed
+- **Skipped, cancelled and missed blocks no longer count as accepted placements.** Placement learning treated
+  an unmoved auto block as accepted once its time had passed, even if the block had been skipped (by you, or by
+  the sweep that skips blocks that ended unfinished), cancelled with its task, or marked missed. That made the
+  survival reading look better than it was and diluted the corrections the hour bands are built from. These
+  blocks now count as neither accepted nor corrected, as a block that has been deleted already did. A move you
+  made still counts. The next Monday `calibrate_placement` run uses the corrected rule over the same 90 days.
 - **The dismissal pass keeps the similarity data it already has when the model is unreachable.** Each weekly
   `calibrate_dismissals` run rebuilt its examples and embedded every one again, so a run that found Ollama down
   replaced a working index with empty vectors until a later run found it up. It now reuses the vector already

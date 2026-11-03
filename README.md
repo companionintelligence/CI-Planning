@@ -1322,7 +1322,9 @@ Connections**. Replay the walkthrough from **Settings → Profile**.
   logs it as a correction when you move an auto-placed block. A weekly `calibrate_placement`
   job turns 5 or more corrections for a direction into a preferred hour band (never one wider
   than 6 hours), and gap choice leans toward that band by at most an hour of extra
-  fragmentation. `GET /api/placement/survival` shows whether placements are surviving the day
+  fragmentation. A block you did not move counts as accepted once its time has passed and it
+  still stands; one that was skipped, cancelled or marked missed does not count either way.
+  `GET /api/placement/survival` shows whether placements are surviving the day
   untouched; `DELETE /api/placement/preferences` resets the bands. Settings → Learning shows the
   readings with the settled blocks behind each, and the clear button
 - **Balance targets in planning** — with `balance_bias_enabled` (default on), a life dimension
