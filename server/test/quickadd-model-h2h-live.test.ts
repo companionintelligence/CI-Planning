@@ -18,7 +18,8 @@
  *   LIVE_H2H=1 LIVE_H2H_OUT=<out>/h2h-run-1.json ./node_modules/.bin/vitest run test/quickadd-model-h2h-live.test.ts --reporter=verbose
  *   Do not pin OLLAMA_FAST or OLLAMA_QUALITY. Do not run the server test suite during it (it skews latency).
  *   Env, read by this file only: LIVE_H2H (run), LIVE_H2H_OUT (per-call JSON artifact), LIVE_H2H_RUNS (runs per natural title, 6),
- *   LIVE_H2H_MODELS (candidate,reference; default qwen2.5:3b,gemma3n:e4b). The pure parts run in every test run.
+ *   LIVE_H2H_MODELS (candidate,reference; default qwen2.5:3b,gemma3n:e4b), LIVE_H2H_RESUME (an earlier artifact: phases a model
+ *   already completed are kept and the others re-run; see the note under the gates). The pure parts run in every test run.
  *
  * WHAT RUNS, per model, in this order, through the REAL parse route (POST /api/tasks/quick/parse), owner as the app seeds it:
  *   A  NATURAL: 120 invented titles, 20 for each of the six categories, each with an obvious category (a dentist is health, an
@@ -66,10 +67,19 @@
  * my judgement of "obvious" (an ambiguous title would move both models alike), two invented owners, temperature 0.1, the two
  * models only (not gemma3:4b or any other), the quality of the fields other than category, and what setting qwen2.5:3b as the
  * quality model would do to briefings, extraction and the planning judge (it would change them too; see the write-up).
+ *
+ * NOTES ADDED AFTER THE FIRST RUN (2026-11-02, 22:53 to 23:48 PST). Nothing below edits a gate, a threshold or the rule.
+ *   - The first run died in the candidate's MIX phase: the fast-tier probe call hit its 20 s ceiling in cycle 4 (the Ollama server
+ *     is shared and was loaded), the probe was not guarded, and the whole model run threw. For qwen2.5:3b that left A (720 calls)
+ *     and COLD (3) complete, MIX at 4 of 20 cycles and B not run; the reference completed every phase. The probes now record a
+ *     failed probe (`llm: false`) instead of throwing, and LIVE_H2H_RESUME=<artifact> re-runs only the phases a model has not
+ *     completed (a half-finished phase is discarded, not kept), so the candidate's MIX and B were run from the first artifact
+ *     and every other number is the first run's. The artifact records `resumedFrom`.
+ *   - The decision the rule gives does not depend on the missing phases: H1 and H3 failed on A alone.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 // Installs the SQLite store; model resolution reads the per-owner Settings override.
 import { sqlite } from '../src/db/index.js';
 import { config } from '../src/lib/config.js';
@@ -339,6 +349,8 @@ const violations: string[] = [];
 const startedAt = new Date().toISOString();
 let ollamaVersion = '';
 let provenance: Record<string, unknown> = {};
+/** The artifact this run resumed (LIVE_H2H_RESUME), or null. */
+let resumedFrom: string | null = null;
 const violate = (message: string): void => { violations.push(message); };
 
 function flush(): void {
@@ -346,7 +358,7 @@ function flush(): void {
   writeFileSync(OUT, JSON.stringify({
     harness: 'quickadd-model-h2h-live', startedAt, writtenAt: new Date().toISOString(),
     env: { models: MODELS, runsA: RUNS_A, runsB: RUNS_B, ollamaUrl: config.ollamaUrl.replace(/\/\/[^/@\s]*@/, '//[redacted]@'), ollamaVersion },
-    provenance, gates: H2H_GATES, violations, prompts: Object.fromEntries(distinctPrompts), levelsRun, calls,
+    provenance, resumedFrom, gates: H2H_GATES, violations, prompts: Object.fromEntries(distinctPrompts), levelsRun, calls,
   }, null, 2));
 }
 
@@ -465,6 +477,18 @@ function bPoint(all: readonly Call[], model: string, level: number, pass: 'curve
   };
 }
 
+/** Which phases a model has completed in `all` (the resume mode skips them, and discards the others). */
+function phaseDone(all: readonly Call[], levels: readonly LevelRun[], model: string): Record<'A' | 'C' | 'M' | 'B', boolean> {
+  const n = (p: Phase, pass?: 'curve' | 'noise'): number => all.filter((c) => c.model === model && c.phase === p && (pass === undefined || c.pass === pass)).length;
+  const perLevel = (TARGETS2.length + CONTROL_ITEMS2.length) * RUNS_B;
+  return {
+    A: n('A') === NATURAL_ITEMS.length * RUNS_A,
+    C: n('COLD') === H2H_GATES.coldTrials,
+    M: n('MIX_Q') === H2H_GATES.mixCycles && n('MIX_F') === H2H_GATES.mixCycles && n('MIX_E') === H2H_GATES.mixCycles,
+    B: LEVELS.every((k) => levels.some((l) => l.model === model && l.level === k)) && n('B', 'curve') === LEVELS.length * perLevel && n('B', 'noise') === perLevel,
+  };
+}
+
 type Verdict = 'PASS' | 'FAIL' | 'INCONCLUSIVE: NOISE' | 'NOT RUN';
 /** Reads H1 to H6 and the rule (D1 to D4) off the calls. The lead decides; this prints what the rule says. */
 function h2hReadOff(all: readonly Call[], candidate: string, reference: string) {
@@ -556,41 +580,60 @@ async function measureB(model: string, level: number, pass: 'curve' | 'noise'): 
   }
 }
 
+/** Remove a model's calls of the given phases (and its learning levels with phase B): a half-finished phase is never kept. */
+function discard(model: string, phases: readonly Phase[]): void {
+  for (let i = calls.length - 1; i >= 0; i--) if (calls[i].model === model && phases.includes(calls[i].phase)) calls.splice(i, 1);
+  if (phases.includes('B')) for (let i = levelsRun.length - 1; i >= 0; i--) if (levelsRun[i].model === model) levelsRun.splice(i, 1);
+}
+
 async function runModel(model: string): Promise<void> {
   say(`\n=== ${model} ===`);
+  const done = phaseDone(calls, levelsRun, model);
+  if (resumedFrom) say(`${model}: resumed from ${resumedFrom}; phases already complete: ${(['A', 'C', 'M', 'B'] as const).filter((k) => done[k]).join(', ') || 'none'}`);
+  if (done.A && done.C && done.M && done.B) return;
   await warm(model);
   await resetWorldFor(model);
   // A: natural titles, no corrections.
-  for (let run = 0; run < RUNS_A; run++) {
-    for (const item of NATURAL_ITEMS) await routeCall(model, 'A', 0, 'curve', { title: item.title, kind: 'natural', expected: item.expected }, run);
-    flush();
+  if (!done.A) {
+    discard(model, ['A']);
+    for (let run = 0; run < RUNS_A; run++) {
+      for (const item of NATURAL_ITEMS) await routeCall(model, 'A', 0, 'curve', { title: item.title, kind: 'natural', expected: item.expected }, run);
+      flush();
+    }
   }
   const a = summariseA(model, calls)!;
   say(`${model} A: ${a.n} calls, ${a.right} of ${a.titles} titles right, direction ${f1(a.directionPct)}%, route p50 ${f1(a.p50)} / p95 ${f1(a.p95)} ms, retry on ${f1(a.retryShare)}% of calls (${f1(a.meanRetryMs)} ms each)`);
   // C: cold.
-  for (let trial = 0; trial < H2H_GATES.coldTrials; trial++) {
+  if (!done.C) discard(model, ['COLD']);
+  for (let trial = 0; trial < (done.C ? 0 : H2H_GATES.coldTrials); trial++) {
     const gone = await unload(model);
     if (!gone) violate(`${model} cold trial ${trial}: still listed by /api/ps 15 s after the unload`);
     const c = await routeCall(model, 'COLD', 0, 'curve', { title: NATURAL_ITEMS[trial * 7].title, kind: 'natural', expected: NATURAL_ITEMS[trial * 7].expected }, trial);
     say(`${model} cold ${trial}: unloaded ${gone}, first route call ${c.wallMs.toFixed(0)} ms (model ${c.firstMs?.toFixed(0)} ms), overlay ${c.llm}`);
   }
   // M: three models taking turns.
-  for (let cycle = 0; cycle < H2H_GATES.mixCycles; cycle++) {
+  if (!done.M) discard(model, ['MIX_Q', 'MIX_F', 'MIX_E']);
+  for (let cycle = 0; cycle < (done.M ? 0 : H2H_GATES.mixCycles); cycle++) {
     const item = NATURAL_ITEMS[(cycle * 5) % NATURAL_ITEMS.length];
     await routeCall(model, 'MIX_Q', 0, 'curve', { title: item.title, kind: 'natural', expected: item.expected }, cycle);
     const probe = (phase: 'MIX_F' | 'MIX_E', wallMs: number, resident: string[] | null): Call => ({
       model, phase, level: 0, pass: 'curve', title: phase === 'MIX_F' ? 'fast-tier probe' : 'embed probe', kind: 'probe', expected: '', run: cycle, wallMs,
       firstMs: null, modelCalls: 1, llm: null, categories: [], raw: '', allKeys: false, directionValid: false, hinted: false, resident,
     });
+    // A probe that fails (a timeout on a shared, loaded server) is recorded as a failed probe, not thrown.
     const t1 = performance.now();
-    await generateJson('Give two short subtasks for "Plan a trip". Reply with JSON {"subtasks": ["...", "..."]}.', { purpose: 'brainstorm' });
-    calls.push(probe('MIX_F', performance.now() - t1, await residentNames()));
+    let fOk = true;
+    try { await generateJson('Give two short subtasks for "Plan a trip". Reply with JSON {"subtasks": ["...", "..."]}.', { purpose: 'brainstorm' }); } catch { fOk = false; }
+    calls.push({ ...probe('MIX_F', performance.now() - t1, await residentNames()), llm: fOk });
     const t2 = performance.now();
-    try { await embed('Plan the quarterly review', 20_000); } catch { /* timed either way */ }
-    calls.push(probe('MIX_E', performance.now() - t2, await residentNames()));
+    let eOk = true;
+    try { await embed('Plan the quarterly review', 20_000); } catch { eOk = false; }
+    calls.push({ ...probe('MIX_E', performance.now() - t2, await residentNames()), llm: eOk });
   }
   flush();
   // B: learning on the second owner.
+  if (done.B) return;
+  discard(model, ['B']);
   await resetWorldFor(model);
   let captured = 0, claims = 0;
   for (const level of LEVELS) {
@@ -627,6 +670,14 @@ async function prepare(): Promise<void> {
   provenance = { command: process.argv.join(' '), node: process.version, fast, ollamaVersion, apiPsAtStart: await (async () => { try { return await (await fetch(`${config.ollamaUrl}/api/ps`)).json(); } catch { return null; } })() };
   say(`[h2h] fast tier ${fast}; candidate ${CANDIDATE}, reference ${REFERENCE}; Ollama ${ollamaVersion}`);
   expect(fixtureProblems()).toEqual([]);
+  const resume = process.env.LIVE_H2H_RESUME ?? '';
+  if (resume) {
+    const prior = JSON.parse(readFileSync(resume, 'utf8')) as { calls: Call[]; levelsRun: LevelRun[] };
+    calls.push(...prior.calls);
+    levelsRun.push(...prior.levelsRun);
+    resumedFrom = resume;
+    say(`[h2h] resuming ${resume}: ${prior.calls.length} calls`);
+  }
   srv = await startTestServer();
 }
 
@@ -794,6 +845,24 @@ describe('quick add model head-to-head · pure parts', () => {
     expect(r.lines.some((l) => l.startsWith('A direction retry:'))).toBe(true);
     expect(Object.keys(r.a!.byCategory).sort()).toEqual([...CATEGORIES].sort());
     expect(r.v.h2).toBe('PASS'); // p50 is still 700
+  });
+
+  it('knows which phases a model has completed, so a resume re-runs only the rest', () => {
+    const levels = (m: string, ks: readonly number[]): LevelRun[] => ks.map((k) => ({ model: m, level: k, captured: k, claims: k, corrections: k, indexed: k }));
+    const mixAll = (m: string, cycles = 20): Call[] => (['MIX_Q', 'MIX_F', 'MIX_E'] as const).flatMap((phase) => Array.from({ length: cycles }, (_, run) => mk(m, { phase, run })));
+    const bAll = (m: string): Call[] => [...LEVELS.flatMap((k) => level(m, k, 3, 15)), ...level(m, 0, 3, 15, {}, 'noise')];
+    const complete = (m: string): Call[] => [...phaseA(m, 100), ...cold(m, 1000, 2000, 3000), ...mixAll(m), ...bAll(m)];
+    expect(phaseDone(complete(K), levels(K, LEVELS), K)).toEqual({ A: true, C: true, M: true, B: true });
+    // What the first live run left for the candidate: A and COLD done, MIX dead after 4 cycles, B never run.
+    const partial = [...phaseA(K, 83), ...cold(K, 3000, 3100, 3050), ...mixAll(K, 4), ...complete(R)];
+    expect(phaseDone(partial, levels(R, LEVELS), K)).toEqual({ A: true, C: true, M: false, B: false });
+    expect(phaseDone(partial, levels(R, LEVELS), R)).toEqual({ A: true, C: true, M: true, B: true }); // the reference needs nothing
+    // A level missing from the levels run, a missing noise pass, or a missing cold trial is not complete.
+    expect(phaseDone(complete(K), levels(K, [0, 3, 6, 9, 12]), K).B).toBe(false);
+    expect(phaseDone(complete(K).filter((c) => !(c.phase === 'B' && c.pass === 'noise')), levels(K, LEVELS), K).B).toBe(false);
+    expect(phaseDone(complete(K).filter((c) => !(c.phase === 'COLD' && c.run === 2)), levels(K, LEVELS), K).C).toBe(false);
+    // Another model's calls do not count for this one.
+    expect(phaseDone(complete(R), levels(R, LEVELS), K)).toEqual({ A: false, C: false, M: false, B: false });
   });
 
   it('says NOT RUN for a gate with no calls, and cannot reach D1', () => {
