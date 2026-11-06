@@ -75,6 +75,41 @@ describe('the owner’s edit becomes evidence', () => {
     expect(row.final_value).toBe('them');
   });
 
+  describe('a beneficiary set', () => {
+    // The wizard sends `beneficiary_ids`; the server derives the motivation axis from it.
+    const person = (name: string) =>
+      (sqlite.prepare(`INSERT INTO people (id, owner_id, display_name) VALUES (uuid7(), ?, ?) RETURNING id`).get(OWNER, name) as { id: string }).id;
+    const setBeneficiaries = (id: string, ids: string[]) =>
+      api(srv.url, `/api/tasks/${id}`, { method: 'PATCH', json: { beneficiary_ids: ids } });
+
+    it('closes an open motivation row when it changes the axis', async () => {
+      const id = insertTask('Help mum with her taxes');
+      await logAssignment(OWNER, { taskId: id, field: 'motivation', inputText: 'Help mum with her taxes', llmValue: 'me' });
+      expect((await setBeneficiaries(id, [person('Mum')])).status).toBe(200);
+      expect(logFor(id, 'motivation')).toMatchObject({ llm_value: 'me', final_value: 'them' });
+    });
+
+    it('leaves the row open when the set re-derives the axis the task already has', async () => {
+      const id = insertTask('Help mum with her taxes');
+      const mum = person('Mum');
+      expect((await setBeneficiaries(id, [mum])).status).toBe(200); // axis is now 'them'
+      await logAssignment(OWNER, { taskId: id, field: 'motivation', inputText: 'Help mum with her taxes', llmValue: 'them' });
+
+      // The wizard's Edit re-sends the set it was seeded with: not an answer.
+      expect((await setBeneficiaries(id, [mum])).status).toBe(200);
+      expect(logFor(id, 'motivation')).toMatchObject({ final_value: null, corrected_at: null });
+
+      // A second person that leaves the axis at 'them' is also not an answer.
+      expect((await setBeneficiaries(id, [mum, person('Dad')])).status).toBe(200);
+      expect(logFor(id, 'motivation')).toMatchObject({ final_value: null, corrected_at: null });
+
+      // ...so a real correction can still follow, and clearing the set (axis back to null) is one.
+      expect((await setBeneficiaries(id, [])).status).toBe(200);
+      expect(logFor(id, 'motivation')).toMatchObject({ final_value: '' });
+      expect(logFor(id, 'motivation')!.corrected_at).not.toBeNull();
+    });
+  });
+
   it('logs nothing for a field the machine never claimed', async () => {
     // The owner categorising a task the model never touched teaches nothing — there
     // was no claim to correct, and a row here would poison the index with "you said
@@ -609,27 +644,49 @@ describe('the wizard’s Add records the preview’s category pick', () => {
         }
       });
 
-      it('cannot teach the classifier anything when it sends the instance’s empty picker', async () => {
-        // The one case the server rule cannot cover: sending [] to a template that HAS a
-        // set is a real change to what is saved (it clears the template, which it always
-        // did), so the row closes with ''. The client must not send the instance's picker
-        // as testimony. What is guaranteed here is the damage limit: a cleared picker is
-        // an answer but not a label, so these never reach the floor, the index or the
-        // held-out slice.
+      const listed = async (id: string) =>
+        ((await api(srv.url, '/api/tasks')).body.tasks as { id: string; tags: string[]; secondary_tags: string[]; categories: string[] }[])
+          .find((t) => t.id === id)!;
+
+      it('does not apply the instance’s empty picker: the template keeps its categories and its open row', async () => {
+        // Instances carry no tag or category rows, so the picker of one is always empty. A
+        // series save through it used to clear the template's set and close its row as a
+        // correction to '' that nobody made. The empty sets are now not applied at all.
         const habits = [await habit('Habit C'), await habit('Habit D')];
-        expect(habits.length).toBeGreaterThanOrEqual(CORRECTION_FLOOR);
-        for (const { instance } of habits) {
+        for (const { template, instance } of habits) {
           const res = await series(instance, { categories: [] });
           expect(res.status).toBe(200);
-          expect(res.body.task.categories).toEqual([]);
+          expect(res.body.task.categories).toEqual(['leisure']);
+          expect(rowOf(template)).toMatchObject({ final_value: null, corrected_at: null });
         }
-        const r = await calibrateClassification(OWNER, new Date(), { embedFn: null });
-        const cat = r.fields.find((f) => f.field === 'category')!;
-        expect(cat.corrections).toBe(0);
-        expect(cat.indexed).toBe(0);
-        expect(cat.heldOut).toBe(0);
-        const index = sqlite.prepare(`SELECT COUNT(*) n FROM classification_exemplars WHERE owner_id = ?`).get(OWNER) as { n: number };
-        expect(index.n).toBe(0);
+      });
+
+      it('keeps the template’s tags when the instance sends empty ones, and applies non-empty ones', async () => {
+        const res = await create({ title: 'Habit T', recurrence_rule: 'FREQ=DAILY', is_habit: true, tags: ['deep'], secondary_tags: ['focus'] });
+        expect(res.status).toBe(201);
+        const template = res.body.task.id as string;
+        const instance = (sqlite.prepare(`SELECT id FROM tasks WHERE recurrence_parent_id = ? LIMIT 1`).get(template) as { id: string }).id;
+
+        expect((await series(instance, { tags: [], secondary_tags: [], categories: [] })).status).toBe(200);
+        expect(await listed(template)).toMatchObject({ tags: ['deep'], secondary_tags: ['focus'] });
+
+        // one level empty, the other real: only the real one is written
+        expect((await series(instance, { tags: [], secondary_tags: ['calm'] })).status).toBe(200);
+        expect(await listed(template)).toMatchObject({ tags: ['deep'], secondary_tags: ['calm'] });
+      });
+
+      it('still clears when the series is addressed through the template, and for an instance-scope edit', async () => {
+        const res = await create({ title: 'Habit U', recurrence_rule: 'FREQ=DAILY', is_habit: true, categories: ['leisure'], tags: ['deep'], secondary_tags: ['focus'] });
+        const template = res.body.task.id as string;
+        const instance = (sqlite.prepare(`SELECT id FROM tasks WHERE recurrence_parent_id = ? LIMIT 1`).get(template) as { id: string }).id;
+
+        // an instance-scope edit writes that instance and never reaches the template
+        expect((await patch(instance, { tags: [], categories: [] })).status).toBe(200);
+        expect(await listed(template)).toMatchObject({ tags: ['deep'], categories: ['leisure'] });
+
+        // the template's own id is how a series save says "clear them"
+        expect((await series(template, { tags: [], secondary_tags: [], categories: [] })).status).toBe(200);
+        expect(await listed(template)).toMatchObject({ tags: [], secondary_tags: [], categories: [] });
       });
     });
   });

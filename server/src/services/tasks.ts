@@ -413,6 +413,18 @@ export async function updateTask(
 ): Promise<UpdateTaskResult> {
   const targetId = scope === 'series' ? ((await resolveTemplateId(id)) ?? id) : id;
 
+  // A series save addressed through a generated INSTANCE. Instances carry no tag or category
+  // rows (generateRecurrences copies neither), so an instance's picker is always empty and an
+  // empty set from it is the absence of an answer, not a clear: applying it would wipe the
+  // template's tags and categories. It is not applied. A non-empty set is, and so is any set
+  // sent to the template's own id, which is how a series save says "clear them".
+  const fromInstance = scope === 'series' && targetId !== id;
+  const unlessEmptyFromInstance = (v: string[] | undefined): string[] | undefined =>
+    fromInstance && Array.isArray(v) && v.length === 0 ? undefined : v;
+  const tagsIn = unlessEmptyFromInstance(input.tags);
+  const secondaryTagsIn = unlessEmptyFromInstance(input.secondary_tags);
+  const categoriesIn = unlessEmptyFromInstance(input.categories);
+
   // Capture the pre-edit parent so a re-parent can GC the OLD parent's auto-objective
   // if this was its last subtask.
   const prevParentId = input.parent_id !== undefined
@@ -474,6 +486,12 @@ export async function updateTask(
     : undefined;
   const wasDone = priorStatus !== undefined ? priorStatus === 'done' : undefined;
 
+  // The saved motivation before this PATCH, read only when a beneficiary set is being written:
+  // that write re-derives the axis, and whether it CHANGED it decides if it is an answer.
+  const motivationBefore: string | null | undefined = Array.isArray(input.beneficiary_ids)
+    ? ((await store().prepare(`SELECT motivation FROM tasks WHERE id = ? AND owner_id = ?`).get<{ motivation: string | null }>(targetId, ownerId))?.motivation ?? null)
+    : undefined;
+
   // Refine the `completed` shortcut against the pre-edit state:
   //  - re-completing an already-done task must not clobber its original completed_at;
   //  - `completed: false` on a task that isn't done is a no-op (never forces a
@@ -526,9 +544,9 @@ export async function updateTask(
     : await db.select().from(tasks).where(and(eq(tasks.id, targetId), eq(tasks.ownerId, ownerId)));
   if (!task) return { ok: false, error: 'not_found' };
 
-  if (Array.isArray(input.tags) || Array.isArray(input.secondary_tags)) {
+  if (Array.isArray(tagsIn) || Array.isArray(secondaryTagsIn)) {
     // Partial: an omitted level is preserved (mirrors the block PATCH semantics).
-    await applyTaskTagLevels(ownerId, targetId, { tags: input.tags, secondary: input.secondary_tags });
+    await applyTaskTagLevels(ownerId, targetId, { tags: tagsIn, secondary: secondaryTagsIn });
   }
 
   // Phase B: category axis — `undefined` preserves, `[]` clears (mirrors tags).
@@ -537,7 +555,7 @@ export async function updateTask(
   // learning runs on. Recorded after the write lands, only for what the PATCH actually
   // touched, and a no-op unless the model made a claim about this task and field.
   // Never throws — a task update must not fail because the learning log did.
-  if (Array.isArray(input.categories)) {
+  if (Array.isArray(categoriesIn)) {
     // An answer is a change to the SAVED set, recorded as read back rather than as sent.
     // The picker can arrive without an answer in it: a wizard Edit re-sends the set it was
     // seeded with when the owner touched the picker and put it back, and a series save opened
@@ -547,15 +565,13 @@ export async function updateTask(
     // untouched task or habit edit; this read-back is a second guard, independent of that,
     // and the only one a REST, GraphQL or agent caller gets. It also means a case,
     // unknown-name or duplicate difference in the request cannot fabricate a change.
-    // Known gap, for those callers: only an UNCHANGED set is absorbed. A different or empty
-    // one is a real change here and is recorded as the owner's answer, so it cannot be told
-    // from a deliberate clear. A series save from a generated instance is the case that
-    // matters: the instance's picker is empty (instances carry no category rows), the write
-    // clears the template's set (older behaviour), and an open row for the template is
-    // closed as a correction to '' that nobody made. A caller must not send `categories`
-    // the owner did not set.
+    // Only an UNCHANGED set is absorbed here. A different or empty one is a real change and
+    // is recorded as the owner's answer, so it cannot be told from a deliberate clear. The
+    // one empty set that is known not to be an answer, the empty picker of a generated
+    // instance on a series save, never gets this far (`categoriesIn` above). A caller must
+    // not send `categories` the owner did not set.
     const before = await entityCategoryNames('task', targetId);
-    await setEntityCategories('task', targetId, await categoryIdsForOwner(input.categories, ownerId));
+    await setEntityCategories('task', targetId, await categoryIdsForOwner(categoriesIn, ownerId));
     const after = await entityCategoryNames('task', targetId);
     if (canonicalValue(before) !== canonicalValue(after)) {
       await recordCorrection(ownerId, targetId, 'category', after);
@@ -580,7 +596,12 @@ export async function updateTask(
     // or the client renders the PREVIOUS value.
     task.motivation = projected;
     task.motivationSource = projected === null ? null : 'user';
-    await recordCorrection(ownerId, targetId, 'motivation', projected);
+    // An answer is a change to the saved axis. Re-sending the beneficiary set the task
+    // already has (the wizard's Edit does, with the set it was seeded with) re-derives the
+    // same value, and counting that would close an open row as 'accepted' ahead of its 24h
+    // window and discard the correction the owner makes an hour later. Same rule as the
+    // category branch above.
+    if (projected !== motivationBefore) await recordCorrection(ownerId, targetId, 'motivation', projected);
   }
 
   if (Array.isArray(input.depends_on)) {

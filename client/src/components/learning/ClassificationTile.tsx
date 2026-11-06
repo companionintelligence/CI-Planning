@@ -63,10 +63,11 @@ const ordinal = (n: number): string => {
 const MEANING =
   "What it counts: when your local model fills in a task's category, or who it is for (me, us, them), " +
   'the app logs the guess, and a change you make is a correction. ' +
-  `Once a week (early on Monday, server time) it builds a set of examples from your corrections in the last ${F.windowDays} days, ` +
+  `Once a week (early on Monday, server time) it builds a set of examples from your corrections to guesses made in the last ${F.windowDays} days, ` +
   `holds back every ${ordinal(F.heldOutStride)} correction, ` +
   `asks the model about up to ${F.maxScored} of the held-back ones per field using the examples it just built, ` +
   'and counts how many answers match what you chose. ' +
+  'The days run from when the app made the guess, not from when you corrected it, so a correction to a guess that is now over that old stops counting. ' +
   'Cases behind it: the held-back count printed in every line, often 1 to 5 early on. ' +
   'Direction: higher is better.';
 
@@ -135,7 +136,7 @@ const MORE_CAVEATS: readonly string[] = [
     'So this number is not a score of either, and it is not a recording of what the app did on your tasks.',
   'Answers it already gets right are not tested, so this cannot show whether the examples made any of those worse. ' +
     'The same question asked twice can also come out differently, so one weekly score has some noise of its own.',
-  `The test questions change. Each week's test is every ${ordinal(F.heldOutStride)} correction from the last ${F.windowDays} days; ` +
+  `The test questions change. Each week's test is every ${ordinal(F.heldOutStride)} correction to a guess made in the last ${F.windowDays} days; ` +
     'many repeat from one week to the next and the set shifts as corrections arrive or age out. ' +
     'Readings from different weeks are not independent, so they are never added together or compared.',
   `Small numbers. At most ${F.maxScored} corrections are scored per field per week, and early on it is 1 to 5. ` +
@@ -149,7 +150,7 @@ const HOW_TO_START =
   'Change a category the Describe-it line picked (before you press Add, or later on the task), ' +
   'or a category or me/us/them label the app filled in from memory. ' +
   'A value you typed yourself on a task the app did not guess is not a correction, and the Add dialog does not record who a task is for. ' +
-  `Within ${F.windowDays} days, ${F.correctionFloor} corrections of one kind start the examples. ` +
+  `${F.correctionFloor} corrections of one kind, to guesses made in the last ${F.windowDays} days, start the examples. ` +
   `With ${F.heldOutStride}, the weekly test can hold one back and score it. ` +
   "Nothing reaches a prompt until Monday's run has built the examples. " +
   'The score also needs your local model (Ollama) running early on Monday; the examples themselves do not. ' +
@@ -168,7 +169,7 @@ const AI_OFF =
 
 const NO_ROWS_AT_ALL =
   'No readings yet. ' +
-  `A reading appears after the weekly pass (early on Monday, server time) finds at least ${F.correctionFloor} of your corrections in the last ${F.windowDays} days. ` +
+  `A reading appears after the weekly pass (early on Monday, server time) finds at least ${F.correctionFloor} of your corrections to guesses made in the last ${F.windowDays} days. ` +
   'Until then the model is shown no examples of your choices and nothing is measured.';
 
 const TABLE_COLUMNS = ['Date', 'Right', 'Scored', 'Share'];
@@ -206,7 +207,7 @@ const shortOf = (field: string): string => FIELD_SHORT[field] ?? field;
 const isMeasured = (r: Reading): boolean => readingValue(r) !== null;
 
 function noReadingYet(field: string): string {
-  return `${shortOf(field)}: no reading yet. It needs at least ${F.correctionFloor} corrections of this kind in the last ${F.windowDays} days.`;
+  return `${shortOf(field)}: no reading yet. It needs at least ${F.correctionFloor} corrections of this kind, to guesses made in the last ${F.windowDays} days.`;
 }
 
 /** Fraction first. A percent only at MIN_N scored cases, and then always with its range.
@@ -249,7 +250,7 @@ function tableRow(r: Reading): { key: string; cells: string[] } {
  */
 function staleNote(newest: Reading, latestAnywhere: string): string {
   const since = `No reading since ${shortDate(newest.date)}.`;
-  const floor = `${F.correctionFloor} corrections in the last ${F.windowDays} days`;
+  const floor = `${F.correctionFloor} corrections to guesses made in the last ${F.windowDays} days`;
   if (daysBetween(newest.date, latestAnywhere) > 0) {
     return `${since} The weekly pass has run since, and this field had fewer than ${floor}, so its examples were removed.`;
   }

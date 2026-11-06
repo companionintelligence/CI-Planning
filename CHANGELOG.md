@@ -106,6 +106,18 @@ version at `GET /api/health` (`release`).
   reopening brings the same item back. The close button still clears the selection.
 
 ### Fixed
+- **Saving a repeating task from one of its days no longer wipes the series' tags and categories.** Each day of a
+  repeating task has no tags or categories of its own, so its form opened empty, and "This & future" sent that
+  empty form to the series. Now choosing "This & future" shows the series' own tags and categories, a form you did
+  not change leaves them out of the save, and the server ignores an empty set that arrives from a day. Editing the
+  series itself still clears them when you clear them.
+- **Re-saving who a task is for no longer closes the learning row early.** Saving a task with the same people as
+  before worked out the same me/us/them value and counted it as your answer, which settled an open guess as
+  accepted ahead of its 24 hours and threw away a correction you might make an hour later. Only a change to the
+  value counts now.
+- **The classification card says what its 90 days count from.** The days run from when the app made the guess,
+  not from when you corrected it, so a correction to a guess that is now more than 90 days old stops counting.
+  The card said "corrections in the last 90 days", which read as the date of the correction.
 - **Skipped, cancelled and missed blocks no longer count as accepted placements.** Placement learning treated
   an unmoved auto block as accepted once its time had passed, even if the block had been skipped (by you, or by
   the sweep that skips blocks that ended unfinished), cancelled with its task, or marked missed. That made the

@@ -321,6 +321,35 @@ describe('saveElement(task/habit) — split POST body shape', () => {
     expect(wire.secondary_tags).toEqual([]);
   });
 
+  it('edit with tagsTouched: false leaves tags and secondary_tags out of the PATCH', async () => {
+    // The chips were only seeded, never used: a generated instance opens with none, and sending
+    // that snapshot on a series save wiped the template's tags.
+    await saveElement('task', 'edit', { ...taskForm, primary: '', intentions: [], tagsTouched: false }, 'task-3');
+    const wire = JSON.parse(JSON.stringify(lastTaskUpdateBody()));
+    expect(wire).not.toHaveProperty('tags');
+    expect(wire).not.toHaveProperty('secondary_tags');
+  });
+
+  it('edit with tagsTouched: true, or unset, still sends both levels', async () => {
+    await saveElement('task', 'edit', { ...taskForm, primary: 'work', intentions: ['deep'], tagsTouched: true }, 'task-4');
+    expect(JSON.parse(JSON.stringify(lastTaskUpdateBody()))).toMatchObject({ tags: ['work'], secondary_tags: ['deep'] });
+    await saveElement('task', 'edit', { ...taskForm, primary: 'work', intentions: [] }, 'task-5');
+    expect(JSON.parse(JSON.stringify(lastTaskUpdateBody()))).toMatchObject({ tags: ['work'], secondary_tags: [] });
+  });
+
+  it('a series save from an instance goes to the template id; an instance save keeps the edited id', async () => {
+    await saveElement('habit', 'edit', { ...taskForm, primary: '', intentions: [], editScope: 'series', editTemplateId: 'tpl-1' }, 'inst-1');
+    expect(tasksUpdate.mock.calls.at(-1)![0]).toBe('tpl-1');
+    expect(tasksUpdate.mock.calls.at(-1)![2]).toBe('series');
+
+    await saveElement('habit', 'edit', { ...taskForm, primary: '', intentions: [], editScope: 'series' }, 'tpl-2');
+    expect(tasksUpdate.mock.calls.at(-1)![0]).toBe('tpl-2'); // already a template: no instance to translate
+
+    await saveElement('habit', 'edit', { ...taskForm, primary: '', intentions: [], editScope: 'instance', editTemplateId: 'tpl-1' }, 'inst-2');
+    expect(tasksUpdate.mock.calls.at(-1)![0]).toBe('inst-2');
+    expect(tasksUpdate.mock.calls.at(-1)![2]).toBeUndefined();
+  });
+
   it('habit saves use the same split shape', async () => {
     await saveElement('habit', 'add', { ...taskForm, primary: 'home', intentions: ['errand'] });
     const body = lastTaskCreateBody();

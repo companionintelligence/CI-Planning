@@ -282,9 +282,9 @@ describe('classificationView: both fields', () => {
     expect(m.state).toBe('none');
     expect(m.headline).toBeNull();
     expect(m.empty).toBe(
-      `Motivation: no reading yet. It needs at least ${LEARNING_FACTS.classification.correctionFloor} corrections of this kind in the last ${LEARNING_FACTS.classification.windowDays} days.`,
+      `Motivation: no reading yet. It needs at least ${LEARNING_FACTS.classification.correctionFloor} corrections of this kind, to guesses made in the last ${LEARNING_FACTS.classification.windowDays} days.`,
     );
-    expect(m.empty).toBe('Motivation: no reading yet. It needs at least 2 corrections of this kind in the last 90 days.');
+    expect(m.empty).toBe('Motivation: no reading yet. It needs at least 2 corrections of this kind, to guesses made in the last 90 days.');
     expect(m.chart).toBeNull();
     expect(m.readings).toBeNull();
     // One field has a number, so the card is not "nothing measured".
@@ -309,11 +309,11 @@ describe('classificationView: both fields', () => {
     const v = classificationView(NONE, ctx());
     expect(v.series.every((s) => s.state === 'none')).toBe(true);
     expect(seriesOf(v, 'category').empty).toBe(
-      'No readings yet. A reading appears after the weekly pass (early on Monday, server time) finds at least 2 of your corrections in the last 90 days. ' +
+      'No readings yet. A reading appears after the weekly pass (early on Monday, server time) finds at least 2 of your corrections to guesses made in the last 90 days. ' +
         'Until then the model is shown no examples of your choices and nothing is measured.',
     );
     expect(seriesOf(v, 'motivation').empty).toBe(
-      'Motivation: no reading yet. It needs at least 2 corrections of this kind in the last 90 days.',
+      'Motivation: no reading yet. It needs at least 2 corrections of this kind, to guesses made in the last 90 days.',
     );
     for (const s of v.series) {
       expect(s.headline).toBeNull();
@@ -394,7 +394,7 @@ describe('classificationView: a field whose reading has stopped', () => {
 
   it('names the cause when the other field has a newer reading, which proves the pass ran', () => {
     const cat = seriesOf(classificationView(stopped, ctx()), 'category');
-    expect(cat.notes[0]).toBe('No reading since Sep 28.' + ' The weekly pass has run since, and this field had fewer than 2 corrections in the last 90 days, so its examples were removed.');
+    expect(cat.notes[0]).toBe('No reading since Sep 28.' + ' The weekly pass has run since, and this field had fewer than 2 corrections to guesses made in the last 90 days, so its examples were removed.');
     expect(cat.notes.join(' ')).not.toContain('Either');
   });
 
@@ -412,7 +412,7 @@ describe('classificationView: a field whose reading has stopped', () => {
     const v = classificationView(res(row('category', '2026-08-31', 4, 3), row('motivation', '2026-08-31', 5, 2)), ctx());
     for (const key of ['category', 'motivation']) {
       expect(seriesOf(v, key).notes[0]).toBe(
-        'No reading since Aug 31. Either the weekly pass has not run, or this field has fewer than 2 corrections in the last 90 days and its examples were removed.',
+        'No reading since Aug 31. Either the weekly pass has not run, or this field has fewer than 2 corrections to guesses made in the last 90 days and its examples were removed.',
       );
     }
   });
@@ -616,7 +616,7 @@ describe('ClassificationTile: loading, ready and empty', () => {
     mount();
     await screen.findByTestId('learning-headline-classification-category');
     expect(screen.getByTestId('learning-empty-classification-motivation').textContent).toBe(
-      'Motivation: no reading yet. It needs at least 2 corrections of this kind in the last 90 days.',
+      'Motivation: no reading yet. It needs at least 2 corrections of this kind, to guesses made in the last 90 days.',
     );
     expect(screen.queryByTestId('learning-headline-classification-motivation')).toBeNull();
     expect(screen.queryByTestId('learning-chart-classification-motivation')).toBeNull();
@@ -725,7 +725,7 @@ describe('ClassificationTile: what the card says about itself', () => {
 
   it('what it counts: the window, the stride, the cap and the typical count', async () => {
     const { about } = await open();
-    expect(about).toContain('it builds a set of examples from your corrections in the last 90 days, holds back every 4th correction');
+    expect(about).toContain('it builds a set of examples from your corrections to guesses made in the last 90 days, holds back every 4th correction');
     expect(about).toContain('asks the model about up to 20 of the held-back ones per field');
     expect(about).toContain('often 1 to 5 early on');
     expect(about).toContain('Direction: higher is better.');
@@ -767,7 +767,7 @@ describe('ClassificationTile: what the card says about itself', () => {
     expect(steps).toContain('Change a category the Describe-it line picked (before you press Add, or later on the task),');
     expect(steps).toContain('or a category or me/us/them label the app filled in from memory.');
     expect(steps).toContain('the Add dialog does not record who a task is for.');
-    expect(steps).toContain('Within 90 days, 2 corrections of one kind start the examples.');
+    expect(steps).toContain('2 corrections of one kind, to guesses made in the last 90 days, start the examples.');
     expect(steps).toContain('With 4, the weekly test can hold one back and score it.');
     expect(steps).toContain("Nothing reaches a prompt until Monday's run has built the examples.");
     expect(steps).toContain('The Describe-it line needs no Companion Memory. The fill-in from memory does,');
@@ -786,7 +786,7 @@ describe('ClassificationTile: what the card says about itself', () => {
     expect(items[1]).toContain('The Describe-it line asks a longer question with your most frequent corrections at the end');
     expect(items[1]).toContain('So this number is not a score of either, and it is not a recording of what the app did on your tasks.');
     expect(items[2]).toContain('Answers it already gets right are not tested');
-    expect(items[3]).toContain('Each week\'s test is every 4th correction from the last 90 days');
+    expect(items[3]).toContain('Each week\'s test is every 4th correction to a guess made in the last 90 days');
     expect(items[3]).toContain('they are never added together or compared');
     expect(items[4]).toContain('At most 20 corrections are scored per field per week, and early on it is 1 to 5.');
     expect(items[4]).toContain(`3 right out of 4 looks like 75%, but the true figure could be anywhere from about ${formatRange(wilsonRange(3, 4)!)}`);
@@ -887,7 +887,7 @@ describe('ClassificationTile: wording the card must carry', () => {
     expect(more).toContain('Readings from different weeks are not independent, so they are never added together or compared.');
     expect(more).toContain('3 right out of 4 looks like 75%, but the true figure could be anywhere from about');
     expect(more).toContain(formatRange(wilsonRange(3, 4)!));
-    expect(more).toContain('Within 90 days, 2 corrections of one kind start the examples.');
+    expect(more).toContain('2 corrections of one kind, to guesses made in the last 90 days, start the examples.');
     expect(more).toContain('There is no switch to start it earlier and no setting that turns it off.');
   });
 

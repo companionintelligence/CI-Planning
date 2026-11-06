@@ -128,6 +128,10 @@ export function ElementWizard() {
   const [dependsOn, setDependsOn] = createSignal<string[]>([]);
   const [editScope, setEditScope] = createSignal<'instance' | 'series'>('instance');
   const [wasRecurring, setWasRecurring] = createSignal(false);
+  // The template behind a generated instance being edited, if any. Instances carry no tag or
+  // category rows, so an instance opens with empty pickers; "This & future" swaps in the
+  // template's sets (chooseScope), and a series save is addressed to the template itself.
+  const [editTemplateId, setEditTemplateId] = createSignal<string | null>(null);
   // time-block: note + recurrence (AF-9: secondary tags round-trip through the
   // shared `intentions` chips — no separate blind-preserve signal anymore)
   const [note, setNote] = createSignal('');
@@ -143,6 +147,11 @@ export function ElementWizard() {
   // owner used the picker. A task or habit EDIT save sends the picker only when it is true;
   // a Time Block edit sends it either way.
   const [categoriesTouched, setCategoriesTouched] = createSignal(false);
+  // What the direction and intention chips held when the form was last seeded. A task or habit
+  // EDIT sends tags only when they differ from this, the same testimony rule as the category
+  // picker: the seed is a snapshot, not an answer, and sending it on every save wiped the
+  // template's tags on a series save from an instance.
+  const [seededTagKey, setSeededTagKey] = createSignal('');
   // Phase B (0135): per-element texture override (on by default; null colour = derive).
   const [textureEnabled, setTextureEnabled] = createSignal(true);
   const [textureColorToken, setTextureColorToken] = createSignal<string | null>(null);
@@ -463,6 +472,7 @@ export function ElementWizard() {
       setTaskRepeat(ps.preset); setTaskWeekdays(ps.weekdays); setTaskCustomRule(ps.custom);
       setWasRecurring(!!(t.recurrence_rule || t.recurrence_parent_id));
       setEditScope('instance');
+      setEditTemplateId(t.recurrence_parent_id ?? null);
       setCalMonth((t.scheduled_for ?? localISODate()).slice(0, 8) + '01');
       // Routine chip seed: first Routine pattern containing this task.
       const r = routineList().find((p) => p.task_ids.includes(id));
@@ -487,6 +497,26 @@ export function ElementWizard() {
     setPrimary(prim ?? '');
     setIntentions(mergeTagNames(names.filter((n) => n !== prim), secondary)
       .filter((n) => n.toLowerCase() !== (prim ?? '').toLowerCase()));
+    setSeededTagKey(tagKey());
+  }
+  const tagKey = () =>
+    JSON.stringify([primary().trim().toLowerCase(), intentions().map((n) => n.toLowerCase()).sort()]);
+  const tagsChanged = () => tagKey() !== seededTagKey();
+
+  // "Applies to" for a generated instance: the instance has no tag or category rows, the
+  // template has them, and a series save writes the template. So choosing "This & future"
+  // shows the template's sets (and choosing "This task" shows the instance's again), unless
+  // the owner has already used a picker, whose work is never overwritten. The template comes
+  // from the same store the instance does; if it is not there the pickers stay as they are,
+  // untouched, and the save leaves tags and categories out.
+  function chooseScope(s: 'instance' | 'series') {
+    setEditScope(s);
+    const templateId = editTemplateId();
+    if (!templateId || tagsChanged() || categoriesTouched()) return;
+    const source = (tasks() ?? []).find((x) => x.id === (s === 'series' ? templateId : m().editTarget?.id));
+    if (!source) return;
+    seedTags(source.tags ?? [], source.secondary_tags ?? []);
+    seedCategories(source.categories ?? []);
   }
 
   // ── Tag interactions ────────────────────────────────────────────────────────
@@ -930,9 +960,8 @@ export function ElementWizard() {
         // and closes no learning row. The gate latches once the owner touched the picker, even
         // if they tapped a chip back off: they used it, so it sends what the picker shows (on
         // an instance's series save, that can be the empty set).
-        // Still open, and older than this gate: that same instance series save sends tags []
-        // and secondary_tags [] (taskTagPayload), which wipes the template's direction and
-        // intention tags. Left for a follow-up. Add sends the picker. A Time Block edit sends
+        // Tags follow the same rule (tagsTouched below), and a series save opened from an
+        // instance shows the template's sets and is addressed to the template. Add sends the picker. A Time Block edit sends
         // it always, as before: a block has no learning row, and its save re-stamps the
         // block's frozen colour from the first category (services/blocks.ts updateBlock).
         categories: isEdit() && (effectiveKind === 'task' || effectiveKind === 'habit') && !categoriesTouched()
@@ -958,6 +987,11 @@ export function ElementWizard() {
         dueAt: dueAt() || undefined, priority: priority(),
         deferUntil: deferUntil() || undefined, dependsOn: dependsOn(),
         editScope: editScope(), parentId: m().parentId,
+        // A series save is addressed to the template when the task being edited is a generated
+        // instance, so an emptied picker is a real clear there (see updateTask).
+        editTemplateId: editTemplateId() ?? undefined,
+        // Tags go with an edit only when the owner changed them (a new task always sends them).
+        tagsTouched: isEdit() && (effectiveKind === 'task' || effectiveKind === 'habit') ? tagsChanged() : undefined,
         routineAddId: routineId() && routineId() !== initialRoutineId() ? routineId() : undefined,
         routineRemoveId: initialRoutineId() && routineId() !== initialRoutineId() ? initialRoutineId() : undefined,
         recurrenceRule:
@@ -1682,7 +1716,7 @@ export function ElementWizard() {
                     <div class="flex gap-1">
                       <For each={['instance', 'series'] as const}>
                         {(s) => (
-                          <button type="button" onClick={() => setEditScope(s)}
+                          <button type="button" onClick={() => chooseScope(s)}
                             class={seg}
                             classList={{ [chipOn]: editScope() === s, [chipOff]: editScope() !== s }}>
                             {s === 'instance' ? 'This task' : 'This & future'}
