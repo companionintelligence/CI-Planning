@@ -13,7 +13,8 @@ import { createSignal } from 'solid-js';
  *      shows by then (the owner's edit IS the correction, so it is never re-built);
  *   2. every SUCCESSFUL parse replaces the claim: one where the model abstained clears a
  *      stale one, a later claim wins, a failed parse leaves it alone;
- *   3. a Time Block parse is about a block (no task row): no claim;
+ *   3. a Time Block parse keeps its claim like a task's, and Add on that tab sends it on the
+ *      block create (the server settles it against the block, as a 'time_block' row);
  *   4. a claim whose names the picker could not show in full (stale tags store) is not
  *      kept: the owner would "correct" a pick they never saw;
  *   5. closing and reopening the modal forgets it;
@@ -239,20 +240,35 @@ describe('ElementWizard — classification claim', () => {
     expect(body.classification_claim).toEqual(claimFor(['leisure']));
   });
 
-  it('a Time Block parse yields no claim, and the stale task claim does not survive it', async () => {
+  it('a Time Block parse replaces the claim, and the Time Block create carries the new one', async () => {
+    const blockLine = `${LINE} again`;
     quickParseMock
       .mockResolvedValueOnce(parseOk(['leisure'], claimFor(['leisure'])))
-      .mockResolvedValueOnce(parseOk(['leisure'], claimFor(['leisure'])));
+      .mockResolvedValueOnce(parseOk(['health'], { text: blockLine, categories: ['health'] }));
     render(() => <ElementWizard />);
     open();
     await describeIt(LINE);                                    // task tab: claim held
     fireEvent.click(screen.getByRole('button', { name: 'Time Block' }));
-    await describeIt(`${LINE} again`);                         // block tab: replaces it with null
-    fireEvent.click(screen.getByRole('button', { name: 'Task' }));
+    await describeIt(blockLine);                               // block tab: replaces it
 
-    const body = await add();
-    expect(blocksCreateMock).not.toHaveBeenCalled();
-    expect(body.title).toBe(LINE);
+    await press('Add');
+    expect(tasksCreateMock).not.toHaveBeenCalled();
+    const body = blocksCreateMock.mock.calls.at(-1)![0] as Record<string, unknown>;
+    expect(body.classification_claim).toEqual({ text: blockLine, categories: ['health'] });
+  });
+
+  it('a Time Block parse where the model abstained clears the task claim instead of keeping it', async () => {
+    quickParseMock
+      .mockResolvedValueOnce(parseOk(['leisure'], claimFor(['leisure'])))
+      .mockResolvedValueOnce(parseOk(undefined, undefined));
+    render(() => <ElementWizard />);
+    open();
+    await describeIt(LINE);
+    fireEvent.click(screen.getByRole('button', { name: 'Time Block' }));
+    await describeIt(`${LINE} again`);
+
+    await press('Add');
+    const body = blocksCreateMock.mock.calls.at(-1)![0] as Record<string, unknown>;
     expect('classification_claim' in body).toBe(false);
   });
 

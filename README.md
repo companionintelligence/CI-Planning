@@ -1043,7 +1043,7 @@ deployment option yet — see [Environment variables](#environment-variables).
 Migrations produce the tables below. The authoritative, ordered migration list — and
 therefore the current head — is
 [`server/src/db/migrations/index.ts`](server/src/db/migrations/index.ts); at the time
-of writing (2026-11-01) `main` is at `0172_signup_codes`, the 168th migration (the
+of writing (2026-11-01) `main` is at `0173_classification_entity_kind`, the 169th migration (the
 numbering skips 0009, 0119, 0159 and 0160).
 
 | Table | Purpose |
@@ -1106,7 +1106,7 @@ numbering skips 0009, 0119, 0159 and 0160).
 | `calibration_history` | Append-only calibration trend — one row per (owner, scope, day) written by the same job; the rollup above is regenerable, this table is never recomputed or pruned (0138) |
 | `triality_log` | Append-only Triality outcome log — one row per suggestion **shown**, stamped at most once more when it is opened / staged / dismissed. Each row keeps that pick's full per-component score breakdown as JSON, which is what makes the weekly weight calibration evidence-based rather than guesswork; never recomputed, never pruned (0140). A `confidence` reading is stamped at *show* time (0144) — reported, never fed back into ranking; `NULL` means "shown before that column existed" permanently, and readers must exclude those rows rather than coerce them |
 | `triality_weights` | Learned per-(owner, slot) Triality weights — regenerable, replaced wholesale by the weekly `calibrate_triality` job. A missing row means "score on the defaults", so deleting an owner's rows is the reset switch; the log above survives it (0142) |
-| `classification_log` | Append-only evidence for the parse/classify LLM's `category`/`motivation` picks — what the model said, what the owner ultimately settled on (`NULL` until corrected), and the text judged; never recomputed, never pruned (Phase 8, 0149) |
+| `classification_log` | Append-only evidence for the parse/classify LLM's `category`/`motivation` picks — what the model said, what the owner ultimately settled on (`NULL` until corrected), and the text judged; never recomputed, never pruned; `entity_kind` says whether the id is a task or a Time Block (Phase 8, 0149, 0173) |
 | `classification_exemplars` | Regenerable few-shot retrieval index the classify prompts read (quick add and the Describe-it preview by frequency, memory enrichment by similarity), rebuilt wholesale per owner by the weekly `calibrate_classification` job; deleting an owner's rows resets the adaptation without losing the log above (0149) |
 | `classification_accuracy` | One held-out accuracy score per field per calibration run — `NULL` (not `0`) when a run measured nothing, so a trend chart draws a gap rather than a false dip (0149) |
 | `possible_outcome_log` | Append-only evidence for dismissal learning — one row per decided suggestion (`dismissed` / `promoted`) with the text the extractor proposed and when it was decided; deliberately no FK to `possible_tasks`, so pruning a suggestion never deletes what it taught (0157) |
@@ -1295,7 +1295,10 @@ Connections**. Replay the walkthrough from **Settings → Profile**.
   `MEMORY_MODE` is set) and by the Add wizard's Describe-it preview, which logs the category pick
   only: the preview returns the model's category pick as an opaque `classification_claim`, the wizard
   echoes it on Add, and changing the pick before you save, in value or in order, is recorded as a
-  correction (a preview you never save records nothing). No screen in the app calls
+  correction (a preview you never save records nothing). The same holds on the Time Block tab: a
+  Time Block created from a Describe-it pick is logged as a Time Block (`entity_kind`), and changing
+  its categories later settles that row. Settings → Learning splits the corrections it counts by
+  what the guess was about. Tasks and Time Blocks teach the same examples. No screen in the app calls
   `POST /api/tasks/quick` today, so a who-it's-for pick is logged only by that route or by memory
   enrichment. The examples reach a prompt in three places. The quick-add routes
   (`/api/tasks/quick/parse`, which the Describe-it line calls, and `/api/tasks/quick`) show the
@@ -1949,7 +1952,7 @@ consistent snapshot.
 ## Change set — August 2026 (migrations 0148–0150)
 
 Everything above describes the app **as it runs on `main`**, which is at migration head
-`0172_signup_codes` (v4.2, checked 2026-11-01). This section is the narrative description of
+`0173_classification_entity_kind` (v4.2, checked 2026-11-02). This section is the narrative description of
 the change set that took the head from 0147 to 0150 on 2026-08-14: closing a locking gap on
 synced calendar blocks, plus a new learning loop that lets the parse/classify LLM improve
 from the owner's own corrections. Everything in it is still true of `main`. What shipped
@@ -2066,9 +2069,9 @@ disagree about the set: `sqliteUtcToISO()` folded into `localDateInTZ` server-si
 the same normalization in `isCreatedOnDay` client-side. A no-op for the proper ISO strings
 every other caller passes.
 
-### Since then — migrations 0151–0172 and what else shipped
+### Since then — migrations 0151–0173 and what else shipped
 
-Migrations 0151–0171 landed between 2026-08-16 and 2026-08-30, and 0172 on 2026-10-21.
+Migrations 0151–0171 landed between 2026-08-16 and 2026-08-30, 0172 on 2026-10-21 and 0173 on 2026-11-02.
 Numbers 0159 and 0160 were never used.
 
 - **0151–0154 · People on work.** A per-owner `people` directory (`person_emails` for
@@ -2099,6 +2102,8 @@ Numbers 0159 and 0160 were never used.
   direction (Home windows used to be left out)
 - **0171 · The trust dial is an ordering policy.** `planning_mode` no longer follows
   `trust_mode`; owners who relied on Hands-off implying Smart were pinned to `smart`
+- **0173 · Classification log entity kind.** `classification_log.entity_kind` (`task` or `time_block`,
+  default `task`), so a Time Block's category picks and corrections are logged next to a task's.
 - **0172 · Invite-code sign-up.** `signup_codes`; with `AUTH_SIGNUP=invite` (the default) an
   operator mints single-use codes in Settings → Accounts for `/signup`
 - **No migration.** Auto fills a matching Time Block before any bare window (Pass 1.9). A
@@ -2115,8 +2120,8 @@ Release notes from 4.2.0 on are in [CHANGELOG.md](CHANGELOG.md); earlier changes
 
 The latest git tag is `v4.2.2` (2026-10-29). The root `package.json` still reads `4.2.0`,
 and the container image reports the version it was built with (`CI_PLANNING_VERSION`, set
-from the tag) in `GET /api/health`. The migration head is `0172_signup_codes`: 168
-migrations, 0001–0172, with no files for 0009, 0119, 0159 or 0160; the ordered list in
+from the tag) in `GET /api/health`. The migration head is `0173_classification_entity_kind`: 169
+migrations, 0001–0173, with no files for 0009, 0119, 0159 or 0160; the ordered list in
 `server/src/db/migrations/index.ts` is authoritative. `main` is four commits past `v4.2.2`
 (the iOS and Android shells, the polling endpoint they use, and a test fix). Release notes
 are in [CHANGELOG.md](CHANGELOG.md).
@@ -2124,7 +2129,7 @@ are in [CHANGELOG.md](CHANGELOG.md).
 **Working today:**
 
 - Koa + TypeScript backend serving both the API and the built client on port 3848
-- SQLite schema (migrations 0001 → 0172 — the ordered list in
+- SQLite schema (migrations 0001 → 0173 — the ordered list in
   `server/src/db/migrations/index.ts` is authoritative): tasks, subtasks, time
   blocks, tags, entity_tags, tag_directions, patterns, pattern_blocks, tag_prefs,
   flight_plan, daily_plan, daily_recap, possible_tasks, scheduling_prefs,
@@ -2800,7 +2805,7 @@ This table lists the notable endpoints, not every route; the routers are in
 | POST · GET | `/api/tasks/:id/timer/start` \| `/api/tasks/:id/timer/stop` · `/api/timer` | The single running timer: start (stops any other first), stop (**409** when none is running), and `GET /api/timer` for the current entry or `null` |
 | POST · GET | `/api/tasks/:id/skip` \| `/reschedule` \| `/promote-habit` \| `/promote-objective` · `/api/tasks/:id/streak` | Per-task actions: skip a recurring instance, bump a missed task out by `days`, make a task a habit, surface it in the Objectives tree, and read a habit's streak |
 | POST | `/api/tasks/suggest-tags` \| `/api/tasks/suggest-subtasks` \| `/api/tasks/auto-tag` | Best-effort Ollama helpers: tags for a title, a subtask brainstorm, and auto-tagging for the Tasks view |
-| GET/POST/PATCH/DELETE | `/api/blocks` | Time blocks for a date range |
+| GET/POST/PATCH/DELETE | `/api/blocks` | Time blocks for a date range. A create also accepts the optional `classification_claim` that `/api/tasks/quick/parse` returned, settled like a task's but logged as a Time Block |
 | GET | `/api/blocks/export.ics?from=&to=` | Download the range's dated blocks as an iCalendar file (defaults to today) |
 | POST | `/api/blocks/:id/move-group` \| `/promote` \| `/add-tasks` · `/api/days/:date/clear` | Shift a Plan and its members by `delta_minutes`; turn a Concept into a scheduled Plan; attach existing tasks to a Time-Block; clear the day's auto-placed task blocks only (manual, locked and calendar blocks stay) |
 | POST/DELETE/GET | `/api/blocks/:id/extend` \| `/reschedule` \| `/focus-reminders` \| `/whats-next` | Time-Sense (Focus Ritual): extend a block (two-phase, `confirm`), re-stage its task, arm / clear its background cues, and the "what's next" line. 404 while `time_sense_enabled` is off |
@@ -2885,7 +2890,7 @@ This table lists the notable endpoints, not every route; the routers are in
 | POST | `/api/triality/feedback` | `{log_id, outcome}` — stamp `opened` / `staged` / `dismissed` on a shown suggestion, at most once (this is the learning evidence). 404 while the flag is off |
 | DELETE | `/api/triality/weights` | Reset learning — drops this owner's learned slot weights, so scoring returns to the shipped defaults. The outcome log is untouched, and the next weekly pass re-derives weights from it: this is a recompute, not a permanent opt-out. 404 while the flag is off |
 | GET | `/api/metrics/triality?days=` | Balance → Metrics: acceptance per slot (a suggestion undecided for **less than 24h** is pending and excluded from the denominator; once it is 24h old and still untouched it counts as *ignored* — a decision, and a weak negative), the Novel uptake trend against the prior window, how under-served categories responded, and the learned weights with their sample counts (`null` until learning has run). 404 while the flag is off |
-| GET | `/api/classification/accuracy?limit=` | The classify/parse LLM's held-out accuracy trend, newest run first, per field (`category`/`motivation`). `accuracy: null` on a run that measured nothing — never a `0`. A field with fewer than 2 corrections in 90 days writes no row at all (not a null row), and `limit` counts rows across both fields, so the default of 12 is about six weeks. No feature flag. Settings → Learning is the client |
+| GET | `/api/classification/accuracy?limit=` | The classify/parse LLM's held-out accuracy trend, newest run first, per field (`category`/`motivation`). `accuracy: null` on a run that measured nothing — never a `0`. A field with fewer than 2 corrections in 90 days writes no row at all (not a null row), and `limit` counts rows across both fields, so the default of 12 is about six weeks. The response also carries `evidence`: the corrections the weekly pass can learn from, per field and per `entity_kind` (`task` or `time_block`), counted over the same 90 days from when each guess was made. No feature flag. Settings → Learning is the client |
 | DELETE | `/api/classification/exemplars` | Reset classification learning — drops this owner's learned few-shot index; the correction log survives and the next weekly `calibrate_classification` pass re-earns it. Settings → Learning has the button |
 | GET · DELETE | `/api/placement/survival?limit=` · `/api/placement/preferences` | Placement learning: the weekly trend of whether auto-placed blocks survive the day untouched, newest run first (`survival_rate: null` = nothing was decided that period; `limit` defaults to 12, max 100); and reset this owner's learned hour bands (the placement log survives). No feature flag. Settings → Learning is the client |
 | GET | `/api/plan-loop/trend?limit=` | The §A0 authoring loop's measured trend per stage — pass rate, first-try pass rate, escapes and average iterations — newest run first. `limit` defaults to 26, clamped to 1–365. A week with no runs has no row, so a chart draws a gap; the rate columns are real numbers on any row that exists. `limit` counts rows across stages. No feature flag, and no reset endpoint: nothing in this wave influences the loop's behavior. Settings → Learning is the client |

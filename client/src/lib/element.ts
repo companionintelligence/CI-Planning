@@ -217,7 +217,7 @@ export interface ElementForm {
    *  that can still fail (routine chip, subtasks). The wizard spends its stored claim here:
    *  a retry after such a failure makes a second task, and the one decision the owner made
    *  must not be recorded twice. A create that threw never calls it, so that retry keeps the
-   *  claim. Edit, routine and time-block saves never call it. */
+   *  claim. Edit and routine saves never call it. */
   onCreated?: () => void;
   // Routine membership (modal redesign): single-select "Routine" chip. Applied
   // after the task exists (works for add + edit); undefined = leave membership alone.
@@ -424,8 +424,13 @@ export async function saveElement(
     };
   }
   let blockId: string;
-  if (mode === 'add') blockId = (await api.blocks.create(body as any)).block.id;
-  else { await api.blocks.update(editId!, body as any); blockId = editId!; }
+  if (mode === 'add') {
+    // The Describe-it claim rides the create only, like a task's: the server settles it against
+    // the block it just made, as a Time Block (its own entity kind), and drops one it cannot trust.
+    const payload = form.classificationClaim ? { ...body, classification_claim: form.classificationClaim } : body;
+    blockId = (await api.blocks.create(payload as any)).block.id;
+    form.onCreated?.();
+  } else { await api.blocks.update(editId!, body as any); blockId = editId!; }
 
   // Membership changes (scheduled blocks only) — applied after we hold the block id, so
   // this works identically for New (just-created) and Edit. Detach first, then add.

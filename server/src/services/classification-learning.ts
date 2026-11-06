@@ -97,6 +97,13 @@ export const EMBED_TIMEOUT_MS = 3_000;
 export const FIELDS = ['category', 'motivation'] as const;
 export type ClassifiedField = (typeof FIELDS)[number];
 
+/**
+ * What a log row's id refers to (migration 0173): a `tasks` row or a `time_blocks` row.
+ * Enforced here, not by a CHECK constraint. The id column is still called `task_id`.
+ */
+export const ENTITY_KINDS = ['task', 'time_block'] as const;
+export type EntityKind = (typeof ENTITY_KINDS)[number];
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface Exemplar {
@@ -151,16 +158,16 @@ export interface ClassificationCalibrationResult {
 // ── SQL (module level, prepared inside functions — §5.5) ──────────────────────
 
 const INSERT_LOG = `
-  INSERT INTO classification_log (id, owner_id, task_id, field, input_text, llm_value, assigned_at, local_date)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+  INSERT INTO classification_log (id, owner_id, task_id, field, input_text, llm_value, assigned_at, local_date, entity_kind)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
 /**
  * A row born already answered: `logAssignment` and `recordCorrection` in one statement,
  * for a caller that knows the owner's answer at the moment it records the model's claim.
  */
 const INSERT_LOG_ANSWERED = `
-  INSERT INTO classification_log (id, owner_id, task_id, field, input_text, llm_value, final_value, assigned_at, corrected_at, local_date)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+  INSERT INTO classification_log (id, owner_id, task_id, field, input_text, llm_value, final_value, assigned_at, corrected_at, local_date, entity_kind)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
 /**
  * The still-open assignment for a task and field, newest first. "Open" means the owner
@@ -170,7 +177,7 @@ const INSERT_LOG_ANSWERED = `
  */
 const SELECT_OPEN_ASSIGNMENT = `
   SELECT id, llm_value FROM classification_log
-   WHERE task_id = ? AND field = ? AND owner_id = ? AND corrected_at IS NULL
+   WHERE task_id = ? AND field = ? AND owner_id = ? AND entity_kind = ? AND corrected_at IS NULL
    ORDER BY assigned_at DESC LIMIT 1`;
 
 const CLOSE_ASSIGNMENT = `
@@ -231,7 +238,11 @@ export function canonicalValue(value: string | readonly string[] | null | undefi
  */
 export async function logAssignment(
   ownerId: string,
-  input: { taskId: string | null; field: ClassifiedField; inputText: string; llmValue: string | readonly string[] },
+  input: {
+    taskId: string | null; field: ClassifiedField; inputText: string; llmValue: string | readonly string[];
+    /** What `taskId` refers to; a task unless said otherwise. */
+    entityKind?: EntityKind;
+  },
   now: Date = new Date(),
 ): Promise<void> {
   try {
@@ -241,6 +252,7 @@ export async function logAssignment(
     await store().prepare(INSERT_LOG).run(
       newId(), ownerId, input.taskId, input.field,
       input.inputText, value, now.toISOString(), localDateInTZ(now.toISOString(), tz),
+      input.entityKind ?? 'task',
     );
   } catch (err) {
     logger.warn('classification-learning: could not log assignment', { err: (err as Error).message });
@@ -261,10 +273,11 @@ export async function recordCorrection(
   field: ClassifiedField,
   finalValue: string | readonly string[] | null,
   now: Date = new Date(),
+  entityKind: EntityKind = 'task',
 ): Promise<boolean> {
   try {
     const open = await store().prepare(SELECT_OPEN_ASSIGNMENT)
-      .get<{ id: string; llm_value: string }>(taskId, field, ownerId);
+      .get<{ id: string; llm_value: string }>(taskId, field, ownerId, entityKind);
     if (!open) return false;
     const value = canonicalValue(finalValue);
     const r = await store().prepare(CLOSE_ASSIGNMENT).run(value, now.toISOString(), open.id);
@@ -298,6 +311,8 @@ export async function logAnsweredAssignment(
     inputText: string;
     llmValue: string | readonly string[];
     finalValue: string | readonly string[] | null;
+    /** What `taskId` refers to; a task unless said otherwise. */
+    entityKind?: EntityKind;
   },
   now: Date = new Date(),
 ): Promise<void> {
@@ -311,6 +326,7 @@ export async function logAnsweredAssignment(
     await store().prepare(INSERT_LOG_ANSWERED).run(
       newId(), ownerId, input.taskId, input.field, input.inputText, llm,
       differs ? final : null, at, differs ? at : null, localDateInTZ(at, tz),
+      input.entityKind ?? 'task',
     );
   } catch (err) {
     logger.warn('classification-learning: could not log answered assignment', { err: (err as Error).message });
@@ -372,6 +388,47 @@ export async function decidedRows(
     });
   }
   return out;
+}
+
+/** What the learner has to work with in the window for one field and one kind of thing. */
+export interface EvidenceCount {
+  field: ClassifiedField;
+  entity_kind: EntityKind;
+  /** Rows the owner has decided (corrected, or let stand for a day): the same rows `decidedRows` returns. */
+  decided: number;
+  /** Corrections the field's classifier could learn from: what `calibrateClassification` counts as `corrections`. */
+  corrections: number;
+}
+
+const SELECT_WINDOW_KINDS = `
+  SELECT field, entity_kind, llm_value, final_value, assigned_at, corrected_at
+    FROM classification_log
+   WHERE owner_id = ? AND local_date >= ?`;
+
+/**
+ * The window's evidence split by what each row is about, for the Learning card. Same window
+ * and same rules as `decidedRows` and the calibration pass, so the counts add up to what the
+ * pass reads: the window is the last `LEARNING_WINDOW_DAYS` counted from the day the GUESS was
+ * made, not the day it was corrected. Kinds with no decided row are left out; the order is
+ * `FIELDS`, then `ENTITY_KINDS`.
+ */
+export async function evidenceByKind(ownerId: string, now: Date = new Date()): Promise<EvidenceCount[]> {
+  const tz = await ownerTimezone(ownerId);
+  const since = localDateInTZ(new Date(now.getTime() - LEARNING_WINDOW_DAYS * 86_400_000).toISOString(), tz);
+  const rows = await store().prepare(SELECT_WINDOW_KINDS)
+    .all<LogRow & { field: ClassifiedField; entity_kind: EntityKind }>(ownerId, since);
+  const tally = new Map<string, EvidenceCount>();
+  for (const r of rows) {
+    const outcome = rowOutcome(r, now);
+    if (outcome === null) continue;
+    const key = `${r.field}\u0000${r.entity_kind}`;
+    const c = tally.get(key) ?? { field: r.field, entity_kind: r.entity_kind, decided: 0, corrections: 0 };
+    c.decided++;
+    if (outcome === 'corrected' && isLearnableLabel(r.field, { correctValue: canonicalValue(r.final_value) } as DecidedRow)) c.corrections++;
+    tally.set(key, c);
+  }
+  const rank = (c: EvidenceCount) => FIELDS.indexOf(c.field) * ENTITY_KINDS.length + ENTITY_KINDS.indexOf(c.entity_kind);
+  return [...tally.values()].sort((a, b) => rank(a) - rank(b));
 }
 
 // ── Retrieval: what a live classification reads ───────────────────────────────

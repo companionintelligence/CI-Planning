@@ -403,7 +403,7 @@ describe('motivation save shape (0141)', () => {
 // (server: settlePreviewClaim). It must reach nothing else: an update, a subtask, a
 // block or a routine has no preview pick to answer, and a claim on a PATCH would be
 // evidence about a row the model never classified.
-describe('classification claim — only the add-mode task/habit create carries it', () => {
+describe('classification claim — only an add-mode task, habit or Time Block create carries it', () => {
   const taskForm = { title: 'Gym session before work', primary: '', intentions: [] as string[], scheduledFor: '', taskTime: '', priority: 3 };
   const claim = { text: 'Gym session before work', categories: ['leisure'] };
   const formWithClaim = { ...taskForm, categories: ['health'], classificationClaim: claim };
@@ -447,9 +447,22 @@ describe('classification claim — only the add-mode task/habit create carries i
     expect(bodies.slice(1).map((b) => b.parent_id)).toEqual(['task-new', 'task-new']);
   });
 
-  it('time-block and routine adds with a claim in the form: neither body carries it', async () => {
+  it('time block add: the create body carries the claim, next to the categories the owner ended on', async () => {
     await saveElement('timeblock', 'add', { ...baseForm, primary: 'work', categories: ['health'], classificationClaim: claim });
+    const wire = JSON.parse(JSON.stringify(lastCreateBody()));
+    expect(wire.classification_claim).toEqual(claim);
+    expect(wire.categories).toEqual(['health']);
+    expect(tasksCreate).not.toHaveBeenCalled();
+  });
+
+  it('time block add without a claim, and a Time Block edit with one: no key on the wire', async () => {
+    await saveElement('timeblock', 'add', { ...baseForm, primary: 'work', categories: ['health'] });
     expect('classification_claim' in JSON.parse(JSON.stringify(lastCreateBody()))).toBe(false);
+    await saveElement('timeblock', 'edit', { ...baseForm, primary: 'work', categories: ['health'], classificationClaim: claim }, 'blk-1');
+    expect('classification_claim' in JSON.parse(JSON.stringify(blocksUpdate.mock.calls.at(-1)![1]))).toBe(false);
+  });
+
+  it('a routine add with a claim in the form: the body does not carry it', async () => {
     await saveElement('routine', 'add', { ...baseForm, title: 'Morning', primary: '', classificationClaim: claim });
     expect('classification_claim' in JSON.parse(JSON.stringify(patternsCreate.mock.calls.at(-1)![0]))).toBe(false);
     expect(tasksCreate).not.toHaveBeenCalled();
@@ -460,7 +473,7 @@ describe('classification claim — only the add-mode task/habit create carries i
 // after a LATER step failed (routine chip) creates a second task, and must not echo the same
 // claim and record one decision twice. A create that threw never fires it, so that retry keeps
 // the claim and still records.
-describe('onCreated — fires once, right after the add-mode task/habit create lands', () => {
+describe('onCreated — fires once, right after the add-mode task, habit or Time Block create lands', () => {
   const taskForm = { title: 'Gym session before work', primary: '', intentions: [] as string[], scheduledFor: '', taskTime: '', priority: 3 };
 
   it('task add: called once, after the create resolved and before the routine chip runs', async () => {
@@ -506,11 +519,21 @@ describe('onCreated — fires once, right after the add-mode task/habit create l
     expect(onCreated).toHaveBeenCalledTimes(1);
   });
 
-  it('task edit (instance and series), time block add/edit and routine add: never called', async () => {
+  it('time block add: called once, after the create resolved; a create that rejects never calls it', async () => {
+    const onCreated = vi.fn();
+    await saveElement('timeblock', 'add', { ...baseForm, primary: 'work', onCreated });
+    expect(onCreated).toHaveBeenCalledTimes(1);
+
+    blocksCreate.mockRejectedValueOnce(new Error('offline'));
+    const again = vi.fn();
+    await expect(saveElement('timeblock', 'add', { ...baseForm, primary: 'work', onCreated: again })).rejects.toThrow('offline');
+    expect(again).not.toHaveBeenCalled();
+  });
+
+  it('task edit (instance and series), time block edit and routine add: never called', async () => {
     const onCreated = vi.fn();
     await saveElement('task', 'edit', { ...taskForm, onCreated }, 'task-1');
     await saveElement('habit', 'edit', { ...taskForm, editScope: 'series', recurrenceRule: 'FREQ=DAILY', onCreated }, 'task-2');
-    await saveElement('timeblock', 'add', { ...baseForm, primary: 'work', onCreated });
     await saveElement('timeblock', 'edit', { ...baseForm, primary: 'work', onCreated }, 'blk-1');
     await saveElement('routine', 'add', { ...baseForm, title: 'Morning', primary: '', onCreated });
     expect(onCreated).not.toHaveBeenCalled();

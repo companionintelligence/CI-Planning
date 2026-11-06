@@ -119,6 +119,51 @@ const NO_VERDICT =
 
 // ── The pure builder ─────────────────────────────────────────────────────────
 
+describe('classificationView: corrections by what the guess was about', () => {
+  const ev = (field: ClassifiedField, entity_kind: string, corrections: number, decided = corrections) => ({ field, entity_kind, decided, corrections });
+  const withEvidence = (evidence: ClassificationAccuracyResponse['evidence']): ClassificationAccuracyResponse => ({ ...NONE, evidence });
+  const lines = (r: ClassificationAccuracyResponse, over: Partial<LearningContext> = {}) => classificationView(r, ctx(over)).contextLines;
+
+  it('says nothing when the response has no evidence, an empty list, or only zero counts', () => {
+    expect(lines(NONE)).toEqual([]);
+    expect(lines(withEvidence([]))).toEqual([]);
+    expect(lines(withEvidence([ev('category', 'task', 0, 4), ev('category', 'time_block', 0, 1)]))).toEqual([]);
+  });
+
+  it('splits a field into tasks and Time Blocks, fields in the response order, kinds tasks first', () => {
+    const r = withEvidence([ev('motivation', 'task', 3), ev('category', 'time_block', 2), ev('category', 'task', 5)]);
+    expect(lines(r)).toEqual([
+      'Corrections the examples are built from, by what the guess was about (guesses made in the last 90 days). ' +
+        'Category: 5 to tasks, 2 to Time Blocks. Motivation: 3 to tasks.',
+    ]);
+  });
+
+  it('leaves a kind with no corrections out of its field, and a field with none out of the line', () => {
+    expect(lines(withEvidence([ev('category', 'time_block', 4), ev('category', 'task', 0, 9)]))[0]).toContain('Category: 4 to Time Blocks.');
+    expect(lines(withEvidence([ev('category', 'time_block', 4), ev('category', 'task', 0, 9)]))[0]).not.toContain('to tasks');
+    expect(lines(withEvidence([ev('motivation', 'task', 2)]))[0]).not.toContain('Category');
+  });
+
+  it('ignores a count that is not a whole non-negative number, and a kind it does not know', () => {
+    const r = withEvidence([
+      ev('category', 'task', Number.NaN), ev('category', 'task', -3), ev('category', 'time_block', 2.9),
+      ev('category', 'event', 7),
+    ]);
+    expect(lines(r)).toEqual([
+      'Corrections the examples are built from, by what the guess was about (guesses made in the last 90 days). Category: 2 to Time Blocks.',
+    ]);
+  });
+
+  it('goes after the model-off line when both apply, and does not touch the readings', () => {
+    const r = withEvidence([ev('category', 'task', 2)]);
+    const v = classificationView(r, ctx({ aiAvailable: false }));
+    expect(v.contextLines).toHaveLength(2);
+    expect(v.contextLines[0]).toContain('not ready');
+    expect(v.contextLines[1]).toContain('Category: 2 to tasks.');
+    expect(classificationView(NONE, ctx({ aiAvailable: false })).series).toEqual(v.series);
+  });
+});
+
 describe('classificationView: headline', () => {
   it('under 10 scored cases leads with the fraction and shows no percent anywhere', () => {
     const v = classificationView(res(row('category', '2026-10-26', 4, 3)), ctx());
