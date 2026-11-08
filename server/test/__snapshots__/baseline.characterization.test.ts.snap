@@ -1816,6 +1816,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "scores",
       "shown_at",
       "slot",
+      "weights_source",
     ],
     "table": "triality_log",
   },

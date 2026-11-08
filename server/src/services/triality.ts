@@ -58,12 +58,26 @@ const COMPONENTS = ['F', 'H', 'Q', 'N', 'C'] as const;
 // SQL at module scope, prepare at the use site (§5.5).
 const SQL_WEIGHTS = `SELECT weights FROM triality_weights WHERE owner_id = ? AND slot = ?`;
 
+/**
+ * Which weights ranked a pick (migration 0174, `triality_log.weights_source`). `defaults_invalid`
+ * is a stored row that could not be used, so the defaults ranked it: not the same as having none.
+ */
+export type WeightsSource = 'learned' | 'defaults' | 'defaults_invalid';
+
 export async function getWeights(ownerId: string, slot: Slot): Promise<SlotWeights> {
+  return (await getWeightsWithSource(ownerId, slot)).weights;
+}
+
+/** `getWeights`, plus where the weights it returned came from. Same rules, same fallbacks. */
+export async function getWeightsWithSource(
+  ownerId: string,
+  slot: Slot,
+): Promise<{ weights: SlotWeights; source: WeightsSource }> {
   // Every fallback returns a COPY: DEFAULT_WEIGHTS is exported, and handing out a
   // reference to it makes a future caller's in-place tweak a global default change.
-  const defaults = () => ({ ...DEFAULT_WEIGHTS[slot] });
+  const defaults = (source: WeightsSource = 'defaults_invalid') => ({ weights: { ...DEFAULT_WEIGHTS[slot] }, source });
   const row = await store().prepare(SQL_WEIGHTS).get<{ weights: string }>(ownerId, slot);
-  if (!row) return defaults();
+  if (!row) return defaults('defaults');
   try {
     const parsed = JSON.parse(row.weights) as Record<string, unknown>;
     const out = { ...DEFAULT_WEIGHTS[slot] };
@@ -94,7 +108,7 @@ export async function getWeights(ownerId: string, slot: Slot): Promise<SlotWeigh
       logger.info('triality: learned weights sum to zero — falling back to defaults', { ownerId, slot });
       return defaults();
     }
-    return out;
+    return { weights: out, source: 'learned' };
   } catch {
     logger.info('triality: unparseable learned weights — falling back to defaults', { ownerId, slot });
     return defaults();
@@ -357,6 +371,9 @@ export interface ScoredPick extends Candidate {
   /** Completions matching this candidate under `historyMatches`, raw and UNCAPPED —
    *  the evidence behind H, which confidence divides by EVIDENCE_FULL. */
   evidenceRows: number;
+  /** Which weights ranked this pick, stamped on the impression log by `logShown`. null when the
+   *  weights were injected (a test seam), so the source is not known. */
+  weightsSource: WeightsSource | null;
 }
 
 export type TrialityResult =
@@ -1085,8 +1102,8 @@ export async function logShown(
   const tz = await ownerTimezone(ownerId);
   const localDate = localDateInTZ(now.toISOString(), tz);
   const insert = store().prepare(
-    `INSERT INTO triality_log (id, owner_id, shown_at, local_date, slot, action_kind, action_ref, scores, confidence)
-     VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+    `INSERT INTO triality_log (id, owner_id, shown_at, local_date, slot, action_kind, action_ref, scores, confidence, weights_source)
+     VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
   );
   // for-of, not .map: an async callback would hand every caller a promise where it
   // expects a log id, and the ids are what stampOutcome is later keyed on.
@@ -1102,6 +1119,7 @@ export async function logShown(
       p.ref,
       JSON.stringify({ ...p.scores, ternary: p.ternary }),
       confidenceJson[i] ?? null,
+      p.weightsSource ?? null,
     ))!;
     ids.push(row.id);
   }
@@ -1175,10 +1193,15 @@ export async function trialityNext(ownerId: string, now: Date, opts: TrialityOpt
   // learning is batch by construction), so scoring is one table read per slot
   // rather than one per candidate, and the whole run sees a single consistent
   // weight set even if the job happened to land between two candidates.
-  const weightsFor = opts.getWeightsFn ?? getWeights;
-  const resolvedWeights = Object.fromEntries(
-    await Promise.all(SLOTS.map(async (s) => [s, await weightsFor(ownerId, s)] as const)),
-  ) as Record<Slot, SlotWeights>;
+  // An injected getWeightsFn hands back weights and nothing about where they came from, so those
+  // picks carry no source (null) rather than a guess.
+  const resolved = Object.fromEntries(
+    await Promise.all(SLOTS.map(async (s) => {
+      if (opts.getWeightsFn) return [s, { weights: await opts.getWeightsFn(ownerId, s), source: null }] as const;
+      return [s, await getWeightsWithSource(ownerId, s)] as const;
+    })),
+  ) as Record<Slot, { weights: SlotWeights; source: WeightsSource | null }>;
+  const resolvedWeights = Object.fromEntries(SLOTS.map((s) => [s, resolved[s].weights])) as Record<Slot, SlotWeights>;
   const slotScore = (slot: Slot, i: number): number => {
     const w = resolvedWeights[slot];
     return w.F * F[i] + w.H * H[i] + w.Q * Q[i] + w.N * N[i] + w.C * C[i];
@@ -1244,6 +1267,7 @@ export async function trialityNext(ownerId: string, now: Date, opts: TrialityOpt
         runnerUpScore: runnerKey ? runnerKey[1] : null,
       },
       evidenceRows: histCounts[best],
+      weightsSource: resolved[slot].source,
     });
   }
 

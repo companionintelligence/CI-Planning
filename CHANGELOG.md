@@ -154,6 +154,11 @@ version at `GET /api/health` (`release`).
   stored VAPID pair so a pair sealed by an earlier test file cannot leave push dormant.
 
 ### Added
+- **Triality now records which weights ranked each suggestion.** Every suggestion it shows is stamped `learned`
+  (the weekly pass had tuned that slot's weights), `defaults` (it had not) or `defaults_invalid` (a stored row
+  was unusable, so the defaults were used). Until now the log could not tell the two apart, so a change in how
+  often you accept suggestions could not be linked to the learning or ruled out. Older rows stay unstamped, and the
+  stamp does not change what is suggested. No screen shows the split yet.
 - **Time Blocks now teach the category learning too.** When the Describe-it line picks categories for a Time
   Block and you change them before pressing Add, or change them on the block later, that is recorded as a
   correction, the way it already was for tasks and habits. The log now says whether a row is about a task or a Time
