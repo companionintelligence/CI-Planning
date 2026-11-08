@@ -1043,7 +1043,7 @@ deployment option yet — see [Environment variables](#environment-variables).
 Migrations produce the tables below. The authoritative, ordered migration list — and
 therefore the current head — is
 [`server/src/db/migrations/index.ts`](server/src/db/migrations/index.ts); at the time
-of writing (2026-11-01) `main` is at `0173_classification_entity_kind`, the 169th migration (the
+of writing (2026-11-01) `main` is at `0176_motivation_recap_pref`, the 172nd migration (the
 numbering skips 0009, 0119, 0159 and 0160).
 
 | Table | Purpose |
@@ -1074,7 +1074,7 @@ numbering skips 0009, 0119, 0159 and 0160).
 | `day_types` · `day_of_week_map` · `day_assignments` | Which day-type a date is (0068): a per-date assignment beats the weekly map, which beats the weekend heuristic. The resolved key selects the `pattern_blocks` windows Auto places into |
 | `tag_prefs` | Per-owner × per-tag config, partitioned by `kind` (`direction` \| `category`): shared `color_token`/`default_minutes`, plus direction-only `auto_fill`/`reminder_offsets`/`icon_shape`/`show_open_time` (whether a direction's windows count in Today's OPEN TIME summary, default on; 0170); merged from `pattern_prefs` + `category_prefs` (0097). `category` rows are the six Balance-dimension hues (0134) |
 | `flight_plan` | Staged task list for the two-step Auto (select → schedule); composite PK `(owner_id, task_id)` with `owner_id` `TEXT NOT NULL` (0093) |
-| `scheduling_prefs` | Focus/break bounds, `capacity_hours_per_week` (default 56; replaces the retired `workday_start`/`workday_end` window — per-direction windows live in `pattern_blocks`; 0156), model overrides, feature flags (including `llm_thinking_enabled`, 0155, and `balance_bias_enabled`, default on, 0164), `recurrence_horizon_days` (materialization ceiling, default 7; 0091), `sleep_hours_per_week` (default 63 — reserved as unschedulable; 0128), and the **ingestion windows** `memory_window_days` / `email_lookback_days` (0147) |
+| `scheduling_prefs` | Focus/break bounds, `capacity_hours_per_week` (default 56; replaces the retired `workday_start`/`workday_end` window — per-direction windows live in `pattern_blocks`; 0156), model overrides, feature flags (including `llm_thinking_enabled`, 0155, `balance_bias_enabled`, default on, 0164, and `motivation_recap_enabled`, default off, 0176), `recurrence_horizon_days` (materialization ceiling, default 7; 0091), `sleep_hours_per_week` (default 63 — reserved as unschedulable; 0128), and the **ingestion windows** `memory_window_days` / `email_lookback_days` (0147) |
 | `app_config` | Server-owned singleton config set in-app rather than via env — Google connection setup + the auto-provisioned Web Push VAPID keypair (0124) |
 | `life_priorities` | Life-priorities self-audit per (owner, category) — satisfaction · importance · target hours/week; backs `/priorities` + `/balance` (0127). `/balance` also joins tasks by their `entity_categories` to show each dimension's related open tasks (0134) |
 | `scheduled_jobs` | Croner job registry (name, cron expression, enabled) |
@@ -1104,7 +1104,7 @@ numbering skips 0009, 0119, 0159 and 0160).
 | `estimate_calibration` | Per-owner bias stats (median actual/estimated ratio + quartiles) recomputed nightly (01:30) by the `calibrate_estimates` job (Phase N, 0083; scope columns + the move off a weekly cron, 0107) |
 | `calibration_combo_pins` | Time-Sense (Phase Z) tag-combo confirmations — the system only ever *suggests* a divergent tag combo, computed on demand; a pinned row is the owner's explicit accept, and only pinned refs get a `tag_combo` row in `estimate_calibration` (0107) |
 | `calibration_history` | Append-only calibration trend — one row per (owner, scope, day) written by the same job; the rollup above is regenerable, this table is never recomputed or pruned (0138) |
-| `triality_log` | Append-only Triality outcome log — one row per suggestion **shown**, stamped at most once more when it is opened / staged / dismissed. Each row keeps that pick's full per-component score breakdown as JSON, which is what makes the weekly weight calibration evidence-based rather than guesswork; never recomputed, never pruned (0140). A `confidence` reading is stamped at *show* time (0144) — reported, never fed back into ranking; `NULL` means "shown before that column existed" permanently, and readers must exclude those rows rather than coerce them |
+| `triality_log` | Append-only Triality outcome log — one row per suggestion **shown**, stamped at most once more when it is opened / staged / dismissed. Each row keeps that pick's full per-component score breakdown as JSON, which is what makes the weekly weight calibration evidence-based rather than guesswork; never recomputed, never pruned (0140). A `confidence` reading is stamped at *show* time (0144) — reported, never fed back into ranking; `NULL` means "shown before that column existed" permanently, and readers must exclude those rows rather than coerce them. A `weights_source` (0174) is stamped beside it: `learned` when a `triality_weights` row ranked the pick, `defaults` when there was none, `defaults_invalid` when a row existed but could not be used; `NULL` is again "before the stamp". `motivation` (0175) is stamped too: the me / us / them label the suggested task carried, or `none` when it had none; `NULL` for rows shown before it. Descriptive only: ranking never reads it |
 | `triality_weights` | Learned per-(owner, slot) Triality weights — regenerable, replaced wholesale by the weekly `calibrate_triality` job. A missing row means "score on the defaults", so deleting an owner's rows is the reset switch; the log above survives it (0142) |
 | `classification_log` | Append-only evidence for the parse/classify LLM's `category`/`motivation` picks — what the model said, what the owner ultimately settled on (`NULL` until corrected), and the text judged; never recomputed, never pruned; `entity_kind` says whether the id is a task or a Time Block (Phase 8, 0149, 0173) |
 | `classification_exemplars` | Regenerable few-shot retrieval index the classify prompts read (quick add and the Describe-it preview by frequency, memory enrichment by similarity), rebuilt wholesale per owner by the weekly `calibrate_classification` job; deleting an owner's rows resets the adaptation without losing the log above (0149) |
@@ -1689,6 +1689,14 @@ behind. Tap 1 then reads a pool of up to 60 open tasks instead of 20 and takes t
 dimensions' tasks first. The same dimensions lead the day's authored order ahead of the plain
 deadline/priority sort, in Balanced and Hands-off but not Cautious.
 
+**Me, us, them in the weekly recap.** Off by default; Settings → Preferences → "Me, us, them in the weekly recap"
+(`motivation_recap_enabled`). On, the recap ("Review past data" in Plan my week) adds, for last week and for each
+category, the timed hours split into me, us, them and unlabeled. It counts finished time entries, labeled by the
+task's current me / us / them label, with the same category join the Balance numbers use. Unlabeled time is shown on
+its own and is never counted as us. A task counts in each of its categories, so category rows can add up to more than
+the week; the "Whole week" row counts every timed minute once. Read-only, no model, and the setting does not change
+what Triality suggests or how Auto plans.
+
 ### How a day gets packed
 
 Each pass places into a window; every pass flows around the same live obstacle set, so
@@ -1952,7 +1960,7 @@ consistent snapshot.
 ## Change set — August 2026 (migrations 0148–0150)
 
 Everything above describes the app **as it runs on `main`**, which is at migration head
-`0173_classification_entity_kind` (v4.2, checked 2026-11-02). This section is the narrative description of
+`0176_motivation_recap_pref` (v4.2, checked 2026-11-08). This section is the narrative description of
 the change set that took the head from 0147 to 0150 on 2026-08-14: closing a locking gap on
 synced calendar blocks, plus a new learning loop that lets the parse/classify LLM improve
 from the owner's own corrections. Everything in it is still true of `main`. What shipped
@@ -2069,9 +2077,9 @@ disagree about the set: `sqliteUtcToISO()` folded into `localDateInTZ` server-si
 the same normalization in `isCreatedOnDay` client-side. A no-op for the proper ISO strings
 every other caller passes.
 
-### Since then — migrations 0151–0173 and what else shipped
+### Since then — migrations 0151–0176 and what else shipped
 
-Migrations 0151–0171 landed between 2026-08-16 and 2026-08-30, 0172 on 2026-10-21 and 0173 on 2026-11-02.
+Migrations 0151–0171 landed between 2026-08-16 and 2026-08-30, 0172 on 2026-10-21, 0173 on 2026-11-02, 0174 on 2026-11-07 and 0175 and 0176 on 2026-11-08.
 Numbers 0159 and 0160 were never used.
 
 - **0151–0154 · People on work.** A per-owner `people` directory (`person_emails` for
@@ -2102,6 +2110,15 @@ Numbers 0159 and 0160 were never used.
   direction (Home windows used to be left out)
 - **0171 · The trust dial is an ordering policy.** `planning_mode` no longer follows
   `trust_mode`; owners who relied on Hands-off implying Smart were pinned to `smart`
+- **0176 · Me, us, them in the weekly recap.** `scheduling_prefs.motivation_recap_enabled`, off by default
+  (Settings → Preferences). On, the weekly recap adds how last week's timed hours split between work for
+  you, for us and for them, per category.
+- **0175 · Triality motivation stamp.** `triality_log.motivation` (`me`, `us`, `them` or `none`; `NULL` for older
+  rows), the label the suggested task carried when it was shown. Triality already read the label; now the log
+  keeps it.
+- **0174 · Triality weights source.** `triality_log.weights_source` (`learned`, `defaults` or
+  `defaults_invalid`; `NULL` for older rows), stamped when a suggestion is shown, so acceptance can be
+  split by whether learned weights ranked it.
 - **0173 · Classification log entity kind.** `classification_log.entity_kind` (`task` or `time_block`,
   default `task`), so a Time Block's category picks and corrections are logged next to a task's.
 - **0172 · Invite-code sign-up.** `signup_codes`; with `AUTH_SIGNUP=invite` (the default) an
@@ -2120,8 +2137,8 @@ Release notes from 4.2.0 on are in [CHANGELOG.md](CHANGELOG.md); earlier changes
 
 The latest git tag is `v4.2.2` (2026-10-29). The root `package.json` still reads `4.2.0`,
 and the container image reports the version it was built with (`CI_PLANNING_VERSION`, set
-from the tag) in `GET /api/health`. The migration head is `0173_classification_entity_kind`: 169
-migrations, 0001–0173, with no files for 0009, 0119, 0159 or 0160; the ordered list in
+from the tag) in `GET /api/health`. The migration head is `0176_motivation_recap_pref`: 172
+migrations, 0001–0176, with no files for 0009, 0119, 0159 or 0160; the ordered list in
 `server/src/db/migrations/index.ts` is authoritative. `main` is four commits past `v4.2.2`
 (the iOS and Android shells, the polling endpoint they use, and a test fix). Release notes
 are in [CHANGELOG.md](CHANGELOG.md).
@@ -2129,7 +2146,7 @@ are in [CHANGELOG.md](CHANGELOG.md).
 **Working today:**
 
 - Koa + TypeScript backend serving both the API and the built client on port 3848
-- SQLite schema (migrations 0001 → 0173 — the ordered list in
+- SQLite schema (migrations 0001 → 0176 — the ordered list in
   `server/src/db/migrations/index.ts` is authoritative): tasks, subtasks, time
   blocks, tags, entity_tags, tag_directions, patterns, pattern_blocks, tag_prefs,
   flight_plan, daily_plan, daily_recap, possible_tasks, scheduling_prefs,
@@ -2829,7 +2846,7 @@ This table lists the notable endpoints, not every route; the routers are in
 | GET | `/api/days/:date/conflicts` | Tasks now outside their direction's windows (Phase 7) |
 | GET | `/api/days/:date/reflow/preview` | Exactly what a confirmed reflow would do — read-only |
 | POST | `/api/days/:date/reflow/apply` | The confirmation; the only mutating path of the three |
-| GET | `/api/plan-week/review?anchor=` | **Plan my week** — deterministic weekly recap (defaults to the week that just ended); LLM-free |
+| GET | `/api/plan-week/review?anchor=` | **Plan my week** — deterministic weekly recap (defaults to the week that just ended); LLM-free. With `motivation_recap_enabled` on it also carries `motivation_balance`: timed me / us / them minutes per category (the key is absent when off) |
 | GET | `/api/plan-week/candidates` | Candidate tasks/gaps the assistant's branches can offer |
 | POST | `/api/plan-week/next-step` | Phrase the next question + its fixed 3 options through the local LLM, with a deterministic fallback |
 | POST | `/api/plan-week/parse` | Parse a free-text answer within a Plan-my-week session |

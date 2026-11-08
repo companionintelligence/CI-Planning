@@ -1578,6 +1578,7 @@ export interface Prefs {
   ambient_color_enabled?: boolean; // depletion + breathing animation (arm-derived)
   calibration_loop_enabled?: boolean; // estimate prompt + scoped nudge (§2)
   balance_bias_enabled?: boolean; // balance-targets wave: bias gate (default true)
+  motivation_recap_enabled?: boolean; // 0176: me / us / them block in the weekly recap (default false)
   z_experiment_arm?: 'A' | 'B' | 'C' | 'D' | null; // fixed A/B bucket, server-assigned; read-only
   day_theme?: Record<string, string>; planning_mode: string;
   timezone?: string; planning_horizon_days?: number;
@@ -2125,6 +2126,25 @@ export interface PlanWeekReview {
   stars: DayStar[];
   note_dates: string[];
   sessions: PlanningSession[];
+  /** Present only when the owner turned on `motivation_recap_enabled` (0176). */
+  motivation_balance?: MotivationBalance;
+}
+
+/** Timed minutes by who the work was for. `unlabeled` is time on tasks with no label, never `us`. */
+export interface MotivationMinutes {
+  me: number; us: number; them: number; unlabeled: number;
+  /** me + us + them + unlabeled. */
+  total: number;
+}
+export interface MotivationBalanceCategory extends MotivationMinutes { category: string }
+/** The recap's me / us / them block (server: services/motivation-balance.ts). */
+export interface MotivationBalance {
+  week_start: string;
+  basis: 'timed';
+  /** Most minutes first. A task's minutes count in each of its categories, so rows can add up to
+   *  more than the week; `overall` counts each entry once. */
+  categories: MotivationBalanceCategory[];
+  overall: MotivationMinutes;
 }
 
 /**
