@@ -59,12 +59,14 @@ interface SettingsForm {
   // 0164 (balance-targets wave, bal-2): bias gate — nudges auto-planning toward life
   // dimensions running behind their weekly target. NOT a Time-Sense channel; default ON.
   balance_bias_enabled: boolean;
+  // 0176: me / us / them balance block in the weekly recap. Opt-in; default OFF.
+  motivation_recap_enabled: boolean;
 }
 
 /** The boolean fields of the form — for the reusable Toggle. */
 type BoolField =
   | 'auto_fill_workday' | 'plan_allday_always' | 'plan_daylong_for_promoted' | 'plan_autofill_gaps' | 'concept_autosurface' | 'recall_keeps_pattern' | 'enable_routines' | 'enable_rituals' | 'time_sense_enabled'
-  | 'focus_ritual_enabled' | 'haptic_cues_enabled' | 'ambient_color_enabled' | 'calibration_loop_enabled' | 'triality_enabled' | 'llm_thinking_enabled' | 'balance_bias_enabled';
+  | 'focus_ritual_enabled' | 'haptic_cues_enabled' | 'ambient_color_enabled' | 'calibration_loop_enabled' | 'triality_enabled' | 'llm_thinking_enabled' | 'balance_bias_enabled' | 'motivation_recap_enabled';
 
 const DEFAULTS: SettingsForm = {
   auto_fill_workday: true,
@@ -87,6 +89,7 @@ const DEFAULTS: SettingsForm = {
   triality_enabled: false,
   capacity_hours_per_week: 56,
   balance_bias_enabled: true,
+  motivation_recap_enabled: false,
 };
 
 /** Minute-of-day -> "9 AM" / "12 PM" / "8 PM". 1440 is the end of the day, not 12 AM
@@ -261,6 +264,7 @@ export function Settings() {
       triality_enabled:           p.triality_enabled ?? false,
       capacity_hours_per_week:    p.capacity_hours_per_week ?? 56,
       balance_bias_enabled:       p.balance_bias_enabled ?? true,
+      motivation_recap_enabled:   p.motivation_recap_enabled ?? false,
     });
   });
 
@@ -1201,6 +1205,11 @@ export function Settings() {
             <div class="mt-4 pt-3 border-t border-border">
               <Toggle field="balance_bias_enabled" label="Balance bias"
                 hint="Nudge auto-planning toward life dimensions running behind their weekly target." />
+            </div>
+            {/* 0176: the me / us / them block in the weekly recap. Opt-in, default off. */}
+            <div class="mt-4 pt-3 border-t border-border">
+              <Toggle field="motivation_recap_enabled" label="Me, us, them in the weekly recap"
+                hint="Show how last week's timed hours split between work for you, for us and for them, per category. Off by default." />
             </div>
             {/* 0156: replaces workday_start/workday_end as the source for the AI-authoring
                 "capacity today" hint — not a placement window, just a weekly total. */}

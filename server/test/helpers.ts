@@ -185,7 +185,8 @@ export function resetDb(): void {
       triality_enabled = 0,
       sleep_hours_per_week = 63,
       capacity_hours_per_week = 56,
-      balance_bias_enabled = 1;
+      balance_bias_enabled = 1,
+      motivation_recap_enabled = 0;
   `);
 }
 

@@ -138,6 +138,9 @@ export class SchedulingPrefsEntity {
   @Column({ name: 'balance_bias_enabled', type: 'int', nullable: true })
   balanceBiasEnabled!: number | null;
 
+  @Column({ name: 'motivation_recap_enabled', type: 'int', nullable: true })
+  motivationRecapEnabled!: number | null;
+
   @Column({ name: 'z_experiment_arm', type: 'text', nullable: true })
   zExperimentArm!: string | null;
 

@@ -2,6 +2,7 @@ import { createResource, For, Show } from 'solid-js';
 import { ChevronLeft } from 'lucide-solid';
 import { api } from '../lib/api.js';
 import { WeeklyReview } from './WeeklyReview.js';
+import { MotivationBalanceBlock } from './MotivationBalanceBlock.js';
 import type { BranchProps } from './PlanWeekAssistant.js';
 
 /**
@@ -44,6 +45,12 @@ export function PlanWeekReviewBranch(props: BranchProps) {
           {(r) => (
             <div class="flex flex-col gap-3 max-h-72 overflow-y-auto">
               <WeeklyReview data={r().week} calibration={r().calibration} />
+
+              {/* Opt-in (Settings → "Me, us, them in the weekly recap"). The server sends no
+                  `motivation_balance` key at all while it is off, so off renders nothing here. */}
+              <Show when={r().motivation_balance}>
+                {(mb) => <MotivationBalanceBlock data={mb()} />}
+              </Show>
 
               {/* Five-star days — one line per day that actually scored. */}
               <Show when={r().stars.some((s) => s.total > 0)}>
