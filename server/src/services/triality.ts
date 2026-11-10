@@ -1102,8 +1102,8 @@ export async function logShown(
   const tz = await ownerTimezone(ownerId);
   const localDate = localDateInTZ(now.toISOString(), tz);
   const insert = store().prepare(
-    `INSERT INTO triality_log (id, owner_id, shown_at, local_date, slot, action_kind, action_ref, scores, confidence, weights_source)
-     VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+    `INSERT INTO triality_log (id, owner_id, shown_at, local_date, slot, action_kind, action_ref, scores, confidence, weights_source, motivation)
+     VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
   );
   // for-of, not .map: an async callback would hand every caller a promise where it
   // expects a log id, and the ids are what stampOutcome is later keyed on.
@@ -1120,10 +1120,21 @@ export async function logShown(
       JSON.stringify({ ...p.scores, ternary: p.ternary }),
       confidenceJson[i] ?? null,
       p.weightsSource ?? null,
+      motivationStamp(p.motivation),
     ))!;
     ids.push(row.id);
   }
   return ids;
+}
+
+/**
+ * What `triality_log.motivation` records for a pick (0175): the candidate's me / us / them label,
+ * or 'none' when it had none. Anything else (a stray value in a legacy row) is 'none' too, so the
+ * column only ever holds the four values readers expect. NULL is reserved for rows shown before the
+ * stamp existed. Exported for tests.
+ */
+export function motivationStamp(m: Candidate['motivation'] | string | undefined): 'me' | 'us' | 'them' | 'none' {
+  return m === 'me' || m === 'us' || m === 'them' ? m : 'none';
 }
 
 export type Outcome = 'opened' | 'staged' | 'dismissed';

@@ -346,6 +346,9 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   // Time-Sense channel; the suggest surface and weekly snapshot are deliberately NOT
   // gated by this flag.
   balanceBiasEnabled: integer('balance_bias_enabled', { mode: 'boolean' }).notNull().default(true),
+  // 0176: the me / us / them balance block in the weekly recap. Default OFF; off means the
+  // recap payload is byte-identical to before and the block is never computed.
+  motivationRecapEnabled: integer('motivation_recap_enabled', { mode: 'boolean' }).notNull().default(false),
 });
 
 export const tags = sqliteTable('tags', {

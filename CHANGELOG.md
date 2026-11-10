@@ -159,6 +159,15 @@ version at `GET /api/health` (`release`).
   was unusable, so the defaults were used). Until now the log could not tell the two apart, so a change in how
   often you accept suggestions could not be linked to the learning or ruled out. Older rows stay unstamped, and the
   stamp does not change what is suggested. No screen shows the split yet.
+- **Triality now records who each suggestion was for.** Every suggestion it shows is stamped with the me / us /
+  them label its task carried at that moment (`none` when the task had none). Triality already used the label to
+  rank; the log kept only which task, so the label could only be looked up later, after you may have changed it.
+  Older rows stay unstamped, and the stamp does not change what is suggested. No screen shows it yet.
+- **The weekly recap can show a me / us / them balance per category.** Off by default; turn it on in Settings →
+  Preferences ("Me, us, them in the weekly recap"). The recap then adds how last week's timed hours split between
+  work for you, for us and for them, for the whole week and for each category, with time on unlabeled tasks shown
+  separately (never counted as us). A task counts in each of its categories, so the category rows can add up to
+  more than the week. With the setting off nothing is computed and the recap is unchanged.
 - **Time Blocks now teach the category learning too.** When the Describe-it line picks categories for a Time
   Block and you change them before pressing Add, or change them on the block later, that is recorded as a
   correction, the way it already was for tasks and habits. The log now says whether a row is about a task or a Time
