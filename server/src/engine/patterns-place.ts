@@ -27,7 +27,7 @@ import { occurrencesBetween, parseRule } from './recurrence.js';
 import { taskTagNames, routineDerivedTags, syncLeveledEntityTags } from '../services/tags.js';
 import { mirrorEnginePlacement } from '../services/block-task-sync.js';
 import {
-  getPatternBlocks,
+  getPatternBlocksForDate,
   directionWindowsByName,
   FALLBACK_FILL_DIRECTION_NAMES,
 } from '../services/pattern-blocks.js';
@@ -133,7 +133,7 @@ async function directionWindows(
   directionNames: string[],
 ): Promise<{ startMs: number; endMs: number }[]> {
   if (directionNames.length === 0) return [];
-  const byTagId = await getPatternBlocks(owner, await resolveDayType(owner, date));
+  const byTagId = (await getPatternBlocksForDate(owner, date)).windows;
   const ids = Object.keys(byTagId);
   if (ids.length === 0) return [];
   const dirTags = (await store()
@@ -223,7 +223,7 @@ export async function placePatternOnDay(
         // min..max span, so placement cannot land in the gap between them; empty ranges
         // leave `windows` empty, which the length check below turns into a clean no-op.
         const dayType = await resolveDayType(owner, date);
-        const ranges = await directionWindowsByName(owner, dayType, FALLBACK_FILL_DIRECTION_NAMES);
+        const ranges = await directionWindowsByName(owner, dayType, FALLBACK_FILL_DIRECTION_NAMES, date);
         windows = ranges.map((r) => ({
           startMs: Date.parse(zonedWallTimeToUTC(date, r.start_time, tz)),
           endMs: Date.parse(zonedWallTimeToUTC(date, r.end_time, tz)),

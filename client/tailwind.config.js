@@ -15,12 +15,22 @@ export default {
         heading: ['Manrope', 'system-ui', 'sans-serif'],
         mono:    ['"Source Code Pro"', 'ui-monospace', 'monospace'],
       },
-      // Radius scale keyed off the global --radius token (CI-Hub: 0.625rem).
+      // Canonical app radius scale. Legacy utility names intentionally collapse
+      // onto five values; see docs/color-styling-rules.md.
       borderRadius: {
-        sm: 'calc(var(--radius) - 4px)',
-        md: 'calc(var(--radius) - 2px)',
-        lg: 'var(--radius)',
-        xl: 'calc(var(--radius) + 4px)',
+        none: 'var(--radius-0)',
+        DEFAULT: 'var(--radius-3)',
+        xs: 'var(--radius-3)',
+        sm: 'var(--radius-3)',
+        md: 'var(--radius-3)',
+        lg: 'var(--radius-3)',
+        xl: 'var(--radius-8)',
+        '2xl': 'var(--radius-8)',
+        '3xl': 'var(--radius-30)',
+        '4xl': 'var(--radius-30)',
+        '5xl': 'var(--radius-30)',
+        full: 'var(--radius-3)',
+        circle: 'var(--radius-999)',
       },
       colors: {
         // ── CI-Hub semantic design tokens (shared org system; flip light/dark via CSS vars) ──

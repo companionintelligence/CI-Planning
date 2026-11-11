@@ -1,4 +1,5 @@
 import { createSignal, createEffect, Show, createResource, For, onMount } from 'solid-js';
+import { useSearchParams } from '@solidjs/router';
 import { ViewHeader } from '../components/ViewHeader.js';
 import { BellRing, Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, Database, AlertTriangle, Users, KeyRound, ScrollText, Eye, FileJson, FileText, Mail, Ticket } from 'lucide-solid';
 import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast, texturesEnabled, setTexturesEnabled, focusAppearance, setFocusAppearance, plannerAxisState, setPlannerCollapseBounds, integrations, refetchIntegrations, recheckIntegrations, aiAvailable, connections, refetchConnections, openOnboardingAt, openTimeRange, setOpenTimeRange, refetchPatternTypes,
@@ -103,7 +104,11 @@ function fmtHourLabel(min: number): string {
 }
 
 export function Settings() {
+  const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = createSignal<'profile' | 'preferences' | 'connections' | 'learning' | 'logs'>('profile');
+  createEffect(() => {
+    if (searchParams.tab === 'preferences') setActiveTab('preferences');
+  });
   const [form, setForm] = createSignal<SettingsForm>({ ...DEFAULTS });
 
   // V8 — account (local sign-in only): the backup reset-email. Fetch auth config + the
@@ -331,9 +336,9 @@ export function Settings() {
     <label class="flex items-start gap-2 cursor-pointer select-none">
       <button type="button" role="switch" aria-checked={form()[props.field]}
         onClick={() => setField(props.field, !form()[props.field])}
-        class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+        class="relative w-9 h-5 rounded-sm transition-colors flex-shrink-0 mt-0.5"
         classList={{ 'bg-primary': form()[props.field], 'bg-muted border border-border': !form()[props.field] }}>
-        <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform"
+        <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-circle bg-card transition-transform"
           classList={{ 'translate-x-4': form()[props.field] }} />
       </button>
       <div>
@@ -1014,7 +1019,7 @@ export function Settings() {
                             {!a.username ? ' · signs in via Companion Portal' : ''}
                           </span>
                           <Show when={a.username && !a.hasPassword}>
-                            <span class="text-[10px] px-1.5 py-0.5 ml-2 rounded-full bg-amber-500/15 text-amber-400">invite pending</span>
+                            <span class="text-[10px] px-1.5 py-0.5 ml-2 rounded-sm bg-amber-500/15 text-amber-400">invite pending</span>
                           </Show>
                         </div>
                         <div class="flex items-center gap-1.5 shrink-0">
@@ -1096,7 +1101,7 @@ export function Settings() {
                             <div class="min-w-0 flex items-center gap-2 flex-wrap">
                               <span class="text-foreground truncate">{c.note ?? 'Untitled code'}</span>
                               <span
-                                class="text-[10px] px-1.5 py-0.5 rounded-full"
+                                class="text-[10px] px-1.5 py-0.5 rounded-sm"
                                 classList={{
                                   'bg-emerald-500/15 text-emerald-400': c.status === 'active',
                                   'bg-muted text-muted-foreground': c.status === 'used',
@@ -1186,7 +1191,7 @@ export function Settings() {
         <Show when={activeTab() === 'preferences'}>
 
           {/* Schedule Patterns — per-direction availability windows */}
-          <section class="card">
+          <section id="schedule-patterns" class="card">
             <div class="flex items-center justify-between mb-1">
               <div class="section-label" title="Define day types, assign them to each weekday, and set per-direction availability windows. Auto places direction-tagged tasks only inside these windows. Changes save as you make them.">Schedule Patterns</div>
               <button type="button" onClick={doSave} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
@@ -1288,9 +1293,9 @@ export function Settings() {
             <label class="flex items-start gap-2 cursor-pointer select-none">
               <button type="button" role="switch" aria-checked={texturesEnabled()}
                 onClick={() => setTexturesEnabled(!texturesEnabled())}
-                class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+                class="relative w-9 h-5 rounded-sm transition-colors flex-shrink-0 mt-0.5"
                 classList={{ 'bg-primary': texturesEnabled(), 'bg-muted border border-border': !texturesEnabled() }}>
-                <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform"
+                <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-circle bg-card transition-transform"
                   classList={{ 'translate-x-4': texturesEnabled() }} />
               </button>
               <div>
@@ -1419,9 +1424,6 @@ export function Settings() {
                   </label>
                 </div>
 
-                <Toggle field="plan_allday_always" label="All-day Plans" hint="Always allow creating all-day Plans." />
-                <Toggle field="plan_daylong_for_promoted" label="Day-long when promoted" hint="A promoted Concept becomes a day-long Plan." />
-
                 <label class="flex flex-col gap-1">
                   <span class="text-[11px] text-muted-foreground">Planning horizon (days)</span>
                   <input type="number" class="input py-1 text-sm" min={1} max={60} step={1}
@@ -1430,7 +1432,7 @@ export function Settings() {
 
                 <div class="pt-2 border-t border-border mt-auto">
                   <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Autoscheduling</div>
-                  <Toggle field="plan_autofill_gaps" label="Auto-fill free gaps" hint="Let Auto place Plans into open time." />
+                  <Toggle field="plan_autofill_gaps" label="Auto-fill free gaps" hint="Let Auto place matching tasks into open gaps inside Scheduled Blocks." />
                   <div class="flex gap-3 mt-2">
                     <label class="flex flex-col gap-1 flex-1">
                       <span class="text-[11px] text-muted-foreground">Max focus (min)</span>
@@ -1449,11 +1451,11 @@ export function Settings() {
               {/* ── CONCEPT ── unscheduled goal (start day + duration) */}
               <div class="rounded-xl border border-border p-3 flex flex-col gap-3">
                 <div class="flex items-center justify-between">
-                  <span class="text-sm font-semibold text-foreground">Someday Block</span>
+                  <span class="text-sm font-semibold text-foreground">Someday Task</span>
                   <Pentagon size={15} class="text-muted-foreground" />
                 </div>
                 <div class="border-t-2 border-dashed border-muted-foreground" />
-                <p class="text-[11px] text-muted-foreground -mt-1.5">A goal with a start day + estimate; no set time until Auto places it.</p>
+                <p class="text-[11px] text-muted-foreground -mt-1.5">An unscheduled task idea with a goal day and estimate. It stays off the Flight Plan until you promote it.</p>
 
                 <div>
                   <span class="text-[11px] text-muted-foreground">Default duration</span>
@@ -1477,11 +1479,12 @@ export function Settings() {
                   <span class="text-[11px] text-muted-foreground">Planning horizon (days)</span>
                   <input type="number" class="input py-1 text-sm" min={1} max={365} step={1}
                     value={form().concept_horizon_days} onInput={e => setField('concept_horizon_days', Number(e.currentTarget.value))} />
+                  <span class="text-[10px] text-muted-foreground">Weekly Review includes dated tasks in this horizon, plus undated tasks.</span>
                 </label>
 
                 <div class="pt-2 border-t border-border mt-auto">
-                  <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Autoscheduling</div>
-                  <Toggle field="concept_autosurface" label="Surface on goal day" hint="Show the Concept on its goal start day." />
+                  <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Visibility</div>
+                  <Toggle field="concept_autosurface" label="Show on goal day" hint="Show Someday Tasks in the Planner header on their goal date. This does not schedule them." />
                 </div>
               </div>
 
@@ -1509,9 +1512,9 @@ export function Settings() {
               <Show when={!isNativeShell()}>
                 <label class="flex items-start gap-2 cursor-pointer select-none">
                   <button type="button" role="switch" aria-checked={pushOn()} disabled={pushBusy()} onClick={togglePush}
-                    class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5 disabled:opacity-50"
+                    class="relative w-9 h-5 rounded-sm transition-colors flex-shrink-0 mt-0.5 disabled:opacity-50"
                     classList={{ 'bg-primary': pushOn(), 'bg-muted border border-border': !pushOn() }}>
-                    <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform" classList={{ 'translate-x-4': pushOn() }} />
+                    <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-circle bg-card transition-transform" classList={{ 'translate-x-4': pushOn() }} />
                   </button>
                   <div>
                     <div class="text-sm text-foreground leading-tight">Push notifications</div>
@@ -1522,9 +1525,9 @@ export function Settings() {
               {/* Start-time reminder */}
               <label class="flex items-start gap-2 cursor-pointer select-none">
                 <button type="button" role="switch" aria-checked={remStartOn()} onClick={() => setRemStartOn((v) => !v)}
-                  class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+                  class="relative w-9 h-5 rounded-sm transition-colors flex-shrink-0 mt-0.5"
                   classList={{ 'bg-primary': remStartOn(), 'bg-muted border border-border': !remStartOn() }}>
-                  <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform" classList={{ 'translate-x-4': remStartOn() }} />
+                  <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-circle bg-card transition-transform" classList={{ 'translate-x-4': remStartOn() }} />
                 </button>
                 <div>
                   <div class="text-sm text-foreground leading-tight">Start-time reminder</div>
@@ -1534,9 +1537,9 @@ export function Settings() {
               {/* Advance reminder (advanced timer) */}
               <label class="flex items-start gap-2 cursor-pointer select-none">
                 <button type="button" role="switch" aria-checked={remAdvOn()} onClick={() => setRemAdvOn((v) => !v)}
-                  class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+                  class="relative w-9 h-5 rounded-sm transition-colors flex-shrink-0 mt-0.5"
                   classList={{ 'bg-primary': remAdvOn(), 'bg-muted border border-border': !remAdvOn() }}>
-                  <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform" classList={{ 'translate-x-4': remAdvOn() }} />
+                  <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-circle bg-card transition-transform" classList={{ 'translate-x-4': remAdvOn() }} />
                 </button>
                 <div class="flex-1">
                   <div class="text-sm text-foreground leading-tight">Advance reminder</div>
@@ -1651,9 +1654,9 @@ export function Settings() {
                 <label class="flex items-start gap-2 cursor-pointer select-none">
                   <button type="button" role="switch" aria-checked={smartMode()}
                     onClick={togglePlanningMode}
-                    class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+                    class="relative w-9 h-5 rounded-sm transition-colors flex-shrink-0 mt-0.5"
                     classList={{ 'bg-primary': smartMode(), 'bg-muted border border-border': !smartMode() }}>
-                    <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform"
+                    <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-circle bg-card transition-transform"
                       classList={{ 'translate-x-4': smartMode() }} />
                   </button>
                   <div>
@@ -1898,10 +1901,10 @@ export function Settings() {
                 role="switch"
                 aria-checked={form().memory_pull_enabled}
                 onClick={() => setField('memory_pull_enabled', !form().memory_pull_enabled)}
-                class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+                class="relative w-9 h-5 rounded-sm transition-colors flex-shrink-0 mt-0.5"
                 classList={{ 'bg-primary': form().memory_pull_enabled, 'bg-muted border border-border': !form().memory_pull_enabled }}
               >
-                <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform"
+                <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-circle bg-card transition-transform"
                   classList={{ 'translate-x-4': form().memory_pull_enabled }} />
               </button>
               <div class="flex-1">
@@ -1939,10 +1942,10 @@ export function Settings() {
                 role="switch"
                 aria-checked={form().memory_sync_enabled}
                 onClick={() => setField('memory_sync_enabled', !form().memory_sync_enabled)}
-                class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+                class="relative w-9 h-5 rounded-sm transition-colors flex-shrink-0 mt-0.5"
                 classList={{ 'bg-primary': form().memory_sync_enabled, 'bg-muted border border-border': !form().memory_sync_enabled }}
               >
-                <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform"
+                <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-circle bg-card transition-transform"
                   classList={{ 'translate-x-4': form().memory_sync_enabled }} />
               </button>
               <div class="flex-1">
@@ -2177,7 +2180,7 @@ export function Settings() {
                           </span>
                           <div class="flex items-center gap-2 shrink-0">
                             <span
-                              class="text-[10px] px-1.5 py-0.5 rounded-full capitalize"
+                              class="text-[10px] px-1.5 py-0.5 rounded-sm capitalize"
                               // The three mapped states — the raw connection_tokens
                               // status ('active'/'revoked'/'error') no longer reaches
                               // the client, so there is nothing else to colour.

@@ -170,7 +170,7 @@ export function PeopleField(props: {
     }
   }
 
-  const pill = 'text-xs px-2.5 py-1 rounded-full border transition-colors whitespace-nowrap';
+  const pill = 'text-xs px-2.5 py-1 rounded-sm border transition-colors whitespace-nowrap';
   const chipOn = 'border-primary text-primary bg-primary/10';
   const chipOff = 'border-border text-muted-foreground hover:text-foreground';
 
@@ -191,12 +191,12 @@ export function PeopleField(props: {
           the per-role pin exists to separate. The people shown are the task's. */}
       <Show when={props.inheriting}>
         <div class="flex flex-wrap items-center gap-1.5" data-inheriting="true">
-          <span class="text-[11px] px-2 py-1 rounded-full border border-dashed border-border text-muted-foreground">
+          <span class="text-[11px] px-2 py-1 rounded-sm border border-dashed border-border text-muted-foreground">
             Following the linked task
           </span>
           <For each={props.value}>
             {(person) => (
-              <span class="text-xs px-2.5 py-1 rounded-full border border-border text-muted-foreground/70 italic">
+              <span class="text-xs px-2.5 py-1 rounded-sm border border-border text-muted-foreground/70 italic">
                 {person.display_name}
               </span>
             )}
@@ -204,7 +204,7 @@ export function PeopleField(props: {
           <button
             type="button"
             onClick={() => props.onOverride?.()}
-            class="text-xs px-2 py-1 rounded-full border border-dashed border-border text-muted-foreground hover:text-foreground transition-colors"
+            class="text-xs px-2 py-1 rounded-sm border border-dashed border-border text-muted-foreground hover:text-foreground transition-colors"
             title="Set this block's own people instead of following the task"
           >
             Override
@@ -251,7 +251,7 @@ export function PeopleField(props: {
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          class="text-xs px-2 py-1 rounded-full border border-dashed border-border text-muted-foreground hover:text-foreground inline-flex items-center gap-1 transition-colors"
+          class="text-xs px-2 py-1 rounded-sm border border-dashed border-border text-muted-foreground hover:text-foreground inline-flex items-center gap-1 transition-colors"
           aria-expanded={open()}
         >
           <Plus size={11} /> Add
@@ -263,7 +263,7 @@ export function PeopleField(props: {
           <button
             type="button"
             onClick={() => props.onInherit!()}
-            class="text-xs px-2 py-1 rounded-full border border-dashed border-border text-muted-foreground hover:text-foreground transition-colors"
+            class="text-xs px-2 py-1 rounded-sm border border-dashed border-border text-muted-foreground hover:text-foreground transition-colors"
             title="Stop overriding, and follow the linked task's people"
           >
             Use task's

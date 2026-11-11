@@ -30,7 +30,7 @@ export function SortControl(props: SortControlProps) {
     // would silently drift the moment `.input`'s padding or type scale changes.
     <div class="flex items-stretch gap-2 self-stretch">
       <div
-        class="inline-flex items-stretch rounded-full border border-border overflow-hidden text-[11px] flex-shrink-0"
+        class="inline-flex items-stretch rounded-sm border border-border overflow-hidden text-[11px] flex-shrink-0"
         role="group"
         title="Priority: highest-priority first. Due Date: nearest due date first."
       >

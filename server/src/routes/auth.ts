@@ -936,25 +936,43 @@ function renderConfirmAccountPage(intent: PortalIntent): string {
 <meta name="robots" content="noindex">
 <title>Create your Companion Planning account</title>
 <style>
-  :root { color-scheme: dark; }
+  :root {
+    color-scheme: dark;
+    /* Self-contained no-JS page; keep its token values aligned with the app style system. */
+    --radius-0: 0px;
+    --radius-3: 3px;
+    --radius-8: 8px;
+    --radius-30: 30px;
+    --radius-999: 999px;
+    --background: #041620;
+    --foreground: #88a29e;
+    --card: #0a222e;
+    --border: #2c676d;
+    --muted-foreground: #8f98a3;
+    --primary: #c5e8dc;
+    --primary-foreground: #041620;
+    --accent: #409b9b;
+    --accent-hi: #58ebbf;
+    --font-sans: 'Manrope', system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
   body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
-         background: #0b1114; color: #e2e8f0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+         background: var(--background); color: var(--foreground); font: 15px/1.5 var(--font-sans); }
   main { width: 100%; max-width: 26rem; padding: 1.5rem; box-sizing: border-box; }
   .brand { text-align: center; margin-bottom: 1.5rem; }
-  .brand .mark { width: 3rem; height: 3rem; margin: 0 auto .75rem; border-radius: 1rem;
-                 background: linear-gradient(135deg, #58ebbf, #409b9b); }
-  .brand .kicker { font-size: 10px; letter-spacing: .2em; text-transform: uppercase; color: #409b9b; font-weight: 500; }
-  .brand .name { font-size: 1.25rem; letter-spacing: .04em; color: #f1f5f9; }
-  .card { background: #121b1f; border: 1px solid #1f2a30; border-radius: .9rem; padding: 1.25rem; }
+  .brand .mark { width: 3rem; height: 3rem; margin: 0 auto .75rem; border-radius: var(--radius-8);
+                 background: linear-gradient(135deg, var(--accent-hi), var(--accent)); }
+  .brand .kicker { font-size: 10px; letter-spacing: .2em; text-transform: uppercase; color: var(--accent); font-weight: 500; }
+  .brand .name { font-size: 1.25rem; letter-spacing: .04em; color: var(--foreground); }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-8); padding: 1.25rem; }
   h1 { font-size: 1rem; margin: 0 0 .5rem; }
-  p { margin: 0 0 .75rem; color: #94a3b8; font-size: .9rem; }
-  .who { color: #e2e8f0; font-weight: 600; }
-  .muted { color: #94a3b8; font-weight: 400; }
+  p { margin: 0 0 .75rem; color: var(--muted-foreground); font-size: .9rem; }
+  .who { color: var(--foreground); font-weight: 600; }
+  .muted { color: var(--muted-foreground); font-weight: 400; }
   form { display: flex; flex-direction: column; gap: .6rem; margin-top: 1rem; }
-  button { font: inherit; border-radius: .6rem; padding: .6rem 1rem; cursor: pointer; border: 1px solid transparent; }
-  .primary { background: #58ebbf; color: #0b1114; font-weight: 600; }
-  .ghost { background: transparent; color: #94a3b8; border-color: #1f2a30; }
-  footer { text-align: center; font-size: 11px; color: #64748b; margin-top: 1rem; }
+  button { font: inherit; border-radius: var(--radius-3); padding: .6rem 1rem; cursor: pointer; border: 1px solid transparent; }
+  .primary { background: var(--primary); color: var(--primary-foreground); font-weight: 600; }
+  .ghost { background: transparent; color: var(--muted-foreground); border-color: var(--border); }
+  footer { text-align: center; font-size: 11px; color: var(--muted-foreground); margin-top: 1rem; }
 </style>
 </head>
 <body>

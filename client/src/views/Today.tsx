@@ -215,7 +215,7 @@ export function Today() {
             >
               <CalendarClock size={16} />
               <Show when={dueBadgeCount() > 0}>
-                <span class="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-[3px] rounded-full bg-destructive text-[9px] leading-[14px] text-white text-center font-semibold">
+                <span class="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-[3px] rounded-sm bg-destructive text-[9px] leading-[14px] text-white text-center font-semibold">
                   {dueBadgeCount()}
                 </span>
               </Show>
@@ -248,9 +248,9 @@ export function Today() {
             <span class={`text-[10px] tabular-nums ${capacityPct() >= 90 ? 'text-destructive' : capacityPct() >= 70 ? 'text-amber-400' : 'text-primary'}`}>
               {durationLabel(capacity()!.scheduled_minutes)} / {durationLabel(capacity()!.workday_minutes)}
             </span>
-            <div class="relative h-1.5 w-32 rounded-full bg-background border border-border overflow-hidden">
+            <div class="relative h-1.5 w-32 rounded-sm bg-background border border-border overflow-hidden">
               <div
-                class="absolute inset-y-0 left-0 rounded-full bg-primary transition-all"
+                class="absolute inset-y-0 left-0 rounded-sm bg-primary transition-all"
                 classList={{ 'bg-amber-400': capacityPct() >= 70, 'bg-destructive': capacityPct() >= 90 }}
                 style={{ width: `${capacityPct()}%` }}
               />
@@ -338,7 +338,7 @@ export function Today() {
 
       {/* Multi-select indicator (Phase F) — appears when items are picked. */}
       <Show when={selection().size > 0 && !routineModal().open}>
-        <div class="fixed bottom-24 left-1/2 -translate-x-1/2 z-30 rounded-full border border-border bg-popover px-4 py-2 shadow-lg flex items-center gap-3 text-xs">
+        <div class="fixed bottom-24 left-1/2 -translate-x-1/2 z-30 rounded-sm border border-border bg-popover px-4 py-2 shadow-lg flex items-center gap-3 text-xs">
           <span class="font-medium text-foreground">{selection().size} selected</span>
           <span class="text-muted-foreground">Shift+= → Routine · Esc to clear</span>
           <button onClick={() => clearSelection()} class="btn-icon"><X size={14} /></button>
@@ -450,7 +450,10 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void; bare?: boolea
   }
 
   const Row = (p: { task: Task; when: string; danger?: boolean; missed?: boolean }) => (
-    <li class="flex items-center">
+    <li
+      class="flex items-center"
+      classList={{ 'border border-dotted border-orange-400': !!p.task.auto_generated && !p.task.human_approved_at }}
+    >
       <button
         class="flex-1 min-w-0 flex items-center gap-2 px-3 py-1.5 text-left text-foreground hover:bg-primary/5 transition-colors"
         classList={{ 'text-xs': !!p.danger, 'text-sm': !p.danger }}
@@ -474,7 +477,7 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void; bare?: boolea
               <button
                 type="button"
                 onClick={() => deferDue(p.task, s.days, s.label)}
-                class="text-[10px] tabular-nums px-1.5 py-0.5 rounded-full border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors"
+                class="text-[10px] tabular-nums px-1.5 py-0.5 rounded-sm border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors"
                 title={`Defer due date ${s.label}`}
               >{s.label}</button>
             )}
@@ -489,7 +492,7 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void; bare?: boolea
               <button
                 type="button"
                 onClick={() => reviveMissed(p.task, s.days, s.label)}
-                class="text-[10px] tabular-nums px-1.5 py-0.5 rounded-full border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors"
+                class="text-[10px] tabular-nums px-1.5 py-0.5 rounded-sm border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors"
                 title={s.days === 0 ? 'Reopen and reschedule for today' : `Reopen and reschedule ${s.label}`}
               >{s.label}</button>
             )}
@@ -524,7 +527,7 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void; bare?: boolea
               type="button"
               aria-expanded={showOverdue()}
               onClick={() => setShowOverdue((v) => !v)}
-              class="inline-flex items-center gap-1.5 rounded-full border border-destructive/40 bg-destructive/5 px-2.5 py-1 text-xs transition-colors hover:border-destructive"
+              class="inline-flex items-center gap-1.5 rounded-sm border border-destructive/40 bg-destructive/5 px-2.5 py-1 text-xs transition-colors hover:border-destructive"
               title={showOverdue() ? 'Hide overdue tasks' : 'Show overdue tasks'}
             >
               <AlertCircle size={12} class="text-destructive" />
@@ -543,7 +546,7 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void; bare?: boolea
               type="button"
               aria-expanded={showMissed()}
               onClick={() => setShowMissed((v) => !v)}
-              class="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/5 px-2.5 py-1 text-xs transition-colors hover:border-amber-500"
+              class="inline-flex items-center gap-1.5 rounded-sm border border-amber-500/40 bg-amber-500/5 px-2.5 py-1 text-xs transition-colors hover:border-amber-500"
               title={showMissed() ? 'Hide missed tasks' : 'Show missed tasks — reopen them with the chips'}
             >
               <AlertCircle size={12} class="text-amber-400" />

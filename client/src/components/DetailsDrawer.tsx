@@ -4,13 +4,14 @@ import { FlightPlan } from './FlightPlan.js';
 import { X, PanelRight, Inbox, Pencil, Sparkles, Check, ChevronDown, ChevronRight, Rocket } from 'lucide-solid';
 import {
   detailsOpen, detailsWidth, setDetailsOpen, setDetailsWidth,
-  drawerTab, setDrawerTab, DETAILS_MIN_W, DETAILS_MAX_W, DETAILS_DEFAULT_W,
+  drawerTab, setDrawerTab, DETAILS_MIN_W, DETAILS_MAX_W, DETAILS_DEFAULT_W, revealDetails,
 } from '../stores/ui.js';
 import { activeTask, activeBlock, activeEntity, clearActiveEntity, setActiveTask, setActiveBlock, setActiveEntity, type ActiveEntity } from '../stores/selection.js';
 import {
   blocks, tasks, taskOf, tags, objectives, suggestions, refetchSuggestions,
   isSuggestionBusy, setSuggestionBusy, connections, showToast, refetchTasks, setElementModal, selectedDay,
   refetchBlocks, refetchFlightPlan, askRecurringScope, isRecurringOccurrence,
+  conflictedBlockIds, refetchDayConflicts, openCloseRitual, patternBlocks,
 } from '../stores/index.js';
 import { api, type Task, type Block, type Tag, type Person, type PossibleTask, type Objective } from '../lib/api.js';
 import { displayTag } from '../lib/tag-tax.js';
@@ -23,6 +24,8 @@ import { PriorityToggle, DateField } from './TaskCard.js';
 import { flattenObjectives } from '../lib/objectives.js';
 import { describeRule } from '../lib/recurrence.js';
 import { rangeUTC } from '../lib/dates.js';
+import { minutesIntoDay } from '../lib/grid.js';
+import { OpenTimeSummary } from './OpenTimeSummary.js';
 import {
   windowFor, inWindow, targetForWindow, groupByTitle, minutesBetween, hoursLabel,
   type RollupPeriod, type TitleGroup,
@@ -576,10 +579,13 @@ function GroupPanel(props: { tag: Tag }) {
 }
 
 function DayPanel(props: { date: string }) {
-  const [resolved] = createResource(() => props.date, (d) => api.dayTypes.resolve(d).catch(() => null));
+  const [resolved] = createResource(
+    () => [props.date, patternBlocks()] as const,
+    ([d]) => api.dayTypes.resolve(d).catch(() => null),
+  );
   const [windows] = createResource(
-    () => resolved()?.key ?? null,
-    (key) => api.patternBlocks.forDay(key).then((r) => r.windows).catch(() => ({})),
+    () => [props.date, patternBlocks()] as const,
+    ([date]) => api.patternBlocks.forDate(date).then((r) => r.windows).catch(() => ({})),
   );
   const directionName = (tagId: string) =>
     (tags() ?? []).find((t) => t.id === tagId)?.name ?? 'unknown';
@@ -587,15 +593,159 @@ function DayPanel(props: { date: string }) {
     name: displayTag(directionName(tagId)),
     n: (ranges as unknown[]).length,
   }));
+
+  // Match Focus: placed task/focus/habit blocks first, then scheduled-for-day tasks
+  // that have no active block. Keep completed placements visible as dimmed history.
+  const dayTasks = createMemo(() => {
+    const placed: Array<{ key: string; task: Task; block?: Block }> = [];
+    const placedTaskIds = new Set<string>();
+    const focusKinds = new Set(['task', 'focus', 'habit']);
+    for (const block of blocks() ?? []) {
+      if (!focusKinds.has(block.block_kind) || block.all_day) continue;
+      const minute = minutesIntoDay(block.start_at, props.date);
+      if (minute < 0 || minute >= 24 * 60) continue;
+      if (['skipped', 'cancelled', 'missed'].includes(block.status)) continue;
+      if (!block.task_id) continue;
+      const task = taskOf(block.task_id);
+      if (!task) continue;
+      placedTaskIds.add(task.id);
+      placed.push({ key: `block:${block.id}`, task, block });
+    }
+    for (const task of tasks() ?? []) {
+      if ((task.scheduled_for ?? '').slice(0, 10) !== props.date) continue;
+      if (task.parent_id || task.status === 'cancelled' || placedTaskIds.has(task.id)) continue;
+      placed.push({ key: `task:${task.id}`, task });
+    }
+    return placed.sort((a, b) => {
+      const minuteOf = (item: { task: Task; block?: Block }) => {
+        if (item.block) return minutesIntoDay(item.block.start_at, props.date);
+        const [hours, minutes] = (item.task.task_time ?? '').split(':').map(Number);
+        return Number.isFinite(hours) && Number.isFinite(minutes) ? hours * 60 + minutes : 24 * 60;
+      };
+      return minuteOf(a) - minuteOf(b);
+    });
+  });
+
+  const rowDone = (item: { task: Task; block?: Block }) =>
+    item.task.status === 'done' || item.block?.status === 'completed' || item.block?.status === 'done';
+
+  function openTask(task: Task) {
+    setActiveTask(task.id);
+    revealDetails();
+  }
+
+  async function toggleTask(item: { task: Task; block?: Block }) {
+    const completed = rowDone(item);
+    try {
+      if (completed) {
+        await api.tasks.update(item.task.id, { status: 'open', completed_at: null });
+      } else {
+        await api.tasks.update(item.task.id, { completed: true });
+        openCloseRitual(item.task, item.block?.id);
+      }
+      refetchTasks();
+      refetchBlocks();
+      refetchDayConflicts();
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    }
+  }
+
+  async function keepConflict(block: Block) {
+    try {
+      await api.blocks.update(block.id, { is_locked: true });
+      refetchBlocks();
+      refetchDayConflicts();
+      showToast('Keeping this task at its current time', 'success');
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    }
+  }
+
+  async function removeConflict(block: Block) {
+    try {
+      await api.blocks.delete(block.id);
+      refetchBlocks();
+      refetchTasks();
+      refetchFlightPlan();
+      refetchDayConflicts();
+      showToast('Task returned to the open list', 'success');
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    }
+  }
+
   return (
     <div class="drawer-body">
-      <div><span class="drawer-pill" data-status="open">{resolved()?.key ?? '…'}</span></div>
       <Group label="Day type">
+        <DayTypeControl date={props.date} hideLabel />
         <dl class="drawer-grid">
           <Field label="Type" when={true}>{resolved()?.key ?? '…'}</Field>
           <Field label="Source" when={resolved()?.source}>{resolved()?.source}</Field>
         </dl>
       </Group>
+      <Group label="Plan">
+        <Show when={dayTasks().length > 0} fallback={<span class="text-xs text-muted-foreground">No tasks scheduled for this day.</span>}>
+          <div class="flex flex-col gap-1">
+            <For each={dayTasks()}>{(item) => {
+              const conflict = () => !!item.block && conflictedBlockIds().has(item.block.id);
+              const done = () => rowDone(item);
+              const range = () => {
+                if (item.block) return `${fmtClock(item.block.start_at)}–${fmtClock(item.block.end_at)}`;
+                if (!item.task.task_time) return 'Unplaced';
+                const [hours, minutes] = item.task.task_time.split(':').map(Number);
+                if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return 'Unplaced';
+                const time = new Date(`${props.date}T${item.task.task_time.length === 5 ? item.task.task_time : '00:00'}:00`);
+                return time.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+              };
+              const priority = () => item.task.priority === 1 ? '10px' : '4px';
+              return (
+                <div
+                  class="relative flex items-start gap-2 border-b border-border/50 py-2 last:border-b-0"
+                  classList={{ 'day-type-conflict-outline': conflict(), 'opacity-45': done() }}
+                  style={{ '--conflict-dash': priority() }}
+                >
+                  <button
+                    type="button"
+                    class="mt-0.5 inline-flex h-4 w-4 flex-shrink-0 items-center justify-center border border-muted-foreground/60 text-muted-foreground hover:border-primary hover:text-primary"
+                    classList={{ 'bg-primary text-primary-foreground border-primary': done() }}
+                    aria-label={done() ? `Reopen ${item.task.title}` : `Complete ${item.task.title}`}
+                    aria-pressed={done()}
+                    onClick={() => void toggleTask(item)}
+                  >
+                    <Show when={done()}><Check size={11} /></Show>
+                  </button>
+                  <div class="min-w-0 flex-1">
+                    <button
+                      type="button"
+                      class="block max-w-full truncate text-left text-xs text-foreground hover:text-primary"
+                      classList={{ 'line-through': done() }}
+                      onClick={() => openTask(item.task)}
+                    >
+                      {item.task.title}
+                    </button>
+                    <div class="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                      <span class="font-mono tabular-nums">{range()}</span>
+                      <Show when={!item.block}><span>· open</span></Show>
+                      <Show when={item.task.priority === 1}><span class="text-primary">P1</span></Show>
+                    </div>
+                    <Show when={conflict() && item.block}>
+                      <div class="mt-1 flex items-center gap-2 text-[10px] text-destructive">
+                        <span>Outside this day’s windows</span>
+                        <Show when={!item.block?.is_locked} fallback={<span class="text-muted-foreground">Kept</span>}>
+                          <button type="button" class="underline underline-offset-2" onClick={() => void keepConflict(item.block!)}>Keep</button>
+                        </Show>
+                        <button type="button" class="underline underline-offset-2" onClick={() => void removeConflict(item.block!)}>Remove</button>
+                      </div>
+                    </Show>
+                  </div>
+                </div>
+              );
+            }}</For>
+          </div>
+        </Show>
+      </Group>
+      <OpenTimeSummary date={props.date} />
       <Group label="Windows">
         <Show when={rows().length > 0} fallback={<span class="text-xs text-muted-foreground">No placement windows configured.</span>}>
           <dl class="drawer-grid">
@@ -679,7 +829,7 @@ function RollupRow(props: {
           {/* The repeat count, as a digit — a recurring task collapses to one row rather
               than N identical ones. Absent at count 1 so a one-off carries no "x1" noise. */}
           <Show when={props.group.count > 1}>
-            <span class="flex-shrink-0 text-[10px] font-mono px-1.5 rounded-full bg-muted text-muted-foreground border border-border">
+            <span class="flex-shrink-0 text-[10px] font-mono px-1.5 rounded-sm bg-muted text-muted-foreground border border-border">
               x{props.group.count}
             </span>
           </Show>
@@ -714,7 +864,7 @@ function RollupRow(props: {
             {props.group.title}
           </span>
           <Show when={props.group.count > 1}>
-            <span class="flex-shrink-0 text-[10px] font-mono px-1.5 rounded-full bg-muted text-muted-foreground border border-border">
+            <span class="flex-shrink-0 text-[10px] font-mono px-1.5 rounded-sm bg-muted text-muted-foreground border border-border">
               x{props.group.count}
             </span>
           </Show>
@@ -1187,13 +1337,9 @@ function ObjectivePanel(props: { objective: Objective }) {
  * (moved off the Planner header, which now carries only the day-type select).
  */
 function DayWindowPanel(props: { date: string }) {
-  const [dayType] = createResource(
-    () => props.date,
-    (date) => api.dayTypes.resolve(date).then((r) => r.key).catch(() => null),
-  );
   const [windows] = createResource(
-    () => dayType() ?? null,
-    (key) => api.patternBlocks.forDay(key).then((r) => r.windows).catch(() => ({})),
+    () => [props.date, patternBlocks()] as const,
+    ([date]) => api.patternBlocks.forDate(date).then((r) => r.windows).catch(() => ({})),
   );
 
   // Re-read on a timer so the panel does not sit on a stale "now" all afternoon. A

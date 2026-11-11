@@ -1,14 +1,31 @@
-# Color Styling Rules
+# Application Style System
 
-All color in the app resolves to a single source of truth: the CSS custom properties in `client/src/index.css`, surfaced to utility classes through `client/tailwind.config.js` (Tailwind v4 loads it with `@config`, `index.css:2`). The system is "deep teal-navy", shared with CI-Hub. Light theme lives on `:root`, dark on `.dark`.
+This is the app's single canonical style document. Components should use the color, typography, and shape rules here rather than add one-off visual tokens. The CSS custom properties in `client/src/index.css` implement the tokens, and `client/tailwind.config.js` exposes them to utility classes. The color system is "deep teal-navy", shared with CI-Hub. Light theme lives on `:root`, dark on `.dark`.
 
 `index.css` first imports the CI-Common canon token layer (`@import "@companionintelligence/tokens/tokens.css"`, `index.css:7`) and then overrides surfaces and text on top of it. `--primary` is never one of the overrides: `pnpm lint:canon` (`ci-lint-canon`) and `client/src/theme-tokens.test.ts` fail if it drifts from the canon values below (phthalo `#0a6358` light, `#c5e8dc` dark).
 
-## Where colors are defined
+## Shape and radius system
 
-- `client/src/index.css` defines the raw color values as CSS variables (semantic tokens, enriched tokens, tag palette) on top of the canon token layer, plus the component styles that consume them.
-- `client/tailwind.config.js` maps those variables to Tailwind utilities (`bg-card`, `text-primary`, `bg-tag-1`, etc.) and defines the constant brand scales (`ci-*`, `accent-*`).
+Only these five corner radii are permitted anywhere in the app:
+
+| Token | Value | Use |
+|---|---:|---|
+| `--radius-0` | `0px` | Scheduled tasks and time blocks; square timeline and calendar items |
+| `--radius-3` | `3px` | Compact cards, controls, pills, and subtle corners |
+| `--radius-8` | `8px` | Outer surfaces and dialogs |
+| `--radius-30` | `30px` | Large sheet corners and deliberately soft display surfaces |
+| `--radius-999` | `999px` | True circles such as dots, avatars, and swatches |
+
+Use the `rounded-*` utility classes; they all resolve through `client/tailwind.config.js` to this scale. Utility names collapse onto the same canonical values: default/`xs`/`sm`/`md`/`lg`/`full` map to 3px, `xl`/`2xl` map to 8px, and `3xl`/`4xl`/`5xl` map to 30px. `none` maps to 0px and the app-specific `circle` utility maps to 999px. Use 3px for pills and compact cards. Do not add arbitrary radius classes or raw radius values. For direct or inline CSS, use the `--radius-*` variables; avoid `inherit` and `calc()` so every radius can be audited against the scale.
+
+Task and time-block representations must be square, including list cards and scheduled calendar/planner shapes. Their detail dialogs and unrelated controls may use the standard surface radius.
+
+## Where styles and color tokens are defined
+
+- `client/src/index.css` defines semantic color variables, the canonical radius scale, and shared component styles.
+- `client/tailwind.config.js` maps those tokens to Tailwind utilities (`bg-card`, `text-primary`, `bg-tag-1`, and `rounded-*`) and defines the constant brand scales (`ci-*`, `accent-*`).
 - `client/src/lib/pattern-meta.ts` and `client/src/lib/textures.ts` pick tokens at runtime (patterns, tags), always referencing tokens, never hex.
+- `server/src/routes/auth.ts` and `server/src/scripts/fixture-portal.ts` contain self-contained HTML pages. Their radius declarations use the same tokens and values because they render without the SPA stylesheet; the fixture keeps its separate palette to mimic an external provider. Inline component styles must use a canonical CSS variable, such as `var(--radius-0)` for square task and block overlays.
 
 ## Semantic tokens (flip with theme)
 
@@ -35,7 +52,10 @@ These are the primary tokens. Use them via Tailwind (`bg-background`, `text-fore
 | `--border` | `oklch(92.9% 0.013 255.508)` | `#2c676d` |
 | `--input` | `oklch(92.9% 0.013 255.508)` | `#6992a2` |
 | `--ring` | `oklch(70.4% 0.04 256.788)` | `#58ebbf` |
-| `--radius` | `0.625rem` | (same) |
+
+## Typography
+
+Manrope is the application font for sans-serif and headings. Source Code Pro is the monospace fallback for times and other tabular/technical values. Use the existing semantic text-size and weight utilities instead of per-component font imports.
 
 ### Chart colors
 
@@ -147,7 +167,3 @@ To keep older utilities themeable, `tailwind.config.js` remaps:
 
 - `surface-950/900/800/700/600/500` onto `--background` / `--sidebar` / `--card` / `--border` / `--input`.
 - `slate-*` text shades onto themed text tokens (50 to 200 prominent headings, 300 to 400 body, 500 to 700 muted, 800 to 950 backgrounds).
-
-## Typography note
-
-Font family is Manrope across the org (`sans` and `heading`), with `Source Code Pro` as the mono fallback.

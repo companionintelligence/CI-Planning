@@ -230,7 +230,7 @@ export function RoutinesPanel() {
     return (
       // #391: the resolved item-first colour is the card's left-edge identity —
       // the same 3px-border idiom TaskCard's direction rail uses.
-      <div class="rounded-lg border border-border bg-card border-l-[3px]" style={{ 'border-left-color': props.color }}>
+      <div class="rounded-none border border-border bg-card border-l-[3px]" style={{ 'border-left-color': props.color }}>
         <div class="flex items-center gap-2 px-3 py-2">
           <button onClick={() => setOpen((v) => !v)} class="text-muted-foreground hover:text-foreground">
             <Show when={open()} fallback={<ChevronRight size={14} />}><ChevronDown size={14} /></Show>
@@ -243,7 +243,7 @@ export function RoutinesPanel() {
           </For>
           <For each={routineChips(props.pattern).ghosts}>
             {(t) => (
-              <span class="text-[10px] px-1.5 py-0.5 rounded-full border border-border/60 text-muted-foreground/80 flex-shrink-0" title="from member tasks">
+              <span class="text-[10px] px-1.5 py-0.5 rounded-sm border border-border/60 text-muted-foreground/80 flex-shrink-0" title="from member tasks">
                 {t}
               </span>
             )}
@@ -392,7 +392,7 @@ export function RoutinesPanel() {
           <div class="flex flex-wrap gap-1 mb-2">
             <For each={props.items}>
               {(item, i) => (
-                <span class="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2 py-0.5 text-xs text-foreground">
+                <span class="inline-flex items-center gap-1 rounded-sm border border-border bg-card px-2 py-0.5 text-xs text-foreground">
                   <Show when={item.kind === 'new'}><Plus size={10} class="text-primary" /></Show>
                   <span class="truncate max-w-40">{item.title}</span>
                   <button onClick={() => removeAt(i())} class="text-muted-foreground hover:text-destructive"><X size={11} /></button>

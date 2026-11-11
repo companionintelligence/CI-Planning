@@ -24,20 +24,21 @@
 import { store } from '../db/store.js';
 import { AUTO_PLACED_SQL, REFLOW_CANDIDATE_SQL } from './mobility.js';
 import { broadcast } from '../routes/sse.js';
-import { serverTimezone, zonedWallTimeToUTC, utcDayBounds, localDateInTZ, todayInTZ } from '../lib/tz.js';
+import { serverTimezone, zonedWallTimeToUTC, utcDayBounds, localDateInTZ, todayInTZ, utcToZonedWallTime } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
 import { inheritContainerDirection, removeEntityTags, entityTagLevels, splitTagString, entityCategoryIds, categoryIdsForOwner } from '../services/tags.js';
 import { localISODate } from '../lib/dates.js';
 import { newId } from '../lib/ids.js';
 import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
 import { mirrorEnginePlacement, revertTaskPlacementStatus, applyTaskPlacementStatus, TERMINAL_BLOCK_STATUS_SQL } from '../services/block-task-sync.js';
-import { getPatternBlocks, directionWindowsByName, FALLBACK_FILL_DIRECTION_NAMES, HOME_DIRECTION_NAME } from '../services/pattern-blocks.js';
+import { getPatternBlocksForDate, directionWindowsByName, FALLBACK_FILL_DIRECTION_NAMES, HOME_DIRECTION_NAME } from '../services/pattern-blocks.js';
 import { resolveDayType } from '../services/day-types.js';
 import { getPatternPrefs } from '../services/pattern-prefs.js';
 import { nestCandidatesInRange, preferredContainers, taskNestCoords } from '../services/auto-nest.js';
 import { logPlacement, slotKeyFor, placementScorer, type CandidateGap } from '../services/placement-learning.js';
 import { dimensionShortfalls, biasLeadDimensions } from '../services/balance-budget.js';
 import { logger } from '../lib/logger.js';
+import { loadSchedulingIntelligence, type TaskSignals } from '../services/scheduling-intelligence.js';
 
 const DEFAULT_EST_MIN = 30;
 const MIN_SESSION_MS = 15 * MS_PER_MIN;
@@ -68,7 +69,9 @@ interface StagedTask {
   scheduled_for: string | null; // AD1: START-day intent (owner-local YYYY-MM-DD)
   task_time: string | null;     // AD1: wall-clock HH:MM pin — placed exactly at (day, time)
   created_at: string | null;    // UTC ISO — read only by the 'new_today' fill order
+  motivation: string | null;
   tags: string[];
+  categories: string[];
 }
 interface PrefsRow {
   timezone: string | null;
@@ -82,6 +85,7 @@ interface PrefsRow {
   // biasLeadDimensionsForFill, which used to issue its own second scheduling_prefs
   // query for just this column.
   balance_bias_enabled: number | null;
+  plan_autofill_gaps: number | null;
 }
 interface PlanRow {
   id: string;
@@ -112,6 +116,14 @@ async function tagsOf(taskId: string): Promise<string[]> {
   return (await entityTagLevels('task', taskId)).map((t) => t.name);
 }
 
+async function categoriesOf(owner: string, taskId: string): Promise<string[]> {
+  const rows = await store().prepare(
+    `SELECT t.name FROM entity_categories ec JOIN tags t ON t.id = ec.category_tag_id
+      WHERE ec.entity_kind = 'task' AND ec.entity_id = ? AND t.owner_id = ? ORDER BY ec.position`,
+  ).all<{ name: string }>(taskId, owner);
+  return rows.map((r) => r.name);
+}
+
 /**
  * Selected staged tasks, ordered by `daily_plan.position` when an authored day plan
  * exists for `date` (Phase M §0 / A1). Tasks with no `daily_plan` row (e.g. added
@@ -121,7 +133,7 @@ async function tagsOf(taskId: string): Promise<string[]> {
 async function selectedStaged(owner: string, date: string): Promise<StagedTask[]> {
   const rows = await store()
     .prepare(
-      `SELECT fp.task_id, t.title, t.estimated_minutes, t.priority, t.due_at, t.scheduled_for, t.task_time, t.created_at
+      `SELECT fp.task_id, t.title, t.estimated_minutes, t.priority, t.due_at, t.scheduled_for, t.task_time, t.created_at, t.motivation
          FROM flight_plan fp
          JOIN tasks t ON t.id = fp.task_id
          LEFT JOIN daily_plan dp
@@ -131,8 +143,8 @@ async function selectedStaged(owner: string, date: string): Promise<StagedTask[]
                  COALESCE(dp.position, fp.position),
                  t.priority, fp.task_id`
     )
-    .all(date, owner) as Omit<StagedTask, 'tags'>[];
-  return await Promise.all(rows.map(async (r) => ({ ...r, priority: r.priority ?? 3, tags: await tagsOf(r.task_id) })));
+    .all(date, owner) as Omit<StagedTask, 'tags' | 'categories'>[];
+  return await Promise.all(rows.map(async (r) => ({ ...r, priority: r.priority ?? 3, tags: await tagsOf(r.task_id), categories: await categoriesOf(owner, r.task_id) })));
 }
 
 /**
@@ -146,15 +158,15 @@ async function stagedFromTaskIds(owner: string, ids: readonly string[]): Promise
   if (ids.length === 0) return [];
   const rows = await store()
     .prepare(
-      `SELECT id AS task_id, title, estimated_minutes, priority, due_at, scheduled_for, task_time, created_at
+      `SELECT id AS task_id, title, estimated_minutes, priority, due_at, scheduled_for, task_time, created_at, motivation
          FROM tasks WHERE owner_id = ? AND id IN (${ids.map(() => '?').join(',')})`,
     )
-    .all(owner, ...ids) as Omit<StagedTask, 'tags'>[];
+    .all(owner, ...ids) as Omit<StagedTask, 'tags' | 'categories'>[];
   const byId = new Map(rows.map((r) => [r.task_id, r]));
   const found = ids
     .map((id) => byId.get(id))
-    .filter((r): r is Omit<StagedTask, 'tags'> => r !== undefined);
-  return await Promise.all(found.map(async (r) => ({ ...r, priority: r.priority ?? 3, tags: await tagsOf(r.task_id) })));
+    .filter((r): r is Omit<StagedTask, 'tags' | 'categories'> => r !== undefined);
+  return await Promise.all(found.map(async (r) => ({ ...r, priority: r.priority ?? 3, tags: await tagsOf(r.task_id), categories: await categoriesOf(owner, r.task_id) })));
 }
 
 /** How many tasks are staged in the flight-plan (selected or not). */
@@ -169,7 +181,7 @@ async function recordRun(owner: string, runId: string, blocksCreated: number): P
 
 async function prefsOf(owner: string): Promise<PrefsRow | undefined> {
   return await store()
-    .prepare(`SELECT timezone, min_break_minutes, max_focus_block_minutes, auto_fill_workday, fill_order, default_time_block_minutes, balance_bias_enabled FROM scheduling_prefs WHERE owner_id = ?`)
+    .prepare(`SELECT timezone, min_break_minutes, max_focus_block_minutes, auto_fill_workday, fill_order, default_time_block_minutes, balance_bias_enabled, plan_autofill_gaps FROM scheduling_prefs WHERE owner_id = ?`)
     .get(owner) as PrefsRow | undefined;
 }
 
@@ -425,6 +437,10 @@ async function placeIntoWindow(
      *  would only ever cover one window, not the run. */
     slotKeyCache: Map<string, string>;
     scorerCache: Map<string, ((startMs: number) => number) | null>;
+    taskScorerCache: Map<string, ((startMs: number) => number) | null>;
+    intelligence: Awaited<ReturnType<typeof loadSchedulingIntelligence>> | null;
+    dayType: string;
+    timezone: string;
   }
 ): Promise<{ blocksCreated: number; placedTaskIds: Set<string> }> {
   const placedTaskIds = new Set<string>();
@@ -449,7 +465,7 @@ async function placeIntoWindow(
   // not yet resolved; `null` = resolved to "no learned band" (stored, not re-queried).
   // Both caches are the CALLER's (see the opts type above) — they span every window
   // one Auto run places into, not just this one.
-  const { slotKeyCache, scorerCache } = opts;
+  const { slotKeyCache, scorerCache, taskScorerCache } = opts;
 
   // AD2: when placing INTO a Plan/container (parentBlockId set), read the container's
   // direction (`time_blocks.tag`) so each child task inherits it as its level-1 primary
@@ -463,10 +479,30 @@ async function placeIntoWindow(
   for (const t of tasks) {
     if (opts.parentBlockId) await inheritContainerDirection(t.task_id, containerTag, owner);
     const slotKey = await slotKeyFor(owner, t.task_id, slotKeyCache);
-    let scorer = scorerCache.get(slotKey);
+    let scorer = taskScorerCache.get(t.task_id);
     if (scorer === undefined) {
-      scorer = await placementScorer(owner, slotKey);
-      scorerCache.set(slotKey, scorer);
+      let learned = scorerCache.get(slotKey);
+      if (learned === undefined) {
+        learned = await placementScorer(owner, slotKey);
+        scorerCache.set(slotKey, learned);
+      }
+      const signals: TaskSignals = { id: t.task_id, title: t.title, tags: t.tags, categories: t.categories, motivation: t.motivation };
+      const model = opts.intelligence;
+      const personal = model
+        ? (startMs: number) => {
+            try {
+              const wall = utcToZonedWallTime(new Date(startMs).toISOString(), opts.timezone);
+              const hour = Number(wall.slice(0, 2)) + Number(wall.slice(3, 5)) / 60;
+              const result = model.predict(signals, hour, opts.dayType);
+              if (result.evidence <= 0) return learned ? learned(startMs) : 0;
+              return learned ? result.probability * 0.7 + learned(startMs) * 0.3 : result.probability;
+            } catch {
+              return learned ? learned(startMs) : 0;
+            }
+          }
+        : learned;
+      scorer = personal;
+      taskScorerCache.set(t.task_id, scorer);
     }
     const sessions = splitIntoSessions((t.estimated_minutes ?? DEFAULT_EST_MIN) * MS_PER_MIN, maxFocusMs);
     let placedAny = false;
@@ -631,7 +667,7 @@ async function directionWindowsMs(
   tz: string,
   names: readonly string[],
 ): Promise<{ start: number; end: number }[]> {
-  const ranges = await directionWindowsByName(owner, dayType, names);
+  const ranges = await directionWindowsByName(owner, dayType, names, date);
   return ranges.map((r) => ({
     start: Date.parse(zonedWallTimeToUTC(date, r.start_time, tz)),
     end: Date.parse(zonedWallTimeToUTC(date, r.end_time, tz)),
@@ -675,6 +711,10 @@ async function placeHintWindows(
   notBeforeMs: number | null | undefined,
   slotKeyCache: Map<string, string>,
   scorerCache: Map<string, ((startMs: number) => number) | null>,
+  taskScorerCache: Map<string, ((startMs: number) => number) | null>,
+  intelligence: Awaited<ReturnType<typeof loadSchedulingIntelligence>> | null,
+  dayType: string,
+  timezone: string,
 ): Promise<{ placedTaskIds: Set<string>; constrainedIds: Set<string>; blocksCreated: number }> {
   const placedTaskIds = new Set<string>();
   const constrainedIds = new Set<string>();
@@ -686,7 +726,6 @@ async function placeHintWindows(
   const timed = hintRows.filter((h) => (h.kind === 'tag_before' || h.kind === 'tag_after') && h.time);
   if (timed.length === 0) return { placedTaskIds, constrainedIds, blocksCreated };
 
-  const dayType = await resolveDayType(owner, date);
   const fullDay = { start: Date.parse(zonedWallTimeToUTC(date, '00:00', tz)), end: Date.parse(zonedWallTimeToUTC(date, '24:00', tz)) };
   const baseBound = outerBound(await directionWindowsMs(owner, dayType, date, tz, FALLBACK_FILL_DIRECTION_NAMES)) ?? fullDay;
   const homeBound = outerBound(await directionWindowsMs(owner, dayType, date, tz, [HOME_DIRECTION_NAME]));
@@ -718,7 +757,7 @@ async function placeHintWindows(
     if (!matched) continue;
     constrainedIds.add(t.task_id); // hard: caller excludes these from the unconstrained fill
     if (end <= start) continue;    // contradictory/empty window → leave unplaced today
-    const r = await placeIntoWindow(owner, [t], start, end, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs, slotKeyCache, scorerCache });
+    const r = await placeIntoWindow(owner, [t], start, end, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs, slotKeyCache, scorerCache, taskScorerCache, intelligence, dayType, timezone });
     r.placedTaskIds.forEach((id) => placedTaskIds.add(id));
     blocksCreated += r.blocksCreated;
   }
@@ -756,6 +795,10 @@ async function placeIntoContainers(
   notBeforeMs: number | null | undefined,
   slotKeyCache: Map<string, string>,
   scorerCache: Map<string, ((startMs: number) => number) | null>,
+  taskScorerCache: Map<string, ((startMs: number) => number) | null>,
+  intelligence: Awaited<ReturnType<typeof loadSchedulingIntelligence>> | null,
+  dayType: string,
+  timezone: string,
 ): Promise<{ placedTaskIds: Set<string>; blocksCreated: number }> {
   const placedTaskIds = new Set<string>();
   let blocksCreated = 0;
@@ -785,6 +828,10 @@ async function placeIntoContainers(
         notBeforeMs,
         slotKeyCache,
         scorerCache,
+        taskScorerCache,
+        intelligence,
+        dayType,
+        timezone,
       });
       if (!r.placedTaskIds.has(t.task_id)) continue; // full → the next container, then L01
       placedTaskIds.add(t.task_id);
@@ -952,6 +999,12 @@ export async function placeFlightPlan(
   // once per run, not once per window.
   const slotKeyCache = new Map<string, string>();
   const scorerCache = new Map<string, ((startMs: number) => number) | null>();
+  const taskScorerCache = new Map<string, ((startMs: number) => number) | null>();
+  const dayTypeForPlacement = await resolveDayType(owner, date);
+  const intelligence = staged.length > 0 ? await loadSchedulingIntelligence(owner).catch((err) => {
+    logger.warn('autoplan: scheduling preference history unavailable; using standard slot choice', { err: (err as Error).message });
+    return null;
+  }) : null;
 
   // ── Legacy single-Plan scope: place tag-matched staged tasks into one Plan ──
   if (opts.blockId != null) {
@@ -989,7 +1042,7 @@ export async function placeFlightPlan(
     // the Plan lose their prior agent blocks — a staged task that doesn't match this
     // Plan keeps its existing placement.
     await clearPriorAutoInWindow(owner, Date.parse(block.start_at), Date.parse(block.end_at), cands.map((t) => t.task_id));
-    const r = await placeIntoWindow(owner, ordered, Date.parse(block.start_at), Date.parse(block.end_at), prefs, { parentBlockId: opts.blockId, runId, notBeforeMs, slotKeyCache, scorerCache });
+    const r = await placeIntoWindow(owner, ordered, Date.parse(block.start_at), Date.parse(block.end_at), prefs, { parentBlockId: opts.blockId, runId, notBeforeMs, slotKeyCache, scorerCache, taskScorerCache, intelligence, dayType: dayTypeForPlacement, timezone: tz });
     await recordRun(owner, runId, r.blocksCreated);
     // A candidate whose block was cleared but found no room is back off the board.
     for (const t of cands) if (!r.placedTaskIds.has(t.task_id)) await revertTaskPlacementStatus(t.task_id, owner);
@@ -1050,7 +1103,11 @@ export async function placeFlightPlan(
     ...allPlans.filter((p) => !p.catch_all),
     ...allPlans.filter((p) => p.catch_all),
   ];
-  for (const plan of orderedPlans) {
+  // Settings → Scheduled Block → Auto-fill free gaps gates the three implicit
+  // container passes below. An explicit “Auto into this block” request returns through
+  // the scoped path above and remains an intentional placement.
+  const autoFillPlans = (prefs?.plan_autofill_gaps ?? 1) === 1;
+  for (const plan of (autoFillPlans ? orderedPlans : [])) {
     let cands: StagedTask[];
     let ordered: StagedTask[];
     if (plan.catch_all) {
@@ -1064,7 +1121,7 @@ export async function placeFlightPlan(
       ordered = orderForPlan(cands, weights);
     }
     if (cands.length === 0) continue;
-    const r = await placeIntoWindow(owner, ordered, Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id, runId, notBeforeMs, slotKeyCache, scorerCache });
+    const r = await placeIntoWindow(owner, ordered, Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id, runId, notBeforeMs, slotKeyCache, scorerCache, taskScorerCache, intelligence, dayType: dayTypeForPlacement, timezone: tz });
     r.placedTaskIds.forEach((id) => placedIds.add(id));
     blocksCreated += r.blocksCreated;
   }
@@ -1075,10 +1132,10 @@ export async function placeFlightPlan(
   // match + direction opt-out filter), preserving staged order. Runs immediately after
   // Pass 1 and before the direction-window pass, so category blocks supersede pattern
   // windows for their span (via dayObstacles includePlans) just like tag-Plans.
-  for (const plan of await dayCategoryPlans(owner, date, tz)) {
+  for (const plan of autoFillPlans ? await dayCategoryPlans(owner, date, tz) : []) {
     const filtered = (await categoryCandidates(staged, plan.category_id, owner)).filter((t) => !placedIds.has(t.task_id));
     if (filtered.length === 0) continue;
-    const r = await placeIntoWindow(owner, filtered, Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id, runId, notBeforeMs, slotKeyCache, scorerCache });
+    const r = await placeIntoWindow(owner, filtered, Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id, runId, notBeforeMs, slotKeyCache, scorerCache, taskScorerCache, intelligence, dayType: dayTypeForPlacement, timezone: tz });
     r.placedTaskIds.forEach((id) => placedIds.add(id));
     blocksCreated += r.blocksCreated;
   }
@@ -1090,7 +1147,7 @@ export async function placeFlightPlan(
   // from the direction-window pass AND the workday fill below, so a hinted task never
   // lands outside its window (HARD: a full/empty window leaves it unplaced). Reflow honours
   // this automatically — it re-runs placeFlightPlan, which re-reads `plan_hints`.
-  const hintPass = await placeHintWindows(owner, date, staged.filter((s) => !placedIds.has(s.task_id)), prefs, tz, runId, notBeforeMs, slotKeyCache, scorerCache);
+  const hintPass = await placeHintWindows(owner, date, staged.filter((s) => !placedIds.has(s.task_id)), prefs, tz, runId, notBeforeMs, slotKeyCache, scorerCache, taskScorerCache, intelligence, dayTypeForPlacement, tz);
   hintPass.placedTaskIds.forEach((id) => placedIds.add(id));
   blocksCreated += hintPass.blocksCreated;
   const hintConstrainedIds = hintPass.constrainedIds;
@@ -1099,17 +1156,23 @@ export async function placeFlightPlan(
   // bare L01 window the block sits inside ("matching Time Block with room first, then
   // L01 windows"). Runs after the hint pass so a same-day NL instruction still wins,
   // and before the direction windows so a container outranks a pattern window.
-  const containerPass = await placeIntoContainers(
-    owner,
-    date,
-    staged.filter((s) => !placedIds.has(s.task_id) && !hintConstrainedIds.has(s.task_id)),
-    prefs,
-    tz,
-    runId,
-    notBeforeMs,
-    slotKeyCache,
-    scorerCache,
-  );
+  const containerPass = autoFillPlans
+    ? await placeIntoContainers(
+        owner,
+        date,
+        staged.filter((s) => !placedIds.has(s.task_id) && !hintConstrainedIds.has(s.task_id)),
+        prefs,
+        tz,
+        runId,
+        notBeforeMs,
+        slotKeyCache,
+        scorerCache,
+        taskScorerCache,
+        intelligence,
+        dayTypeForPlacement,
+        tz,
+      )
+    : { placedTaskIds: new Set<string>(), blocksCreated: 0 };
   containerPass.placedTaskIds.forEach((id) => placedIds.add(id));
   blocksCreated += containerPass.blocksCreated;
 
@@ -1120,7 +1183,7 @@ export async function placeFlightPlan(
   // Leftover capacity is left OPEN here — the workday/priority fill is the separate,
   // explicit fillByPriority() step (tap 3, D5).
   const dayType = await resolveDayType(owner, date);
-  const patWindows = await getPatternBlocks(owner, dayType);
+  const patWindows = (await getPatternBlocksForDate(owner, date)).windows;
   // Track tasks gated off by per-direction auto_fill=false so Pass 2b skips them too.
   const directionGatedOffIds = new Set<string>();
   if (Object.keys(patWindows).length > 0) {
@@ -1146,7 +1209,7 @@ export async function placeFlightPlan(
         if (placedIds.has(t.task_id)) break;
         const winStart = Date.parse(zonedWallTimeToUTC(date, range.start_time, tz));
         const winEnd = Date.parse(zonedWallTimeToUTC(date, range.end_time, tz));
-        const r = await placeIntoWindow(owner, [t], winStart, winEnd, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs, slotKeyCache, scorerCache });
+        const r = await placeIntoWindow(owner, [t], winStart, winEnd, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs, slotKeyCache, scorerCache, taskScorerCache, intelligence, dayType: dayTypeForPlacement, timezone: tz });
         r.placedTaskIds.forEach((id) => placedIds.add(id));
         blocksCreated += r.blocksCreated;
       }
@@ -1182,7 +1245,7 @@ export async function placeFlightPlan(
       for (const range of await directionWindowsMs(owner, dayType, date, tz, FALLBACK_FILL_DIRECTION_NAMES)) {
         const stillOpen = ordered.filter((t) => !placedIds.has(t.task_id));
         if (stillOpen.length === 0) break;
-        const r = await placeIntoWindow(owner, stillOpen, range.start, range.end, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs, slotKeyCache, scorerCache });
+        const r = await placeIntoWindow(owner, stillOpen, range.start, range.end, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs, slotKeyCache, scorerCache, taskScorerCache, intelligence, dayType: dayTypeForPlacement, timezone: tz });
         r.placedTaskIds.forEach((id) => placedIds.add(id));
         blocksCreated += r.blocksCreated;
         placedInWorkday += r.placedTaskIds.size;
@@ -1269,20 +1332,25 @@ export async function fillByPriority(owner: string = currentOwnerId(), opts: { d
   // whatever placeFlightPlan already did today.
   const slotKeyCache = new Map<string, string>();
   const scorerCache = new Map<string, ((startMs: number) => number) | null>();
+  const taskScorerCache = new Map<string, ((startMs: number) => number) | null>();
+  const dayType = await resolveDayType(owner, date);
+  const intelligence = await loadSchedulingIntelligence(owner).catch((err) => {
+    logger.warn('autoplan priority fill: scheduling preference history unavailable; using standard slot choice', { err: (err as Error).message });
+    return null;
+  });
   // A4: honour NL tag-window hints here too. A hint-constrained task is placed only within
   // its window (or left unplaced) and excluded from the unconstrained priority fill, so the
   // explicit top-up can't leak "no errands before noon" past its window.
-  const hintPass = await placeHintWindows(owner, date, remaining, prefs, tz, runId, notBeforeMs, slotKeyCache, scorerCache);
+  const hintPass = await placeHintWindows(owner, date, remaining, prefs, tz, runId, notBeforeMs, slotKeyCache, scorerCache, taskScorerCache, intelligence, dayType, tz);
   const unconstrained = orderForPlan(remaining.filter((t) => !hintPass.constrainedIds.has(t.task_id)));
   // 0156: fallback-fill union (work+community pattern_blocks) replaces the flat
   // workday_start/workday_end window — same range-by-range placement as Pass 2b.
-  const dayType = await resolveDayType(owner, date);
   const placedByFill = new Set<string>();
   let fillBlocksCreated = 0;
   for (const range of await directionWindowsMs(owner, dayType, date, tz, FALLBACK_FILL_DIRECTION_NAMES)) {
     const stillOpen = unconstrained.filter((t) => !placedByFill.has(t.task_id));
     if (stillOpen.length === 0) break;
-    const r = await placeIntoWindow(owner, stillOpen, range.start, range.end, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs, slotKeyCache, scorerCache });
+    const r = await placeIntoWindow(owner, stillOpen, range.start, range.end, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs, slotKeyCache, scorerCache, taskScorerCache, intelligence, dayType, timezone: tz });
     r.placedTaskIds.forEach((id) => placedByFill.add(id));
     fillBlocksCreated += r.blocksCreated;
   }
@@ -1557,7 +1625,7 @@ export async function placeStartAnchoredTask(
   // the task's level-1 direction tags, minus those gated off by auto_fill=false,
   // union of their windows for the date's day-type, earliest-first.
   const dayType = await resolveDayType(owner, date);
-  const patWindows = await getPatternBlocks(owner, dayType);
+  const patWindows = (await getPatternBlocksForDate(owner, date)).windows;
   if (Object.keys(patWindows).length > 0) {
     const dprefs = await getPatternPrefs(owner);
     const dirIds = (

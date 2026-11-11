@@ -22,7 +22,7 @@ export function PatternBlockOverlay(props: { bands: () => Band[] }) {
         {(b) => {
           return (
             <div
-              class="absolute left-0 right-0 rounded-sm"
+              class="absolute left-0 right-0 rounded-none"
               style={{ top: `${b.top}px`, height: `${b.height}px`, border: `1px solid ${b.color}` }}
             />
           );

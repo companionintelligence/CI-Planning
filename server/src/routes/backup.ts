@@ -43,9 +43,9 @@ import { httpError } from '../lib/http-error.js';
 // '12': the 0153/0154 per-role people pins on time_blocks. `time_blocks` is exported
 // with SELECT *, so those columns joined the payload the moment the migration landed —
 // giving two different shapes under one version string, which is exactly what the
-// version exists to prevent. Purely additive: an '11' dump restores with the columns
-// defaulted (insertRows intersects with the live table).
-const EXPORT_VERSION = '12';
+// version exists to prevent. '13': per-date window overrides. Purely additive; older
+// exports restore with no overrides, inheriting the day-type defaults.
+const EXPORT_VERSION = '13';
 
 /**
  * Older payloads this build can still read. Every change since '6' has been ADDITIVE —
@@ -54,7 +54,7 @@ const EXPORT_VERSION = '12';
  * ageing out. Append each version as it ships; only remove one when its payload
  * genuinely cannot be read any more.
  */
-export const RESTORABLE_VERSIONS = ['6', '7', '8', '9', '10', '11', '12'] as const;
+export const RESTORABLE_VERSIONS = ['6', '7', '8', '9', '10', '11', '12', '13'] as const;
 export { EXPORT_VERSION };
 
 // Owner-scoped tables exported/restored via a direct `WHERE owner_id = ?` query.
@@ -89,6 +89,7 @@ const OWNER_TABLES = [
   'day_types',
   'day_of_week_map',
   'day_assignments',
+  'day_window_overrides',
   'pattern_day_optouts',
   'plan_hints',
   'replan_suggestions',
@@ -531,6 +532,7 @@ export function backupRouter() {
       counts['task_dependencies']= await insertJunctionRows('task_dependencies', g('task_dependencies'), ownerId);
       counts['block_templates']  = await insertRows('block_templates', g('block_templates'), ownerId);
       counts['pattern_blocks']   = await insertRows('pattern_blocks', g('pattern_blocks'), ownerId);
+      counts['day_window_overrides'] = await insertRows('day_window_overrides', g('day_window_overrides'), ownerId);
       counts['tag_prefs']        = await insertRows('tag_prefs', g('tag_prefs'), ownerId);
       counts['flight_plan']      = await insertRows('flight_plan', g('flight_plan'), ownerId);
       counts['time_entries']     = await insertRows('time_entries', g('time_entries'), ownerId);

@@ -242,7 +242,7 @@ export function FocusRitual(props: { block: Block; next?: Block | null; onClose:
                     {(s) => (
                       <li class="flex items-center gap-2">
                         <span
-                          class="flex-shrink-0 w-4 h-4 rounded-full border flex items-center justify-center"
+                          class="flex-shrink-0 w-4 h-4 rounded-sm border flex items-center justify-center"
                           classList={{ 'bg-primary border-primary': s.status === 'done', 'border-border': s.status !== 'done' }}
                         >
                           <Show when={s.status === 'done'}><Check size={10} class="text-primary-foreground" /></Show>
@@ -323,7 +323,7 @@ function DiscButton(props: { active: boolean; label: string; onClick: () => void
       onClick={props.onClick}
       aria-pressed={props.active}
       title={props.label}
-      class="btn-icon rounded-full border transition-colors"
+      class="btn-icon rounded-sm border transition-colors"
       classList={{ 'border-primary text-primary bg-primary/10': props.active, 'border-border text-muted-foreground hover:text-foreground': !props.active }}
     >
       {props.children}

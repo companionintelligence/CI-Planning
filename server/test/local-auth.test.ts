@@ -45,7 +45,7 @@ beforeAll(async () => {
   config.auth.disableOidc = true;
   config.auth.sessionSecret = 'test-session-secret';
   config.auth.rateLimit = { ...config.auth.rateLimit, issueMax: 1000 }; // don't trip during functional tests
-  config.auth.signup = 'invite'; // the AUTH_SIGNUP default, pinned so the config assertions are deterministic
+  config.auth.signup = 'open'; // the AUTH_SIGNUP default, pinned so the config assertions are deterministic
   config.trustProxy = true; // behind-a-TLS-terminator posture, so X-Forwarded-Proto is honored
   srv = await startTestServer();
 });
@@ -77,7 +77,7 @@ describe('U2/A4 — GET /api/auth/config (public)', () => {
   it('reports the active mode and capability flags without any credential (local-only sub-mode)', async () => {
     // `disableOidc` stays for one release; `portal`/`local`/`signup` are what the
     // login screen reads now (A4).
-    expect(await getConfig()).toEqual({ mode: 'sso', disableOidc: true, portal: false, local: true, signup: 'invite' });
+    expect(await getConfig()).toEqual({ mode: 'sso', disableOidc: true, portal: false, local: true, signup: 'open' });
   });
 
   it('`signup` follows AUTH_SIGNUP while the portal is off', async () => {

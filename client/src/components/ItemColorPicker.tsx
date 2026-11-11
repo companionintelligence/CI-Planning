@@ -21,7 +21,7 @@ export function ItemColorPicker(props: {
         type="button"
         onClick={() => props.onChange(null)}
         title={props.inheritLabel ?? 'Inherit'}
-        class="w-5 h-5 rounded-full border-2 transition-all bg-transparent"
+        class="w-5 h-5 rounded-circle border-2 transition-all bg-transparent"
         classList={{
           'border-foreground scale-110': props.value == null,
           'border-border hover:scale-105': props.value != null,
@@ -35,7 +35,7 @@ export function ItemColorPicker(props: {
             type="button"
             onClick={() => props.onChange(c.token)}
             title={c.label}
-            class="w-5 h-5 rounded-full border-2 transition-all"
+            class="w-5 h-5 rounded-circle border-2 transition-all"
             classList={{
               'border-foreground scale-110': props.value === c.token,
               'border-transparent hover:scale-105': props.value !== c.token,

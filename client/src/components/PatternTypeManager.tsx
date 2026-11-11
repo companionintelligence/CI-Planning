@@ -68,7 +68,7 @@ export function PatternTypeManager(props: { onClose: () => void }) {
                     onChange={(e) => { const v = e.currentTarget.value.trim(); if (v && v !== t.name) void patch(t.id, { name: v }); }}
                   />
                   <Show when={t.is_builtin}>
-                    <span class="text-[10px] px-1.5 py-0.5 rounded-full border border-border/60 text-muted-foreground" title="Built-in — rename and recolour freely; cannot be deleted">built-in</span>
+                    <span class="text-[10px] px-1.5 py-0.5 rounded-sm border border-border/60 text-muted-foreground" title="Built-in — rename and recolour freely; cannot be deleted">built-in</span>
                   </Show>
                   <button class="btn-icon hover:text-destructive" title={`Delete ${t.name}`} onClick={() => void remove(t.id)}>
                     <Trash2 size={13} />

@@ -127,7 +127,7 @@ export function PrioritiesWizard() {
             <button
               onClick={() => num < 4 && setStep(num)}
               disabled={num === 4 && step() < 3}
-              class="relative z-10 w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs border transition-all duration-200"
+              class="relative z-10 w-8 h-8 rounded-circle flex items-center justify-center font-bold text-xs border transition-all duration-200"
               classList={{
                 'bg-accent border-accent text-background scale-110': step() === num,
                 'bg-accent/20 border-accent text-accent': step() > num,
@@ -206,8 +206,8 @@ export function PrioritiesWizard() {
                 {remainingHours() >= 0 ? `${remainingHours()}h remaining` : `${Math.abs(remainingHours())}h over!`}
               </span>
             </div>
-            <div class="h-2 w-full bg-muted rounded-full overflow-hidden">
-              <div class="h-full rounded-full transition-all duration-300"
+            <div class="h-2 w-full bg-muted rounded-sm overflow-hidden">
+              <div class="h-full rounded-sm transition-all duration-300"
                 classList={{ 'bg-destructive': remainingHours() < 0, 'bg-accent': remainingHours() >= 0 }}
                 style={{ width: `${Math.min(100, schedulablePool() > 0 ? (totalAllocatedHours() / schedulablePool()) * 100 : 0)}%` }} />
             </div>
@@ -259,7 +259,7 @@ export function PrioritiesWizard() {
         {/* Step 4 — done */}
         <Show when={step() === 4}>
           <div class="text-center py-8">
-            <div class="w-16 h-16 bg-accent/20 border border-accent/40 rounded-full flex items-center justify-center mx-auto mb-5 text-accent">
+            <div class="w-16 h-16 bg-accent/20 border border-accent/40 rounded-sm flex items-center justify-center mx-auto mb-5 text-accent">
               <Check class="w-8 h-8 stroke-[3]" />
             </div>
             <h2 class="text-2xl font-bold text-foreground mb-2">Life priorities saved</h2>

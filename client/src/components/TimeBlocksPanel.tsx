@@ -59,7 +59,7 @@ export function TimeBlocksPanel() {
     };
     return (
       <Show when={editing()} fallback={
-        <div onPointerDown={drag.onPointerDown} class="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 cursor-grab select-none touch-none">
+        <div onPointerDown={drag.onPointerDown} class="flex items-center gap-2 rounded-none border border-border bg-card px-3 py-2 cursor-grab select-none touch-none">
           <Star size={12} class="text-primary flex-shrink-0" />
           <span class="flex-1 text-sm text-foreground truncate">{props.t.name}</span>
           <Show when={props.t.tag}><span class="text-primary text-xs">#{props.t.tag}</span></Show>
@@ -70,7 +70,7 @@ export function TimeBlocksPanel() {
           <button onClick={(e) => { e.stopPropagation(); deleteTemplate(props.t); }} class="btn-icon" title="Delete template"><Trash2 size={13} class="text-muted-foreground" /></button>
         </div>
       }>
-        <div class="flex items-center gap-2 rounded-lg border border-primary/40 bg-card px-3 py-2">
+        <div class="flex items-center gap-2 rounded-none border border-primary/40 bg-card px-3 py-2">
           <Star size={12} class="text-primary flex-shrink-0" />
           <input class="input py-1 text-sm flex-1 min-w-24" placeholder="Name" value={name()} onInput={(e) => setName(e.currentTarget.value)} onKeyDown={(e) => e.key === 'Enter' && commit()} />
           <input class="input py-1 text-sm w-24" placeholder="#tag" value={tag()} onInput={(e) => setTag(e.currentTarget.value)} onKeyDown={(e) => e.key === 'Enter' && commit()} />

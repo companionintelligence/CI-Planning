@@ -11,7 +11,7 @@
  *
  * Nothing is stored: the look is fully derived. The texture is theme-adaptive — it
  * renders as a `currentColor` overlay clipped to the motif via a CSS mask, so it is
- * a low-contrast whisper (≤ ~6%) over whatever surface it sits on, in light or dark.
+ * a low-contrast overlay at 15% opacity over whatever surface it sits on, in light or dark.
  */
 
 /** The motif shapes we can draw. A pattern type's `icon_shape` maps onto one. */
@@ -99,9 +99,8 @@ function motifSvg(motif: Motif, cell: number, r: number): string {
   }
 }
 
-/** Max contrast of the texture over its surface — a whisper, never noise (design §7).
- *  Phase C (owner ruling 2026-07-20): halved 0.06 → 0.03 — denser geometry, fainter ink. */
-export const TEXTURE_OPACITY = 0.03;
+/** Texture strength for task and pattern surfaces. */
+export const TEXTURE_OPACITY = 0.15;
 
 /** A style object (Solid `style=` shape) for the texture overlay. */
 export type TextureStyle = Record<string, string | number>;
@@ -117,9 +116,9 @@ export type TextureStyle = Record<string, string | number>;
 // ── Phase C (0134/0135): category stripes ────────────────────────────────────
 // The per-element texture: even diagonal stripes of the element's category
 // colours (position order = stripe order), 1px line / 2px gap (denser than the
-// old 8px hatch), at the halved TEXTURE_OPACITY. Colour resolution:
+// old 8px hatch), at TEXTURE_OPACITY. Colour resolution:
 //   element texture_color_token (user override) → its categories' colour tokens
-//   → the legacy motif fallback (routine patterns keep their tile, fainter).
+//   → the legacy motif fallback (routine patterns keep their tile).
 // `texture_enabled=0` suppresses the overlay entirely.
 
 /** Stripe geometry: 1px ink line, 2px transparent gap (owner: "2px apart"). */
@@ -166,7 +165,7 @@ export function stripeStyle(colors: readonly string[]): TextureStyle | undefined
     inset: '0',
     'pointer-events': 'none',
     'background-image': `repeating-linear-gradient(45deg, ${stops.join(', ')})`,
-    opacity: TEXTURE_OPACITY * 2, // 1px lines carry ~⅓ the ink of the motif tile — 2× keeps the whisper visible
+    opacity: TEXTURE_OPACITY,
   };
 }
 

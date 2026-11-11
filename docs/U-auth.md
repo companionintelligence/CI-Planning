@@ -319,7 +319,7 @@ Known subjects never see the page — they sign in directly, as before.
 ### B2 — invite-code local sign-up
 
 Companion Memory's `signup_code` model, keeping the 2026-07-12 ruling: an operator never sees or sets
-anyone's password. **`AUTH_SIGNUP`** = `invite` (default; the CI-Hub manifest's value) · `open` ·
+anyone's password. **`AUTH_SIGNUP`** = `open` (default) · `invite` ·
 `off`; an unknown value refuses to boot. Meaningful only under `AUTH_MODE=sso`, in **both** sub-modes
 — on a portal install `/signup` is the operator's escape hatch for someone without a Portal account,
 reached by direct link (the login screen's affordance is the portal).
@@ -358,7 +358,7 @@ All auth env vars (see [`server/.env.example`](../server/.env.example) for the a
 | `DISABLE_OIDC` | — | `sso` only: `true` ⇒ local login instead of CI-Portal |
 | `AUTH_AUTO_PROVISION` | — | `true` ⇒ an unknown Companion Portal `sub` provisions a new owner (the first one on an operator-less instance as `operator`, A3); else 403 |
 | `AUTH_DEFAULT_USERNAME` / `AUTH_DEFAULT_PASSWORD` | `sso`, first boot | seed the first local owner as operator. Required under `DISABLE_OIDC=true` (fails closed otherwise); optional under OIDC, where it seeds the break-glass operator (A3) |
-| `AUTH_SIGNUP` | — | `sso` only: local self-serve sign-up at `/signup` (B2) — `invite` (default; needs an operator-minted single-use code) \| `open` \| `off`. Independent of the portal, which owns sign-up whenever it is on (B1). Unknown values fail boot |
+| `AUTH_SIGNUP` | — | `sso` only: local self-serve sign-up at `/signup` (B2) — `open` (default; no code required) \| `invite` (needs an operator-minted single-use code) \| `off`. Independent of the portal, which owns sign-up whenever it is on (B1). Unknown values fail boot |
 | `CIPORTAL_ISSUER` | — | discovery base; **default `https://hub.ci.computer/api/auth`** (production; staging `hub.companionintel.com`, dev `hub.companionintelligence.com`, each `+ /api/auth`). Endpoints + canonical `iss` come from `<issuer>/.well-known/openid-configuration`. On a CI-Hub appliance the Hub injects the paired value. |
 | `CIPORTAL_CLIENT_ID` | — | our client at CI-Portal (public PKCE). **Default `ci-planning`** — a fixed first-party registration, so a deployment no longer has to set it |
 | `CIPORTAL_CLIENT_SECRET` | confidential clients only | omit for public/PKCE-only |

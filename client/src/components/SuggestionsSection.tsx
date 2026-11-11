@@ -123,7 +123,7 @@ function SuggestionRow(props: {
             <Users size={11} class="text-muted-foreground flex-shrink-0" />
             <For each={responsible()}>
               {(d) => (
-                <span class="text-[10px] px-1.5 py-0.5 rounded-full border border-border text-muted-foreground">
+                <span class="text-[10px] px-1.5 py-0.5 rounded-sm border border-border text-muted-foreground">
                   {d.display_name}
                 </span>
               )}

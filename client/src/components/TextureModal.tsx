@@ -26,17 +26,17 @@ export function TextureTrigger(props: {
     <button
       type="button"
       onClick={props.onOpen}
-      class="inline-flex items-center gap-2 text-xs px-2.5 py-1 rounded-full border border-border text-muted-foreground hover:text-foreground transition-colors"
+      class="inline-flex items-center gap-2 text-xs px-2.5 py-1 rounded-sm border border-border text-muted-foreground hover:text-foreground transition-colors"
       aria-haspopup="dialog"
     >
       <Show
         when={props.enabled}
-        fallback={<span class="w-3 h-3 rounded-full border border-border bg-transparent" aria-hidden="true" />}
+        fallback={<span class="w-3 h-3 rounded-circle border border-border bg-transparent" aria-hidden="true" />}
       >
         {/* An "Auto" colour has no token to show, so the dot falls back to the
             category-derived hue the stripe will actually use. */}
         <span
-          class="w-3 h-3 rounded-full border border-border"
+          class="w-3 h-3 rounded-circle border border-border"
           style={{ 'background-color': colorVar(props.colorToken ?? undefined) }}
           aria-hidden="true"
         />
@@ -76,7 +76,7 @@ export function TextureModal(props: {
             <button
               type="button"
               onClick={() => props.onToggle(!props.enabled)}
-              class="text-xs px-2.5 py-1 rounded-full border transition-colors"
+              class="text-xs px-2.5 py-1 rounded-sm border transition-colors"
               classList={{
                 'border-primary text-primary bg-primary/10': props.enabled,
                 'border-border text-muted-foreground hover:text-foreground': !props.enabled,

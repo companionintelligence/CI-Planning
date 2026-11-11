@@ -27,7 +27,7 @@ import { store } from '../db/store.js';
 import { utcDayBounds } from '../lib/tz.js';
 import { ownerTimezone } from './recurrence-generate.js';
 import { resolveDayType } from '../services/day-types.js';
-import { getPatternBlocks } from '../services/pattern-blocks.js';
+import { getPatternBlocksForDate } from '../services/pattern-blocks.js';
 import { splitTagString } from '../services/tags.js';
 
 /** Minutes since midnight, local to the owner's day. */
@@ -219,8 +219,7 @@ async function externalBlockIds(owner: string, ids: string[]): Promise<Set<strin
  * of that direction and read as "the day type has no work hours".
  */
 export async function windowsForDate(owner: string, date: string): Promise<WindowsByDirection> {
-  const dayType = await resolveDayType(owner, date);
-  const byId = await getPatternBlocks(owner, dayType);
+  const { windows: byId } = await getPatternBlocksForDate(owner, date);
   const names = new Map(
     (await store()
       .prepare(`SELECT id, name FROM tags WHERE owner_id = ? AND kind = 'direction'`)

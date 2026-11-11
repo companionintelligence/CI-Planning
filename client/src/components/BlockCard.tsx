@@ -48,7 +48,7 @@ export function BlockCard(props: Props) {
 
   return (
     <div
-      class={`card group flex gap-3 border-l-4 ${done() ? 'opacity-40' : ''}`}
+      class={`card rounded-none group flex gap-3 border-l-4 ${done() ? 'opacity-40' : ''}`}
       style={{ 'border-left-color': borderColor() }}
     >
       <div class="flex-1 min-w-0">

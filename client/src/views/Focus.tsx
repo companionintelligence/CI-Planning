@@ -23,6 +23,10 @@ import { DayReflowBanner } from '../components/DayReflowBanner.js';
 import { blockColorVar } from '../lib/textures.js';
 import { categoryPrefs, conflictedBlockIds } from '../stores/index.js';
 
+function taskNeedsApproval(task?: Task): boolean {
+  return !!task?.auto_generated && !task.human_approved_at;
+}
+
 /**
  * FOCUS — the pre-Today view: "what am I doing right now, and what's left today?"
  *
@@ -347,7 +351,7 @@ export function Focus() {
               <ChevronDown size={13} class="flex-shrink-0 text-muted-foreground" />
             </Show>
             <span
-              class="w-1.5 h-4 rounded-full flex-shrink-0"
+              class="w-1.5 h-4 rounded-sm flex-shrink-0"
               style={{ 'background-color': blockColorVar(b(), categoryPrefs()?.prefs) }}
             />
             <span class="text-sm font-medium text-foreground truncate">{b().title}</span>
@@ -386,10 +390,12 @@ export function Focus() {
       class="flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-colors"
       classList={{
         'opacity-50': !!props.dim,
+        'border-dotted border-orange-400': taskNeedsApproval(props.entry.task),
         'border-accent-hi/50 bg-accent-hi/5': isNow(props.entry) && !strandedRow(props.entry),
         'border-destructive bg-destructive/5': strandedRow(props.entry),
         'border-border/60': !isNow(props.entry) && !strandedRow(props.entry),
       }}
+      style={taskNeedsApproval(props.entry.task) ? { 'border-style': 'dotted', 'border-color': '#f97316' } : {}}
     >
       <span class="w-16 flex-shrink-0 text-[11px] font-mono tabular-nums text-muted-foreground">
         {props.entry.timeLabel ?? 'Anytime'}
@@ -397,7 +403,7 @@ export function Focus() {
       <button
         onClick={() => toggleDone(props.entry)}
         disabled={!props.entry.taskId}
-        class="w-[16px] h-[16px] rounded-full border flex-shrink-0 flex items-center justify-center transition-colors"
+        class="w-[16px] h-[16px] rounded-sm border flex-shrink-0 flex items-center justify-center transition-colors"
         style={props.entry.done ? { background: dotColor(props.entry), 'border-color': dotColor(props.entry) } : { 'border-color': dotColor(props.entry) }}
         title={props.entry.taskId ? (props.entry.done ? 'Mark open' : 'Mark done') : undefined}
       >
@@ -494,7 +500,13 @@ export function Focus() {
       {/* Time-Sense hero — the in-progress block, live countdown, Focus Ritual launcher. */}
       <Show when={currentBlock()}>
         {(b) => (
-          <div class="mb-5 rounded-2xl border border-accent-hi/40 bg-accent-hi/5 p-4">
+          <div
+            class="mb-5 rounded-2xl border border-accent-hi/40 bg-accent-hi/5 p-4"
+            classList={{
+              'border-dotted border-orange-400': taskNeedsApproval(b().task_id ? taskOf(b().task_id!) : undefined),
+            }}
+            style={taskNeedsApproval(b().task_id ? taskOf(b().task_id!) : undefined) ? { 'border-style': 'dotted', 'border-color': '#f97316' } : {}}
+          >
             <div class="text-[10px] font-semibold uppercase tracking-[0.15em] text-accent-hi mb-1.5">Focus now</div>
             <div class="flex items-center gap-3">
               <div class="flex-1 min-w-0">
@@ -513,14 +525,14 @@ export function Focus() {
               <button
                 onClick={() => restartHeroNow(b())}
                 disabled={starting() === b().id}
-                class="flex items-center gap-1 h-9 px-3 rounded-full border border-accent-hi/50 text-accent-hi text-[13px] font-semibold hover:bg-accent-hi/10 transition-colors flex-shrink-0 disabled:opacity-60"
+                class="flex items-center gap-1 h-9 px-3 rounded-sm border border-accent-hi/50 text-accent-hi text-[13px] font-semibold hover:bg-accent-hi/10 transition-colors flex-shrink-0 disabled:opacity-60"
                 title="Start fresh from now — reset the timer to a full estimate"
               >
                 <RotateCcw size={13} /> Start
               </button>
               <button
                 onClick={() => setRitualOpen(true)}
-                class="flex items-center gap-1.5 h-9 px-4 rounded-full bg-accent-hi text-[#041620] text-sm font-semibold hover:brightness-110 transition-all flex-shrink-0"
+                class="flex items-center gap-1.5 h-9 px-4 rounded-sm bg-accent-hi text-[#041620] text-sm font-semibold hover:brightness-110 transition-all flex-shrink-0"
               >
                 <Play size={14} /> Enter Focus
               </button>
@@ -528,8 +540,8 @@ export function Focus() {
             {/* Depletion bar — same math the ritual's ambient layer uses. */}
             <Show when={heroState()}>
               {(s) => (
-                <div class="mt-3 h-1 rounded-full bg-muted/60 overflow-hidden">
-                  <div class="h-full rounded-full bg-accent-hi transition-all" style={{ width: `${(1 - s().depletionFrac) * 100}%` }} />
+                <div class="mt-3 h-1 rounded-sm bg-muted/60 overflow-hidden">
+                  <div class="h-full rounded-sm bg-accent-hi transition-all" style={{ width: `${(1 - s().depletionFrac) * 100}%` }} />
                 </div>
               )}
             </Show>
