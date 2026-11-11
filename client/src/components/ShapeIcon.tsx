@@ -1,12 +1,28 @@
-import { Circle, Square, Triangle, Diamond, Smile, Cog, Hourglass } from 'lucide-solid';
+import {
+  Circle, Square, Triangle, Diamond, Smile, Cog, Hourglass, House, Briefcase, Users,
+  Heart, Star, Sun, CalendarDays, BookOpen, Target, Dumbbell, Utensils, Coffee,
+  Phone, Mail, Laptop, Music, Leaf, PawPrint, Car, Plane, ShoppingBag, CookingPot,
+  Wrench, Baby, GraduationCap, Shield, Church, TreePine, Bed, Brain, HandHeart,
+  Activity, ClipboardList,
+} from 'lucide-solid';
+import { Dynamic } from 'solid-js/web';
+
+const ICONS: Record<string, typeof House> = {
+  House, Briefcase, Users, Heart, Star, Sun, CalendarDays, BookOpen, Target, Dumbbell,
+  Utensils, Coffee, Phone, Mail, Laptop, Music, Leaf, PawPrint, Car, Plane,
+  ShoppingBag, CookingPot, Wrench, Baby, GraduationCap, Shield, Church, TreePine,
+  Bed, Brain, HandHeart, Activity, ClipboardList,
+};
 
 export function ShapeIcon(props: { shape: string | null | undefined; size?: number; class?: string; strokeWidth?: number }) {
   const size = () => props.size ?? 14;
   const sw = () => props.strokeWidth ?? 1.5;
   const shape = () => (props.shape ?? '').toLowerCase();
+  const Icon = () => ICONS[props.shape ?? ''];
   return (
     <>
-      {shape() === 'circle' ? <Circle size={size()} strokeWidth={sw()} class={props.class} />
+      {Icon() ? <Dynamic component={Icon()} size={size()} strokeWidth={sw()} class={props.class} />
+       : shape() === 'circle' ? <Circle size={size()} strokeWidth={sw()} class={props.class} />
        : shape() === 'triangle' ? <Triangle size={size()} strokeWidth={sw()} class={props.class} />
        : shape() === 'diamond' ? <Diamond size={size()} strokeWidth={sw()} class={props.class} />
        : shape() === 'spiral' ? (

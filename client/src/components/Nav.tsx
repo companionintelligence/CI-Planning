@@ -53,7 +53,7 @@ export function Nav() {
     >
       {/* CI logo mark */}
       <div class="flex items-center gap-2.5 px-3 mb-5" classList={{ 'justify-center px-0': navCollapsed() }}>
-        <BrandMark size={32} />
+        <BrandMark size={32} class="flex-shrink-0" />
         <Show when={!navCollapsed()}>
           <div>
             <div class="text-[10px] font-medium tracking-[0.2em] uppercase leading-none" style={{ color: '#409b9b' }}>

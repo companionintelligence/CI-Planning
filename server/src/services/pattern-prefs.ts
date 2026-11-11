@@ -149,7 +149,8 @@ export async function setPatternPrefChecked(
   ) {
     return { ok: false, error: 'reminder_offsets_invalid' };
   }
-  if (patch.icon_shape !== undefined && !['circle', 'square', 'triangle'].includes(patch.icon_shape as string)) return { ok: false, error: 'icon_shape_invalid' };
+  const iconOptions = ['circle','square','triangle','diamond','spiral','smile','gear','hourglass','House','Briefcase','Users','Heart','Star','Sun','CalendarDays','BookOpen','Target','Dumbbell','Utensils','Coffee','Phone','Mail','Laptop','Music','Leaf','PawPrint','Car','Plane','ShoppingBag','CookingPot','Wrench','Baby','GraduationCap','Shield','Church','TreePine','Bed','Brain','HandHeart','Activity','ClipboardList'];
+  if (patch.icon_shape !== undefined && !iconOptions.includes(patch.icon_shape as string)) return { ok: false, error: 'icon_shape_invalid' };
   if (patch.color_token !== undefined && (typeof patch.color_token !== 'string' || !patch.color_token)) return { ok: false, error: 'color_token_invalid' };
   if (patch.default_minutes !== undefined && !(Number.isInteger(patch.default_minutes) && (patch.default_minutes as number) > 0)) return { ok: false, error: 'default_minutes_invalid' };
 

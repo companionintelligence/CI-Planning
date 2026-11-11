@@ -11,6 +11,8 @@ import { buildPlannerViewPrefs } from '../lib/view-prefs.js';
 import { TRUST_OPTIONS, type TrustMode } from './TrustModal.js';
 import { ConnectSourceStep } from './onboarding/ConnectSourceStep.js';
 import { RunFirstSyncStep } from './onboarding/RunFirstSyncStep.js';
+import { PatternTagsSetup, DayTypeSetup, WeekdayTypesStep } from './onboarding/PlanningSetupSteps.js';
+import { useNavigate } from '@solidjs/router';
 
 const BROWSER_TZ = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
@@ -33,15 +35,14 @@ function clampMinutes(v: number, lo: number, hi: number): number {
   return Math.min(Math.max(Math.round(v), lo), hi);
 }
 
-// Step 4's choices come from the same source the top-bar trust control uses, so the
+// Trust dial choices come from the same source the top-bar trust control uses, so the
 // wizard and the modal can never describe the dial differently. (They did: this file's
 // copy still promised Balanced "auto-promotes high-confidence items" long after AF-3
 // retired auto-promotion.)
 
 /**
- * FTUE · T11 (#347) + T12 (#348) — the first-run onboarding overlay, 5 steps
- * (docs/ftue-plan.md §5): 1 identity, 2 time+place, 3 connect a source, 4 trust dial,
- * 5 run first sync. Gated on the owner's own `onboarded_at` flag (0132), never on
+ * FTUE — first-run setup for identity, time, tags, availability, integrations and planning preferences.
+ * Gated on the owner's own `onboarded_at` flag (0132), never on
  * route, so it covers every screen the same way `ElementWizard` does.
  *
  * T2 ("Plan my week") defines no exported, form-generic stepper to reuse: its
@@ -52,9 +53,10 @@ function clampMinutes(v: number, lo: number, hi: number): number {
  * (T12) that signal now lives in the store (`onboardingStep`), not locally, because
  * the empty-state "Connect a source" CTA is a SIBLING of this component (it lives in
  * Focus/Today/AllTasks), not a descendant, and needs to jump the already-mounted
- * wizard to step 3 from outside.
+ * wizard to the Connect step from outside.
  */
 export function OnboardingWizard() {
+  const navigate = useNavigate();
   const shouldOnboard = () => {
     const p = prefs();
     const notYetOnboarded = p !== undefined && p !== null && p.onboarded_at == null;
@@ -62,6 +64,7 @@ export function OnboardingWizard() {
   };
 
   const [busy, setBusy] = createSignal(false);
+  const [setupDayType, setSetupDayType] = createSignal('workday');
 
   const [me] = createResource(() => api.auth.me().catch(() => null));
 
@@ -105,7 +108,7 @@ export function OnboardingWizard() {
   const [wakeTime, setWakeTime] = createSignal(minutesToHHMM(topCollapseEnd(plannerAxisState())));
   const [bedTime, setBedTime] = createSignal(minutesToHHMM(bottomCollapseStart(plannerAxisState())));
 
-  // Step 4 — trust dial (Balanced preselected pre-completion, matching
+  // Trust dial (Balanced preselected pre-completion, matching
   // docs/ftue-plan.md §4; hydrated from prefs() for the same reopen reason as above).
   const [trustMode, setTrustMode] = createSignal<TrustMode>('balanced');
   createEffect(() => {
@@ -119,7 +122,7 @@ export function OnboardingWizard() {
    * log is best-effort afterward: a failed log write must never reopen or block the
    * wizard (mirrors PlanWeekAssistant's own "log must never block the UI" contract).
    */
-  async function completeOnboarding() {
+  async function completeOnboarding(): Promise<boolean> {
     setBusy(true);
     try {
       await api.prefs.update({ onboarded_at: new Date().toISOString() });
@@ -132,16 +135,22 @@ export function OnboardingWizard() {
                                       // have been set, so the force flag is what closes it
       setOnboardingSampleDataAllowed(true); // don't leak a quick-connect's `false` into
                                              // the next genuine restart
+      return true;
     } catch (err) {
       showToast((err as Error).message, 'error');
+      return false;
     } finally {
       setBusy(false);
     }
   }
 
+  async function finishToBalance() {
+    if (await completeOnboarding()) navigate('/priorities');
+  }
+
   /** Shared shape behind every "save this step, then advance" transition: busy-guard,
    *  write, advance on success, toast + stay put on failure. */
-  async function advance(write: () => Promise<unknown>, nextStep: 1 | 2 | 3 | 4 | 5) {
+  async function advance(write: () => Promise<unknown>, nextStep: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10) {
     setBusy(true);
     try {
       await write();
@@ -185,7 +194,7 @@ export function OnboardingWizard() {
   }
 
   function nextFromTrust() {
-    return advance(() => api.prefs.update({ trust_mode: trustMode() }), 5);
+    return advance(() => api.prefs.update({ trust_mode: trustMode() }), 9);
   }
 
   /**
@@ -213,10 +222,10 @@ export function OnboardingWizard() {
     localStorage.removeItem(FTUE_RESUME_KEY);
     if (g === 'connected') {
       showToast('Google account connected', 'success');
-      setOnboardingStep(4);
+      setOnboardingStep(8);
     } else {
       showToast(`Google connect failed${q.get('reason') ? `: ${q.get('reason')}` : ''}`, 'error');
-      setOnboardingStep(3); // back to Connect so the user can retry, not the step-1 default
+      setOnboardingStep(7); // back to Connect so the user can retry, not the step-1 default
     }
     setOnboardingForceOpen(true);
     q.delete('google'); q.delete('reason');
@@ -231,9 +240,7 @@ export function OnboardingWizard() {
         style={{ background: 'rgba(0,0,0,.7)', 'backdrop-filter': 'blur(6px)' }}
       >
         <div class="card w-full max-w-md flex flex-col gap-4">
-          {/* Adversarial review noted the 5-step flow had no progress indicator at
-              all — a user had no sense of how much was left. */}
-          <p class="text-[11px] text-muted-foreground -mb-1">Step {onboardingStep()} of 5</p>
+          <p class="text-[11px] text-muted-foreground -mb-1">Step {onboardingStep()} of 10</p>
           <Show when={onboardingStep() === 1}>
             <div class="flex flex-col gap-3">
               <div>
@@ -289,14 +296,41 @@ export function OnboardingWizard() {
           </Show>
 
           <Show when={onboardingStep() === 3}>
+            <PatternTagsSetup onBack={() => setOnboardingStep(2)} onNext={() => setOnboardingStep(4)} busy={busy()} />
+          </Show>
+
+          <Show when={onboardingStep() === 4}>
+            <DayTypeSetup dayType={setupDayType()} onBack={() => setOnboardingStep(3)} onNext={() => { setSetupDayType('workday'); setOnboardingStep(5); }} onAddType={async () => {
+              const label = window.prompt('Name your day type (for example, Holiday):')?.trim();
+              if (!label) return;
+              const key = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `day-${Date.now()}`;
+              try {
+                await api.dayTypes.create(key, label);
+                const directions = (await api.tags.list()).tags.filter((tag) => tag.kind === 'direction');
+                await Promise.all(directions.map((tag) => api.patternBlocks.set(tag.id, key, [])));
+                setSetupDayType(key);
+                showToast(`${label} added. Set its availability windows now.`, 'success');
+              } catch (err) { showToast((err as Error).message, 'error'); }
+            }} busy={busy()} />
+          </Show>
+
+          <Show when={onboardingStep() === 5}>
+            <DayTypeSetup dayType="weekend" onBack={() => setOnboardingStep(4)} onNext={() => setOnboardingStep(6)} onSkip={() => setOnboardingStep(6)} busy={busy()} />
+          </Show>
+
+          <Show when={onboardingStep() === 6}>
+            <WeekdayTypesStep onBack={() => setOnboardingStep(5)} onNext={() => setOnboardingStep(7)} busy={busy()} />
+          </Show>
+
+          <Show when={onboardingStep() === 7}>
             <ConnectSourceStep
-              onNext={() => setOnboardingStep(4)}
-              onBack={() => setOnboardingStep(2)}
+              onNext={() => setOnboardingStep(8)}
+              onBack={() => setOnboardingStep(6)}
               onSkip={() => void completeOnboarding()}
             />
           </Show>
 
-          <Show when={onboardingStep() === 4}>
+          <Show when={onboardingStep() === 8}>
             <div class="flex flex-col gap-3">
               <div>
                 <h2 class="text-base font-semibold text-foreground">Trust dial</h2>
@@ -320,19 +354,26 @@ export function OnboardingWizard() {
               <div class="flex justify-between items-center pt-1">
                 <button type="button" class="btn-ghost text-xs" disabled={busy()} onClick={() => void completeOnboarding()}>Skip</button>
                 <div class="flex gap-2">
-                  <button type="button" class="btn-ghost text-xs" disabled={busy()} onClick={() => setOnboardingStep(3)}>Back</button>
+                  <button type="button" class="btn-ghost text-xs" disabled={busy()} onClick={() => setOnboardingStep(7)}>Back</button>
                   <button type="button" class="btn-primary text-xs" disabled={busy()} onClick={() => void nextFromTrust()}>Next</button>
                 </div>
               </div>
             </div>
           </Show>
 
-          <Show when={onboardingStep() === 5}>
+          <Show when={onboardingStep() === 9}>
             <RunFirstSyncStep
-              onBack={() => setOnboardingStep(4)}
-              onFinish={() => void completeOnboarding()}
-              onGoToConnect={() => setOnboardingStep(3)}
+              onBack={() => setOnboardingStep(8)}
+              onFinish={() => setOnboardingStep(10)}
+              onGoToConnect={() => setOnboardingStep(7)}
             />
+          </Show>
+
+          <Show when={onboardingStep() === 10}>
+            <div class="flex flex-col gap-3">
+              <div><h2 class="text-base font-semibold text-foreground">You’re ready to plan</h2><p class="text-xs text-muted-foreground mt-0.5">Your setup is saved. Want to set your life priorities and weekly balance now?</p></div>
+              <div class="flex justify-between items-center pt-1"><button type="button" class="btn-ghost text-xs" disabled={busy()} onClick={() => void completeOnboarding()}>Finish</button><div class="flex gap-2"><button type="button" class="btn-ghost text-xs" disabled={busy()} onClick={() => setOnboardingStep(9)}>Back</button><button type="button" class="btn-primary text-xs" disabled={busy()} onClick={() => void finishToBalance()}>Set up Life Balance</button></div></div>
+            </div>
           </Show>
         </div>
       </div>
