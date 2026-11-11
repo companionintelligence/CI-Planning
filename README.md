@@ -2,12 +2,11 @@
 
 <p align="center"><strong>A private, local-first personal todo and planning app.</strong></p>
 
-Tasks, time blocks,
-tags, and an automation pipeline live in a single SQLite file on your machine; an
-optional local LLM (Ollama) adds AI briefings, task extraction, grooming, and
-auto-scheduling. No cloud dependency — your planning data lives on your hardware
-and stays there. Sign in with your Companion Portal account on a CI Hub, or with a
-local username and password on a self-hosted install; neither sends your data anywhere.
+Tasks, time blocks, tags, objectives, and planning history live in a SQLite database
+you host. The app works without AI or cloud services; optional Google sync, configured
+AI providers, Companion Portal sign-in, and scrubbed crash reports connect only when
+enabled by your deployment. CI Hub installs use a local username and password; other
+deployments can enable Companion Portal sign-in.
 
 [![tag](https://img.shields.io/github/v/tag/companionintelligence/CI-Planning?style=flat-square&color=0a6358&label=tag)](https://github.com/companionintelligence/CI-Planning/tags)
 [![platform](https://img.shields.io/badge/platform-Web%20%C2%B7%20Node.js-0a6358?style=flat-square)](https://github.com/companionintelligence/CI-Planning)
@@ -29,8 +28,9 @@ calendar and reflections are never sent. Turn it off without a rebuild with
 any build made without a DSN initialises no Sentry at all** and opens no outbound
 connection. Full posture: [docs/operations/error-reporting.md](docs/operations/error-reporting.md).
 
-Companion Planning is currently at **v4.2** (latest release tag `v4.2.2`; see [CHANGELOG.md](CHANGELOG.md)). The core app is
-fully local and usable today. A **standalone Google OAuth 2.1 flow** (Authorization
+The latest release is **v4.2.2**; the current `main` branch contains later, unreleased
+changes (see [CHANGELOG.md](CHANGELOG.md)). The core app works locally without optional
+integrations. A **standalone Google OAuth 2.1 flow** (Authorization
 Code + PKCE/S256, implemented in the app — not the macOS Keychain) and **two-way
 Google Calendar sync** are built in. Enable them either **in-app** (an admin pastes a
 Google OAuth client in Settings → Connections; needs only a 32-byte `CP_KEK_B64` key
@@ -52,14 +52,17 @@ client.
 **Source of truth for docs:** this README describes the running app;
 SQLite is the single source of truth for data.
 
+Production ship findings are tracked in the [2026-11-11 readiness review](docs/PRODUCTION-READINESS-2026-11-11.md).
+
 ## Features
 
 | Feature | What it provides |
 |---|---|
-| **Tasks and objectives** | Track owner-scoped tasks, recurrences, objectives and audit history. |
-| **Calendar and time blocks** | Plan work locally and optionally sync to Google Calendar. |
-| **Local AI assistance** | Use a local model (Ollama, or your CI Hub's AI) for briefings, task extraction, grooming and auto-scheduling. |
-| **Integration boundaries** | Add Companion OIDC, calendar sync, MCP and push without moving the local SQLite records. |
+| **Tasks and objectives** | Track tasks, recurring work, routines, habits, objectives, and someday tasks. |
+| **Calendar and availability** | Plan with time blocks, day types, availability windows, open time, and an auto-scheduler. |
+| **Balance and learning** | Set weekly life priorities and review schedule, completion, and preference patterns. |
+| **People** | Keep a directory of people linked to tasks and time blocks. |
+| **Optional integrations** | Connect Google Calendar, Companion Portal, local or Hub AI, and Web Push without moving the planning database. |
 
 ## How it fits together
 
@@ -2133,20 +2136,18 @@ Numbers 0159 and 0160 were never used.
 Release notes from 4.2.0 on are in [CHANGELOG.md](CHANGELOG.md); earlier changes are in
 `git log`.
 
-## Project status (v4.2, 2026-11-01)
+## Project status (source snapshot, 2026-11-11)
 
-The latest git tag is `v4.2.2` (2026-10-29). The root `package.json` still reads `4.2.0`,
-and the container image reports the version it was built with (`CI_PLANNING_VERSION`, set
-from the tag) in `GET /api/health`. The migration head is `0176_motivation_recap_pref`: 172
-migrations, 0001–0176, with no files for 0009, 0119, 0159 or 0160; the ordered list in
-`server/src/db/migrations/index.ts` is authoritative. `main` is four commits past `v4.2.2`
-(the iOS and Android shells, the polling endpoint they use, and a test fix). Release notes
+The latest release tag is `v4.2.2` (2026-10-30); `main` has unreleased changes after that
+tag. The root `package.json` still reads `4.2.0`, so align the package version when cutting
+the next release. The migration head is `0178_day_window_overrides` (174 migration files;
+the ordered list in `server/src/db/migrations/index.ts` is authoritative). Release notes
 are in [CHANGELOG.md](CHANGELOG.md).
 
 **Working today:**
 
 - Koa + TypeScript backend serving both the API and the built client on port 3848
-- SQLite schema (migrations 0001 → 0176 — the ordered list in
+- SQLite schema (migrations 0001 → 0178 — the ordered list in
   `server/src/db/migrations/index.ts` is authoritative): tasks, subtasks, time
   blocks, tags, entity_tags, tag_directions, patterns, pattern_blocks, tag_prefs,
   flight_plan, daily_plan, daily_recap, possible_tasks, scheduling_prefs,
@@ -2157,7 +2158,7 @@ are in [CHANGELOG.md](CHANGELOG.md).
   entity_people, signup_codes, plus the learning tables (triality_log,
   triality_weights, classification_*, possible_outcome_log, plan_loop_*,
   placement_*, balance_week_log)
-- All nine routed SolidJS views, with full task CRUD (tags, notes, priorities, due
+- SolidJS views for Today, Calendar, Tasks, Objectives, Balance, Tags, Jobs, and Settings, with full task CRUD (tags, notes, priorities, due
   date/time, subtasks)
 - Deterministic auto-scheduler honoring pattern-block windows, locked meetings, Time
   Blocks and break preferences; per-pattern auto-fill gating
@@ -2202,10 +2203,11 @@ are in [CHANGELOG.md](CHANGELOG.md).
 - **Reflow correctness** (Phase AE) — the reactive reflow is snapshot-based (clear set == re-place set), so editing one placed task can never wipe the other auto-placed blocks; placement status parity (`open`↔`scheduled`), a not-before-now clamp, and locked-block guards across reschedule/review/sweep
 - **Today + Tasks UI** (Phase AC) — Today's single header row (Brief · Focus · Note popovers + FAB, collapsible DUE); Tasks task-chip redesign, Routine grouping with end-of-day archive and a midnight `reset_routines` job
 - **Memory integration** (Phase AA, opt-in) — a pull-first, read-only link to the CI-Server `companion-memory` graph behind `memory_pull_enabled`: the `memory_suggest` job stages upcoming events as task suggestions (auto-promoted since Phase AF), the Daily Brief folds in a memory excerpt, the Hands-off trust tier's day ordering favors memory-related tasks, and memory-drafted tasks get a history-based default estimate; a one-way `push_memory` job (behind `memory_sync_enabled`) mirrors completions/habits/reflections back
-- **People on work** (0151–0154) — Responsible and Beneficiaries sets on tasks and time blocks, a per-owner people directory, and people detected on suggestions; see [docs/people-on-work.md](docs/people-on-work.md)
+- **People on work** (0151–0154) — a dedicated Settings → People directory, plus Responsible and Beneficiaries on tasks and time blocks, and people detected on suggestions; see [docs/people-on-work.md](docs/people-on-work.md)
+- **First-time setup** — a persistent ten-step setup for profile, planner hours, pattern tags, day-type availability, weekday mapping, integrations, automation trust, and optional Life Balance setup.
 - **Learning from what you do** — weekly, batch-only passes over per-owner evidence logs, never run mid-request: `calibrate_classification` (category and motivation picks), `calibrate_dismissals` (suggestion noise), `calibrate_placement` (preferred hours for auto-placed blocks), `calibrate_plan_loop` (authoring-loop stats) and the flagged `calibrate_triality`. All but the plan-loop stats have a reset endpoint. Settings → Learning shows what the first four measured, with the number of cases behind every figure, and offers a clear button for all but the plan-loop stats (Triality's readout is on Balance, Metrics)
 - **Balance targets in planning** (0164–0165, 0168) — `balance_bias_enabled` (default on) puts life dimensions that are behind their weekly target first in Fill and in the day's order; `snapshot_balance` freezes each closed week into `balance_week_log`
-- **Accounts** — Companion Portal sign-in and local username/password; invite-code self-serve sign-up (0172, `AUTH_SIGNUP`); operator / member / viewer roles
+- **Accounts** — local username/password and optional Companion Portal sign-in; configurable self-serve sign-up (`AUTH_SIGNUP=open` by default, `invite`, or `off`); operator / member / viewer roles
 - **Mobile** — Capacitor iOS and Android shells in `mobile/` that connect to a server you run (see [Mobile app](#mobile-app-ios-and-android)); on `main`, not yet in a tagged release
 
 **Intentionally partial:**

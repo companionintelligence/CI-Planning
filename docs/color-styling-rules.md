@@ -112,24 +112,24 @@ The `accent-*` utility keeps the bright legacy teal: `accent` `#409b9b`, `accent
 
 ## Tag palette (categorical labels only)
 
-12 complementary hues defined once in `index.css`, shared by light and dark. Rule: use only for categorical labels (tags, chips, status pills), never for primary CTAs. Keep one tag color per semantic category. Bases are exposed as `bg-tag-1` through `bg-tag-12`; variants are reached via `var(--tag-N-...)`.
+12 complementary hues defined in `index.css` with theme-aware bases. Light mode uses brighter, more colorful shades while dark mode keeps the established vivid palette. Use these only for categorical labels (tags, chips, status pills), never for primary CTAs. Keep one tag color per semantic category. Bases are exposed as `bg-tag-1` through `bg-tag-12`; variants are reached via `var(--tag-N-...)`.
 
 Each hue gives 6 saturation steps at L62% (`s6` vivid down to `s1` near-neutral) and 3 dark steps at S54% (`d3` down to `d1` deepest). `--tag-N` is the balanced base.
 
-| Token | Name | Base | Hue |
-|---|---|---|---|
-| `--tag-1` | Carnelian | `#e07a5f` | 14 |
-| `--tag-2` | Sunstone | `#f2a65a` | 32 |
-| `--tag-3` | Pyrite | `#f4d35e` | 48 |
-| `--tag-4` | Citrine | `#c3d86d` | 74 |
-| `--tag-5` | Jade | `#8ecf9e` | 142 |
-| `--tag-6` | Amazonite | `#6ec9c2` | 174 |
-| `--tag-7` | Aquamarine | `#78a6f5` | 218 |
-| `--tag-8` | Amethyst | `#8b8fe5` | 244 |
-| `--tag-9` | Kunzite | `#b18bd9` | 268 |
-| `--tag-10` | Rhodochrosite | `#d28fc1` | 318 |
-| `--tag-11` | Rhodonite | `#e89ab0` | 340 |
-| `--tag-12` | Topaz | `#d7a37a` | 24 |
+| Token | Name | Light | Dark | Hue |
+|---|---|---|---|---|
+| `--tag-1` | Carnelian | `#e86d47` | `#e07a5f` | 14 |
+| `--tag-2` | Sunstone | `#d17c1a` | `#f2a65a` | 32 |
+| `--tag-3` | Pyrite | `#aa8c15` | `#f4d35e` | 48 |
+| `--tag-4` | Citrine | `#7a9a13` | `#c3d86d` | 74 |
+| `--tag-5` | Jade | `#14a549` | `#8ecf9e` | 142 |
+| `--tag-6` | Amazonite | `#14a092` | `#6ec9c2` | 174 |
+| `--tag-7` | Aquamarine | `#5b90eb` | `#78a6f5` | 218 |
+| `--tag-8` | Amethyst | `#8982f0` | `#8b8fe5` | 244 |
+| `--tag-9` | Kunzite | `#ad75ee` | `#b18bd9` | 268 |
+| `--tag-10` | Rhodochrosite | `#eb59bf` | `#d28fc1` | 318 |
+| `--tag-11` | Rhodonite | `#ec618f` | `#e89ab0` | 340 |
+| `--tag-12` | Topaz | `#e47226` | `#d7a37a` | 24 |
 
 Variant pattern per hue (example for tag-1, hue 14):
 
