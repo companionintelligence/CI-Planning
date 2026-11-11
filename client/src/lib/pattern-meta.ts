@@ -7,15 +7,6 @@
 
 export interface ColorToken { token: string; label: string }
 
-/** The CI teal-first core — the main interaction family (keep these primary). */
-export const CORE_COLORS: readonly ColorToken[] = [
-  { token: 'primary', label: 'Primary' },
-  { token: 'chart-1', label: 'Mint' },
-  { token: 'chart-3', label: 'Aqua' },
-  { token: 'chart-4', label: 'Steel' },
-  { token: 'chart-5', label: 'Navy' },
-];
-
 /**
  * The 12 categorical tag hues (index.css `--tag-1`…`--tag-12`). For tags, chips,
  * and pattern elements — never primary CTAs. Names match the palette spec.
@@ -35,8 +26,8 @@ export const TAG_COLORS: readonly ColorToken[] = [
   { token: 'tag-12', label: 'Topaz' },
 ];
 
-/** Colours a pattern element can pick from — the teal core plus the tag hues. */
-export const PATTERN_COLORS: readonly ColorToken[] = [...CORE_COLORS, ...TAG_COLORS];
+/** Every tag color picker uses the same 12-hue palette. */
+export const PATTERN_COLORS: readonly ColorToken[] = TAG_COLORS;
 
 /** Motif shapes with both a lucide icon and a texture motif (textures.ts). */
 export const SHAPE_OPTIONS = ['circle', 'square', 'triangle', 'diamond', 'spiral', 'smile', 'gear', 'hourglass'] as const;
