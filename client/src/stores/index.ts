@@ -706,9 +706,9 @@ export const [planWeekModal, setPlanWeekModal] = createSignal<{ open: boolean }>
 // it needed to move it). T12 adds the empty-state "Connect a source" CTA, which lives
 // in Focus/Today/AllTasks — siblings of the wizard, not descendants — so the step
 // needs to be store-level for `openOnboardingAt` to reach the already-mounted wizard
-// and jump it to the Connect step. 5 steps: 1 identity, 2 time+place, 3 connect a
-// source (T12), 4 trust dial, 5 run first sync (T12).
-export const [onboardingStep, setOnboardingStep] = createSignal<1 | 2 | 3 | 4 | 5>(1);
+// and jump it to the Connect step. 10 steps: identity, time/place, pattern tags,
+// Workday, Weekend, weekday defaults, connect, trust, sync, and optional Balance.
+export const [onboardingStep, setOnboardingStep] = createSignal<1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10>(1);
 // The wizard's own gate is `prefs().onboarded_at == null` — true only pre-completion.
 // By the time a user can SEE an empty Focus/Today/Tasks view, onboarding has almost
 // always already finished (any Skip, from any step, sets `onboarded_at`), so the
@@ -726,16 +726,16 @@ export const [onboardingSampleDataAllowed, setOnboardingSampleDataAllowed] = cre
  *  if onboarding already completed — used by Settings' "Restart the First-Time
  *  Experience" (step 1). Sample data stays available; use `openQuickConnect` for the
  *  empty-state shortcut instead. */
-export function openOnboardingAt(step: 1 | 2 | 3 | 4 | 5): void {
+export function openOnboardingAt(step: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10): void {
   setOnboardingStep(step);
   setOnboardingForceOpen(true);
 }
 
-/** Reopen the wizard straight at Connect (3), for the empty-state CTA in Today/Focus/
+/** Reopen the wizard straight at Connect (7), for the empty-state CTA in Today/Focus/
  *  AllTasks. Unlike `openOnboardingAt`, this is not a real FTUE run — it's a returning
  *  owner reconnecting a source mid-usage — so it hides "Try with sample data". */
 export function openQuickConnect(): void {
-  setOnboardingStep(3);
+  setOnboardingStep(7);
   setOnboardingForceOpen(true);
   setOnboardingSampleDataAllowed(false);
 }
