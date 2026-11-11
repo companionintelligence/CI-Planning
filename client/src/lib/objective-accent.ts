@@ -1,7 +1,7 @@
 /**
  * Objective accent for the Planner day grid — spike #361 step 1 (option (c), #386).
  *
- * Pure: maps blocks to the leaf objective their linked task serves, so a member
+ * Pure: maps blocks to the most specific objective their linked task serves, so a member
  * chip can carry its objective's colour with ZERO added geometry. No band, no
  * rail, no span — the spike measured a derived min→max span at 25-29% density,
  * swallowing rival objectives' blocks and interleaving so spans cannot nest
@@ -17,7 +17,7 @@
 export interface AccentSource {
   id: string;
   title: string;
-  /** AF-2: linked tasks — populated on leaves, always `[]` on non-leaves. */
+  /** Linked tasks may be attached to any node in the objective tree. */
   tasks: { id: string }[];
   children: AccentSource[];
   /** #391 (forward seam): user-chosen colour token; absent/null → hash. */
@@ -62,34 +62,40 @@ export function accentColor(obj: { id: string; color_token?: string | null }): s
 }
 
 /**
- * Walk the live tree to LEAVES and map task id → owning leaf objective. Tasks
- * link only to leaf objectives (the server 422s a non-leaf link with
- * `non_leaf`), so a node with children contributes nothing itself — recurse.
+ * Walk the live tree and map task id → owning objective. If a task is linked to
+ * multiple nodes, prefer the deepest node, then the lexically smallest id. This
+ * lets a task linked only to a parent use that parent's accent while retaining a
+ * more specific child accent when the same task is linked in both places.
  *
- * A task serving MULTIPLE objectives (legal — objective_tasks is M:N) resolves
- * to the LOWEST objective id: pinned, deterministic, independent of tree order.
+ * A task serving multiple objectives (legal — objective_tasks is M:N) resolves
+ * to the deepest node, then lowest objective id: deterministic, independent of tree order.
  * (The spike's prototype used first-match, a latent order-dependence bug.)
  */
-export function leafObjectiveByTask(objectives: AccentSource[]): Map<string, AccentSource> {
+export function objectiveByTask(objectives: AccentSource[]): Map<string, AccentSource> {
   const byTask = new Map<string, AccentSource>();
-  const walk = (nodes: AccentSource[]) => {
+  const depthByTask = new Map<string, number>();
+  const walk = (nodes: AccentSource[], depth: number) => {
     for (const node of nodes) {
-      if (node.children.length > 0) {
-        walk(node.children);
-        continue; // non-leaf: its own tasks are always [] per AF-2; never read them
-      }
       for (const t of node.tasks) {
         const existing = byTask.get(t.id);
-        if (!existing || node.id < existing.id) byTask.set(t.id, node);
+        const existingDepth = depthByTask.get(t.id) ?? -1;
+        if (!existing || depth > existingDepth || (depth === existingDepth && node.id < existing.id)) {
+          byTask.set(t.id, node);
+          depthByTask.set(t.id, depth);
+        }
       }
+      walk(node.children, depth + 1);
     }
   };
-  walk(objectives);
+  walk(objectives, 0);
   return byTask;
 }
 
+/** @deprecated Use objectiveByTask; retained for existing imports. */
+export const leafObjectiveByTask = objectiveByTask;
+
 /**
- * blockId → the accent of the leaf objective its task serves. Blocks with no
+ * blockId → the accent of the most specific objective its task serves. Blocks with no
  * `task_id` (breaks, buffers, containers) and tasks with no objective simply
  * have no entry — the chip renders unchanged.
  */
@@ -97,7 +103,7 @@ export function objectiveOfBlock(
   objectives: AccentSource[],
   blocks: { id: string; task_id?: string | null }[],
 ): Map<string, ObjectiveAccent> {
-  const byTask = leafObjectiveByTask(objectives);
+  const byTask = objectiveByTask(objectives);
   const out = new Map<string, ObjectiveAccent>();
   for (const b of blocks) {
     if (b.task_id == null) continue;

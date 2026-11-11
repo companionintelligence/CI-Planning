@@ -1,6 +1,6 @@
 import { For, Show, createMemo, createResource } from 'solid-js';
 import { api } from '../lib/api.js';
-import { blocks, tags, patternPrefs, openTimeRange } from '../stores/index.js';
+import { blocks, tags, patternPrefs, patternBlocks, openTimeRange } from '../stores/index.js';
 import {
   busyFromBlocks, formatClock, formatDuration, openTime, parseHHMM, totalOpen,
   type TimeRange,
@@ -11,8 +11,7 @@ import { Skeleton } from './Skeleton.js';
  * Today's header answers "when could I put something?" rather than re-listing the
  * schedule — the Planner tab and the Calendar both already show the blocks.
  *
- * Windows come from the day type resolved for this date (`pattern-blocks/:dayType`),
- * so the summary reflects the operator's configured hours instead of assumed ones.
+ * Windows inherit the resolved day type and then apply any overrides for this date.
  * Which directions count is per-direction owner preference (`show_open_time`, set
  * next to that direction's windows in `SchedulePatternEditor`) — default on for
  * every direction, including home.
@@ -38,14 +37,10 @@ function describeDirections(directions: string[]): string {
 }
 
 export function OpenTimeSummary(props: { date: string }) {
-  // Which day type applies to this date, then that day type's placement windows.
-  const [dayType] = createResource(
-    () => props.date,
-    (date) => api.dayTypes.resolve(date).then((r) => r.key).catch(() => null),
-  );
+  // Re-read when this date changes or its day-window overrides are edited.
   const [windows] = createResource(
-    () => dayType() ?? null,
-    (key) => api.patternBlocks.forDay(key).then((r) => r.windows).catch(() => ({})),
+    () => [props.date, patternBlocks()] as const,
+    ([date]) => api.patternBlocks.forDate(date).then((r) => r.windows).catch(() => ({})),
   );
 
   /** Direction tag id → lowercased name, so windows can be read by direction. */
@@ -90,7 +85,7 @@ export function OpenTimeSummary(props: { date: string }) {
   // window may run far wider than the hours anyone would actually schedule into.
   const segments = createMemo(() => openTime(byDirection(), busy(), visibleDirections(), openTimeRange()));
   const total = () => totalOpen(segments());
-  const loading = () => dayType.loading || windows.loading;
+  const loading = () => windows.loading;
 
   return (
     <div class="flex flex-col gap-1.5">

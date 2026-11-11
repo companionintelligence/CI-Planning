@@ -28,13 +28,13 @@ export function ErrorBoundaryFallback(props: { error: unknown; onReset: () => vo
         <div class="flex items-center gap-2">
           <button
             onClick={() => props.onReset()}
-            class="px-3 py-1 rounded-full text-xs bg-primary text-primary-foreground transition-colors"
+            class="px-3 py-1 rounded-sm text-xs bg-primary text-primary-foreground transition-colors"
           >
             Try again
           </button>
           <button
             onClick={() => window.location.reload()}
-            class="px-3 py-1 rounded-full text-xs border border-surface-700/60 text-muted-foreground hover:text-foreground transition-colors"
+            class="px-3 py-1 rounded-sm text-xs border border-surface-700/60 text-muted-foreground hover:text-foreground transition-colors"
           >
             Reload
           </button>

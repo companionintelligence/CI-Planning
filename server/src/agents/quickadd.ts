@@ -6,6 +6,7 @@ import {
   PRIORITY_RUBRIC, DURATION_RUBRIC, TIME_OF_DAY_RUBRIC, COMPLEXITY_RUBRIC, MOTIVATION_RUBRIC,
 } from './rubric.js';
 import { constrainToVocabulary, constrainOne, type EnrichOut } from './constrain.js';
+import type { TimeBlockDurationBounds, TimeBlockDurationEvidence } from '../services/timeblock-duration.js';
 
 /**
  * Optional best-effort overlay on the deterministic parse: a small local model
@@ -217,6 +218,7 @@ export async function enrichQuick(
   parsed: ParsedQuick,
   vocab: QuickVocab = { directions: [], others: [] },
   hints: QuickHints = {},
+  durationContext?: { bounds: TimeBlockDurationBounds; evidence: TimeBlockDurationEvidence | null },
 ): Promise<ParsedQuick> {
   const hasCats = (vocab.categories?.length ?? 0) > 0;
   // Layout matters as much as wording here. Measured 2026-07-27 against llama3.2: with
@@ -240,7 +242,11 @@ export async function enrichQuick(
       `Every task has a direction, always choose one.${directionGuide(vocab.directions)}\n` +
       `"isComplex": true or false. ${COMPLEXITY_RUBRIC}\n` +
       `"priority": 1-4. ${PRIORITY_RUBRIC}\n` +
-      `"estimatedMinutes": a number or null. ${DURATION_RUBRIC}\n` +
+      `"estimatedMinutes": a number or null. ${durationContext
+        ? `For this scheduled time block, quickly assess the amount of work implied by the title and make an educated duration estimate. Choose a multiple of 5 between ${durationContext.bounds.minMinutes} and ${durationContext.bounds.maxMinutes} minutes, inclusive; do not return null. Use roughly 15m for a brief call/message, 30m for a small errand or task, 30–60m for a meeting, and 60–90m for focused work; scale for the number of steps and scope in the title. ${durationContext.evidence
+          ? `Prior owner history is available: ${durationContext.evidence.samples} completed ${durationContext.evidence.basis} item(s) took a median of ${durationContext.evidence.minutes} minutes. Use that as the strongest signal when it fits this block; otherwise assess the title itself. `
+          : ''}`
+        : DURATION_RUBRIC}\n` +
       `"timeOfDay": one of "morning","afternoon","evening","any". ${TIME_OF_DAY_RUBRIC}\n` +
       `"timeOfDayReason": a few words on why, or null.\n` +
       `"motivation": one of "me","us","them", or null. ${MOTIVATION_RUBRIC}\n` +
@@ -270,4 +276,26 @@ export async function enrichQuick(
   }
 
   return merged;
+}
+
+/**
+ * Estimate a newly created objective task without inheriting the source task's
+ * start time or duration. This is deliberately narrow: the parent's other settings
+ * are copied by the objective route, while the model only returns minutes.
+ */
+export async function estimateObjectiveTaskMinutes(title: string, parentTitle?: string | null): Promise<number> {
+  const context = parentTitle?.trim()
+    ? `It belongs to the same objective as the related task "${parentTitle.trim()}". Use this only to understand context; estimate this task on its own.`
+    : 'There is no related task context.';
+  const out = await generateJson<{ estimatedMinutes?: unknown }>(
+    `Estimate how long this task will take one person to perform. Reply only as JSON: {"estimatedMinutes": number}. ` +
+      `Always choose a useful estimate; do not return null. Use a multiple of 5 from 5 to 240 minutes. ` +
+      `Use 15 for a brief message or call, around 30 for a small errand or focused task, 30–60 for a meeting, ` +
+      `and 60–90 for substantial focused work. Increase the estimate for multiple steps or larger scope. ` +
+      `Do not reuse another task's duration. ${context}\nTask: "${title.trim()}"`,
+    { purpose: 'classify' },
+  );
+  const value = Number(out.estimatedMinutes);
+  if (!Number.isFinite(value)) throw new Error('The model returned no task duration estimate');
+  return Math.min(240, Math.max(5, Math.round(value / 5) * 5));
 }

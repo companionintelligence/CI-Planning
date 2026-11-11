@@ -261,6 +261,7 @@ export async function purgeOwnerData(ownerId: string): Promise<void> {
   await run('DELETE FROM reflections WHERE owner_id = ?', ownerId);
   await run('DELETE FROM daily_plan WHERE owner_id = ?', ownerId);
   await run('DELETE FROM day_assignments WHERE owner_id = ?', ownerId);
+  await run('DELETE FROM day_window_overrides WHERE owner_id = ?', ownerId);
   await run('DELETE FROM day_of_week_map WHERE owner_id = ?', ownerId);
   await run('DELETE FROM day_types WHERE owner_id = ?', ownerId);
   await run('DELETE FROM pattern_day_optouts WHERE owner_id = ?', ownerId);

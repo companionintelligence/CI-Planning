@@ -1,10 +1,9 @@
 @import "tailwindcss";
+/* The canon token layer is imported before app-specific overrides below so every token
+   the app does not set falls back to CI-Common. */
+@import "@companionintelligence/tokens/tokens.css";
 @config "../tailwind.config.js";
 @reference "tailwindcss";
-/* The canon token layer (@companionintelligence/tokens, CI-Common styles/tokens/src/tokens.json
-   is the one source). It is imported FIRST so the app-specific overrides below win where
-   they are set and every token the app does not set falls back to canon. */
-@import "@companionintelligence/tokens/tokens.css";
 
 /* ──────────────────────────────────────────────────────────────────────────
    Companion Planning surface overrides on the canon token layer above.
@@ -16,11 +15,18 @@
    whole UI themes from this one place — global styles first.
    ────────────────────────────────────────────────────────────────────────── */
 :root {
-  --radius: 0.625rem;
+  /* Canonical corner scale. Every surface radius resolves to one of these values. */
+  --radius-0: 0px;
+  --radius-3: 3px;
+  --radius-8: 8px;
+  --radius-30: 30px;
+  --radius-999: 999px;
+  --radius: var(--radius-8);
 
   --background: #f3f3f3;
   --foreground: #010f16;
   --card: #f7f7f9;
+  --details-panel-background: color-mix(in srgb, var(--background) 92%, #000 8%);
   --card-foreground: #041620;
   --popover: oklch(100% 0 0);
   --popover-foreground: #041620;
@@ -41,12 +47,14 @@
   --border: oklch(92.9% 0.013 255.508);
   --input: oklch(92.9% 0.013 255.508);
   --ring: oklch(70.4% 0.04 256.788);
-  --chart-1: oklch(64.6% 0.222 41.116);
+  /* Chart hues also serve as legacy direction-icon defaults. Keep them dark enough
+     to read on light surfaces (the dark theme has its own brighter values below). */
+  --chart-1: #a34112;
   --chart-2: oklch(60% 0.118 184.704);
   --chart-3: oklch(39.8% 0.07 227.392);
-  --chart-4: oklch(82.8% 0.189 84.429);
-  --chart-5: oklch(76.9% 0.188 70.08);
-  --sidebar: oklch(98.4% 0.003 247.858);
+  --chart-4: #866300;
+  --chart-5: #8a5500;
+  --sidebar: color-mix(in srgb, var(--background) 85%, #000 15%);
   --sidebar-foreground: oklch(12.9% 0.042 264.695);
   --sidebar-accent: oklch(96.8% 0.007 247.896);
   --sidebar-accent-foreground: #0a222e;
@@ -70,11 +78,13 @@
   --mint: #58ebbf;
   --teal-accent: #2c676d;
   --teal-mid: #409b9b;
-  --radius-sm: calc(var(--radius, 0.625rem) - 4px);
-  --radius-md: calc(var(--radius, 0.625rem) - 2px);
-  --radius-lg: var(--radius, 0.625rem);
-  --radius-xl: calc(var(--radius, 0.625rem) + 4px);
-  --radius-2xl: calc(var(--radius, 0.625rem) + 10px);
+  /* Compatibility aliases; these never introduce additional sizes. */
+  --radius-sm: var(--radius-3);
+  --radius-md: var(--radius-3);
+  --radius-lg: var(--radius-3);
+  --radius-xl: var(--radius-8);
+  --radius-2xl: var(--radius-8);
+  --radius-3xl: var(--radius-30);
 
   /* enriched — semantic status + gradients + elevation (light) */
   --success: #16a34a;
@@ -97,6 +107,7 @@
   --background: #041620;
   --foreground: #88a29e;
   --card: #0a222e;
+  --details-panel-background: var(--card);
   --card-foreground: #88a29e;
   --popover: #0a222e;
   --popover-foreground: #88a29e;
@@ -143,77 +154,93 @@
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
-   TAG PALETTE — 12 complementary hues that support (never compete with) the
-   CI teal-first system. USE ONLY for categorical labels: tags, chips, status
-   pills — NOT primary CTAs (keep the teal family as the main interaction
-   colour). Prefer one tag colour per semantic category and keep it consistent.
+   TAG PALETTE — 12 hues for tag icons, chips, and labels. The active `--tag-N`
+   values are theme-aware: compact dark strokes on light surfaces, the original
+   brighter palette on dark surfaces. Every hue clears 3:1 non-text contrast on
+   the light app background. These colors are not primary actions.
 
-   Each hue exposes 6 saturation steps at L62% (s6 vivid → s1 near-neutral) and
-   3 dark steps at S54% (d3 dark → d1 deepest). `--tag-N` is the balanced base.
-   Theme-independent: defined once, shared by light + dark. Tailwind exposes the
-   bases as `bg-tag-1`…`bg-tag-12`; reach for variants via `var(--tag-1-d2)`.
+   Saturation/dark variants remain available for existing texture treatments.
+   Tailwind exposes the active bases as `bg-tag-1`…`bg-tag-12`.
    ────────────────────────────────────────────────────────────────────────── */
 :root {
   /* tag-1 Carnelian */
-  --tag-1: #e07a5f;
+  --tag-1: #8a2c0f;
   --tag-1-s6: hsl(14 78% 62%); --tag-1-s5: hsl(14 66% 62%); --tag-1-s4: hsl(14 54% 62%);
   --tag-1-s3: hsl(14 42% 62%); --tag-1-s2: hsl(14 30% 62%); --tag-1-s1: hsl(14 18% 62%);
   --tag-1-d3: hsl(14 54% 48%); --tag-1-d2: hsl(14 54% 38%); --tag-1-d1: hsl(14 54% 28%);
   /* tag-2 Sunstone */
-  --tag-2: #f2a65a;
+  --tag-2: #8a510f;
   --tag-2-s6: hsl(32 78% 62%); --tag-2-s5: hsl(32 66% 62%); --tag-2-s4: hsl(32 54% 62%);
   --tag-2-s3: hsl(32 42% 62%); --tag-2-s2: hsl(32 30% 62%); --tag-2-s1: hsl(32 18% 62%);
   --tag-2-d3: hsl(32 54% 48%); --tag-2-d2: hsl(32 54% 38%); --tag-2-d1: hsl(32 54% 28%);
   /* tag-3 Pyrite */
-  --tag-3: #f4d35e;
+  --tag-3: #8a710f;
   --tag-3-s6: hsl(48 78% 62%); --tag-3-s5: hsl(48 66% 62%); --tag-3-s4: hsl(48 54% 62%);
   --tag-3-s3: hsl(48 42% 62%); --tag-3-s2: hsl(48 30% 62%); --tag-3-s1: hsl(48 18% 62%);
   --tag-3-d3: hsl(48 54% 48%); --tag-3-d2: hsl(48 54% 38%); --tag-3-d1: hsl(48 54% 28%);
   /* tag-4 Citrine */
-  --tag-4: #c3d86d;
+  --tag-4: #6d8a0f;
   --tag-4-s6: hsl(74 78% 62%); --tag-4-s5: hsl(74 66% 62%); --tag-4-s4: hsl(74 54% 62%);
   --tag-4-s3: hsl(74 42% 62%); --tag-4-s2: hsl(74 30% 62%); --tag-4-s1: hsl(74 18% 62%);
   --tag-4-d3: hsl(74 54% 48%); --tag-4-d2: hsl(74 54% 38%); --tag-4-d1: hsl(74 54% 28%);
   /* tag-5 Jade */
-  --tag-5: #8ecf9e;
+  --tag-5: #0f8a3c;
   --tag-5-s6: hsl(142 78% 62%); --tag-5-s5: hsl(142 66% 62%); --tag-5-s4: hsl(142 54% 62%);
   --tag-5-s3: hsl(142 42% 62%); --tag-5-s2: hsl(142 30% 62%); --tag-5-s1: hsl(142 18% 62%);
   --tag-5-d3: hsl(142 54% 48%); --tag-5-d2: hsl(142 54% 38%); --tag-5-d1: hsl(142 54% 28%);
   /* tag-6 Amazonite */
-  --tag-6: #6ec9c2;
+  --tag-6: #0f8a7d;
   --tag-6-s6: hsl(174 78% 62%); --tag-6-s5: hsl(174 66% 62%); --tag-6-s4: hsl(174 54% 62%);
   --tag-6-s3: hsl(174 42% 62%); --tag-6-s2: hsl(174 30% 62%); --tag-6-s1: hsl(174 18% 62%);
   --tag-6-d3: hsl(174 54% 48%); --tag-6-d2: hsl(174 54% 38%); --tag-6-d1: hsl(174 54% 28%);
   /* tag-7 Aquamarine */
-  --tag-7: #78a6f5;
+  --tag-7: #0f3c8a;
   --tag-7-s6: hsl(218 78% 62%); --tag-7-s5: hsl(218 66% 62%); --tag-7-s4: hsl(218 54% 62%);
   --tag-7-s3: hsl(218 42% 62%); --tag-7-s2: hsl(218 30% 62%); --tag-7-s1: hsl(218 18% 62%);
   --tag-7-d3: hsl(218 54% 48%); --tag-7-d2: hsl(218 54% 38%); --tag-7-d1: hsl(218 54% 28%);
   /* tag-8 Amethyst */
-  --tag-8: #8b8fe5;
+  --tag-8: #170f8a;
   --tag-8-s6: hsl(244 78% 62%); --tag-8-s5: hsl(244 66% 62%); --tag-8-s4: hsl(244 54% 62%);
   --tag-8-s3: hsl(244 42% 62%); --tag-8-s2: hsl(244 30% 62%); --tag-8-s1: hsl(244 18% 62%);
   --tag-8-d3: hsl(244 54% 48%); --tag-8-d2: hsl(244 54% 38%); --tag-8-d1: hsl(244 54% 28%);
   /* tag-9 Kunzite */
-  --tag-9: #b18bd9;
+  --tag-9: #480f8a;
   --tag-9-s6: hsl(268 78% 62%); --tag-9-s5: hsl(268 66% 62%); --tag-9-s4: hsl(268 54% 62%);
   --tag-9-s3: hsl(268 42% 62%); --tag-9-s2: hsl(268 30% 62%); --tag-9-s1: hsl(268 18% 62%);
   --tag-9-d3: hsl(268 54% 48%); --tag-9-d2: hsl(268 54% 38%); --tag-9-d1: hsl(268 54% 28%);
   /* tag-10 Rhodochrosite */
-  --tag-10: #d28fc1;
+  --tag-10: #8a0f65;
   --tag-10-s6: hsl(318 78% 62%); --tag-10-s5: hsl(318 66% 62%); --tag-10-s4: hsl(318 54% 62%);
   --tag-10-s3: hsl(318 42% 62%); --tag-10-s2: hsl(318 30% 62%); --tag-10-s1: hsl(318 18% 62%);
   --tag-10-d3: hsl(318 54% 48%); --tag-10-d2: hsl(318 54% 38%); --tag-10-d1: hsl(318 54% 28%);
   /* tag-11 Rhodonite */
-  --tag-11: #e89ab0;
+  --tag-11: #8a0f38;
   --tag-11-s6: hsl(340 78% 62%); --tag-11-s5: hsl(340 66% 62%); --tag-11-s4: hsl(340 54% 62%);
   --tag-11-s3: hsl(340 42% 62%); --tag-11-s2: hsl(340 30% 62%); --tag-11-s1: hsl(340 18% 62%);
   --tag-11-d3: hsl(340 54% 48%); --tag-11-d2: hsl(340 54% 38%); --tag-11-d1: hsl(340 54% 28%);
   /* tag-12 Topaz */
-  --tag-12: #d7a37a;
+  --tag-12: #8a400f;
   --tag-12-s6: hsl(24 78% 62%); --tag-12-s5: hsl(24 66% 62%); --tag-12-s4: hsl(24 54% 62%);
   --tag-12-s3: hsl(24 42% 62%); --tag-12-s2: hsl(24 30% 62%); --tag-12-s1: hsl(24 18% 62%);
   --tag-12-d3: hsl(24 54% 48%); --tag-12-d2: hsl(24 54% 38%); --tag-12-d1: hsl(24 54% 28%);
+}
+
+/* Preserve the current vivid tag palette in dark mode. Keep this after the light
+   palette block so its mode-specific base values win at the root element. */
+.dark {
+  --chart-5: #448b92;
+  --tag-1: #e07a5f;
+  --tag-2: #f2a65a;
+  --tag-3: #f4d35e;
+  --tag-4: #c3d86d;
+  --tag-5: #8ecf9e;
+  --tag-6: #6ec9c2;
+  --tag-7: #78a6f5;
+  --tag-8: #8b8fe5;
+  --tag-9: #b18bd9;
+  --tag-10: #d28fc1;
+  --tag-11: #e89ab0;
+  --tag-12: #d7a37a;
 }
 
 @layer base {
@@ -226,7 +253,7 @@
   }
   ::-webkit-scrollbar { width: 4px; height: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: var(--radius-3); }
   ::-webkit-scrollbar-thumb:hover { background: var(--muted-foreground); }
   /* fill-mode `backwards`, NOT `both`: `both` RETAINS the final keyframe
      (`transform: translateY(0)`) forever, and a transform — even the identity —
@@ -252,7 +279,7 @@
   .btn-ghost,
   .btn-danger,
   .btn-icon {
-    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-sm text-sm font-medium
            tracking-wide transition-all duration-150
            focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent
            active:scale-95 select-none cursor-pointer;
@@ -298,7 +325,7 @@
 
   /* ── Cards ───────────────────────────────────────────────────── */
   .card {
-    @apply rounded-2xl p-4 border;
+    @apply rounded-sm p-4 border;
     background: var(--card);
     border-color: var(--border);
   }
@@ -307,7 +334,7 @@
   .input,
   .input-lg,
   .textarea {
-    @apply rounded-xl px-3 py-1.5 text-sm border
+    @apply rounded-sm px-3 py-1.5 text-sm border
            focus:outline-none transition-colors duration-150 w-full;
     background: transparent;
     border-color: var(--input);
@@ -344,7 +371,7 @@
   .badge-yellow,
   .badge-red,
   .badge-blue {
-    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium tracking-wide;
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-sm text-xs font-medium tracking-wide;
   }
   .badge-neutral { background: var(--muted); color: var(--muted-foreground); }
   .badge-accent  { @apply bg-accent/20 text-accent-light; }
@@ -366,7 +393,7 @@
   :root:not(.dark) .badge-red    { background: #fee2e2; color: #b91c1c; }
 
   /* ── Priority dots (constant across modes) ────────────────────── */
-  .priority-dot { @apply w-2 h-2 rounded-full flex-shrink-0; }
+  .priority-dot { @apply w-2 h-2 rounded-circle flex-shrink-0; }
   .p1 { background: #ef4444; }
   .p2 { background: #f97316; }
   .p3 { background: #58ebbf; }
@@ -378,7 +405,7 @@
   .toast-success,
   .toast-error {
     @apply fixed bottom-4 right-4 z-50 flex items-center gap-2.5
-           px-4 py-3 rounded-2xl text-sm font-medium shadow-xl border;
+           px-4 py-3 rounded-sm text-sm font-medium shadow-xl border;
     background: var(--popover);
     border-color: var(--border);
     color: var(--popover-foreground);
@@ -410,7 +437,7 @@
     animation: fadeIn 150ms ease both;
   }
   .modal {
-    @apply rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border;
+    @apply rounded-xl shadow-2xl w-full max-w-lg overflow-hidden border;
     background: var(--card);
     border-color: var(--border);
     animation: modalIn 200ms cubic-bezier(0.34,1.56,0.64,1) both;
@@ -441,7 +468,7 @@
   /* ── FAB (primary CTA) ────────────────────────────────────────── */
   .fab {
     @apply fixed bottom-6 right-6 z-30 flex items-center gap-2
-           px-5 py-3 font-semibold rounded-full
+           px-5 py-3 font-semibold rounded-lg
            transition-all duration-150 active:scale-95 select-none cursor-pointer;
     color: var(--primary-foreground);
     background: var(--primary);
@@ -451,7 +478,7 @@
 
   /* ── Nav ─────────────────────────────────────────────────────── */
   .nav-item {
-    @apply flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium
+    @apply flex items-center gap-2.5 px-3 py-2 rounded-sm text-sm font-medium
            transition-all duration-100 cursor-pointer select-none;
     color: var(--muted-foreground);
     letter-spacing: .02em;
@@ -463,6 +490,7 @@
        on the light-mode sidebar-accent (1.46:1). */
     color: var(--primary);
     background: var(--sidebar-accent);
+    border-radius: var(--radius-3);
   }
 
   /* ── Labels ──────────────────────────────────────────────────── */
@@ -473,7 +501,7 @@
 
   /* ── Checkbox ────────────────────────────────────────────────── */
   .checkbox {
-    @apply w-4 h-4 rounded-md border-2 flex items-center justify-center
+    @apply w-4 h-4 rounded-sm border-2 flex items-center justify-center
            flex-shrink-0 transition-all duration-200 cursor-pointer;
     border-color: var(--border);
   }
@@ -511,7 +539,7 @@
     max-width: 100%;
     max-height: 92vh;
     overflow-y: auto;
-    border-radius: 1.25rem 1.25rem 0 0;
+    border-radius: var(--radius-30) var(--radius-30) var(--radius-0) var(--radius-0);
     padding-bottom: env(safe-area-inset-bottom);
     animation: sheetIn 240ms cubic-bezier(0.34, 1.2, 0.64, 1) both;
   }
@@ -668,7 +696,7 @@
   height: 1px;
   background: color-mix(in oklab, var(--foreground) 16%, transparent);
   overflow: hidden;
-  border-radius: 999px;
+  border-radius: var(--radius-3);
 }
 .focus-rule > i {
   display: block;
@@ -729,7 +757,7 @@
   position: absolute;
   left: 50%;
   top: 50%;
-  border-radius: 50%;
+  border-radius: var(--radius-999);
   transform: translate(-50%, -50%) scale(0.96);
   opacity: 0.45;
   background: radial-gradient(circle,
@@ -783,7 +811,7 @@
   top: 50%; left: 1px;
   width: 4px; height: 34px;
   transform: translateY(-50%);
-  border-radius: 999px;
+  border-radius: var(--radius-3);
   background: var(--border);
 }
 .details-rail:hover,
@@ -793,15 +821,18 @@
 .details-drawer {
   flex: 0 0 var(--details-w, 400px);
   width: var(--details-w, 400px);
-  background: var(--card);
+  min-width: 0;
+  background: var(--details-panel-background);
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  container: details-panel / inline-size;
 }
 
 .drawer-head {
   flex: 0 0 auto;
+  min-width: 0;
   display: flex;
   align-items: flex-start;
   gap: .625rem;
@@ -822,11 +853,14 @@
   color: var(--foreground);
   line-height: 1.3;
   text-wrap: balance;
+  overflow-wrap: anywhere;
 }
 
 .drawer-tabs {
   flex: 0 0 auto;
+  min-width: 0;
   display: flex;
+  flex-wrap: wrap;
   gap: 2px;
   padding: 0 .875rem;
   border-bottom: 1px solid var(--border);
@@ -848,11 +882,24 @@
 
 .drawer-body {
   flex: 1;
+  min-width: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: .875rem;
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+.drawer-body > * {
+  min-width: 0;
+  max-width: 100%;
+}
+.drawer-body :where(button, span, p, input, textarea, select) {
+  min-width: 0;
+  max-width: 100%;
+}
+.drawer-body :where(button, p) {
+  overflow-wrap: anywhere;
 }
 
 .drawer-group {
@@ -868,17 +915,19 @@
 
 .drawer-grid {
   display: grid;
-  grid-template-columns: minmax(5rem, auto) 1fr;
+  grid-template-columns: minmax(0, 5rem) minmax(0, 1fr);
   gap: .5rem .875rem;
   align-items: baseline;
   margin: 0;
 }
 .drawer-dt {
+  min-width: 0;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: .1em;
   text-transform: uppercase;
   color: var(--muted-foreground);
+  overflow-wrap: anywhere;
 }
 .drawer-dd {
   margin: 0;
@@ -891,16 +940,20 @@
 
 .drawer-pill {
   display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: 5px;
   padding: 3px 9px;
-  border-radius: 999px;
+  border-radius: var(--radius-3);
   font-size: 10.5px;
   font-weight: 600;
   letter-spacing: .04em;
   text-transform: uppercase;
   border: 1px solid var(--border);
   color: var(--muted-foreground);
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .drawer-pill[data-status="open"] {
   color: var(--primary);
@@ -919,16 +972,44 @@
 }
 
 .drawer-tag {
+  min-width: 0;
+  max-width: 100%;
   font-size: 11px;
   padding: 3px 9px;
-  border-radius: 999px;
+  border-radius: var(--radius-3);
   border: 1px solid var(--border);
   background: var(--background);
   color: var(--foreground);
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .drawer-tag-secondary { color: var(--muted-foreground); border-style: dashed; }
 
-.drawer-note { font-size: 12.5px; line-height: 1.6; color: var(--foreground); margin: 0; }
+.drawer-note { font-size: 12.5px; line-height: 1.6; color: var(--foreground); margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+@container details-panel (max-width: 360px) {
+  .drawer-grid {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: .25rem;
+  }
+  .drawer-grid .drawer-dd {
+    margin-bottom: .375rem;
+  }
+  .drawer-tab {
+    white-space: normal;
+  }
+  .drawer-body .flex.items-center.justify-between {
+    flex-wrap: wrap;
+  }
+  .drawer-body > .rounded-xl > .flex.items-center.gap-2 {
+    flex-wrap: wrap;
+  }
+  .drawer-body > .rounded-xl > .flex.items-center.gap-2 > button:first-child,
+  .drawer-body > .rounded-xl > .flex.items-center.gap-2 [role="group"] {
+    flex: 1 1 100%;
+    max-width: 100%;
+  }
+}
 
 .drawer-empty {
   flex: 1;
@@ -958,7 +1039,7 @@
     max-height: 62vh;
     border-left: none;
     border-top: 1px solid var(--border);
-    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    border-radius: var(--radius-30) var(--radius-30) var(--radius-0) var(--radius-0);
     z-index: 40;
     box-shadow: var(--shadow-lg);
   }
@@ -977,7 +1058,7 @@
   align-items: center;
   padding: .375rem .625rem;
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-3);
   background: var(--background);
 }
 .open-window-range {
@@ -988,12 +1069,12 @@
 }
 .open-window-bar {
   height: 4px;
-  border-radius: 999px;
+  border-radius: var(--radius-3);
   background: var(--border);
   overflow: hidden;
   min-width: 0;
 }
-.open-window-bar i { display: block; height: 100%; border-radius: 999px; background: var(--primary); }
+.open-window-bar i { display: block; height: 100%; border-radius: var(--radius-3); background: var(--primary); }
 .open-window-tags {
   display: flex;
   gap: .25rem;
@@ -1005,7 +1086,7 @@
   font-weight: 600;
   text-transform: capitalize;
   padding: 2px 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-3);
   white-space: nowrap;
   color: var(--primary);
   background: color-mix(in srgb, var(--primary) 14%, transparent);
@@ -1123,4 +1204,23 @@
     -webkit-appearance: none;
     appearance: none;
   }
+}
+
+/* Day-type conflicts use a dashed red outline. Priority 1 gets longer dashes through
+   --conflict-dash; all other priorities use the shorter default. This is shared by
+   Calendar blocks and the selected-day task list. */
+.day-type-conflict-outline {
+  --conflict-dash: 4px;
+}
+.day-type-conflict-outline::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(90deg, var(--destructive) 0 var(--conflict-dash), transparent var(--conflict-dash) calc(var(--conflict-dash) + 3px)) top / 100% 2px no-repeat,
+    repeating-linear-gradient(90deg, var(--destructive) 0 var(--conflict-dash), transparent var(--conflict-dash) calc(var(--conflict-dash) + 3px)) bottom / 100% 2px no-repeat,
+    repeating-linear-gradient(180deg, var(--destructive) 0 var(--conflict-dash), transparent var(--conflict-dash) calc(var(--conflict-dash) + 3px)) left / 2px 100% no-repeat,
+    repeating-linear-gradient(180deg, var(--destructive) 0 var(--conflict-dash), transparent var(--conflict-dash) calc(var(--conflict-dash) + 3px)) right / 2px 100% no-repeat;
 }

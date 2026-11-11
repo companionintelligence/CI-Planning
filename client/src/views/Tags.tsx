@@ -225,7 +225,7 @@ function DirectionCard(props: {
                 <button
                   type="button"
                   onClick={() => props.toggles!.onToggle(dir, off())}
-                  class="text-[11px] px-2 py-0.5 rounded-full border capitalize transition-colors"
+                  class="text-[11px] px-2 py-0.5 rounded-sm border capitalize transition-colors"
                   classList={{
                     'border-primary text-primary bg-primary/10': !off(),
                     'border-border text-muted-foreground line-through opacity-60': off(),

@@ -1,9 +1,9 @@
 import { createSignal, createResource, createMemo, createEffect, onCleanup, Show, For } from 'solid-js';
 import { ViewHeader } from '../components/ViewHeader.js';
 import { useSearchParams } from '@solidjs/router';
-import { SlidersHorizontal, Search, Archive, ChevronDown, ChevronRight, X, CalendarRange } from 'lucide-solid';
-import { tasks, tags, taskFilter, setTaskFilter, refetchTasks, showToast, isRoutineTask, scheduledByTaskId, patternForTask, setPlanWeekModal, setElementModal } from '../stores/index.js';
-import { api, type Task } from '../lib/api.js';
+import { SlidersHorizontal, Search, Archive, ChevronDown, ChevronRight, X, CalendarRange, Pencil, Pentagon, Clock3 } from 'lucide-solid';
+import { tasks, tags, concepts, prefs, taskFilter, setTaskFilter, refetchTasks, showToast, isRoutineTask, scheduledByTaskId, patternForTask, setPlanWeekModal, setElementModal } from '../stores/index.js';
+import { api, type Block, type Task } from '../lib/api.js';
 import { colorVar } from '../lib/pattern-meta.js';
 import { localISODate } from '../lib/dates.js';
 import { TaskCard } from '../components/TaskCard.js';
@@ -19,6 +19,7 @@ import { setActiveTask } from '../stores/selection.js';
 import { setDetailsOpen } from '../stores/ui.js';
 import { partitionTaskSections, headerOpenCount } from '../lib/task-sections.js';
 import { SuggestionsSection } from '../components/SuggestionsSection.js';
+import { splitBlockTag } from '../lib/element.js';
 import { Skeleton } from '../components/Skeleton.js';
 
 export function AllTasks() {
@@ -36,12 +37,20 @@ export function AllTasks() {
     if (t.title.toLowerCase().includes(q)) return true;
     return [...(t.tags ?? []), ...(t.secondary_tags ?? [])].some((n) => n.toLowerCase().includes(q));
   };
+  const matchesConceptSearch = (b: Block): boolean => {
+    const q = search().trim().toLowerCase();
+    if (!q) return true;
+    const { primary, secondary } = splitBlockTag(b.tag);
+    return [b.title, b.note ?? '', primary, ...secondary, ...(b.secondary_tags ?? [])]
+      .some((value) => value.toLowerCase().includes(q));
+  };
   const [doneOpen, setDoneOpen] = createSignal(true);
   const [cancelledOpen, setCancelledOpen] = createSignal(true);
   // §E / AF-7: the Tasks tab groups the backlog into New Today / Open / Scheduled /
   // Routine sections.
   const [newTodaySecOpen, setNewTodaySecOpen] = createSignal(true);
   const [openSecOpen, setOpenSecOpen] = createSignal(true);
+  const [somedaySecOpen, setSomedaySecOpen] = createSignal(true);
   const [schedSecOpen, setSchedSecOpen] = createSignal(true);
   const [routineSecOpen, setRoutineSecOpen] = createSignal(true);
 
@@ -114,9 +123,6 @@ export function AllTasks() {
     list = list.filter(matchesSearch);
     return [...list].sort(order() === 'due' ? byDueDateAsc : byPriority);
   };
-  const tabCount = (v: 'tasks' | 'habits') =>
-    baseList().filter((t) => inActiveList(t) && (v === 'habits' ? t.is_habit : !t.is_habit)).length;
-
   // §E / AF-7: partition the (already filtered+sorted) Tasks-tab backlog into four
   // sections. Precedence: Routine wins (a routine task can also be scheduled — it still
   // lands here); then scheduled/in-progress, so placing a task moves its card out of New
@@ -157,6 +163,13 @@ export function AllTasks() {
   const routineList = () => sections().routine;
   const scheduledList = () => sections().scheduled;
   const openList = () => sections().open;
+  const somedayList = () => {
+    const selectedDirection = direction();
+    return (concepts() ?? [])
+      .filter((b) => matchesConceptSearch(b))
+      .filter((b) => !selectedDirection || splitBlockTag(b.tag).primary === selectedDirection)
+      .sort((a, b) => (a.goal_start_date ?? '9999-12-31').localeCompare(b.goal_start_date ?? '9999-12-31') || a.title.localeCompare(b.title));
+  };
   // Explicit status filter → flat list; routine tasks never appear under the 'open' filter.
   const explicitList = () => (taskFilter().status === 'open' ? shownList().filter((t) => !isRoutineTask(t.id)) : shownList());
 
@@ -224,8 +237,7 @@ export function AllTasks() {
       {/* Tabs — always visible; sort sits to the right on the Task/Habit tabs. */}
       <div class="view-tabs justify-between" role="tablist">
         <div class="flex flex-wrap">
-          {/* AF-1 order: Tasks · Objectives · Habits · Routines · Timeblock; only the
-              backlog tabs (tasks/habits) carry a count badge. */}
+          {/* AF-1 order: Tasks · Objectives · Habits · Routines · Timeblock. */}
           <For each={[
             ['tasks', 'Tasks'],
             ['objectives', 'Objectives'],
@@ -236,9 +248,6 @@ export function AllTasks() {
             {([v, label]) => (
               <button role="tab" class="view-tab" aria-selected={view() === v} onClick={() => selectTab(v)}>
                 {label}
-                <Show when={v === 'tasks' || v === 'habits'}>
-                  <span class="count">{tabCount(v as 'tasks' | 'habits')}</span>
-                </Show>
               </button>
             )}
           </For>
@@ -337,13 +346,21 @@ export function AllTasks() {
             }
           >
             <Show
-              when={newTodayList().length + openList().length + scheduledList().length + routineList().length > 0}
-              fallback={<div class="card text-center text-slate-500 py-12 text-sm flex flex-col items-center gap-2">
-                No tasks found.
-                <button type="button" class="btn-primary text-xs" onClick={() => setElementModal({ open: true, mode: 'add', kind: null })}>
-                  Add a task
-                </button>
-                <EmptyStateConnectCTA />
+              when={newTodayList().length + openList().length + somedayList().length + scheduledList().length + routineList().length > 0}
+              fallback={<div class="flex flex-col gap-2">
+                <div class="card text-center text-slate-500 py-12 text-sm flex flex-col items-center gap-2">
+                  No tasks found.
+                  <button type="button" class="btn-primary text-xs" onClick={() => setElementModal({ open: true, mode: 'add', kind: null })}>
+                    Add a task
+                  </button>
+                  <EmptyStateConnectCTA />
+                </div>
+                <SomedayTasksSection
+                  open={somedaySecOpen()}
+                  onToggle={() => setSomedaySecOpen((v) => !v)}
+                  items={somedayList()}
+                  defaultMinutes={prefs()?.concept_default_minutes ?? 60}
+                />
               </div>}
             >
               {/* AF-7: everything created on the local today, above the standing sections.
@@ -354,6 +371,12 @@ export function AllTasks() {
               <Show when={openList().length > 0}>
                 <ArchiveSection title="Open" open={openSecOpen()} onToggle={() => setOpenSecOpen((v) => !v)} items={openList()} loading={false} emptyLabel="" />
               </Show>
+              <SomedayTasksSection
+                open={somedaySecOpen()}
+                onToggle={() => setSomedaySecOpen((v) => !v)}
+                items={somedayList()}
+                defaultMinutes={prefs()?.concept_default_minutes ?? 60}
+              />
               <Show when={scheduledList().length > 0}>
                 <ArchiveSection title="Scheduled" open={schedSecOpen()} onToggle={() => setSchedSecOpen((v) => !v)} items={scheduledList()} loading={false} emptyLabel="" />
               </Show>
@@ -411,7 +434,7 @@ function ArchiveSection(props: {
 }) {
   return (
     <div class="card mb-3">
-      <button onClick={props.onToggle} class="flex items-center gap-2 w-full text-left text-sm font-semibold text-foreground">
+      <button onClick={props.onToggle} class="flex items-center gap-2 w-full text-left text-sm font-semibold text-foreground" aria-expanded={props.open}>
         <Show when={props.open} fallback={<ChevronRight size={15} class="text-muted-foreground" />}>
           <ChevronDown size={15} class="text-muted-foreground" />
         </Show>
@@ -435,6 +458,79 @@ function ArchiveSection(props: {
           </Show>
         </div>
       </Show>
+    </div>
+  );
+}
+
+/** Someday Tasks are unscheduled goal blocks, shown beside the task backlog without
+ *  staging them. Editing keeps the original goal/estimate; promotion is offered in the
+ *  Weekly Review so a deliberate choice creates an ordinary open task. */
+function SomedayTasksSection(props: {
+  open: boolean;
+  onToggle: () => void;
+  items: Block[];
+  defaultMinutes: number;
+}) {
+  return (
+    <div class="card mb-3">
+      <button onClick={props.onToggle} class="flex items-center gap-2 w-full text-left text-sm font-semibold text-foreground" aria-expanded={props.open}>
+        <Show when={props.open} fallback={<ChevronRight size={15} class="text-muted-foreground" />}>
+          <ChevronDown size={15} class="text-muted-foreground" />
+        </Show>
+        Someday Tasks
+        <span class="opacity-60 tabular-nums font-normal">{props.items.length}</span>
+      </button>
+      <Show when={props.open}>
+        <div class="flex flex-col gap-2 mt-3">
+          <For each={props.items}>{(item) => <SomedayTaskRow item={item} defaultMinutes={props.defaultMinutes} />}</For>
+          <Show when={props.items.length === 0}>
+            <div class="text-xs text-muted-foreground py-2">No Someday Tasks yet.</div>
+          </Show>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+function SomedayTaskRow(props: { item: Block; defaultMinutes: number }) {
+  const openEdit = () => setElementModal({
+    open: true,
+    mode: 'edit',
+    kind: 'timeblock',
+    editTarget: { kind: 'timeblock', id: props.item.id },
+  });
+  const estimate = () => props.item.duration_minutes ?? props.defaultMinutes;
+  const estimateLabel = () => {
+    const mins = estimate();
+    const hours = Math.floor(mins / 60);
+    const rest = mins % 60;
+    return hours ? `${hours}h${rest ? ` ${rest}m` : ''}` : `${mins}m`;
+  };
+  const goalLabel = () => {
+    const date = props.item.goal_start_date;
+    if (!date) return 'No goal date';
+    const parsed = new Date(`${date}T12:00:00`);
+    return Number.isNaN(parsed.getTime()) ? date : `Goal · ${parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+  };
+  const tagNames = () => {
+    const { primary, secondary } = splitBlockTag(props.item.tag);
+    return [...new Set([primary, ...secondary, ...(props.item.secondary_tags ?? [])].filter(Boolean))];
+  };
+  return (
+    <div class="flex items-center gap-3 border border-border bg-background/40 px-3 py-2">
+      <Pentagon size={14} class="text-muted-foreground flex-shrink-0" />
+      <button type="button" class="min-w-0 flex-1 text-left" onClick={openEdit} title="Edit Someday Task">
+        <span class="block truncate text-sm font-medium text-foreground">{props.item.title}</span>
+        <span class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+          <span>{goalLabel()}</span>
+          <span class="inline-flex items-center gap-1"><Clock3 size={11} /> {estimateLabel()}</span>
+          <For each={tagNames()}>{(name) => <span class="text-primary">#{name}</span>}</For>
+        </span>
+        <Show when={props.item.note}>{(note) => <span class="block truncate text-[11px] text-muted-foreground/80">{note()}</span>}</Show>
+      </button>
+      <button type="button" class="btn-icon flex-shrink-0" onClick={openEdit} title="Edit Someday Task" aria-label={`Edit ${props.item.title}`}>
+        <Pencil size={13} />
+      </button>
     </div>
   );
 }

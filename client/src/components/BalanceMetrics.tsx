@@ -49,7 +49,7 @@ function ScoreBar(props: { score: ScoreDistribution }) {
       }
     >
       <div class="flex items-center gap-2">
-        <div class="flex h-2 rounded-full overflow-hidden bg-muted flex-1">
+        <div class="flex h-2 rounded-sm overflow-hidden bg-muted flex-1">
           <For each={SCORE_META}>
             {(m) => (
               <Show when={d().counts[m.key] > 0}>
@@ -88,8 +88,8 @@ function AxisCard(props: { m: AxisMetrics }) {
       </div>
 
       <div>
-        <div class="h-1.5 rounded-full bg-muted overflow-hidden">
-          <div class="h-full rounded-full bg-accent transition-all" style={{ width: `${pct()}%` }} />
+        <div class="h-1.5 rounded-sm bg-muted overflow-hidden">
+          <div class="h-full rounded-sm bg-accent transition-all" style={{ width: `${pct()}%` }} />
         </div>
         <div class="text-[10px] text-muted-foreground mt-1">{pct()}% of this area's tasks are finished</div>
       </div>

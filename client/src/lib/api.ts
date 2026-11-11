@@ -112,6 +112,8 @@ export interface Task {
   parent_id?: string;
   owner_id: string;
   source_kind: string;
+  auto_generated?: boolean;
+  human_approved_at?: string | null;
   created_at: string;
   completed_at?: string;
   tags: string[];                 // primary tags (entity_tags level 1) — incl. the home/work/community direction
@@ -328,6 +330,15 @@ export interface ParsedQuick {
   isComplex?: boolean;
 }
 
+export interface DurationSuggestion {
+  minutes: number;
+  minMinutes: number;
+  maxMinutes: number;
+  source: 'title_history' | 'tag_history' | 'quick_estimate' | 'default';
+  samples: number;
+  basis?: 'same title' | 'matching tags';
+}
+
 /**
  * "The model, not the owner, picked these categories for this text" — returned by
  * `quickParse` only when the classifier chose some. The client never builds or edits
@@ -516,6 +527,8 @@ export const api = {
   metrics: {
     // Two-axis task rollup for the Balance → Metrics tab.
     tasks: (days = 30) => request<TaskMetrics>('GET', `/metrics/tasks?days=${days}`),
+    schedulingPreferences: (date?: string) =>
+      request<SchedulingPreferenceSnapshot>('GET', `/metrics/scheduling-preferences${date ? `?date=${encodeURIComponent(date)}` : ''}`),
     // Triality outcome metrics (design §9.2) — 404s while the flag is off; the
     // tiles gate on prefs().triality_enabled and never probe.
     triality: (days = 30) => request<TrialityMetrics>('GET', `/metrics/triality?days=${days}`),
@@ -561,10 +574,16 @@ export const api = {
       return request<{ tasks: Task[] }>('GET', `/tasks${q}`);
     },
     create: (body: TaskInput) => request<{ task: Task }>('POST', '/tasks', body),
+    approve: (id: string) => request<{ task: Task }>('POST', `/tasks/${id}/approve`, {}),
     quick: (text: string) => request<{ task: Task; parsed: ParsedQuick; llm: boolean }>('POST', '/tasks/quick', { text }),
     // T14 (#350) — parse-only twin of `quick`: zero writes; the wizard previews the
     // parse in its own fields and the user approves via the normal Add path.
-    quickParse: (text: string) => request<{ parsed: ParsedQuick; llm: boolean; classification_claim?: ClassificationClaim }>('POST', '/tasks/quick/parse', { text }),
+    quickParse: (text: string, timeBlock = false) => request<{
+      parsed: ParsedQuick;
+      llm: boolean;
+      durationSuggestion?: DurationSuggestion;
+      classification_claim?: ClassificationClaim;
+    }>('POST', '/tasks/quick/parse', { text, timeBlock }),
     // The close ritual: complete (if still open) + record mood/note/corrected duration.
     // Accepted on an already-done task too — reflecting later is the normal case.
     close: (id: string, body: { score?: Score | typeof DECLINED_SCORE; note?: string; actual_minutes?: number }) =>
@@ -630,8 +649,7 @@ export const api = {
         placement?: { placed: boolean; blockId?: string; startAt?: string; endAt?: string; reason?: string };
       }>('POST', `/tasks/${id}/reschedule`, { days }),
     // DEAD SURFACE (zero callers — see #392): no Recall action exists anywhere in the
-    // UI, so Settings' 'Recall keeps Routine membership' toggle currently governs
-    // nothing. Clone a (shelved/Past) task to a brand-new task — cockpit-v2 Phase 6.
+    // UI. Clone a (shelved/Past) task to a brand-new task — cockpit-v2 Phase 6.
     recall: (id: string) => request<{ task: Task }>('POST', `/tasks/${id}/recall`, {}),
   },
 
@@ -934,8 +952,12 @@ export const api = {
   patternBlocks: {
     list: () => request<{ workday: PatternWindows; weekend: PatternWindows }>('GET', '/pattern-blocks'),
     forDay: (dayType: string) => request<{ windows: PatternWindows }>('GET', `/pattern-blocks/${dayType}`),
+    forDate: (date: string) => request<{ date: string; dayType: string; windows: PatternWindows; overriddenDirections: string[] }>('GET', `/pattern-blocks/date/${date}`),
     set:  (dirTagId: string, dayType: string, ranges: Omit<PatternRange, 'id'>[]) =>
             request<{ ranges: PatternRange[] }>('PUT', `/pattern-blocks/${dirTagId}/${dayType}`, { ranges }),
+    setForDate: (dirTagId: string, date: string, ranges: Omit<PatternRange, 'id'>[]) =>
+            request<{ ranges: PatternRange[] }>('PUT', `/pattern-blocks/date/${date}/${dirTagId}`, { ranges }),
+    clearDate: (date: string) => request<{ ok: boolean }>('DELETE', `/pattern-blocks/date/${date}`),
   },
 
   // Day types (T-SCHED-3): the catalog, the weekly default map (dow→key), and
@@ -1061,7 +1083,10 @@ export const api = {
     /** The reversal — cancel a pending permanent deletion. */
     cancelPurge: (id: string) => request<{ ok: boolean }>('DELETE', `/objectives/${id}/purge`),
     linkTask: (id: string, task_id: string) => request<{ ok: boolean }>('POST', `/objectives/${id}/tasks`, { task_id }),
+    createTask: (id: string, title: string) => request<{ task: Task }>('POST', `/objectives/${id}/tasks/create`, { title }),
     unlinkTask: (id: string, task_id: string) => request<{ ok: boolean }>('DELETE', `/objectives/${id}/tasks/${task_id}`),
+    moveTask: (sourceObjectiveId: string, taskId: string, targetObjectiveId: string) =>
+      request<{ ok: boolean }>('POST', `/objectives/${sourceObjectiveId}/tasks/${taskId}/move`, { target_objective_id: targetObjectiveId }),
     // Dead surface (zero callers — see #392); progress recomputes server-side on link
     // and task changes — no UI needs the manual kick.
     recompute: (id: string) => request<{ ok: boolean }>('POST', `/objectives/${id}/recompute`),
@@ -1231,6 +1256,45 @@ export const api = {
       request<{ person: Person }>('POST', `/people/accounts/${accountId}`),
   },
 };
+
+export interface SchedulingActionPreference {
+  action: string;
+  good_probability: number;
+  samples: number;
+  confidence: number;
+  preferred_time_band: string | null;
+  time_samples: number;
+  preferred_window_type: string | null;
+}
+
+export interface SchedulingTimePreference {
+  band: string;
+  good_probability: number;
+  samples: number;
+  confidence: number;
+}
+
+export interface SchedulingSuggestion {
+  task_id: string;
+  title: string;
+  priority: number;
+  estimated_minutes: number | null;
+  due_at: string | null;
+  action: string | null;
+  probability_good: number;
+  confidence: number;
+  samples: number;
+  preferred_time_band: string | null;
+  reason: string;
+}
+
+export interface SchedulingPreferenceSnapshot {
+  history_days: number;
+  history_samples: number;
+  action_preferences: SchedulingActionPreference[];
+  time_preferences: SchedulingTimePreference[];
+  suggestions: SchedulingSuggestion[];
+}
 
 /** How an account invite went out: emailed, or handed back as a link (no SMTP). */
 export type InviteResult = { delivery: 'email'; to: string } | { delivery: 'link'; link: string };
@@ -1570,7 +1634,6 @@ export interface Prefs {
   concept_tags?: { name: string; minutes: number }[]; // canonical Block-Wizard concept tags (0021)
   enable_rituals?: boolean; // feature flag (0024); default false — Rituals hidden
   enable_routines?: boolean; // feature flag; default false — Routines hidden from Add dialog
-  recall_keeps_pattern?: boolean; // cockpit-v2 Phase 6: recall=clone copies Routine membership (default OFF)
   time_sense_enabled?: boolean; // Phase Z master flag (0106); default false — Time-Sense surfaces hidden
   // Phase Z · Z5 per-cue prefs matrix (0108). Read only while time_sense_enabled is on.
   focus_ritual_enabled?: boolean; // master gate for the Focus screen
@@ -2016,7 +2079,7 @@ export interface ObjectiveNextAction {
   scheduled_date: string | null;
 }
 
-/** AF-2: compact linked-task rows GET /objectives attaches to every node (leaves populated, non-leaves `[]`). */
+/** AF-2: compact linked-task rows GET /objectives attaches to every node. */
 export interface ObjectiveTaskSummary {
   id: string;
   title: string;
@@ -2026,6 +2089,9 @@ export interface ObjectiveTaskSummary {
   scheduled_for: string | null;
   parent_id: string | null;
   completed_at: string | null;
+  estimated_minutes?: number | null;
+  auto_generated?: boolean;
+  human_approved_at?: string | null;
 }
 
 export interface Objective {
@@ -2061,7 +2127,7 @@ export interface Objective {
   effective_target: string | null;
   pace_expected: number | null;
   has_tasks: boolean;
-  /** AF-2: linked open/done-recent tasks — leaves populated, non-leaves always `[]`. */
+  /** AF-2: linked open/done-recent tasks — any objective node may carry these. */
   tasks: ObjectiveTaskSummary[];
   children: Objective[];
 }

@@ -5,8 +5,8 @@ import { stampRow } from '../sync/apply.js';
 
 /**
  * Objectives (Phase N life-planning) — the Goal › Project › Objective tree, built
- * bottom-up: a task-bearing leaf is an "objective", a node whose children are objectives
- * is a "project", and one whose children are projects is a "goal". `level` is derived from
+ * bottom-up: a leaf is an "objective", a node whose children are objectives is a "project",
+ * and one whose children are projects is a "goal". Any node may retain linked tasks. `level` is derived from
  * a node's HEIGHT (longest path to a leaf descendant), not its depth from the root.
  *
  * Phase W · W8a (Decision 3): extracted VERBATIM from routes/objectives.ts so REST +
@@ -170,7 +170,7 @@ async function wouldCycle(objId: string, proposedParent: string): Promise<boolea
   return row !== undefined;
 }
 
-/** Minimal task row attached to leaf objectives in the GET /api/objectives tree (AF-2). */
+/** Compact linked task row attached to every objective in the GET /api/objectives tree (AF-2). */
 export interface ObjectiveTaskSummary {
   id: string;
   title: string;
@@ -180,6 +180,9 @@ export interface ObjectiveTaskSummary {
   scheduled_for: string | null;
   parent_id: string | null;
   completed_at: string | null;
+  estimated_minutes: number | null;
+  auto_generated: number | boolean;
+  human_approved_at: string | null;
 }
 
 /**
@@ -188,9 +191,8 @@ export interface ObjectiveTaskSummary {
  * parents. Fetches up-front (no N+1 over rows). Owner-scoped.
  *
  * AF-2: every node also carries `tasks: ObjectiveTaskSummary[]` — ALWAYS present, so the
- * client never branches on shape. Only LEAF nodes (no children in the owner's forest) are
- * populated; non-leaves are always `[]` (leaf-only linking is enforced on writes, so this
- * loses nothing). Active links only (linked=1), cancelled tasks excluded. Fetched in ONE
+ * client never branches on shape. Parent objectives may keep their own linked tasks when
+ * children are added. Active links only (linked=1), cancelled tasks excluded. Fetched in ONE
  * batched query for the whole forest, ordered priority ASC → due_at ASC (NULLs last) → id.
  * next_action / has_tasks are unchanged (the client depends on them until Wave 2).
  */
@@ -218,15 +220,15 @@ export async function buildTree(owner: string) {
     byId.set(o.id, { ...o, next_action: null, effective_target: null, pace_expected: null, has_tasks: false, tasks: [], children: [] });
   }
 
-  // AF-2: linked tasks for LEAF nodes, one batched query for the whole forest (no per-node
+  // AF-2: linked tasks for every node, one batched query for the whole forest (no per-node
   // loop). Owner-scoped on BOTH sides (objective + task) like objectiveForTask, so a
   // stray/dangling objective_tasks row can't leak another owner's task. Active links only
   // (linked=1 — tombstones excluded), cancelled tasks excluded.
-  const isParent = new Set(objs.map((o) => o.parent_id).filter((p): p is string => p != null));
   const linkedTasks = await store()
     .prepare(
       `SELECT ot.objective_id AS objective_id,
-              t.id, t.title, t.status, t.priority, t.due_at, t.scheduled_for, t.parent_id, t.completed_at
+              t.id, t.title, t.status, t.priority, t.due_at, t.scheduled_for, t.parent_id, t.completed_at,
+              t.estimated_minutes, t.auto_generated, t.human_approved_at
          FROM objective_tasks ot
          JOIN tasks t ON t.id = ot.task_id
          JOIN objectives o ON o.id = ot.objective_id
@@ -236,13 +238,12 @@ export async function buildTree(owner: string) {
     .all<ObjectiveTaskSummary & { objective_id: string }>(owner, owner);
   for (const { objective_id, ...task } of linkedTasks) {
     const node = byId.get(objective_id);
-    if (!node || isParent.has(objective_id)) continue; // leaf-only (write-enforced; belt-and-braces)
+    if (!node) continue;
     node.tasks.push(task);
   }
 
   // Only ACTIVE links count (migration 0087: unlink tombstones as linked=0, read paths
-  // filter linked=1) — so a tombstoned link doesn't keep a node marked task-bearing, which
-  // would wrongly block it as a parent. Consistent with the containment guard in updateObjective.
+  // filter linked=1). A tombstoned link must not contribute to objective progress.
   const withTasks = new Set(
     (await store()
       .prepare(`SELECT DISTINCT objective_id FROM objective_tasks WHERE linked = 1`)
@@ -623,11 +624,11 @@ export interface UpdateObjectiveInput extends CreateObjectiveInput {
 }
 export type UpdateObjectiveResult =
   | { ok: true; row: ObjectiveRow }
-  | { ok: false; error: 'not_found' | 'parent_not_found' | 'cycle' | 'parent_has_tasks' };
+  | { ok: false; error: 'not_found' | 'parent_not_found' | 'cycle' };
 
 /**
  * KNOWN RACE, deliberately left open. The three re-parent guards below (live parent, no
- * cycle, parent bears no tasks) are each separated from the UPDATE by an await, so two
+ * cycle) are each separated from the UPDATE by an await, so two
  * concurrent re-parents can each pass and then write. The serious one is `cycle`: A→B and
  * B→A both see an acyclic tree, both commit, and the result is a parent loop that
  * `heightBelow`/`wouldCycle`'s `UNION ALL` recursive CTEs do not terminate on. Unlike
@@ -644,13 +645,6 @@ export async function updateObjective(owner: string, id: string, body: UpdateObj
   if ('parent_id' in body && body.parent_id != null) {
     if (!(await liveParentExists(owner, body.parent_id))) return { ok: false, error: 'parent_not_found' };
     if (await wouldCycle(id, body.parent_id)) return { ok: false, error: 'cycle' };
-    // Containment: a node may not nest under a task-bearing objective. No archived_at
-    // check needed here — liveParentExists above has already refused an archived parent,
-    // so by this line the parent is live and this asks only about its tasks.
-    const parentHasTasks = await store()
-      .prepare(`SELECT 1 FROM objective_tasks WHERE objective_id = ? AND linked = 1 LIMIT 1`)
-      .get(body.parent_id);
-    if (parentHasTasks) return { ok: false, error: 'parent_has_tasks' };
   }
 
   const oldParentId = existing.parent_id;
@@ -944,15 +938,13 @@ export async function cancelPurge(owner: string, id: string): Promise<PurgeResul
 
 export type LinkTaskResult =
   | { ok: true; linkId: string }
-  | { ok: false; error: 'objective_not_found' | 'task_id_required' | 'non_leaf' | 'task_not_found' };
+  | { ok: false; error: 'objective_not_found' | 'task_id_required' | 'task_not_found' };
 
-/** Link a task to a (leaf) objective. Preserves the route's validation order + messages. */
+/** Link a task to any objective, including a parent that also has child objectives. */
 export async function linkTaskToObjective(owner: string, objId: string, taskId: string | undefined): Promise<LinkTaskResult> {
   const obj = await store().prepare(`SELECT id FROM objectives WHERE id = ? AND owner_id = ?`).get(objId, owner);
   if (!obj) return { ok: false, error: 'objective_not_found' };
   if (!taskId) return { ok: false, error: 'task_id_required' };
-  // Containment: tasks live only at the leaf (objective) level.
-  if ((await heightBelow(objId)) > 0) return { ok: false, error: 'non_leaf' };
   const task = await store().prepare(`SELECT id FROM tasks WHERE id = ? AND owner_id = ?`).get(taskId, owner);
   if (!task) return { ok: false, error: 'task_not_found' };
   const linkId = await linkObjectiveTask(objId, taskId);
@@ -973,6 +965,53 @@ export async function unlinkTaskFromObjective(owner: string, objId: string, task
   await recomputeProgress(objId);
   writeAudit({ ownerId: owner, actor: 'owner', action: 'unlink', entity: `objective:${objId}:task:${taskId}` });
   return { linkId };
+}
+
+export type MoveObjectiveTaskResult =
+  | { ok: true; sourceLinkId: string; targetLinkId: string }
+  | { ok: false; error: 'same_objective' | 'objective_not_found' | 'task_not_found' | 'not_linked' | 'different_group' };
+
+/** Move one objective-task link to another objective under the same root goal. */
+export async function moveTaskBetweenObjectives(
+  owner: string,
+  sourceObjectiveId: string,
+  targetObjectiveId: string,
+  taskId: string,
+): Promise<MoveObjectiveTaskResult> {
+  if (sourceObjectiveId === targetObjectiveId) return { ok: false, error: 'same_objective' };
+  const objectives = await store()
+    .prepare(`SELECT id FROM objectives WHERE id IN (?, ?) AND owner_id = ? AND archived_at IS NULL`)
+    .all<{ id: string }>(sourceObjectiveId, targetObjectiveId, owner);
+  if (objectives.length !== 2) return { ok: false, error: 'objective_not_found' };
+  const task = await store().prepare(`SELECT id FROM tasks WHERE id = ? AND owner_id = ?`).get(taskId, owner);
+  if (!task) return { ok: false, error: 'task_not_found' };
+
+  const rootOf = async (id: string) => (await store().prepare(
+    `WITH RECURSIVE lineage(id, parent_id) AS (
+       SELECT id, parent_id FROM objectives WHERE id = ? AND owner_id = ? AND archived_at IS NULL
+       UNION
+       SELECT o.id, o.parent_id FROM objectives o JOIN lineage l ON o.id = l.parent_id
+        WHERE o.owner_id = ? AND o.archived_at IS NULL
+     )
+     SELECT id FROM lineage WHERE parent_id IS NULL LIMIT 1`,
+  ).get<{ id: string }>(id, owner, owner))?.id;
+  const [sourceRoot, targetRoot] = await Promise.all([rootOf(sourceObjectiveId), rootOf(targetObjectiveId)]);
+  if (!sourceRoot || sourceRoot !== targetRoot) return { ok: false, error: 'different_group' };
+
+  const sourceLink = await store().prepare(
+    `SELECT id FROM objective_tasks WHERE objective_id = ? AND task_id = ? AND linked = 1 LIMIT 1`,
+  ).get<{ id: string }>(sourceObjectiveId, taskId);
+  if (!sourceLink) return { ok: false, error: 'not_linked' };
+
+  const result = await store().transaction(async () => {
+    const sourceLinkId = await unlinkObjectiveTask(sourceObjectiveId, taskId);
+    const targetLinkId = await linkObjectiveTask(targetObjectiveId, taskId);
+    await recomputeProgress(sourceObjectiveId);
+    await recomputeProgress(targetObjectiveId);
+    return { sourceLinkId: sourceLinkId ?? sourceLink.id, targetLinkId };
+  });
+  writeAudit({ ownerId: owner, actor: 'owner', action: 'move', entity: `task:${taskId}:objective:${sourceObjectiveId}->${targetObjectiveId}` });
+  return { ok: true, ...result };
 }
 
 export type RecomputeResult = { ok: true } | { ok: false; error: 'not_found' };

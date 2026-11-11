@@ -4,6 +4,7 @@ import { currentOwnerId } from '../lib/context.js';
 import { trialityEnabled } from '../lib/flags.js';
 import { taskMetrics } from '../services/task-metrics.js';
 import { trialityMetrics } from '../services/triality-metrics.js';
+import { schedulingPreferenceSnapshot } from '../services/scheduling-intelligence.js';
 
 /**
  * Read-only metrics surface behind the Balance view's Metrics tab: task counts, timed
@@ -22,6 +23,16 @@ export function metricsRouter() {
     const days = Number((ctx.query.days as string) ?? '30');
     // Koa does NOT await a Promise assigned to ctx.body — it would serialize as {}.
     ctx.body = await taskMetrics(currentOwnerId(), days);
+  });
+
+  // Read-only learned action/time preferences plus the ranked tasks Balance can
+  // suggest into Flight Plan. Evidence comes from completed task ratings and the
+  // write-once deferred/missed outcomes in daily_plan.
+  router.get('/api/metrics/scheduling-preferences', async (ctx) => {
+    const date = typeof ctx.query.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(ctx.query.date)
+      ? ctx.query.date
+      : undefined;
+    ctx.body = await schedulingPreferenceSnapshot(currentOwnerId(), date);
   });
 
   // GET /api/metrics/calibration?scope_kind=global&scope_ref=&limit=90 — the dated

@@ -3,10 +3,11 @@ import {
   Zap, CalendarCheck, X, ChevronDown, ChevronRight, ChevronLeft, Repeat2, Trash2,
   Star, Plus, Check as CheckIcon,
 } from 'lucide-solid';
-import { api, type FlightPlanItem, type Task, type BlockTemplate } from '../lib/api.js';
+import { api, type FlightPlanItem, type Task, type BlockTemplate, type SchedulingSuggestion } from '../lib/api.js';
 import {
   flightPlan, refetchFlightPlan, refetchBlocks, prefs, refetchPrefs, showToast, selectedDay,
   blockTemplates, refetchBlockTemplates, flightPlanTaskIds, patterns,
+  taskOf,
 } from '../stores/index.js';
 import { isSelected, toggleSelection, setActiveTask, activeTask } from '../stores/selection.js';
 import { revealDetails } from '../stores/ui.js';
@@ -51,6 +52,10 @@ export function FlightPlan() {
   const [tab, setTab] = createSignal<'plan' | 'saved'>('plan');
   const items = () => flightPlan() ?? [];
   const selectedCount = () => items().filter((i) => i.selected).length;
+  const [smartSuggestions, { refetch: refetchSmartSuggestions }] = createResource(
+    () => prefs()?.trust_mode === 'balanced' ? selectedDay() : null,
+    (date) => api.metrics.schedulingPreferences(date),
+  );
 
   const fillOrder = () => prefs()?.fill_order ?? 'priority';
   async function setFillOrder(o: 'priority' | 'overdue' | 'new_today') {
@@ -111,7 +116,17 @@ export function FlightPlan() {
     try {
       await api.flightPlan.addTask(t.id);
       refetchFlightPlan();
+      refetchSmartSuggestions();
       showToast(`Staged "${t.title}"`, 'success');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
+  async function stageSuggestion(t: SchedulingSuggestion) {
+    try {
+      await api.flightPlan.addTask(t.task_id);
+      refetchFlightPlan();
+      refetchSmartSuggestions();
+      showToast(`Added "${t.title}" to Flight Plan`, 'success');
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
@@ -144,6 +159,7 @@ export function FlightPlan() {
         'default',
       );
       refetchFlightPlan();
+      refetchSmartSuggestions();
     } catch (err) {
       showToast((err as Error).message, 'error');
     } finally {
@@ -182,6 +198,10 @@ export function FlightPlan() {
 
   const FpRow = (props: { it: FlightPlanItem; inGroup?: boolean }) => {
     const p = () => Math.min(Math.max(props.it.priority ?? 3, 1), 5);
+    const awaitingReview = () => {
+      const task = taskOf(props.it.task_id);
+      return !!task?.auto_generated && !task.human_approved_at;
+    };
     const selected = () => isSelected({ kind: 'flight-plan-task', id: props.it.task_id });
     const drag = useDraggable(() => ({ kind: 'flight-task', id: props.it.task_id }));
     return (
@@ -191,6 +211,7 @@ export function FlightPlan() {
         classList={{
           'pl-7': props.inGroup,
           'ring-2 ring-chart-1 bg-chart-1/5': selected(),
+          'border border-dotted border-orange-400': awaitingReview(),
           // Expanded-in-drawer marker. Distinct from the multi-select ring above so a
           // row that is both selected and expanded still reads as both.
           'bg-sidebar-accent': activeTask() === props.it.task_id,
@@ -298,7 +319,7 @@ export function FlightPlan() {
           <div class="flex items-center gap-2 px-3 pb-2 pl-8">
             <span class="text-[11px] text-muted-foreground">Place on {selectedDay()} at</span>
             <input type="time" step={900} class="input py-0.5 text-sm w-24" value={time()} onInput={(e) => setTime(e.currentTarget.value)} onKeyDown={(e) => e.key === 'Enter' && place()} />
-            <button onClick={place} class="btn-primary !rounded-full !py-0.5 !px-2.5 text-[11px] flex items-center gap-1" title="Create the block at this time"><CalendarCheck size={12} /> Place</button>
+            <button onClick={place} class="btn-primary !rounded-sm !py-0.5 !px-2.5 text-[11px] flex items-center gap-1" title="Create the block at this time"><CalendarCheck size={12} /> Place</button>
             <button onClick={() => setPlacing(false)} class="btn-icon" title="Cancel"><X size={13} /></button>
           </div>
         </Show>
@@ -331,7 +352,7 @@ export function FlightPlan() {
     return (
       <div class="px-3 py-2 border-t border-border">
         <Show when={openForm()} fallback={
-          <button onClick={() => setOpenForm(true)} class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground transition-colors">
+          <button onClick={() => setOpenForm(true)} class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-sm border border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground transition-colors">
             <Plus size={11} /> New saved block
           </button>
         }>
@@ -371,7 +392,7 @@ export function FlightPlan() {
               "New Today" is `fill_order='new_today'`, which gives the Tasks tab's New
               Today set the earliest slots and orders each half by due date. */}
           <div
-            class="inline-flex rounded-full border border-border overflow-hidden text-[11px] flex-shrink-0"
+            class="inline-flex rounded-sm border border-border overflow-hidden text-[11px] flex-shrink-0"
             role="group"
             title="Priority: place highest-priority tasks first. Due Date: place soonest-due tasks first. New Today: give tasks that arrived today the earliest slots."
           >
@@ -400,7 +421,7 @@ export function FlightPlan() {
               <button
                 onClick={runFill}
                 disabled={running()}
-                class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground transition-colors disabled:opacity-40 flex-shrink-0"
+                class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-sm border border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground transition-colors disabled:opacity-40 flex-shrink-0"
                 title="Propose open tasks into the flight-plan (never places anything)"
               >
                 <Zap size={11} classList={{ 'animate-pulse': running() }} /> Fill Plan
@@ -410,7 +431,7 @@ export function FlightPlan() {
             <button
               onClick={reset}
               disabled={running()}
-              class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border border-border text-muted-foreground hover:border-destructive/50 hover:text-destructive transition-colors disabled:opacity-40 flex-shrink-0"
+              class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-sm border border-border text-muted-foreground hover:border-destructive/50 hover:text-destructive transition-colors disabled:opacity-40 flex-shrink-0"
               title="Clear all tasks from the flight-plan"
             >
               <Trash2 size={11} /> Clear Plan
@@ -451,6 +472,45 @@ export function FlightPlan() {
               onInput={(e) => setPlanQuery(e.currentTarget.value)}
             />
           </div>
+
+          {/* Balanced trust mode keeps final placement with the user. These ranked
+              suggestions are computed from that day's open tasks and the owner's
+              action/time outcomes; adding one stages it without placing it. */}
+          <Show when={prefs()?.trust_mode === 'balanced' && !backlogActive()}>
+            <div class="border-b border-border pb-2">
+              <div class="px-3 pt-2 text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">
+                Suggested for {selectedDay()}
+              </div>
+              <Show
+                when={(smartSuggestions()?.suggestions.length ?? 0) > 0}
+                fallback={<div class="px-3 py-2 text-[11px] text-muted-foreground">{smartSuggestions.loading ? 'Finding a good fit…' : 'No unstaged tasks fit this day.'}</div>}
+              >
+                <ul class="divide-y divide-border">
+                  <For each={smartSuggestions()?.suggestions ?? []}>{(suggestion) => (
+                    <li class="flex items-center gap-2 px-3 py-2 group">
+                      <span class={`priority-dot p${Math.min(Math.max(suggestion.priority, 1), 5)} flex-shrink-0`} />
+                      <div class="min-w-0 flex-1">
+                        <div class="flex items-center gap-1.5">
+                          <span class="text-xs text-foreground truncate">{suggestion.title}</span>
+                          <Show when={suggestion.estimated_minutes}><span class="text-[10px] font-mono text-muted-foreground flex-shrink-0">{suggestion.estimated_minutes}m</span></Show>
+                        </div>
+                        <div class="text-[10px] text-muted-foreground truncate">
+                          {suggestion.action ? `${suggestion.action} · ` : ''}{suggestion.reason}
+                          {suggestion.confidence > 0 ? ` · ${suggestion.confidence}% confidence` : ''}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => stageSuggestion(suggestion)}
+                        class="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-sm border border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground transition-colors flex-shrink-0"
+                        title="Add this suggestion to the Flight Plan; scheduling remains a separate action"
+                      ><Plus size={10} /> Add</button>
+                    </li>
+                  )}</For>
+                </ul>
+              </Show>
+            </div>
+          </Show>
           <Show
             when={items().length > 0}
             fallback={
@@ -485,13 +545,16 @@ export function FlightPlan() {
               >
                 <ul class="divide-y divide-border">
                   <For each={backlogMatches().slice(0, BACKLOG_CAP)}>{(t) => (
-                    <li class="flex items-center gap-2.5 px-3 py-2 group">
+                    <li
+                      class="flex items-center gap-2.5 px-3 py-2 group"
+                      classList={{ 'border border-dotted border-orange-400': !!t.auto_generated && !t.human_approved_at }}
+                    >
                       <span class={`priority-dot p${Math.min(Math.max(t.priority ?? 3, 1), 5)} flex-shrink-0`} />
                       <span class="flex-1 text-sm text-foreground truncate">{t.title}</span>
                       <Show when={t.estimated_minutes}><span class="text-[11px] font-mono text-muted-foreground flex-shrink-0">{t.estimated_minutes}m</span></Show>
                       <button
                         onClick={() => stageFromBacklog(t)}
-                        class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground transition-colors flex-shrink-0"
+                        class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-sm border border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground transition-colors flex-shrink-0"
                         title="Stage this task in the flight-plan"
                       ><Plus size={11} /> Add</button>
                     </li>

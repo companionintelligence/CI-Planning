@@ -320,7 +320,7 @@ export function PlannerEntityCard(props: {
           click-to-create on the grid. */}
       <div class="absolute inset-0 z-[44]" onPointerDown={(e) => { e.stopPropagation(); clearActiveEntity(); }} />
       <div
-        class="absolute left-1.5 right-1.5 z-[45] rounded-xl border border-border bg-popover shadow-2xl overflow-hidden"
+        class="absolute left-1.5 right-1.5 z-[45] rounded-none border border-border bg-popover shadow-2xl overflow-hidden"
         style={{ top: `${topPx()}px`, 'border-left': `4px solid ${accent()}` }}
         onPointerDown={(e) => e.stopPropagation()}
       >
@@ -355,8 +355,8 @@ export function PlannerEntityCard(props: {
           </Show>
           <Show when={groupLabels().length > 0 || secondary().length > 0}>
             <div class="flex flex-wrap items-center gap-1">
-              <For each={groupLabels()}>{(lbl) => <span class="text-[11px] px-1.5 py-0.5 rounded-full" style={{ color: accent(), 'background-color': `color-mix(in srgb, ${accent()} 14%, transparent)` }}>{lbl}</span>}</For>
-              <For each={secondary()}>{(name) => <span class="text-[10px] px-1.5 py-0.5 rounded-full border border-border/60 text-muted-foreground">{name}</span>}</For>
+              <For each={groupLabels()}>{(lbl) => <span class="text-[11px] px-1.5 py-0.5 rounded-sm" style={{ color: accent(), 'background-color': `color-mix(in srgb, ${accent()} 14%, transparent)` }}>{lbl}</span>}</For>
+              <For each={secondary()}>{(name) => <span class="text-[10px] px-1.5 py-0.5 rounded-sm border border-border/60 text-muted-foreground">{name}</span>}</For>
             </div>
           </Show>
           <Show when={people().responsible.length > 0 || people().beneficiaries.length > 0}>
@@ -364,13 +364,13 @@ export function PlannerEntityCard(props: {
               <Show when={people().responsible.length > 0}>
                 <div class="flex items-baseline gap-1.5 flex-wrap">
                   <span class="text-[10px] uppercase tracking-wide text-muted-foreground flex-shrink-0">Responsible</span>
-                  <For each={people().responsible}>{(p) => <span class="text-[10px] px-1.5 py-0.5 rounded-full border border-border/60 text-muted-foreground">{p.display_name}</span>}</For>
+                  <For each={people().responsible}>{(p) => <span class="text-[10px] px-1.5 py-0.5 rounded-sm border border-border/60 text-muted-foreground">{p.display_name}</span>}</For>
                 </div>
               </Show>
               <Show when={people().beneficiaries.length > 0}>
                 <div class="flex items-baseline gap-1.5 flex-wrap">
                   <span class="text-[10px] uppercase tracking-wide text-muted-foreground flex-shrink-0">Beneficiaries</span>
-                  <For each={people().beneficiaries}>{(p) => <span class="text-[10px] px-1.5 py-0.5 rounded-full border border-border/60 text-muted-foreground">{p.display_name}</span>}</For>
+                  <For each={people().beneficiaries}>{(p) => <span class="text-[10px] px-1.5 py-0.5 rounded-sm border border-border/60 text-muted-foreground">{p.display_name}</span>}</For>
                 </div>
               </Show>
             </div>

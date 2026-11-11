@@ -81,10 +81,7 @@ export const objectiveResolvers = {
       const res = await updateObjective(owner, args.input.id, toUpdate(args.input));
       if (!res.ok) {
         if (res.error === 'not_found') throw new GraphQLError('objective not found', { extensions: { code: 'NOT_FOUND' } });
-        const msg =
-          res.error === 'parent_not_found' ? 'parent_id not found'
-            : res.error === 'cycle' ? 'parent_id would create a cycle'
-              : 'cannot nest under a task-bearing objective — move its tasks first';
+        const msg = res.error === 'parent_not_found' ? 'parent_id not found' : 'parent_id would create a cycle';
         throw new GraphQLError(msg, { extensions: { code: 'BAD_USER_INPUT' } });
       }
       broadcast(owner, 'objective:updated', { id: args.input.id });
@@ -105,7 +102,6 @@ export const objectiveResolvers = {
       const owner = currentOwnerId();
       const res = await linkTaskToObjective(owner, args.input.objectiveId, args.input.taskId);
       if (!res.ok) {
-        if (res.error === 'non_leaf') throw new GraphQLError('tasks can only be linked to a leaf objective, not a project or goal', { extensions: { code: 'BAD_USER_INPUT' } });
         // objective_not_found / task_not_found (task_id_required can't occur — taskId is ID!).
         throw new GraphQLError(res.error === 'task_not_found' ? 'task not found' : 'objective not found', { extensions: { code: 'NOT_FOUND' } });
       }

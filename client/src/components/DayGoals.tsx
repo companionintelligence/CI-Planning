@@ -215,7 +215,7 @@ export function FocusMenu(props: { date: string }) {
               >
                 <button
                   title={goal().done_at ? 'Mark undone' : 'Mark done'}
-                  class={`mt-0.5 flex-shrink-0 w-4 h-4 rounded-full border flex items-center justify-center transition-colors ${goal().done_at ? 'bg-primary border-primary' : 'border-border hover:border-primary'}`}
+                  class={`mt-0.5 flex-shrink-0 w-4 h-4 rounded-sm border flex items-center justify-center transition-colors ${goal().done_at ? 'bg-primary border-primary' : 'border-border hover:border-primary'}`}
                   onClick={toggleTodayDone}
                 >
                   <Show when={goal().done_at}><Check size={10} class="text-primary-foreground" /></Show>
@@ -300,7 +300,7 @@ export function FocusMenu(props: { date: string }) {
                       >
                         <button
                           title={g().done_at ? 'Mark undone' : 'Mark done'}
-                          class={`mt-0.5 flex-shrink-0 w-4 h-4 rounded-full border flex items-center justify-center transition-colors ${g().done_at ? 'bg-primary border-primary' : 'border-border hover:border-primary'}`}
+                          class={`mt-0.5 flex-shrink-0 w-4 h-4 rounded-sm border flex items-center justify-center transition-colors ${g().done_at ? 'bg-primary border-primary' : 'border-border hover:border-primary'}`}
                           onClick={() => toggleWeeklyDone(pos)}
                         >
                           <Show when={g().done_at}><Check size={10} class="text-primary-foreground" /></Show>
@@ -627,9 +627,9 @@ export function BriefMenu(props: { date: string }) {
                 <span class="text-[10px] text-muted-foreground">Capacity</span>
                 <span class={`text-[10px] tabular-nums ${capacityTone()}`}>{capacityLabel()}</span>
               </div>
-              <div class="relative h-1.5 rounded-full bg-background border border-border overflow-hidden">
+              <div class="relative h-1.5 rounded-sm bg-background border border-border overflow-hidden">
                 <div
-                  class="absolute inset-y-0 left-0 rounded-full bg-primary transition-all"
+                  class="absolute inset-y-0 left-0 rounded-sm bg-primary transition-all"
                   classList={{ 'bg-amber-400': capacityPct() >= 70, 'bg-destructive': capacityPct() >= 90 }}
                   style={{ width: `${capacityPct()}%` }}
                 />
@@ -647,10 +647,15 @@ export function BriefMenu(props: { date: string }) {
               <ul class="flex flex-col gap-1.5">
                 <For each={topTasks()}>
                   {(t) => (
-                    <li class="flex items-center gap-2 text-sm">
+                    <li
+                      class="flex items-center gap-2 text-sm"
+                      classList={{
+                        'border border-dotted border-orange-400': !!taskOf(t.id)?.auto_generated && !taskOf(t.id)?.human_approved_at,
+                      }}
+                    >
                       <button
                         title={t.done ? 'Completed' : 'Mark done'}
-                        class={`flex-shrink-0 w-4 h-4 rounded-full border flex items-center justify-center transition-colors ${t.done ? 'bg-primary border-primary' : 'border-border hover:border-primary'}`}
+                        class={`flex-shrink-0 w-4 h-4 rounded-sm border flex items-center justify-center transition-colors ${t.done ? 'bg-primary border-primary' : 'border-border hover:border-primary'}`}
                         onClick={() => completeTask(t)}
                       >
                         <Show when={t.done} fallback={<Circle size={8} class="opacity-0" />}><Check size={10} class="text-primary-foreground" /></Show>

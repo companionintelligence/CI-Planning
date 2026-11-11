@@ -213,13 +213,13 @@ export function TrialityBanner() {
               {(p) => (
                 <div class="flex flex-col">
                   <div
-                    class="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs text-foreground cursor-pointer"
+                    class="inline-flex items-center gap-2 rounded-sm border px-3 py-1.5 text-xs text-foreground cursor-pointer"
                     classList={{ 'border-accent-hi/50': p.slot === 'contextual', 'border-border': p.slot !== 'contextual' }}
                     onClick={() => setExpanded(expanded() === p.log_id ? null : p.log_id)}
                     title="Tap for the arithmetic"
                   >
                     <Show when={swatch(p)}>
-                      <span class="w-2 h-2 rounded-sm flex-shrink-0" style={{ 'background-color': swatch(p)! }} />
+                      <span class="w-2 h-2 rounded-circle flex-shrink-0" style={{ 'background-color': swatch(p)! }} />
                     </Show>
                     <span class="truncate max-w-[180px]">{p.title}</span>
                     <Show when={p.motivation && MOTIVATION_GLYPH[p.motivation]}>

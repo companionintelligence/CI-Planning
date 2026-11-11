@@ -98,7 +98,7 @@ export function CategorySettings() {
             <div class="rounded-lg border border-border bg-card overflow-hidden">
               {/* Summary row */}
               <div class="flex items-center gap-2.5 px-3 py-2.5">
-                <span class="w-3.5 h-3.5 rounded-full flex-shrink-0" style={{ 'background-color': colorVar(p().color_token) }} />
+                <span class="w-3.5 h-3.5 rounded-circle flex-shrink-0" style={{ 'background-color': colorVar(p().color_token) }} />
                 <span class="text-sm font-medium text-foreground flex-1">{displayTag(c.name)}</span>
                 <button
                   type="button"
@@ -144,7 +144,7 @@ export function CategorySettings() {
                         {(col) => (
                           <button type="button" title={col.label}
                             onClick={() => setEditForm({ ...editForm(), color_token: col.token })}
-                            class="w-5 h-5 rounded-full border-2 transition-all"
+                            class="w-5 h-5 rounded-circle border-2 transition-all"
                             classList={{
                               'border-foreground scale-110': editForm().color_token === col.token,
                               'border-transparent hover:scale-105': editForm().color_token !== col.token,
