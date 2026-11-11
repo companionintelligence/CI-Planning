@@ -649,8 +649,7 @@ export const api = {
         placement?: { placed: boolean; blockId?: string; startAt?: string; endAt?: string; reason?: string };
       }>('POST', `/tasks/${id}/reschedule`, { days }),
     // DEAD SURFACE (zero callers — see #392): no Recall action exists anywhere in the
-    // UI, so Settings' 'Recall keeps Routine membership' toggle currently governs
-    // nothing. Clone a (shelved/Past) task to a brand-new task — cockpit-v2 Phase 6.
+    // UI. Clone a (shelved/Past) task to a brand-new task — cockpit-v2 Phase 6.
     recall: (id: string) => request<{ task: Task }>('POST', `/tasks/${id}/recall`, {}),
   },
 
@@ -1635,7 +1634,6 @@ export interface Prefs {
   concept_tags?: { name: string; minutes: number }[]; // canonical Block-Wizard concept tags (0021)
   enable_rituals?: boolean; // feature flag (0024); default false — Rituals hidden
   enable_routines?: boolean; // feature flag; default false — Routines hidden from Add dialog
-  recall_keeps_pattern?: boolean; // cockpit-v2 Phase 6: recall=clone copies Routine membership (default OFF)
   time_sense_enabled?: boolean; // Phase Z master flag (0106); default false — Time-Sense surfaces hidden
   // Phase Z · Z5 per-cue prefs matrix (0108). Read only while time_sense_enabled is on.
   focus_ritual_enabled?: boolean; // master gate for the Focus screen

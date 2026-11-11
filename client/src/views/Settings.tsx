@@ -48,7 +48,6 @@ interface SettingsForm {
   memory_pull_enabled: boolean; // Phase AA — pull memory graph into suggestions
   // Ingestion windows (0147). memory looks FORWARD (upcoming events), email looks BACK.
   memory_window_days: number; email_lookback_days: number;
-  recall_keeps_pattern: boolean; // cockpit-v2 Phase 6
   enable_routines: boolean; enable_rituals: boolean; // feature flags (0073 / 0024), off by default
   time_sense_enabled: boolean; // Phase Z master flag
   focus_ritual_enabled: boolean; haptic_cues_enabled: boolean; // Phase Z · Z5 per-cue matrix
@@ -66,7 +65,7 @@ interface SettingsForm {
 
 /** The boolean fields of the form — for the reusable Toggle. */
 type BoolField =
-  | 'auto_fill_workday' | 'plan_allday_always' | 'plan_daylong_for_promoted' | 'plan_autofill_gaps' | 'concept_autosurface' | 'recall_keeps_pattern' | 'enable_routines' | 'enable_rituals' | 'time_sense_enabled'
+  | 'auto_fill_workday' | 'plan_allday_always' | 'plan_daylong_for_promoted' | 'plan_autofill_gaps' | 'concept_autosurface' | 'enable_routines' | 'enable_rituals' | 'time_sense_enabled'
   | 'focus_ritual_enabled' | 'haptic_cues_enabled' | 'ambient_color_enabled' | 'calibration_loop_enabled' | 'triality_enabled' | 'llm_thinking_enabled' | 'balance_bias_enabled' | 'motivation_recap_enabled';
 
 const DEFAULTS: SettingsForm = {
@@ -82,7 +81,6 @@ const DEFAULTS: SettingsForm = {
   memory_sync_habits: true, memory_sync_reflections: true,
   memory_pull_enabled: false,
   memory_window_days: 2, email_lookback_days: 7,
-  recall_keeps_pattern: false,
   enable_routines: false, enable_rituals: false,
   time_sense_enabled: false,
   focus_ritual_enabled: true, haptic_cues_enabled: true,
@@ -251,7 +249,6 @@ export function Settings() {
       quality_model:              p.quality_model ?? '',
       embed_model:                p.embed_model ?? '',
       llm_thinking_enabled:       p.llm_thinking_enabled ?? false,
-      recall_keeps_pattern:       p.recall_keeps_pattern ?? false,
       enable_routines:            p.enable_routines ?? false,
       enable_rituals:             p.enable_rituals ?? false,
       time_sense_enabled:         p.time_sense_enabled ?? false,
@@ -1569,12 +1566,6 @@ export function Settings() {
               hint="Show Routine in the Add dialog and place recurring Routines on the Planner on their own, within your repeat horizon. Off (default): a Routine can still be made and placed by hand from the Routines tab." />
             <Toggle field="enable_rituals" label="Rituals"
               hint="Show the Ritual type (habits and one-off tasks for an occasion, like board-meeting prep) in the Routines tab. Off (default) hides it; any Rituals you made are kept." />
-
-            {/* Orphaned setting (see #392): NO Recall action exists anywhere in the UI
-                (api.tasks.recall has zero callers), so this toggle persists but
-                currently governs nothing. */}
-            <Toggle field="recall_keeps_pattern" label="Recall keeps Routine membership"
-              hint="When recalling a shelved (Past) task, also re-link it to its Routine. Off (default) → recall makes a clean, standalone task." />
 
             {/* Phase Z master flag — gates the Focus Ritual, tag-scoped estimate
                 calibration, and the evening EOD Alignment while the phase ships dark. */}
