@@ -103,9 +103,10 @@ function fmtHourLabel(min: number): string {
 
 export function Settings() {
   const [searchParams] = useSearchParams();
-  const [activeTab, setActiveTab] = createSignal<'profile' | 'preferences' | 'connections' | 'learning' | 'logs'>('profile');
+  const [activeTab, setActiveTab] = createSignal<'profile' | 'preferences' | 'people' | 'connections' | 'learning' | 'logs'>('profile');
   createEffect(() => {
     if (searchParams.tab === 'preferences') setActiveTab('preferences');
+    if (searchParams.tab === 'people') setActiveTab('people');
   });
   const [form, setForm] = createSignal<SettingsForm>({ ...DEFAULTS });
 
@@ -809,6 +810,14 @@ export function Settings() {
         </button>
         <button
           type="button"
+          onClick={() => setActiveTab('people')}
+          role="tab" class="view-tab"
+          aria-selected={activeTab() === 'people'}
+        >
+          People
+        </button>
+        <button
+          type="button"
           onClick={() => setActiveTab('connections')}
           role="tab" class="view-tab"
           aria-selected={activeTab() === 'connections'}
@@ -1376,14 +1385,6 @@ export function Settings() {
           <section class="card">
             <div class="section-label flex items-center gap-1.5 mb-1" title={'Quick "types of time" for time blocks (Personal, Professional, Social + your own). Pick a colour; the defaults can be renamed and recoloured but not deleted. Group their intention tags on the Tags → Time Block Categories tab.'}><Tags size={12} /> Time Block Categories</div>
             <CategorySettings />
-          </section>
-
-          {/* People (0151) — the directory behind Responsible / Beneficiaries. Sits next
-              to the other vocabulary catalogs (tags, categories) because that is what
-              it is: the set of names those two fields pick from. */}
-          <section class="card">
-            <div class="section-label flex items-center gap-1.5 mb-1" title="The people you can name as Responsible or Beneficiaries on a task or time block. Entries detected from calendar invites and email arrive here unconfirmed — rename, merge, or delete them."><Users size={12} /> People</div>
-            <PeopleSettings />
           </section>
 
           {/* Time-Block settings — Plan | Concept */}
@@ -2334,6 +2335,14 @@ export function Settings() {
         </Show>
 
       </form>
+
+      {/* ── PEOPLE TAB ────────────────────────────────────────────────────────── */}
+      <Show when={activeTab() === 'people'}>
+        <section class="card">
+          <div class="section-label flex items-center gap-1.5 mb-1" title="The people you can name as Responsible or Beneficiaries on a task or time block. Entries detected from calendar invites and email arrive here unconfirmed — rename, merge, or delete them."><Users size={12} /> People</div>
+          <PeopleSettings />
+        </section>
+      </Show>
 
       {/* ── LEARNING TAB ── Outside the <form> on purpose: its buttons act at once
           (clear learned examples), and nothing here feeds `form()` or Save Settings.
