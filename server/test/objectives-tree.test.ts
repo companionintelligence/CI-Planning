@@ -1,10 +1,9 @@
 /**
- * AF-2 — GET /api/objectives returns linked tasks per LEAF objective.
+ * AF-2 — GET /api/objectives returns linked tasks on every objective node.
  *
- * Response-shape decision: `tasks` is ALWAYS present on every node (never absent),
- * populated only on leaves; non-leaf nodes always carry `tasks: []`. Active links only
- * (linked=1), cancelled tasks excluded, ONE batched query (no N+1). next_action and
- * has_tasks are unchanged — the client depends on them until Wave 2.
+ * `tasks` stays present on every node, including a parent that gains children, so the
+ * parent task list can be expanded instead of becoming inaccessible. Active links only
+ * (linked=1), cancelled tasks excluded, ONE batched query (no N+1).
  *
  * Pinned dates avoid time-bomb failures under TZ=UTC (repo gotcha).
  */
@@ -73,10 +72,10 @@ async function gql(query: string, headers: Record<string, string> = {}) {
   return (await res.json()) as { data?: any; errors?: { message: string }[] };
 }
 
-// ── Leaf task arrays ───────────────────────────────────────────────────────────
+// ── Objective task arrays ──────────────────────────────────────────────────────
 
-describe('GET /api/objectives — per-leaf tasks (AF-2)', () => {
-  it('leaf includes its linked tasks with the minimal summary fields', async () => {
+describe('GET /api/objectives — linked tasks per objective (AF-2)', () => {
+  it('includes task summaries with the current planning and approval fields', async () => {
     const leaf = insertObjective({ title: 'Leaf' });
     const t = insertTask('Do the thing', { priority: 2, due_at: '2026-07-01T00:00:00.000Z' });
     linkTask(leaf, t);
@@ -92,19 +91,27 @@ describe('GET /api/objectives — per-leaf tasks (AF-2)', () => {
       scheduled_for: null,
       parent_id: null,
       completed_at: null,
+      estimated_minutes: null,
+      auto_generated: 0,
+      human_approved_at: null,
     });
   });
 
-  it('non-leaf nodes always carry tasks: [] (shape decision: always-present array)', async () => {
+  it('keeps parent tasks available so a non-leaf task list can be expanded', async () => {
     const root = insertObjective({ title: 'Goal' });
     const mid = insertObjective({ title: 'Project', parent_id: root });
     const leaf = insertObjective({ title: 'Leaf', parent_id: mid });
-    linkTask(leaf, insertTask('Leaf work'));
+    const rootTask = insertTask('Goal work');
+    const midTask = insertTask('Project work');
+    const leafTask = insertTask('Leaf work');
+    linkTask(root, rootTask);
+    linkTask(mid, midTask);
+    linkTask(leaf, leafTask);
 
     const t = await tree();
-    expect(findNode(t, root).tasks).toEqual([]);
-    expect(findNode(t, mid).tasks).toEqual([]);
-    expect(findNode(t, leaf).tasks).toHaveLength(1);
+    expect(findNode(t, root).tasks.map((task: { id: string }) => task.id)).toContain(rootTask);
+    expect(findNode(t, mid).tasks.map((task: { id: string }) => task.id)).toContain(midTask);
+    expect(findNode(t, leaf).tasks.map((task: { id: string }) => task.id)).toContain(leafTask);
   });
 
   it('excludes tombstoned links (linked=0) and cancelled tasks; keeps done tasks', async () => {
