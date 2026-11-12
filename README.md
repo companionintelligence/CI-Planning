@@ -131,7 +131,8 @@ opens the wizard that hosts the one-line natural-language quick entry.
 ### Calendar
 
 Day / week / month grid with the current week in view, plus Export, Review, Plan my
-week and Schedule Day controls, an All blocks / Events only toggle, and the overlays filter.
+week and Today (schedule selected day) controls, an All blocks / Events only toggle, and
+the overlays filter.
 
 | Light | Dark |
 |-------|------|
@@ -1134,12 +1135,15 @@ below are current.
 
 ![Companion Planning — first-run walkthrough: create a task and auto-schedule it](docs/ftue.gif)
 
-The first-run walkthrough has five steps: your name, your time and place, connecting a
-source (Google, or sample data), your trust setting, and a first sync. The *Connect a
-source* step also shows **Your memory and AI**: whether Companion Memory is connected, or
-configured for this server through `CI_SERVER_URL`, and whether an AI model is ready. It
-reads that state and changes nothing. Connect or change either under **Settings →
-Connections**. Replay the walkthrough from **Settings → Profile**.
+First-time setup has ten steps: **Welcome** (name and email), **Time and place** (wake
+and bed times), **Pattern Tags** (edit names, colors, and shapes), **Workday** (set
+availability and optionally add a day type), **Weekend** (set availability or skip),
+**Weekday map** (choose which day type applies to each weekday), **Connect a source**,
+**Trust dial**, **First sync**, and a finish screen with the option to set up Life Balance.
+The *Connect a source* step also shows **Your memory and AI**: whether Companion Memory
+is connected or configured for this server through `CI_SERVER_URL`, and whether an AI
+model is ready. It reads that state and changes nothing. Connect or change either under
+**Settings → Connections**. Replay the walkthrough from **Settings → Profile**.
 
 ## Walkthrough video
 
@@ -1158,7 +1162,7 @@ Connections**. Replay the walkthrough from **Settings → Profile**.
 | Today (with day stars + the Flight Plan drawer) | Calendar (week view) |
 |---|---|
 | [![Today view](docs/screenshots/today.png)](docs/screenshots/today.png) | [![Calendar view](docs/screenshots/calendar.png)](docs/screenshots/calendar.png) |
-| Day header with the five-star tally · OPEN TIME windows per direction · PLANNER grid with the day's placed blocks · the Flight Plan staging list in the details drawer | Day / week / month grid (the five-star heatmap shows on the month view) · Review toggle on the week view (done · still open · blocks · weekly intentions · objectives needing a next action · estimate calibration) · Plan my week · Schedule Day |
+| Day header with the five-star tally · OPEN TIME windows per direction · PLANNER grid with the day's placed blocks · the Flight Plan staging list in the details drawer | Day / week / month grid (the five-star heatmap shows on the month view) · Review toggle on the week view (done · still open · blocks · weekly intentions · objectives needing a next action · estimate calibration) · Plan my week · Today (schedule selected day) |
 
 | Tasks |
 |---|
@@ -1180,7 +1184,7 @@ Connections**. Replay the walkthrough from **Settings → Profile**.
 | Settings |
 |---|
 | [![Settings view](docs/screenshots/settings.png)](docs/screenshots/settings.png) |
-| Five tabs (Profile shown; this screenshot was taken before the **Learning** tab was added and still shows four). **Profile**: your profile, team and invite codes (operators), backup & export, replay of the first-time experience · **Preferences**: schedule patterns and day types, planner display, pattern tags, time block categories, people, time-block and routine settings, reminders, recurrence duration, Clear Date Range · **Connections**: models, Companion Memory, email suggestions, Google · **Learning**: what the four weekly learning passes have measured about the app's own guesses, suggestions, placements and day-ordering checks, with the number of cases behind each figure and a clear button for the first three · **Logs**: planning-session logs |
+| The current Settings view has six tabs; this screenshot predates both **Learning** and **People** and still shows four. **Profile**: your profile, team and invite codes (operators), backup & export, replay of the first-time experience · **Preferences**: schedule patterns and day types, planner display, pattern tags, time block categories, time-block and routine settings, reminders, recurrence duration, Clear Date Range · **People**: the directory used for Responsible and Beneficiaries on tasks and time blocks · **Connections**: models, Companion Memory, email suggestions, Google · **Learning**: what the four weekly learning passes have measured about the app's own guesses, suggestions, placements and day-ordering checks, with the number of cases behind each figure and a clear button for the first three · **Logs**: planning-session logs |
 
 ## What you get
 
