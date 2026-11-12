@@ -180,8 +180,10 @@ roll-up reads 33 %); **New Objective** opens the editor.
 > (`PATCH /api/tags/:id`), and complete one objective step. Then screenshot each route
 > (`/`, `/calendar`, `/tasks`, `/tasks?tab=objectives`) at 1440×900, device scale 2, in
 > both themes (`localStorage['vite-ui-theme']`) into `docs/ui/planning-<screen>-<theme>.png`,
-> and the [Screenshots](#screenshots) tour below at 1280×800 dark. The **Tags**, **Jobs**,
-> and **Settings** screens live in that tour; **Routines** has no screenshot yet.
+> and the [Screenshots](#screenshots) tour below at 1280×800 dark. The tour includes
+> **Tags**, **Jobs**, **Routines**, and **Settings**; capture **People** from the People
+> tab in Settings. The theme-toggle GIF uses the paired Today captures. The first-run
+> GIF shows the current ten-step setup.
 
 ## Architecture
 
@@ -1128,12 +1130,11 @@ numbering skips 0009, 0119, 0159 and 0160).
 
 ## See it in action
 
-From an empty day to a planned one: capture a task, pick a priority, and let the
-planner place it on your calendar — no cloud round-trip, all on-device. The recording
-predates the current layout (it still shows the retired Inbox view); the screenshots
-below are current.
+The current first-run setup walks through profile, schedule, pattern tags, day types,
+integrations, and planning preferences. The app-view screenshots below show the current
+Today, Calendar, Tasks, and Settings screens.
 
-![Companion Planning — first-run walkthrough: create a task and auto-schedule it](docs/ftue.gif)
+![Companion Planning — current ten-step first-run setup](docs/ftue.gif)
 
 First-time setup has ten steps: **Welcome** (name and email), **Time and place** (wake
 and bed times), **Pattern Tags** (edit names, colors, and shapes), **Workday** (set
@@ -1171,20 +1172,18 @@ model is ready. It reads that state and changes nothing. Connect or change eithe
 
 | Routines (Tasks tab) | Objectives (Tasks tab) |
 |---|---|
-| *(screenshot pending)* | [![Objectives tab](docs/ui/planning-objectives-dark.png)](docs/ui/planning-objectives-dark.png) |
-| Routines — bundles of habits that go together (e.g. Prep for work), made from a task or by dropping a Habit or Time Block on the section; Rituals appear when enabled | Hierarchical life goals — Goal → Project → Objective — with task linkage and progress roll-up; lives at `/tasks?tab=objectives` since Phase AF |
-
-> 📸 Routines screenshot coming soon.
+| [![Routines tab](docs/screenshots/routines.png)](docs/screenshots/routines.png) | [![Objectives tab](docs/ui/planning-objectives-dark.png)](docs/ui/planning-objectives-dark.png) |
+| Routines bundle habits and tasks; this example shows an illustrative routine with two member tasks | Hierarchical life goals — Goal → Project → Objective — with task linkage and progress roll-up; lives at `/tasks?tab=objectives` since Phase AF |
 
 | Tags | Jobs |
 |---|---|
 | [![Tags view](docs/screenshots/tags.png)](docs/screenshots/tags.png) | [![Jobs view](docs/screenshots/jobs.png)](docs/screenshots/jobs.png) |
 | Direction + Intention taxonomy — group, mute, or delete; a second tab covers Time Block Categories | Background automations with their cron schedules — run any one on demand |
 
-| Settings |
-|---|
-| [![Settings view](docs/screenshots/settings.png)](docs/screenshots/settings.png) |
-| The current Settings view has six tabs; this screenshot predates both **Learning** and **People** and still shows four. **Profile**: your profile, team and invite codes (operators), backup & export, replay of the first-time experience · **Preferences**: schedule patterns and day types, planner display, pattern tags, time block categories, time-block and routine settings, reminders, recurrence duration, Clear Date Range · **People**: the directory used for Responsible and Beneficiaries on tasks and time blocks · **Connections**: models, Companion Memory, email suggestions, Google · **Learning**: what the four weekly learning passes have measured about the app's own guesses, suggestions, placements and day-ordering checks, with the number of cases behind each figure and a clear button for the first three · **Logs**: planning-session logs |
+| Settings · Profile | Settings · People |
+|---|---|
+| [![Settings Profile tab](docs/screenshots/settings.png)](docs/screenshots/settings.png) | [![Settings People tab](docs/screenshots/people.png)](docs/screenshots/people.png) |
+| The current Settings view has six tabs. **Profile**: personal details, team and invite codes (operators), backup & export, replay of the first-time experience · **Preferences**: schedule patterns and day types, planner display, pattern tags, time block categories, time-block and routine settings, reminders, recurrence duration, Clear Date Range · **Connections**: models, Companion Memory, email suggestions, Google · **Learning**: the four weekly learning passes and their evidence · **Logs**: planning-session logs | **People**: the directory used for Responsible and Beneficiaries on tasks and time blocks |
 
 ## What you get
 
