@@ -199,7 +199,7 @@ export async function createTask(ownerId: string, input: CreateTaskInput): Promi
     ? (isMotivation(input.motivation) ? input.motivation : null)
     : classifyMotivationKeyword(`${input.title} ${input.notes ?? ''}`);
   const motivationSource = isMotivation(motivation)
-    ? input.motivation_source ?? 'user'
+    ? input.motivation_source ?? (hasMotivation ? 'user' : 'llm')
     : null;
 
   const [task] = await db

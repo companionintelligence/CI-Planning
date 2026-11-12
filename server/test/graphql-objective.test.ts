@@ -122,7 +122,7 @@ describe('W8a — mutations reuse the REST services', () => {
     expect(cycle.body.errors?.[0]?.message).toMatch(/cycle/i);
   });
 
-  it('links a task to a leaf objective; rejects linking to a non-leaf', async () => {
+  it('links tasks at any objective depth so parent task lists remain available', async () => {
     const leaf = await create('title: "Leaf"');
     const t = insertTask('Do it');
     const link = await gql(`mutation { linkObjectiveTask(input: { objectiveId: "${leaf}", taskId: "${t}" }) { success objective { tasks { id title } } } }`);
@@ -132,8 +132,10 @@ describe('W8a — mutations reuse the REST services', () => {
     // Give `parent` a child → it's a non-leaf now; linking a task to it is rejected.
     const parent = await create('title: "Parent"');
     await create(`title: "Kid", parentId: "${parent}"`);
-    const bad = await gql(`mutation { linkObjectiveTask(input: { objectiveId: "${parent}", taskId: "${insertTask('x')}" }) { success } }`);
-    expect(bad.body.errors?.[0]?.message).toMatch(/leaf objective/i);
+    const parentTask = insertTask('Parent task');
+    const parentLink = await gql(`mutation { linkObjectiveTask(input: { objectiveId: "${parent}", taskId: "${parentTask}" }) { success objective { tasks { id title } } } }`);
+    expect(parentLink.body.data.linkObjectiveTask.success).toBe(true);
+    expect(parentLink.body.data.linkObjectiveTask.objective.tasks).toContainEqual({ id: parentTask, title: 'Parent task' });
 
     // Unlink is idempotent + clears the tasks edge.
     const unlink = await gql(`mutation { unlinkObjectiveTask(input: { objectiveId: "${leaf}", taskId: "${t}" }) { success objective { tasks { id } } } }`);

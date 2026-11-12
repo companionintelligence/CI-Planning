@@ -442,6 +442,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
   "tasks": [
     {
       "actual_minutes": 0,
+      "auto_generated": false,
       "beneficiaries": [],
       "blocked": false,
       "categories": [],
@@ -456,6 +457,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
       "due_at": null,
       "estimated_minutes": null,
       "field_ts": null,
+      "human_approved_at": null,
       "id": "task#1",
       "is_fast_task": false,
       "is_habit": false,
@@ -490,6 +492,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
     },
     {
       "actual_minutes": 0,
+      "auto_generated": false,
       "beneficiaries": [],
       "blocked": false,
       "categories": [],
@@ -504,6 +507,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
       "due_at": null,
       "estimated_minutes": 10,
       "field_ts": null,
+      "human_approved_at": null,
       "id": "task#2",
       "is_fast_task": false,
       "is_habit": true,
@@ -538,6 +542,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
     },
     {
       "actual_minutes": 0,
+      "auto_generated": false,
       "beneficiaries": [],
       "blocked": false,
       "categories": [],
@@ -552,6 +557,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
       "due_at": null,
       "estimated_minutes": null,
       "field_ts": null,
+      "human_approved_at": null,
       "id": "task#3",
       "is_fast_task": false,
       "is_habit": false,
@@ -586,6 +592,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
     },
     {
       "actual_minutes": 0,
+      "auto_generated": false,
       "beneficiaries": [],
       "blocked": true,
       "categories": [],
@@ -602,6 +609,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
       "due_at": "2026-06-22T17:00:00.000Z",
       "estimated_minutes": 30,
       "field_ts": null,
+      "human_approved_at": null,
       "id": "task#4",
       "is_fast_task": false,
       "is_habit": false,
@@ -638,6 +646,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
     },
     {
       "actual_minutes": 0,
+      "auto_generated": false,
       "beneficiaries": [],
       "blocked": false,
       "categories": [],
@@ -652,6 +661,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
       "due_at": null,
       "estimated_minutes": null,
       "field_ts": null,
+      "human_approved_at": null,
       "id": "task#6",
       "is_fast_task": false,
       "is_habit": false,
@@ -686,6 +696,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
     },
     {
       "actual_minutes": 0,
+      "auto_generated": false,
       "beneficiaries": [],
       "blocked": false,
       "categories": [],
@@ -700,6 +711,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
       "due_at": null,
       "estimated_minutes": 45,
       "field_ts": null,
+      "human_approved_at": null,
       "id": "task#5",
       "is_fast_task": false,
       "is_habit": false,
@@ -744,6 +756,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
   "tasks": [
     {
       "actual_minutes": 0,
+      "auto_generated": false,
       "beneficiaries": [],
       "blocked": false,
       "categories": [],
@@ -758,6 +771,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
       "due_at": null,
       "estimated_minutes": null,
       "field_ts": null,
+      "human_approved_at": null,
       "id": "task#1",
       "is_fast_task": false,
       "is_habit": false,
@@ -1031,6 +1045,15 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "owner_id",
     ],
     "table": "day_types",
+  },
+  {
+    "columns": [
+      "date",
+      "direction_tag_id",
+      "owner_id",
+      "ranges_json",
+    ],
+    "table": "day_window_overrides",
   },
   {
     "columns": [
@@ -1713,6 +1736,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   {
     "columns": [
       "actual_minutes",
+      "auto_generated",
       "completed_at",
       "completion_note",
       "completion_score",
@@ -1723,6 +1747,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "due_at",
       "estimated_minutes",
       "field_ts",
+      "human_approved_at",
       "id",
       "motivation",
       "motivation_source",

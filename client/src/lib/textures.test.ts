@@ -73,9 +73,10 @@ describe('textureStyle — deterministic, shape-correct, subtle', () => {
     expect(decode(textureStyle('triangle', 't')['mask-image'])).toContain('<polygon');
   });
 
-  it('stays a low-contrast whisper (≤ 8%) and is theme-adaptive', () => {
+  it('uses the approved 15% texture opacity and adapts to the active theme', () => {
     const style = textureStyle('square', 'errands');
-    expect(Number(style.opacity)).toBeLessThanOrEqual(0.08);
+    expect(Number(style.opacity)).toBe(TEXTURE_OPACITY);
+    expect(TEXTURE_OPACITY).toBe(0.15);
     expect(style['background-color']).toBe('currentColor'); // flips with light/dark
     expect(style['mask-image']).toBe(style['-webkit-mask-image']); // both prefixes set
   });

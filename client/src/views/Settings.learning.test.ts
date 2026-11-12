@@ -33,7 +33,7 @@ describe('Settings: the Learning tab wiring', () => {
 
   it("adds 'learning' to the tab union, in the middle", () => {
     expect(source).toContain(
-      "createSignal<'profile' | 'preferences' | 'connections' | 'learning' | 'logs'>('profile')",
+      "createSignal<'profile' | 'preferences' | 'people' | 'connections' | 'learning' | 'logs'>('profile')",
     );
   });
 
