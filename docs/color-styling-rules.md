@@ -36,6 +36,7 @@ These are the primary tokens. Use them via Tailwind (`bg-background`, `text-fore
 | `--background` | `#f3f3f3` | `#041620` |
 | `--foreground` | `#010f16` | `#88a29e` |
 | `--card` | `#f7f7f9` | `#0a222e` |
+| `--details-panel-background` | `color-mix(in srgb, var(--background) 93.6%, #000 6.4%)` | `var(--card)` |
 | `--card-foreground` | `#041620` | `#88a29e` |
 | `--popover` | `oklch(100% 0 0)` | `#0a222e` |
 | `--popover-foreground` | `#041620` | `#88a29e` |
@@ -69,9 +70,11 @@ Manrope is the application font for sans-serif and headings. Source Code Pro is 
 
 ### Sidebar colors
 
+In light mode, the left sidebar is 20% closer to the center surface than its previous 15% shade. The details drawer is 20% closer than its previous 8% shade. Dark-mode panel colors are unchanged.
+
 | Token | Light | Dark |
 |---|---|---|
-| `--sidebar` | `oklch(98.4% 0.003 247.858)` | `#041620` |
+| `--sidebar` | `color-mix(in srgb, var(--background) 88%, #000 12%)` | `#041620` |
 | `--sidebar-foreground` | `oklch(12.9% 0.042 264.695)` | `#f5f8fa` |
 | `--sidebar-accent` | `oklch(96.8% 0.007 247.896)` | `#1d293d` |
 | `--sidebar-accent-foreground` | `#0a222e` | `#f5f8fa` |
