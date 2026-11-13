@@ -1102,24 +1102,22 @@ export function Planner() {
           >
             <CalendarCheck size={12} classList={{ 'animate-pulse': scheduling() }} /> Schedule
           </button>
-          {/* Undo — topaz outline; appears after a Schedule run; tap to confirm or dismiss */}
+          {/* Undo — bright accent outline; appears after a Schedule run; tap to confirm or dismiss */}
           <Show when={canUndo()}>
             <Show when={undoConfirm()} fallback={
               <button
                 onClick={() => setUndoConfirm(true)}
-                class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-sm border transition-colors hover:opacity-80 flex-shrink-0"
-                style={{ 'border-color': '#d7a37a', color: '#d7a37a' }}
+                class="planner-undo inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-sm border transition-colors flex-shrink-0"
                 title="Undo the last Schedule run"
               >
                 <Undo2 size={11} /> Undo
               </button>
             }>
               <div class="inline-flex items-center gap-1 flex-shrink-0">
-                <span class="text-[11px]" style={{ color: '#d7a37a' }}>Undo?</span>
+                <span class="text-[11px] text-foreground">Undo?</span>
                 <button
                   onClick={undo}
-                  class="text-[11px] px-1.5 py-0.5 rounded border transition-colors hover:opacity-90"
-                  style={{ 'border-color': '#d7a37a', color: '#d7a37a', background: 'rgba(215,163,122,0.12)' }}
+                  class="planner-undo text-[11px] px-1.5 py-0.5 rounded border transition-colors"
                   title="Confirm undo"
                 >Yes</button>
                 <button

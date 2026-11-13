@@ -9,6 +9,7 @@ import { selection, clearSelection, selectedTaskIds, selectedTitles, routineModa
 import { api, type Task } from '../lib/api.js';
 import { splitTagNames } from '../lib/multi-tag.js';
 import { localISODate, addDays, durationLabel } from '../lib/dates.js';
+import { busyFromBlocks, mergeRanges } from '../lib/open-time.js';
 import { dueItems } from '../lib/task-buckets.js';
 import { Planner } from '../components/Planner.js';
 import { OpenTimeSummary } from '../components/OpenTimeSummary.js';
@@ -50,7 +51,8 @@ export function Today() {
   const monthDay = () => viewedDate().toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
   const stepDay = (n: number) => setSelectedDay(addDays(selectedDay(), n));
 
-  // The tag set of everything scheduled today — the shape of the day at a glance.
+  // Day tags render in the selected-day details panel; this set also controls the
+  // empty-day connect prompt in the canvas.
   // AF-11 Slice 5: a block tag can be a comma-joined multi-direction union — add
   // each split name, never the raw joined string.
   const todayTags = createMemo(() => {
@@ -109,11 +111,13 @@ export function Today() {
   });
 
   // ── Capacity bar (relocated from the removed Morning Briefing, Phase O · O3) ──
-  const capacity = () => summary()?.capacity;
+  const workdayMinutes = () => summary()?.capacity.workday_minutes ?? 0;
+  const scheduledMinutes = createMemo(() => mergeRanges(busyFromBlocks(blocks() ?? [], selectedDay()))
+    .reduce((sum, range) => sum + range.end - range.start, 0));
   const capacityPct = () => {
-    const c = capacity();
-    if (!c || c.workday_minutes === 0) return 0;
-    return Math.min(100, Math.round((c.scheduled_minutes / c.workday_minutes) * 100));
+    const available = workdayMinutes();
+    if (!available) return 0;
+    return Math.min(100, Math.round((scheduledMinutes() / available) * 100));
   };
 
   // ── Multi-select → "Create Routine" (Phase F) ──────────────────────────────
@@ -173,7 +177,7 @@ export function Today() {
         <DayStarsRow date={selectedDay()} />
       </div>
 
-      {/* Day Overview — date · tag set · counts, with + New Task top-right */}
+      {/* Day Overview — date controls and day actions. */}
       <div class="rounded-xl border border-border bg-card p-4">
         {/* Wraps, deliberately. The right-hand icon column is four 32px buttons and was
             flex-shrink-0, so at 360px it overflowed the card (two icons hung off the
@@ -205,7 +209,7 @@ export function Today() {
           {/* Right column, aligned with the date: Today's Brief · Focus · Note
               (Phase AC — collapsed from the removed FOCUS card). The FAB (App.tsx)
               is the create affordance now; the Add button is gone. */}
-          <div class="flex items-center gap-1.5 flex-shrink-0 self-start">
+          <div class="ml-auto flex items-center gap-1.5 flex-shrink-0 self-start">
             {/* Due — was an always-open card; now a button + popup modal (UI backlog). */}
             <button
               onClick={() => setDueOpen(true)}
@@ -243,10 +247,10 @@ export function Today() {
         </div>
 
         {/* Capacity bar — directly below the date (AC follow-up). */}
-        <Show when={!firstRun() && capacity() && capacity()!.workday_minutes > 0}>
+        <Show when={!firstRun() && workdayMinutes() > 0}>
           <div class="mt-2 flex items-center gap-2">
-            <span class={`text-[10px] tabular-nums ${capacityPct() >= 90 ? 'text-destructive' : capacityPct() >= 70 ? 'text-amber-400' : 'text-primary'}`}>
-              {durationLabel(capacity()!.scheduled_minutes)} / {durationLabel(capacity()!.workday_minutes)}
+            <span class="text-[10px] tabular-nums text-muted-foreground">
+              {durationLabel(scheduledMinutes())} / {durationLabel(workdayMinutes())}
             </span>
             <div class="relative h-1.5 w-32 rounded-sm bg-background border border-border overflow-hidden">
               <div
@@ -299,16 +303,11 @@ export function Today() {
           </button>
         </Show>
 
-        <Show
-          when={todayTags().length > 0}
-          fallback={<>
+        <Show when={todayTags().length === 0}>
+          <>
             <p class="mt-2 text-sm text-muted-foreground">Nothing scheduled yet.</p>
             <EmptyStateConnectCTA />
-          </>}
-        >
-          <div class="mt-2 flex flex-wrap gap-1.5">
-            <For each={todayTags()}>{(t) => <span class="badge-neutral text-[11px]">#{t}</span>}</For>
-          </div>
+          </>
         </Show>
       </div>
 

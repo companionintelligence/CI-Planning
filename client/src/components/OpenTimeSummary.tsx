@@ -1,11 +1,12 @@
 import { For, Show, createMemo, createResource, createSignal, onCleanup, onMount } from 'solid-js';
+import { ChevronDown, ListFilter } from 'lucide-solid';
 import { api, type Block } from '../lib/api.js';
 import {
   busyFromBlocks, formatClock, formatDuration, openTime, parseHHMM,
   type OpenSegment, type TimeRange,
 } from '../lib/open-time.js';
 import { localISODate } from '../lib/dates.js';
-import { colorVar, directionColorForTask, BASE_TAG_DEFAULTS } from '../lib/pattern-meta.js';
+import { directionColorForTask } from '../lib/pattern-meta.js';
 import { blockColorVar } from '../lib/textures.js';
 import { isTaskBlock, occupiesMinuteAxis } from '../lib/overlay.js';
 import {
@@ -27,6 +28,7 @@ interface TimelineBlock {
   directions: string[];
   color: string;
   title: string;
+  showTitle: boolean;
 }
 
 interface WindowEdge {
@@ -133,8 +135,7 @@ export function OpenTimeSummary(props: { date: string }) {
   const directionColor = (direction: string): string => {
     const tag = (tags() ?? []).find((item) => item.kind === 'direction' && item.name.toLowerCase() === direction);
     if (!tag) return 'var(--primary)';
-    const token = patternPrefs()?.prefs?.[tag.id]?.color_token ?? BASE_TAG_DEFAULTS[direction]?.color_token;
-    return colorVar(token);
+    return directionColorForTask({ tags: [tag.name] }, tags() ?? [], patternPrefs()?.prefs ?? {});
   };
 
   const timelineBlocks = createMemo<TimelineBlock[]>(() => {
@@ -167,6 +168,9 @@ export function OpenTimeSummary(props: { date: string }) {
         directions: directions.sort((a, b) => directionRank(a) - directionRank(b) || a.localeCompare(b)),
         color,
         title: task?.title ?? block.title,
+        // A direction-only time block already has a letter bug above the bar;
+        // repeating its tag as text inside the bar adds noise without detail.
+        showTitle: Boolean(task || (block.title.trim() && !directions.includes(block.title.trim().toLowerCase()))),
       });
     }
     return output.sort((a, b) => a.start - b.start || a.end - b.end);
@@ -197,6 +201,7 @@ export function OpenTimeSummary(props: { date: string }) {
   });
 
   const [dimmedDirections, setDimmedDirections] = createSignal<Set<string>>(new Set());
+  const [filtersOpen, setFiltersOpen] = createSignal(false);
   function toggleDirection(direction: string) {
     setDimmedDirections((previous) => {
       const next = new Set(previous);
@@ -216,10 +221,16 @@ export function OpenTimeSummary(props: { date: string }) {
     const updateNow = () => setNow(new Date());
     const interval = window.setInterval(updateNow, 60_000);
     const onOutsidePointer = (event: PointerEvent) => {
-      if (rootEl && !rootEl.contains(event.target as Node)) setPopup(null);
+      if (rootEl && !rootEl.contains(event.target as Node)) {
+        setPopup(null);
+        setFiltersOpen(false);
+      }
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setPopup(null);
+      if (event.key === 'Escape') {
+        setPopup(null);
+        setFiltersOpen(false);
+      }
     };
     document.addEventListener('pointerdown', onOutsidePointer);
     document.addEventListener('keydown', onKeyDown);
@@ -320,28 +331,6 @@ export function OpenTimeSummary(props: { date: string }) {
         when={!loading()}
         fallback={<div role="status" class="open-time-loading"><span class="sr-only">Reading the day's windows</span><Skeleton class="h-8" /></div>}
       >
-        <div class="open-time-window-edges" aria-label="Availability window changes">
-          <For each={windowEdges()}>{(edge) => (
-            <div
-              class="open-time-window-edge"
-              classList={{ 'is-first': edge.minute === 0, 'is-last': edge.minute === DAY_MINUTES }}
-              style={{ left: percent(edge.minute) }}
-            >
-              <For each={edge.items}>{(item) => (
-                <span
-                  class="open-time-bug"
-                  classList={{
-                    'is-dimmed': edge.minute < currentMinute() || dimmedDirections().has(item.direction),
-                    'is-ending': item.edge === 'end',
-                  }}
-                  style={{ '--bug-color': directionColor(item.direction) }}
-                  title={`${item.direction} window ${item.edge === 'end' ? 'ends' : item.edge === 'both' ? 'changes' : 'starts'} at ${formatClock(edge.minute)}`}
-                >{item.direction.charAt(0).toUpperCase()}</span>
-              )}</For>
-            </div>
-          )}</For>
-        </div>
-
         <div
           ref={(element) => { trackEl = element; }}
           class="open-time-track"
@@ -364,7 +353,7 @@ export function OpenTimeSummary(props: { date: string }) {
             <button
               type="button"
               class="open-time-scheduled"
-              classList={{ 'is-dimmed': isDimmed(item.directions), 'has-label': item.end - item.start >= 90 }}
+              classList={{ 'is-dimmed': isDimmed(item.directions), 'has-label': item.end - item.start >= 90 && item.showTitle }}
               style={{
                 left: percent(item.start),
                 width: percent(item.end - item.start),
@@ -380,7 +369,9 @@ export function OpenTimeSummary(props: { date: string }) {
               }}
               onClick={(event) => { event.stopPropagation(); clickTimelineBlock(item); }}
             >
-              <span class="open-time-scheduled-title">{item.title}</span>
+              <Show when={item.showTitle}>
+                <span class="open-time-scheduled-title">{item.title}</span>
+              </Show>
               <Show when={item.directions.length > 0}>
                 <span class="open-time-scheduled-bugs" aria-hidden="true">
                   <For each={item.directions}>{(direction) => (
@@ -402,17 +393,57 @@ export function OpenTimeSummary(props: { date: string }) {
           )}</For>
         </div>
 
+        <div class="open-time-window-edges" aria-label="Availability window changes">
+          <For each={windowEdges()}>{(edge) => (
+            <div
+              class="open-time-window-edge"
+              classList={{ 'is-first': edge.minute === 0, 'is-last': edge.minute === DAY_MINUTES }}
+              style={{ left: percent(edge.minute) }}
+            >
+              <For each={edge.items}>{(item) => (
+                <span
+                  class="open-time-bug"
+                  classList={{
+                    'is-dimmed': edge.minute < currentMinute() || dimmedDirections().has(item.direction),
+                    'is-ending': item.edge === 'end',
+                  }}
+                  style={{ '--bug-color': directionColor(item.direction) }}
+                  title={`${item.direction} window ${item.edge === 'end' ? 'ends' : item.edge === 'both' ? 'changes' : 'starts'} at ${formatClock(edge.minute)}`}
+                >{item.direction.charAt(0).toUpperCase()}</span>
+              )}</For>
+            </div>
+          )}</For>
+        </div>
+
         <Show when={visibleDirections().length > 0}>
-          <div class="open-time-filters" aria-label="Dim directions on the timeline">
-            <For each={visibleDirections()}>{(direction) => (
+          <div class="open-time-filter-row">
+            <div class="open-time-filter-wrap">
               <button
                 type="button"
-                class="open-time-filter"
-                classList={{ 'is-dimmed': dimmedDirections().has(direction) }}
-                aria-pressed={!dimmedDirections().has(direction)}
-                onClick={() => toggleDirection(direction)}
-              >#{direction}</button>
-            )}</For>
+                class="open-time-filter-trigger"
+                aria-expanded={filtersOpen()}
+                aria-label="Filter directions"
+                onClick={() => setFiltersOpen((open) => !open)}
+              >
+                <ListFilter size={13} />
+                <span>Directions</span>
+                <ChevronDown size={12} />
+              </button>
+              <Show when={filtersOpen()}>
+                <div class="open-time-filter-menu" role="group" aria-label="Show directions">
+                  <For each={visibleDirections()}>{(direction) => (
+                    <label class="open-time-filter-option">
+                      <input
+                        type="checkbox"
+                        checked={!dimmedDirections().has(direction)}
+                        onChange={() => toggleDirection(direction)}
+                      />
+                      <span>{direction.charAt(0).toUpperCase() + direction.slice(1)}</span>
+                    </label>
+                  )}</For>
+                </div>
+              </Show>
+            </div>
           </div>
         </Show>
 

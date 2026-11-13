@@ -15,6 +15,7 @@ import {
 } from '../stores/index.js';
 import { api, type Task, type Block, type Tag, type Person, type PossibleTask, type Objective } from '../lib/api.js';
 import { displayTag } from '../lib/tag-tax.js';
+import { splitTagNames } from '../lib/multi-tag.js';
 import { LockToggle } from './LockToggle.js';
 import { DayTypeControl } from './DayTypeControl.js';
 import { activeWindowsAt } from '../lib/day-windows.js';
@@ -593,6 +594,15 @@ function DayPanel(props: { date: string }) {
     name: displayTag(directionName(tagId)),
     n: (ranges as unknown[]).length,
   }));
+  const dayTags = createMemo(() => {
+    const names = new Set<string>();
+    for (const block of blocks() ?? []) {
+      if (minutesIntoDay(block.start_at, props.date) < 0) continue;
+      for (const name of splitTagNames(block.tag)) names.add(name);
+      for (const name of taskOf(block.task_id)?.tags ?? []) names.add(name);
+    }
+    return [...names];
+  });
 
   // Match Focus: placed task/focus/habit blocks first, then scheduled-for-day tasks
   // that have no active block. Keep completed placements visible as dimmed history.
@@ -745,6 +755,13 @@ function DayPanel(props: { date: string }) {
           </div>
         </Show>
       </Group>
+      <Show when={dayTags().length > 0}>
+        <Group label="Tags on the day">
+          <div class="flex flex-wrap gap-1.5">
+            <For each={dayTags()}>{(name) => <span class="drawer-tag">#{name}</span>}</For>
+          </div>
+        </Group>
+      </Show>
       <OpenTimeSummary date={props.date} />
       <Group label="Windows">
         <Show when={rows().length > 0} fallback={<span class="text-xs text-muted-foreground">No placement windows configured.</span>}>
