@@ -1,143 +1,481 @@
-import { For, Show, createMemo, createResource } from 'solid-js';
-import { api } from '../lib/api.js';
-import { blocks, tags, patternPrefs, patternBlocks, openTimeRange } from '../stores/index.js';
+import { For, Show, createMemo, createResource, createSignal, onCleanup, onMount } from 'solid-js';
+import { ChevronDown, ListFilter } from 'lucide-solid';
+import { api, type Block } from '../lib/api.js';
 import {
-  busyFromBlocks, formatClock, formatDuration, openTime, parseHHMM, totalOpen,
-  type TimeRange,
+  busyFromBlocks, formatClock, formatDuration, openTime, parseHHMM,
+  type OpenSegment, type TimeRange,
 } from '../lib/open-time.js';
+import { localISODate } from '../lib/dates.js';
+import { directionColorForTask } from '../lib/pattern-meta.js';
+import { blockColorVar } from '../lib/textures.js';
+import { isTaskBlock, occupiesMinuteAxis } from '../lib/overlay.js';
+import {
+  blocks, categoryPrefs, patternBlocks, patternPrefs, tags, taskOf,
+  openTimeRange, setElementModal,
+} from '../stores/index.js';
 import { Skeleton } from './Skeleton.js';
 
-/**
- * Today's header answers "when could I put something?" rather than re-listing the
- * schedule — the Planner tab and the Calendar both already show the blocks.
- *
- * Windows inherit the resolved day type and then apply any overrides for this date.
- * Which directions count is per-direction owner preference (`show_open_time`, set
- * next to that direction's windows in `SchedulePatternEditor`) — default on for
- * every direction, including home.
- */
-/** Fixed display order for the three built-in directions; anything else (a custom
- *  direction) sorts after them, alphabetically. */
-const DIRECTION_ORDER = ['work', 'home', 'community'];
-function directionRank(direction: string): number {
-  const i = DIRECTION_ORDER.indexOf(direction);
-  return i === -1 ? DIRECTION_ORDER.length : i;
+const DAY_MINUTES = 24 * 60;
+const DAY_TICKS = [0, 180, 360, 540, 720, 900, 1080, 1260, DAY_MINUTES];
+
+interface OpenSlot extends TimeRange { directions: string[] }
+
+interface TimelineBlock {
+  block: Block;
+  task?: ReturnType<typeof taskOf>;
+  start: number;
+  end: number;
+  directions: string[];
+  color: string;
+  title: string;
+  showTitle: boolean;
 }
 
-/** "Work, home & community hours" — built from whichever directions are actually
- *  showing, so the subtitle never claims a direction the card doesn't list. Only the
- *  leading word is capitalized (mid-sentence uses of this read naturally too). */
-function describeDirections(directions: string[]): string {
-  const body = directions.length === 0
-    ? 'hours'
-    : directions.length === 1
-      ? `${directions[0]} hours`
-      : `${directions.slice(0, -1).join(', ')} & ${directions[directions.length - 1]} hours`;
-  return body.charAt(0).toUpperCase() + body.slice(1);
+interface WindowEdge {
+  minute: number;
+  items: Array<{ direction: string; edge: 'start' | 'end' | 'both' }>;
+}
+
+type PopupState =
+  | { kind: 'block'; id: string; pinned: boolean }
+  | { kind: 'open'; start: number; end: number; directions: string[] };
+
+/** Merge overlapping open windows into one clickable interval while retaining the
+ * directions available throughout each part of that interval. */
+function combineOpenSlots(segments: OpenSegment[]): OpenSlot[] {
+  const points = [...new Set(segments.flatMap((segment) => [segment.start, segment.end]))]
+    .sort((a, b) => a - b);
+  const out: OpenSlot[] = [];
+  for (let i = 0; i < points.length - 1; i++) {
+    const start = points[i];
+    const end = points[i + 1];
+    if (end <= start) continue;
+    const directions = [...new Set(segments
+      .filter((segment) => segment.start <= start && segment.end >= end)
+      .flatMap((segment) => segment.directions))]
+      .sort((a, b) => directionRank(a) - directionRank(b) || a.localeCompare(b));
+    if (!directions.length) continue;
+    const previous = out[out.length - 1];
+    if (previous && previous.end === start && sameNames(previous.directions, directions)) previous.end = end;
+    else out.push({ start, end, directions });
+  }
+  return out;
+}
+
+const DIRECTION_ORDER = ['work', 'home', 'community'];
+function directionRank(direction: string): number {
+  const index = DIRECTION_ORDER.indexOf(direction);
+  return index < 0 ? DIRECTION_ORDER.length : index;
+}
+function sameNames(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((name, index) => name === b[index]);
+}
+function percent(minute: number): string {
+  return `${Math.max(0, Math.min(100, (minute / DAY_MINUTES) * 100))}%`;
+}
+function tickLabel(minute: number): string {
+  if (minute === DAY_MINUTES || minute === 0) return minute === DAY_MINUTES ? 'Midnight' : '12am';
+  const hour = Math.floor(minute / 60);
+  if (hour === 12) return '12pm';
+  return `${hour % 12 || 12}${hour < 12 ? 'am' : 'pm'}`;
+}
+function localMinute(value: string): number | null {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.getHours() * 60 + date.getMinutes();
+}
+function isInDay(block: Block, date: string): boolean {
+  const start = new Date(block.start_at);
+  return !Number.isNaN(start.getTime()) && localISODate(start) === date;
 }
 
 export function OpenTimeSummary(props: { date: string }) {
   // Re-read when this date changes or its day-window overrides are edited.
   const [windows] = createResource(
     () => [props.date, patternBlocks()] as const,
-    ([date]) => api.patternBlocks.forDate(date).then((r) => r.windows).catch(() => ({})),
+    ([date]) => api.patternBlocks.forDate(date).then((result) => result.windows).catch(() => ({})),
   );
 
-  /** Direction tag id → lowercased name, so windows can be read by direction. */
   const directionName = createMemo(() => {
-    const m = new Map<string, string>();
-    for (const t of tags() ?? []) if (t.kind === 'direction') m.set(t.id, t.name.toLowerCase());
-    return m;
+    const names = new Map<string, string>();
+    for (const tag of tags() ?? []) if (tag.kind === 'direction') names.set(tag.id, tag.name.toLowerCase());
+    return names;
   });
 
-  /** Directions whose `show_open_time` pref is on (default true) — the set the card
-   *  actually reports, in a fixed work/home/community-first display order. */
+  /** Directions whose show_open_time preference is enabled for this day strip. */
   const visibleDirections = createMemo(() => {
-    const prefs = patternPrefs()?.prefs;
-    const names: string[] = [];
-    for (const t of tags() ?? []) {
-      if (t.kind !== 'direction') continue;
-      if ((prefs?.[t.id]?.show_open_time ?? true) === false) continue;
-      names.push(t.name.toLowerCase());
-    }
-    return names.sort((a, b) => directionRank(a) - directionRank(b) || a.localeCompare(b));
+    const preferences = patternPrefs()?.prefs;
+    return (tags() ?? [])
+      .filter((tag) => tag.kind === 'direction' && preferences?.[tag.id]?.show_open_time !== false)
+      .map((tag) => tag.name.toLowerCase())
+      .sort((a, b) => directionRank(a) - directionRank(b) || a.localeCompare(b));
   });
 
   const byDirection = createMemo<Record<string, TimeRange[]>>(() => {
     const out: Record<string, TimeRange[]> = {};
     for (const [tagId, ranges] of Object.entries(windows() ?? {})) {
       const name = directionName().get(tagId);
-      if (!name) continue; // a window whose direction was deleted
-      for (const r of ranges as { start_time: string; end_time: string }[]) {
-        const start = parseHHMM(r.start_time);
-        const end = parseHHMM(r.end_time);
-        if (start === null || end === null) continue; // malformed row, not a NaN gap
+      if (!name) continue;
+      for (const range of ranges as { start_time: string; end_time: string }[]) {
+        const start = parseHHMM(range.start_time);
+        const end = parseHHMM(range.end_time);
+        if (start === null || end === null || end <= start) continue;
         (out[name] ??= []).push({ start, end });
       }
     }
     return out;
   });
 
-  /** Everything scheduled on this date, as minute intervals. */
   const busy = createMemo<TimeRange[]>(() => busyFromBlocks(blocks() ?? [], props.date));
-
-  // Clamped to the owner's Open Time range (view_prefs.today, default 9am-8pm): a
-  // window may run far wider than the hours anyone would actually schedule into.
-  const segments = createMemo(() => openTime(byDirection(), busy(), visibleDirections(), openTimeRange()));
-  const total = () => totalOpen(segments());
+  const openSegments = createMemo(() => openTime(byDirection(), busy(), visibleDirections(), openTimeRange()));
+  const openSlots = createMemo(() => combineOpenSlots(openSegments()));
+  const openMinutes = createMemo(() => openSlots().reduce((total, slot) => total + slot.end - slot.start, 0));
   const loading = () => windows.loading;
 
+  const directionColor = (direction: string): string => {
+    const tag = (tags() ?? []).find((item) => item.kind === 'direction' && item.name.toLowerCase() === direction);
+    if (!tag) return 'var(--primary)';
+    return directionColorForTask({ tags: [tag.name] }, tags() ?? [], patternPrefs()?.prefs ?? {});
+  };
+
+  const timelineBlocks = createMemo<TimelineBlock[]>(() => {
+    const output: TimelineBlock[] = [];
+    for (const block of blocks() ?? []) {
+      if (!occupiesMinuteAxis(block) || !isInDay(block, props.date)) continue;
+      const start = localMinute(block.start_at);
+      const rawEnd = localMinute(block.end_at);
+      const endDate = new Date(block.end_at);
+      if (start === null || rawEnd === null || Number.isNaN(endDate.getTime())) continue;
+      const end = localISODate(endDate) === props.date ? rawEnd : DAY_MINUTES;
+      if (end <= start) continue;
+
+      const task = block.task_id ? taskOf(block.task_id) : undefined;
+      const validDirections = new Set((tags() ?? []).filter((tag) => tag.kind === 'direction').map((tag) => tag.name.toLowerCase()));
+      const directions = [...new Set((task?.tags?.length ? task.tags : block.tag ? [block.tag] : [])
+        .map((name) => name.toLowerCase())
+        .filter((name) => validDirections.has(name)))];
+      const color = task
+        ? directionColorForTask(task, tags() ?? [], patternPrefs()?.prefs ?? {})
+        : directions[0]
+          ? directionColor(directions[0])
+          : blockColorVar(block, categoryPrefs()?.prefs);
+
+      output.push({
+        block,
+        task,
+        start: Math.max(0, start),
+        end: Math.min(DAY_MINUTES, end),
+        directions: directions.sort((a, b) => directionRank(a) - directionRank(b) || a.localeCompare(b)),
+        color,
+        title: task?.title ?? block.title,
+        // A direction-only time block already has a letter bug above the bar;
+        // repeating its tag as text inside the bar adds noise without detail.
+        showTitle: Boolean(task || (block.title.trim() && !directions.includes(block.title.trim().toLowerCase()))),
+      });
+    }
+    return output.sort((a, b) => a.start - b.start || a.end - b.end);
+  });
+
+  const windowEdges = createMemo<WindowEdge[]>(() => {
+    const byMinute = new Map<number, Map<string, { start: boolean; end: boolean }>>();
+    const addEdge = (minute: number, direction: string, edge: 'start' | 'end') => {
+      if (!visibleDirections().includes(direction)) return;
+      let byDirection = byMinute.get(minute);
+      if (!byDirection) { byDirection = new Map(); byMinute.set(minute, byDirection); }
+      const state = byDirection.get(direction) ?? { start: false, end: false };
+      state[edge] = true;
+      byDirection.set(direction, state);
+    };
+    for (const [direction, ranges] of Object.entries(byDirection())) {
+      for (const range of ranges) {
+        addEdge(range.start, direction, 'start');
+        addEdge(range.end, direction, 'end');
+      }
+    }
+    return [...byMinute.entries()].sort(([a], [b]) => a - b).map(([minute, byDirectionAtMinute]) => ({
+      minute,
+      items: [...byDirectionAtMinute.entries()]
+        .sort(([a], [b]) => directionRank(a) - directionRank(b) || a.localeCompare(b))
+        .map(([direction, edge]) => ({ direction, edge: edge.start && edge.end ? 'both' as const : edge.start ? 'start' as const : 'end' as const })),
+    }));
+  });
+
+  const [dimmedDirections, setDimmedDirections] = createSignal<Set<string>>(new Set());
+  const [filtersOpen, setFiltersOpen] = createSignal(false);
+  function toggleDirection(direction: string) {
+    setDimmedDirections((previous) => {
+      const next = new Set(previous);
+      if (next.has(direction)) next.delete(direction);
+      else next.add(direction);
+      return next;
+    });
+  }
+  const isDimmed = (directions: string[]) => directions.length > 0 && directions.every((name) => dimmedDirections().has(name));
+
+  const [popup, setPopup] = createSignal<PopupState | null>(null);
+  const [now, setNow] = createSignal(new Date());
+  let rootEl: HTMLDivElement | undefined;
+  let trackEl: HTMLDivElement | undefined;
+  let closeTimer: ReturnType<typeof setTimeout> | undefined;
+  onMount(() => {
+    const updateNow = () => setNow(new Date());
+    const interval = window.setInterval(updateNow, 60_000);
+    const onOutsidePointer = (event: PointerEvent) => {
+      if (rootEl && !rootEl.contains(event.target as Node)) {
+        setPopup(null);
+        setFiltersOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setPopup(null);
+        setFiltersOpen(false);
+      }
+    };
+    document.addEventListener('pointerdown', onOutsidePointer);
+    document.addEventListener('keydown', onKeyDown);
+    onCleanup(() => {
+      window.clearInterval(interval);
+      if (closeTimer) clearTimeout(closeTimer);
+      document.removeEventListener('pointerdown', onOutsidePointer);
+      document.removeEventListener('keydown', onKeyDown);
+    });
+  });
+
+  const currentMinute = () => props.date < localISODate(now()) ? DAY_MINUTES
+    : props.date > localISODate(now()) ? -1
+      : now().getHours() * 60 + now().getMinutes();
+
+  function cancelClose() {
+    if (closeTimer) clearTimeout(closeTimer);
+    closeTimer = undefined;
+  }
+  function scheduleClose() {
+    cancelClose();
+    closeTimer = setTimeout(() => {
+      const current = popup();
+      if (current?.kind === 'block' && !current.pinned) setPopup(null);
+    }, 180);
+  }
+
+  function editTimelineBlock(item: TimelineBlock) {
+    setPopup(null);
+    if (isTaskBlock(item.block) && item.task) {
+      const kind = item.task.is_habit ? 'habit' : 'task';
+      setElementModal({ open: true, mode: 'edit', kind, editTarget: { kind, id: item.task.id } });
+    } else {
+      setElementModal({ open: true, mode: 'edit', kind: 'timeblock', editTarget: { kind: 'timeblock', id: item.block.id } });
+    }
+  }
+
+  function openAt(kind: 'task' | 'timeblock', slot: OpenSlot) {
+    const current = popup();
+    const clickMinute = current?.kind === 'open' ? current.start : slot.start;
+    const start = Math.max(slot.start, Math.min(slot.end - 15, Math.floor(clickMinute / 15) * 15));
+    const durationMin = Math.max(15, Math.min(60, slot.end - start));
+    setPopup(null);
+    setElementModal({
+      open: true,
+      mode: 'add',
+      kind,
+      prefill: { day: props.date, start: `${String(Math.floor(start / 60)).padStart(2, '0')}:${String(start % 60).padStart(2, '0')}`, durationMin },
+    });
+  }
+
+  function clickOpenSlot(event: MouseEvent, slot: OpenSlot) {
+    event.stopPropagation();
+    const rect = trackEl?.getBoundingClientRect();
+    const minute = rect && rect.width > 0
+      ? Math.max(slot.start, Math.min(slot.end - 1, Math.floor(((event.clientX - rect.left) / rect.width) * DAY_MINUTES)))
+      : slot.start;
+    setPopup({ kind: 'open', start: minute, end: slot.end, directions: slot.directions });
+  }
+
+  function clickTimelineBlock(item: TimelineBlock) {
+    const current = popup();
+    if (current?.kind === 'block' && current.id === item.block.id && current.pinned) {
+      editTimelineBlock(item);
+    } else {
+      setPopup({ kind: 'block', id: item.block.id, pinned: true });
+    }
+  }
+
+  const popupBlock = () => {
+    const current = popup();
+    return current?.kind === 'block' ? timelineBlocks().find((item) => item.block.id === current.id) : undefined;
+  };
+  const openPopup = () => {
+    const current = popup();
+    return current?.kind === 'open' ? current : undefined;
+  };
+
   return (
-    <div class="flex flex-col gap-1.5">
-      <div class="flex items-center gap-2 flex-wrap">
+    <div
+      ref={(element) => { rootEl = element; }}
+      class="open-time-summary"
+      onPointerEnter={cancelClose}
+      onPointerLeave={scheduleClose}
+    >
+      <div class="open-time-summary-head">
         <span class="section-label !mb-0">Open time</span>
-        <span class="text-[10.5px] text-muted-foreground">{describeDirections(visibleDirections())}</span>
+        <span class="text-[10.5px] text-muted-foreground">{visibleDirections().map((direction) => direction[0].toUpperCase() + direction.slice(1)).join(', ') || 'No directions selected'}</span>
         <div class="flex-1" />
         <Show when={!loading()}>
-          <span class="text-[10.5px] text-muted-foreground font-mono">
-            {segments().length} window{segments().length === 1 ? '' : 's'} · {formatDuration(total())}
+          <span class="text-[10.5px] text-muted-foreground font-mono whitespace-nowrap">
+            {openSlots().length} window{openSlots().length === 1 ? '' : 's'} · {formatDuration(openMinutes())}
           </span>
         </Show>
       </div>
 
       <Show
         when={!loading()}
-        fallback={
-          <div role="status" class="flex flex-col gap-1.5">
-            <span class="sr-only">Reading the day's windows</span>
-            <Skeleton class="h-9" />
-            <Skeleton class="h-9 w-4/5" />
-          </div>
-        }
+        fallback={<div role="status" class="open-time-loading"><span class="sr-only">Reading the day's windows</span><Skeleton class="h-8" /></div>}
       >
-        <Show
-          when={segments().length > 0}
-          fallback={
-            <p class="text-xs text-muted-foreground">
-              No open time left in {describeDirections(visibleDirections())}.
-            </p>
-          }
+        <div
+          ref={(element) => { trackEl = element; }}
+          class="open-time-track"
+          role="group"
+          aria-label={`Open-time timeline for ${props.date}`}
         >
-          <For each={segments()}>
-            {(s) => (
-              <div class="open-window">
-                <span class="open-window-range">
-                  {formatClock(s.start)} – {formatClock(s.end)}
+          <For each={openSlots()}>{(slot) => (
+            <button
+              type="button"
+              class="open-time-slot"
+              classList={{ 'is-dimmed': isDimmed(slot.directions) }}
+              style={{ left: percent(slot.start), width: percent(slot.end - slot.start) }}
+              aria-label={`Open ${slot.directions.join(' and ')} time, ${formatClock(slot.start)} to ${formatClock(slot.end)}. Add a task or block.`}
+              title={`Open ${slot.directions.join(' / ')} · ${formatClock(slot.start)}–${formatClock(slot.end)}`}
+              onClick={(event) => clickOpenSlot(event, slot)}
+            />
+          )}</For>
+
+          <For each={timelineBlocks()}>{(item) => (
+            <button
+              type="button"
+              class="open-time-scheduled"
+              classList={{ 'is-dimmed': isDimmed(item.directions), 'has-label': item.end - item.start >= 90 && item.showTitle }}
+              style={{
+                left: percent(item.start),
+                width: percent(item.end - item.start),
+                '--item-color': item.color,
+              }}
+              aria-label={`${item.title}, ${formatClock(item.start)} to ${formatClock(item.end)}. Click to preview; click again to edit.`}
+              onPointerEnter={() => {
+                cancelClose();
+                const current = popup();
+                if (current?.kind !== 'block' || current.id !== item.block.id) {
+                  setPopup({ kind: 'block', id: item.block.id, pinned: false });
+                }
+              }}
+              onClick={(event) => { event.stopPropagation(); clickTimelineBlock(item); }}
+            >
+              <Show when={item.showTitle}>
+                <span class="open-time-scheduled-title">{item.title}</span>
+              </Show>
+              <Show when={item.directions.length > 0}>
+                <span class="open-time-scheduled-bugs" aria-hidden="true">
+                  <For each={item.directions}>{(direction) => (
+                    <span class="open-time-bug" style={{ '--bug-color': directionColor(direction) }}>{direction.charAt(0).toUpperCase()}</span>
+                  )}</For>
                 </span>
-                <span class="open-window-bar">
-                  {/* Width is the segment against a four-hour reference, so a long
-                      afternoon reads as longer at a glance without a second axis. */}
-                  <i style={{ width: `${Math.min(100, ((s.end - s.start) / 240) * 100)}%` }} />
-                </span>
-                <span class="open-window-tags">
-                  <For each={s.directions}>
-                    {(d) => <span class="open-window-tag" data-direction={d}>{d}</span>}
-                  </For>
-                </span>
-                <span class="open-window-dur">{formatDuration(s.end - s.start)}</span>
+              </Show>
+            </button>
+          )}</For>
+        </div>
+
+        <div class="open-time-axis" aria-hidden="true">
+          <For each={DAY_TICKS}>{(minute, index) => (
+            <span
+              class="open-time-axis-tick"
+              classList={{ 'is-first': index() === 0, 'is-last': index() === DAY_TICKS.length - 1 }}
+              style={{ left: percent(minute) }}
+            >{tickLabel(minute)}</span>
+          )}</For>
+        </div>
+
+        <div class="open-time-window-edges" aria-label="Availability window changes">
+          <For each={windowEdges()}>{(edge) => (
+            <div
+              class="open-time-window-edge"
+              classList={{ 'is-first': edge.minute === 0, 'is-last': edge.minute === DAY_MINUTES }}
+              style={{ left: percent(edge.minute) }}
+            >
+              <For each={edge.items}>{(item) => (
+                <span
+                  class="open-time-bug"
+                  classList={{
+                    'is-dimmed': edge.minute < currentMinute() || dimmedDirections().has(item.direction),
+                    'is-ending': item.edge === 'end',
+                  }}
+                  style={{ '--bug-color': directionColor(item.direction) }}
+                  title={`${item.direction} window ${item.edge === 'end' ? 'ends' : item.edge === 'both' ? 'changes' : 'starts'} at ${formatClock(edge.minute)}`}
+                >{item.direction.charAt(0).toUpperCase()}</span>
+              )}</For>
+            </div>
+          )}</For>
+        </div>
+
+        <Show when={visibleDirections().length > 0}>
+          <div class="open-time-filter-row">
+            <div class="open-time-filter-wrap">
+              <button
+                type="button"
+                class="open-time-filter-trigger"
+                aria-expanded={filtersOpen()}
+                aria-label="Filter directions"
+                onClick={() => setFiltersOpen((open) => !open)}
+              >
+                <ListFilter size={13} />
+                <span>Directions</span>
+                <ChevronDown size={12} />
+              </button>
+              <Show when={filtersOpen()}>
+                <div class="open-time-filter-menu" role="group" aria-label="Show directions">
+                  <For each={visibleDirections()}>{(direction) => (
+                    <label class="open-time-filter-option">
+                      <input
+                        type="checkbox"
+                        checked={!dimmedDirections().has(direction)}
+                        onChange={() => toggleDirection(direction)}
+                      />
+                      <span>{direction.charAt(0).toUpperCase() + direction.slice(1)}</span>
+                    </label>
+                  )}</For>
+                </div>
+              </Show>
+            </div>
+          </div>
+        </Show>
+
+        <Show when={openPopup()}>
+          {(state) => (
+            <div class="open-time-popup" role="dialog" aria-label="Add to open time" onPointerEnter={cancelClose}>
+              <div class="open-time-popup-copy">
+                <strong>Open time</strong>
+                <span>{formatClock(state().start)}–{formatClock(state().end)}</span>
+                <small>{state().directions.join(' · ')}</small>
               </div>
-            )}
-          </For>
+              <div class="open-time-popup-actions">
+                <button type="button" class="btn-primary text-xs px-2 py-1" onClick={() => openAt('task', { start: state().start, end: state().end, directions: state().directions })}>New task</button>
+                <button type="button" class="btn-secondary text-xs px-2 py-1" onClick={() => openAt('timeblock', { start: state().start, end: state().end, directions: state().directions })}>Block</button>
+              </div>
+            </div>
+          )}
+        </Show>
+
+        <Show when={popupBlock()}>
+          {(item) => (
+            <div class="open-time-popup" role="dialog" aria-label={`${item().title} details`} onPointerEnter={cancelClose}>
+              <div class="open-time-popup-copy">
+                <strong>{item().title}</strong>
+                <span>{formatClock(item().start)}–{formatClock(item().end)}</span>
+                <small>{item().directions.join(' · ') || 'Scheduled'}</small>
+              </div>
+              <button type="button" class="btn-secondary text-xs px-2 py-1" onClick={() => editTimelineBlock(item())}>
+                {item().task ? 'Open task' : 'Edit block'}
+              </button>
+            </div>
+          )}
         </Show>
       </Show>
     </div>

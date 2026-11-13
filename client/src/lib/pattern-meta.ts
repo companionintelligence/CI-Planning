@@ -40,9 +40,9 @@ export type ShapeOption = (typeof SHAPE_OPTIONS)[number];
  * anything is saved.
  */
 export const BASE_TAG_DEFAULTS: Record<string, { icon_shape: string; color_token: string }> = {
-  community: { icon_shape: 'circle',   color_token: 'primary' },
-  home:      { icon_shape: 'square',   color_token: 'chart-1' },
-  work:      { icon_shape: 'triangle', color_token: 'chart-4' },
+  community: { icon_shape: 'circle',   color_token: 'tag-6' },
+  home:      { icon_shape: 'square',   color_token: 'tag-1' },
+  work:      { icon_shape: 'triangle', color_token: 'tag-7' },
 };
 
 /**
@@ -95,7 +95,10 @@ export function directionColorForTask(
   const dir = tagDefs.find((t) => t.kind === 'direction' && names.includes(t.name));
   if (!dir) return 'var(--primary)';
   const saved = prefs[dir.id]?.color_token;
-  if (saved) return colorVar(saved);
+  // Direction colors use the shared, theme-aware tag palette. Older saved
+  // chart tokens predate that palette and should fall back to the brighter
+  // direction defaults rather than retaining the earthy legacy colors.
+  if (saved?.startsWith('tag-')) return colorVar(saved);
   return colorVar(BASE_TAG_DEFAULTS[dir.name.toLowerCase()]?.color_token);
 }
 
