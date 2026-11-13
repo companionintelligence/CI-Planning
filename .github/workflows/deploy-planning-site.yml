@@ -17,6 +17,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # package.json declares pnpm, and wrangler-action runs pnpm when it sees that, so pnpm must be installed first.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       # Requires two repo secrets that this file does not set. See site/README.md.
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
