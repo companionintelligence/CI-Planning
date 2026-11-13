@@ -320,16 +320,6 @@ export function OpenTimeSummary(props: { date: string }) {
         when={!loading()}
         fallback={<div role="status" class="open-time-loading"><span class="sr-only">Reading the day's windows</span><Skeleton class="h-8" /></div>}
       >
-        <div class="open-time-axis" aria-hidden="true">
-          <For each={DAY_TICKS}>{(minute, index) => (
-            <span
-              class="open-time-axis-tick"
-              classList={{ 'is-first': index() === 0, 'is-last': index() === DAY_TICKS.length - 1 }}
-              style={{ left: percent(minute) }}
-            >{tickLabel(minute)}</span>
-          )}</For>
-        </div>
-
         <div class="open-time-window-edges" aria-label="Availability window changes">
           <For each={windowEdges()}>{(edge) => (
             <div
@@ -399,6 +389,16 @@ export function OpenTimeSummary(props: { date: string }) {
                 </span>
               </Show>
             </button>
+          )}</For>
+        </div>
+
+        <div class="open-time-axis" aria-hidden="true">
+          <For each={DAY_TICKS}>{(minute, index) => (
+            <span
+              class="open-time-axis-tick"
+              classList={{ 'is-first': index() === 0, 'is-last': index() === DAY_TICKS.length - 1 }}
+              style={{ left: percent(minute) }}
+            >{tickLabel(minute)}</span>
           )}</For>
         </div>
 
