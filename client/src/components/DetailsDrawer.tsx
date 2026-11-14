@@ -1,6 +1,7 @@
 import { Show, For, Switch, Match, createSignal, createEffect, createMemo, createResource, on, onCleanup } from 'solid-js';
 import { useLocation } from '@solidjs/router';
 import { FlightPlan } from './FlightPlan.js';
+import { EmptyStateConnectCTA } from './EmptyStateConnectCTA.js';
 import { X, PanelRight, Inbox, Pencil, Sparkles, Check, ChevronDown, ChevronRight, Rocket } from 'lucide-solid';
 import {
   detailsOpen, detailsWidth, setDetailsOpen, setDetailsWidth,
@@ -24,7 +25,7 @@ import { SETTLED_BLOCK } from '../lib/block-status.js';
 import { PriorityToggle, DateField } from './TaskCard.js';
 import { flattenObjectives } from '../lib/objectives.js';
 import { describeRule } from '../lib/recurrence.js';
-import { rangeUTC } from '../lib/dates.js';
+import { addDays, rangeUTC } from '../lib/dates.js';
 import { minutesIntoDay } from '../lib/grid.js';
 import { OpenTimeSummary } from './OpenTimeSummary.js';
 import {
@@ -579,6 +580,248 @@ function GroupPanel(props: { tag: Tag }) {
   );
 }
 
+interface DayPlanItem { key: string; task: Task; block?: Block }
+
+/** The checklist shared by the Today drawer and an explicitly selected day. */
+function DayPlanChecklist(props: { date: string }) {
+  const [removeItemKey, setRemoveItemKey] = createSignal<string | null>(null);
+  const [removeAction, setRemoveAction] = createSignal<'reschedule' | 'defer' | null>(null);
+  const [removeDate, setRemoveDate] = createSignal(addDays(props.date, 1));
+  const [removing, setRemoving] = createSignal(false);
+
+  // Match Focus: placed task/focus/habit blocks first, then scheduled-for-day tasks
+  // that have no active block. Keep completed placements visible as dimmed history.
+  const dayTasks = createMemo(() => {
+    const placed: DayPlanItem[] = [];
+    const placedTaskIds = new Set<string>();
+    const focusKinds = new Set(['task', 'focus', 'habit']);
+    for (const block of blocks() ?? []) {
+      if (!focusKinds.has(block.block_kind) || block.all_day) continue;
+      const minute = minutesIntoDay(block.start_at, props.date);
+      if (minute < 0 || minute >= 24 * 60) continue;
+      if (['skipped', 'cancelled', 'missed'].includes(block.status)) continue;
+      if (!block.task_id) continue;
+      const task = taskOf(block.task_id);
+      if (!task) continue;
+      placedTaskIds.add(task.id);
+      placed.push({ key: `block:${block.id}`, task, block });
+    }
+    for (const task of tasks() ?? []) {
+      if ((task.scheduled_for ?? '').slice(0, 10) !== props.date) continue;
+      if (task.parent_id || task.status === 'cancelled' || placedTaskIds.has(task.id)) continue;
+      placed.push({ key: `task:${task.id}`, task });
+    }
+    return placed.sort((a, b) => {
+      const minuteOf = (item: DayPlanItem) => {
+        if (item.block) return minutesIntoDay(item.block.start_at, props.date);
+        const [hours, minutes] = (item.task.task_time ?? '').split(':').map(Number);
+        return Number.isFinite(hours) && Number.isFinite(minutes) ? hours * 60 + minutes : 24 * 60;
+      };
+      return minuteOf(a) - minuteOf(b);
+    });
+  });
+
+  const rowDone = (item: DayPlanItem) =>
+    item.task.status === 'done' || item.block?.status === 'completed' || item.block?.status === 'done';
+
+  function openTask(task: Task) {
+    setActiveTask(task.id);
+    revealDetails();
+  }
+
+  async function toggleTask(item: DayPlanItem) {
+    const completed = rowDone(item);
+    try {
+      if (completed) {
+        await api.tasks.update(item.task.id, { status: 'open', completed_at: null });
+      } else {
+        await api.tasks.update(item.task.id, { completed: true });
+        openCloseRitual(item.task, item.block?.id);
+      }
+      refetchTasks();
+      refetchBlocks();
+      refetchDayConflicts();
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    }
+  }
+
+  function beginRemove(item: DayPlanItem) {
+    setRemoveItemKey(item.key);
+    setRemoveAction(null);
+    setRemoveDate(addDays(props.date, 1));
+  }
+
+  function cancelRemove() {
+    setRemoveItemKey(null);
+    setRemoveAction(null);
+  }
+
+  async function removeFromDay(item: DayPlanItem) {
+    const action = removeAction();
+    const date = removeDate();
+    if (!action || !date || removing()) return;
+    setRemoving(true);
+    try {
+      // One task can have more than one session on a day. Remove every active
+      // placement for this task on the viewed day before returning it to open.
+      const dayPlacements = (blocks() ?? []).filter((b) => {
+        if (b.task_id !== item.task.id || b.block_kind !== 'task') return false;
+        if (['completed', 'skipped', 'cancelled', 'missed'].includes(b.status)) return false;
+        const minute = minutesIntoDay(b.start_at, props.date);
+        return minute >= 0 && minute < 24 * 60;
+      });
+      for (const placement of dayPlacements) await api.blocks.delete(placement.id);
+
+      // A rescheduled task stays open and dated for the chosen day, ready for a
+      // later placement. A deferred task returns to the undated open list and is
+      // hidden from auto-scheduling until its defer date.
+      await api.tasks.update(item.task.id, {
+        status: 'open',
+        scheduled_for: action === 'reschedule' ? date : null,
+        task_time: null,
+        defer_until: action === 'defer' ? new Date(`${date}T00:00:00`).toISOString() : null,
+      });
+      await api.flightPlan.remove(item.task.id);
+      refetchTasks();
+      refetchBlocks();
+      refetchFlightPlan();
+      refetchDayConflicts();
+      showToast(
+        action === 'reschedule' ? `Task rescheduled for ${date}` : `Task deferred until ${date}`,
+        'success',
+      );
+      cancelRemove();
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setRemoving(false);
+    }
+  }
+
+  async function keepConflict(block: Block) {
+    try {
+      await api.blocks.update(block.id, { is_locked: true });
+      refetchBlocks();
+      refetchDayConflicts();
+      showToast('Keeping this task at its current time', 'success');
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    }
+  }
+
+  return (
+    <Group label="Plan">
+      <Show when={dayTasks().length > 0} fallback={<span class="text-xs text-muted-foreground">No tasks scheduled for this day.</span>}>
+        <div class="flex flex-col gap-1">
+          <For each={dayTasks()}>{(item) => {
+            const conflict = () => !!item.block && conflictedBlockIds().has(item.block.id);
+            const done = () => rowDone(item);
+            const range = () => {
+              if (item.block) return `${fmtClock(item.block.start_at)}–${fmtClock(item.block.end_at)}`;
+              if (!item.task.task_time) return 'Unplaced';
+              const [hours, minutes] = item.task.task_time.split(':').map(Number);
+              if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return 'Unplaced';
+              const time = new Date(`${props.date}T${item.task.task_time.length === 5 ? item.task.task_time : '00:00'}:00`);
+              return time.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+            };
+            const priority = () => item.task.priority === 1 ? '10px' : '4px';
+            return (
+              <div
+                class="relative flex items-start gap-2 border-b border-border/50 py-2 last:border-b-0"
+                classList={{ 'day-type-conflict-outline': conflict(), 'opacity-45': done() }}
+                style={{ '--conflict-dash': priority() }}
+              >
+                <button
+                  type="button"
+                  class="mt-0.5 inline-flex h-4 w-4 flex-shrink-0 items-center justify-center border border-muted-foreground/60 text-muted-foreground hover:border-primary hover:text-primary"
+                  classList={{ 'bg-primary text-primary-foreground border-primary': done() }}
+                  aria-label={done() ? `Reopen ${item.task.title}` : `Complete ${item.task.title}`}
+                  aria-pressed={done()}
+                  onClick={() => void toggleTask(item)}
+                >
+                  <Show when={done()}><Check size={11} /></Show>
+                </button>
+                <div class="min-w-0 flex-1">
+                  <button
+                    type="button"
+                    class="block max-w-full truncate text-left text-xs text-foreground hover:text-primary"
+                    classList={{ 'line-through': done() }}
+                    onClick={() => openTask(item.task)}
+                  >
+                    {item.task.title}
+                  </button>
+                  <div class="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                    <span class="font-mono tabular-nums">{range()}</span>
+                    <Show when={!item.block}><span>· open</span></Show>
+                    <Show when={item.task.priority === 1}><span class="text-primary">P1</span></Show>
+                  </div>
+                  <Show when={conflict() && item.block}>
+                    <div class="mt-1 flex items-center gap-2 text-[10px] text-destructive">
+                      <span>Outside this day’s windows</span>
+                      <Show when={!item.block?.is_locked} fallback={<span class="text-muted-foreground">Kept</span>}>
+                        <button type="button" class="underline underline-offset-2" onClick={() => void keepConflict(item.block!)}>Keep</button>
+                      </Show>
+                      <button type="button" class="underline underline-offset-2" onClick={() => beginRemove(item)}>Remove</button>
+                    </div>
+                  </Show>
+                  <Show when={!done()}>
+                    <Show
+                      when={removeItemKey() === item.key}
+                      fallback={
+                        <button
+                          type="button"
+                          class="mt-1 text-[10px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                          onClick={() => beginRemove(item)}
+                          aria-label={`Remove ${item.task.title} from this day's schedule`}
+                        >Remove</button>
+                      }
+                    >
+                      <div class="mt-2 rounded-md border border-border bg-card p-2 text-[10px]">
+                        <Show
+                          when={removeAction() === null}
+                          fallback={
+                            <div class="flex flex-wrap items-center gap-2">
+                              <label class="flex items-center gap-1.5 text-muted-foreground">
+                                {removeAction() === 'reschedule' ? 'Reschedule to' : 'Defer until'}
+                                <input
+                                  type="date"
+                                  class="input py-0.5 text-[10px]"
+                                  min={addDays(props.date, 1)}
+                                  value={removeDate()}
+                                  onInput={(e) => setRemoveDate(e.currentTarget.value)}
+                                />
+                              </label>
+                              <button
+                                type="button"
+                                class="text-primary hover:underline disabled:opacity-40"
+                                disabled={!removeDate() || removeDate() <= props.date || removing()}
+                                onClick={() => void removeFromDay(item)}
+                              >{removing() ? 'Saving…' : 'Confirm'}</button>
+                              <button type="button" class="text-muted-foreground hover:text-foreground" onClick={cancelRemove}>Cancel</button>
+                            </div>
+                          }
+                        >
+                          <div class="flex flex-wrap items-center gap-2">
+                            <span class="text-muted-foreground">Remove from this day:</span>
+                            <button type="button" class="text-primary hover:underline" onClick={() => { setRemoveAction('reschedule'); setRemoveDate(addDays(props.date, 1)); }}>Reschedule</button>
+                            <button type="button" class="text-primary hover:underline" onClick={() => { setRemoveAction('defer'); setRemoveDate(addDays(props.date, 1)); }}>Defer</button>
+                            <button type="button" class="text-muted-foreground hover:text-foreground" onClick={cancelRemove}>Cancel</button>
+                          </div>
+                        </Show>
+                      </div>
+                    </Show>
+                  </Show>
+                </div>
+              </div>
+            );
+          }}</For>
+        </div>
+      </Show>
+    </Group>
+  );
+}
+
 function DayPanel(props: { date: string }) {
   const [resolved] = createResource(
     () => [props.date, patternBlocks()] as const,
@@ -604,87 +847,6 @@ function DayPanel(props: { date: string }) {
     return [...names];
   });
 
-  // Match Focus: placed task/focus/habit blocks first, then scheduled-for-day tasks
-  // that have no active block. Keep completed placements visible as dimmed history.
-  const dayTasks = createMemo(() => {
-    const placed: Array<{ key: string; task: Task; block?: Block }> = [];
-    const placedTaskIds = new Set<string>();
-    const focusKinds = new Set(['task', 'focus', 'habit']);
-    for (const block of blocks() ?? []) {
-      if (!focusKinds.has(block.block_kind) || block.all_day) continue;
-      const minute = minutesIntoDay(block.start_at, props.date);
-      if (minute < 0 || minute >= 24 * 60) continue;
-      if (['skipped', 'cancelled', 'missed'].includes(block.status)) continue;
-      if (!block.task_id) continue;
-      const task = taskOf(block.task_id);
-      if (!task) continue;
-      placedTaskIds.add(task.id);
-      placed.push({ key: `block:${block.id}`, task, block });
-    }
-    for (const task of tasks() ?? []) {
-      if ((task.scheduled_for ?? '').slice(0, 10) !== props.date) continue;
-      if (task.parent_id || task.status === 'cancelled' || placedTaskIds.has(task.id)) continue;
-      placed.push({ key: `task:${task.id}`, task });
-    }
-    return placed.sort((a, b) => {
-      const minuteOf = (item: { task: Task; block?: Block }) => {
-        if (item.block) return minutesIntoDay(item.block.start_at, props.date);
-        const [hours, minutes] = (item.task.task_time ?? '').split(':').map(Number);
-        return Number.isFinite(hours) && Number.isFinite(minutes) ? hours * 60 + minutes : 24 * 60;
-      };
-      return minuteOf(a) - minuteOf(b);
-    });
-  });
-
-  const rowDone = (item: { task: Task; block?: Block }) =>
-    item.task.status === 'done' || item.block?.status === 'completed' || item.block?.status === 'done';
-
-  function openTask(task: Task) {
-    setActiveTask(task.id);
-    revealDetails();
-  }
-
-  async function toggleTask(item: { task: Task; block?: Block }) {
-    const completed = rowDone(item);
-    try {
-      if (completed) {
-        await api.tasks.update(item.task.id, { status: 'open', completed_at: null });
-      } else {
-        await api.tasks.update(item.task.id, { completed: true });
-        openCloseRitual(item.task, item.block?.id);
-      }
-      refetchTasks();
-      refetchBlocks();
-      refetchDayConflicts();
-    } catch (err) {
-      showToast((err as Error).message, 'error');
-    }
-  }
-
-  async function keepConflict(block: Block) {
-    try {
-      await api.blocks.update(block.id, { is_locked: true });
-      refetchBlocks();
-      refetchDayConflicts();
-      showToast('Keeping this task at its current time', 'success');
-    } catch (err) {
-      showToast((err as Error).message, 'error');
-    }
-  }
-
-  async function removeConflict(block: Block) {
-    try {
-      await api.blocks.delete(block.id);
-      refetchBlocks();
-      refetchTasks();
-      refetchFlightPlan();
-      refetchDayConflicts();
-      showToast('Task returned to the open list', 'success');
-    } catch (err) {
-      showToast((err as Error).message, 'error');
-    }
-  }
-
   return (
     <div class="drawer-body">
       <Group label="Day type">
@@ -694,67 +856,7 @@ function DayPanel(props: { date: string }) {
           <Field label="Source" when={resolved()?.source}>{resolved()?.source}</Field>
         </dl>
       </Group>
-      <Group label="Plan">
-        <Show when={dayTasks().length > 0} fallback={<span class="text-xs text-muted-foreground">No tasks scheduled for this day.</span>}>
-          <div class="flex flex-col gap-1">
-            <For each={dayTasks()}>{(item) => {
-              const conflict = () => !!item.block && conflictedBlockIds().has(item.block.id);
-              const done = () => rowDone(item);
-              const range = () => {
-                if (item.block) return `${fmtClock(item.block.start_at)}–${fmtClock(item.block.end_at)}`;
-                if (!item.task.task_time) return 'Unplaced';
-                const [hours, minutes] = item.task.task_time.split(':').map(Number);
-                if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return 'Unplaced';
-                const time = new Date(`${props.date}T${item.task.task_time.length === 5 ? item.task.task_time : '00:00'}:00`);
-                return time.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-              };
-              const priority = () => item.task.priority === 1 ? '10px' : '4px';
-              return (
-                <div
-                  class="relative flex items-start gap-2 border-b border-border/50 py-2 last:border-b-0"
-                  classList={{ 'day-type-conflict-outline': conflict(), 'opacity-45': done() }}
-                  style={{ '--conflict-dash': priority() }}
-                >
-                  <button
-                    type="button"
-                    class="mt-0.5 inline-flex h-4 w-4 flex-shrink-0 items-center justify-center border border-muted-foreground/60 text-muted-foreground hover:border-primary hover:text-primary"
-                    classList={{ 'bg-primary text-primary-foreground border-primary': done() }}
-                    aria-label={done() ? `Reopen ${item.task.title}` : `Complete ${item.task.title}`}
-                    aria-pressed={done()}
-                    onClick={() => void toggleTask(item)}
-                  >
-                    <Show when={done()}><Check size={11} /></Show>
-                  </button>
-                  <div class="min-w-0 flex-1">
-                    <button
-                      type="button"
-                      class="block max-w-full truncate text-left text-xs text-foreground hover:text-primary"
-                      classList={{ 'line-through': done() }}
-                      onClick={() => openTask(item.task)}
-                    >
-                      {item.task.title}
-                    </button>
-                    <div class="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                      <span class="font-mono tabular-nums">{range()}</span>
-                      <Show when={!item.block}><span>· open</span></Show>
-                      <Show when={item.task.priority === 1}><span class="text-primary">P1</span></Show>
-                    </div>
-                    <Show when={conflict() && item.block}>
-                      <div class="mt-1 flex items-center gap-2 text-[10px] text-destructive">
-                        <span>Outside this day’s windows</span>
-                        <Show when={!item.block?.is_locked} fallback={<span class="text-muted-foreground">Kept</span>}>
-                          <button type="button" class="underline underline-offset-2" onClick={() => void keepConflict(item.block!)}>Keep</button>
-                        </Show>
-                        <button type="button" class="underline underline-offset-2" onClick={() => void removeConflict(item.block!)}>Remove</button>
-                      </div>
-                    </Show>
-                  </div>
-                </div>
-              );
-            }}</For>
-          </div>
-        </Show>
-      </Group>
+      <DayPlanChecklist date={props.date} />
       <Show when={dayTags().length > 0}>
         <Group label="Tags on the day">
           <div class="flex flex-wrap gap-1.5">
@@ -1377,6 +1479,7 @@ function DayWindowPanel(props: { date: string }) {
 
   return (
     <div class="drawer-body">
+      <DayPlanChecklist date={props.date} />
       <Group label="Right now">
         <Show
           when={active().length > 0}
@@ -1428,6 +1531,16 @@ export function DetailsDrawer() {
   const location = useLocation();
   /** Today is the only route with a day grid to host, so it is the only one with tabs. */
   const hasSecondTab = () => location.pathname === '/';
+  // Keep the Today canvas focused on the planner. Its empty-day prompt lives in
+  // this drawer, beside the day's checklist and Flight Plan.
+  const todayHasSchedule = createMemo(() => {
+    const date = selectedDay();
+    if ((blocks() ?? []).some((b) => {
+      const minute = minutesIntoDay(b.start_at, date);
+      return minute >= 0 && minute < 24 * 60 && !['skipped', 'cancelled', 'missed'].includes(b.status);
+    })) return true;
+    return (tasks() ?? []).some((t) => (t.scheduled_for ?? '').slice(0, 10) === date && t.status !== 'cancelled');
+  });
   const task = (): Task | undefined => {
     const id = activeTask();
     if (!id) return undefined;
@@ -1519,9 +1632,17 @@ export function DetailsDrawer() {
   // the Flight Plan (the staging list is the useful resting surface), something
   // selected → its Details. Keyed on the selection signals only, so a manual tab
   // click is never fought — the tab moves when the SELECTION changes, not on render.
+  // A double-click on Details explicitly keeps the day panel visible after deselecting.
+  const [explicitDayDetails, setExplicitDayDetails] = createSignal(false);
   createEffect(on([activeTask, activeBlock, activeEntity], () => {
     if (!hasSecondTab()) return;
-    setDrawerTab(!activeTask() && !activeBlock() && !activeEntity() ? 'flightplan' : 'details');
+    const hasSelection = Boolean(activeTask() || activeBlock() || activeEntity());
+    if (hasSelection) {
+      setExplicitDayDetails(false);
+      setDrawerTab('details');
+    } else {
+      setDrawerTab(explicitDayDetails() ? 'details' : 'flightplan');
+    }
   }));
 
   // Per-view selection memory (mockup contract): each route remembers what was
@@ -1579,11 +1700,8 @@ export function DetailsDrawer() {
   window.addEventListener('keydown', onEsc);
   onCleanup(() => window.removeEventListener('keydown', onEsc));
 
-  // On mobile the drawer is a fixed bottom sheet — with nothing selected (and no
-  // Planner grid to show instead) it has no content of its own, but still sat over
-  // the bottom of the screen and ate clicks meant for the FAB and other bottom
-  // controls underneath it. Desktop is unaffected: there it's a docked side panel,
-  // and an empty side panel doesn't cover anything.
+  // Marker for a drawer with no selected entity. On mobile it remains available as
+  // a bottom sheet so the Today checklist and day details can be opened explicitly.
   const isEmptyState = () => !task() && !block() && !entity() && !(hasSecondTab() && drawerTab() === 'flightplan');
 
   return (
@@ -1646,7 +1764,15 @@ export function DetailsDrawer() {
             <button
               type="button" role="tab" class="drawer-tab"
               aria-selected={drawerTab() === 'details'}
+              aria-label="Details; double-click to clear selection and show the day's details"
               onClick={() => setDrawerTab('details')}
+              onDblClick={() => {
+                if (!hasSecondTab()) return;
+                setExplicitDayDetails(true);
+                clearActiveEntity();
+                setDrawerTab('details');
+              }}
+              title="Double-click to return to the day's details"
             >Details</button>
             <button
               type="button" role="tab" class="drawer-tab"
@@ -1654,6 +1780,13 @@ export function DetailsDrawer() {
               onClick={() => setDrawerTab('flightplan')}
             >Flight Plan</button>
           </div>
+        </Show>
+
+        <Show when={hasSecondTab() && !todayHasSchedule()}>
+          <section class="drawer-day-empty" aria-label="Schedule status">
+            <p>Nothing scheduled yet.</p>
+            <EmptyStateConnectCTA />
+          </section>
         </Show>
 
         <Show
@@ -1688,17 +1821,18 @@ export function DetailsDrawer() {
 }
 
 /** Top-bar toggle for the drawer. Lives in the bar so it survives the drawer closing. */
-export function DetailsToggle() {
+export function DetailsToggle(props: { mobileFloating?: boolean }) {
   return (
     <button
       type="button"
-      class="btn-icon btn-icon-strong flex-shrink-0"
+      class="btn-icon btn-icon-strong flex-shrink-0 min-w-9 min-h-9 justify-center"
+      classList={{ 'details-toggle-mobile-floating': !!props.mobileFloating }}
       aria-expanded={detailsOpen()}
       aria-label={detailsOpen() ? 'Hide details drawer' : 'Show details drawer'}
       title={detailsOpen() ? 'Hide details drawer' : 'Show details drawer'}
       onClick={() => setDetailsOpen(!detailsOpen())}
     >
-      <PanelRight size={13} />
+      <PanelRight size={18} />
     </button>
   );
 }

@@ -32,7 +32,7 @@ import { DayReflowBanner } from '../components/DayReflowBanner.js';
 import { CalendarGrid } from '../components/CalendarGrid.js';
 import { DayTypeControl } from '../components/DayTypeControl.js';
 import { ViewHeader } from '../components/ViewHeader.js';
-import { WeeklyReview } from '../components/WeeklyReview.js';
+import { CalendarReview } from '../components/CalendarReview.js';
 import type { Block, DayStar } from '../lib/api.js';
 
 type ViewMode = 'day' | 'week' | 'month';
@@ -218,12 +218,18 @@ export function Calendar() {
 
   const views: ViewMode[] = ['day', 'week', 'month'];
 
-  // ── Weekly review toggle (week view only) ───────────────────────────────────
+  // ── Calendar review: weekly recap or rolling 30-day recap ────────────────────
   const [showReview, setShowReview] = createSignal(false);
-  const reviewEnabled = () => view() === 'week' && showReview();
+  const weeklyReviewEnabled = () => view() === 'week' && showReview();
+  const monthlyReviewEnabled = () => view() === 'month' && showReview();
+  const reviewEnabled = () => weeklyReviewEnabled() || monthlyReviewEnabled();
   const [weekReview] = createResource(
-    () => (reviewEnabled() ? anchor() : null),
+    () => (weeklyReviewEnabled() ? anchor() : null),
     (a) => api.review.week(a),
+  );
+  const [monthReview] = createResource(
+    () => (monthlyReviewEnabled() ? localISODate() : null),
+    (end) => api.review.month(end),
   );
   // Calibration is owner-wide; fetch once when the review panel opens, then cache.
   const [calibration] = createResource(
@@ -344,13 +350,13 @@ export function Calendar() {
               <Download size={13} /> <span class="hidden sm:inline">Export</span>
             </a>
           </Show>
-          <Show when={view() === 'week'}>
+          <Show when={view() === 'week' || view() === 'month'}>
             <button
               onClick={() => setShowReview((s) => !s)}
               class="btn-ghost text-xs gap-1"
               classList={{ 'text-primary': showReview() }}
-              aria-label="Toggle weekly review panel"
-              title="Toggle weekly review panel"
+              aria-label={`Toggle ${view() === 'week' ? 'weekly' : 'monthly'} review panel`}
+              title={`Toggle ${view() === 'week' ? 'weekly' : 'monthly'} review panel`}
             >
               <ClipboardList size={13} /> <span class="hidden sm:inline">Review</span>
             </button>
@@ -521,9 +527,13 @@ export function Calendar() {
         {(date) => <DayReflowBanner date={date()} />}
       </Show>
 
-      {/* Phase N3/N4: weekly review panel — visible only in week view when toggled. */}
-      <Show when={view() === 'week' && showReview()}>
-        <WeeklyReview data={weekReview()} calibration={calibration()} />
+      {/* Weekly and rolling 30-day recaps are available from their matching views. */}
+      <Show when={(view() === 'week' || view() === 'month') && showReview()}>
+        <CalendarReview
+          period={view() === 'week' ? 'week' : 'month'}
+          data={view() === 'week' ? weekReview() : monthReview()}
+          calibration={calibration()}
+        />
       </Show>
 
       <div class="flex-1 overflow-hidden min-h-0">

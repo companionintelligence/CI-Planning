@@ -6,7 +6,6 @@ import {
   AlertTriangle, Clock, ArrowRight, Pencil, Trash2, Star,
   CheckCircle2, ListPlus, Archive, RotateCcw,
 } from 'lucide-solid';
-import { STAR_GOLD } from '../lib/stars.js';
 import { api, type Objective, type ObjectiveTaskSummary } from '../lib/api.js';
 import { showToast, refetchTasks, setElementModal, elementModal, openCloseRitual, taskOf } from '../stores/index.js';
 import { localISODate } from '../lib/dates.js';
@@ -554,7 +553,7 @@ function ObjectiveNode(props: {
         <div class="relative flex-shrink-0 w-8 sm:w-16 h-1.5 rounded-sm bg-background border border-border overflow-hidden"
              title={obj().status === 'done' ? 'Complete' : (progressPct() ?? 'No plan yet')}>
           <Show when={obj().status === 'done'}>
-            <div class="absolute inset-0 rounded-sm" style={{ 'background-color': STAR_GOLD }} />
+            <div class="absolute inset-0 rounded-sm" style={{ 'background-color': 'var(--star-gold)' }} />
           </Show>
           <Show when={obj().status !== 'done' && obj().progress_cache != null}>
             <div
@@ -582,7 +581,7 @@ function ObjectiveNode(props: {
               {obj().title}
             </span>
             <Show when={obj().status === 'done'}>
-              <Star size={12} color={STAR_GOLD} fill={STAR_GOLD} class="flex-shrink-0" />
+              <Star size={12} color="var(--star-gold)" fill="var(--star-gold)" class="flex-shrink-0" />
             </Show>
             {/* Hidden below `sm`: the level icon to the left already says this, and at
                 360px the word was outbidding the title for the last of the row. */}
@@ -676,10 +675,11 @@ function ObjectiveNode(props: {
                 onDragEnd={props.onTaskDragEnd}
                 class="flex items-center gap-2 pl-2 sm:pl-6 py-1 min-w-0 border border-transparent"
                 classList={{
-                  'border-dotted border-orange-400 bg-orange-400/5': !!t.auto_generated && !t.human_approved_at,
+                  'border-dotted bg-warning/5': !!t.auto_generated && !t.human_approved_at,
                   'cursor-grab': true,
                   'opacity-50': props.draggedTask()?.taskId === t.id,
                 }}
+                style={!!t.auto_generated && !t.human_approved_at ? { 'border-color': 'var(--auto-generated-outline)' } : undefined}
                 title="Drag to another objective in this group"
               >
                 <button
@@ -712,7 +712,7 @@ function ObjectiveNode(props: {
                 </Show>
                 <Show when={!!t.auto_generated && !t.human_approved_at}>
                   <button
-                    class="btn-icon flex-shrink-0 text-orange-300 hover:text-orange-200"
+                    class="btn-icon flex-shrink-0 auto-generated-approval"
                     onDragStart={(ev) => ev.stopPropagation()}
                     onClick={(ev) => { ev.stopPropagation(); void approveTask(t); }}
                     title="Approve this AI-created task"

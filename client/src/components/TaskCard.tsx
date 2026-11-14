@@ -9,6 +9,8 @@ import { isPromotableToObjective } from '../lib/objective-promote.js';
 import { directionColorForTask, directionShapeForTask, colorVar, resolveItemColor } from '../lib/pattern-meta.js';
 import { elementTextureStyle } from '../lib/textures.js';
 import { initialsOf } from '../lib/element.js';
+import { localISODate } from '../lib/dates.js';
+import { isTaskOverdueOnDay } from '../lib/task-buckets.js';
 import { ShapeIcon } from './ShapeIcon.js';
 
 const statusClass: Record<string, string> = {
@@ -75,7 +77,7 @@ export function DateField(props: {
     try { inputRef?.showPicker(); } catch { inputRef?.focus(); }
   };
   const labelClass = () =>
-    props.overdue ? 'text-red-400'
+    props.overdue ? 'text-destructive'
     : props.highlight ? 'text-accent-hi font-medium'
     : 'text-muted-foreground';
   return (
@@ -435,8 +437,7 @@ export function TaskCard(props: Props) {
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
-  const dueOverdue = () =>
-    !!props.task.due_at && new Date(props.task.due_at) < new Date() && props.task.status !== 'done';
+  const dueOverdue = () => isTaskOverdueOnDay(props.task, localISODate());
 
   const awaitingHumanApproval = () => !!props.task.auto_generated && !props.task.human_approved_at;
   async function approveAutoTask() {
@@ -593,7 +594,7 @@ export function TaskCard(props: Props) {
 
           <Show when={awaitingHumanApproval()}>
             <button
-              class="inline-flex items-center gap-1 text-[10px] text-orange-300 hover:text-orange-200 flex-shrink-0"
+              class="inline-flex items-center gap-1 text-[10px] auto-generated-approval flex-shrink-0"
               onClick={(ev) => { ev.stopPropagation(); void approveAutoTask(); }}
               title="Approve this AI-created task"
             >

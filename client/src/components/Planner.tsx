@@ -1,6 +1,6 @@
 import { For, Show, createMemo, createSignal, createEffect, createResource, onCleanup } from 'solid-js';
 import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Repeat, Check, CheckCircle2, ArrowUpRight, Eraser, X, ListChecks, ChevronRight, ChevronDown, CalendarCheck, Undo2 } from 'lucide-solid';
-import { api, type Block, type RecurringScope } from '../lib/api.js';
+import { api, type Block, type RecurringScope, type Task } from '../lib/api.js';
 import { PX_PER_MIN, MINUTES_PER_DAY, SNAP_MIN, minutesIntoDay } from '../lib/grid.js';
 import {
   type AxisState,
@@ -24,7 +24,6 @@ import { blocks, concepts, prefs, flightPlan, taskOf, patternForTask, setElement
 import { accentColor } from '../lib/objective-accent.js';
 import { isAllDay } from '../lib/overlay.js';
 import { elementTextureStyle, blockColorVar, doneHatchStyle } from '../lib/textures.js';
-import { DayTypeControl } from './DayTypeControl.js';
 import { displayTag } from '../lib/tag-tax.js';
 import { pickNextUp, segmentExtentPx, dragDeltaMin, inheritedBlockTag } from '../lib/planner.js';
 import { computeBands, type Band } from '../lib/day-windows.js';
@@ -436,10 +435,22 @@ function HeaderChip(props: { block: Block; concept?: boolean }) {
 }
 
 // ── A draggable planner chip (name · tag · start–end, texture, next-up marker) ──
-function PlannerChip(props: { placed: Placed; day: string; state: () => AxisState; gridY: (y: number) => number; isNextUp: boolean; nested: boolean; updateMode: boolean; group: GroupCtx }) {
+const REVIEWABLE_TASK_STATUSES = new Set(['open', 'scheduled', 'in_progress', 'missed']);
+
+function PlannerChip(props: { placed: Placed; day: string; nowISO: () => string; isToday: boolean; taskLookup?: (id: string) => Task | undefined; state: () => AxisState; gridY: (y: number) => number; isNextUp: boolean; nested: boolean; updateMode: boolean; group: GroupCtx }) {
   const b = () => props.placed.block;
-  const task = () => taskOf(b().task_id);
+  const task = () => b().task_id ? props.taskLookup?.(b().task_id!) ?? taskOf(b().task_id) : undefined;
   const awaitingReview = () => !!task()?.auto_generated && !task()?.human_approved_at;
+  // A past block is a reminder, not a declaration that the user missed the work.
+  // Keep it actionable until the task itself is closed or deliberately deferred.
+  const needsCloseReminder = () => {
+    if (!props.isToday || !b().task_id || ['completed', 'cancelled'].includes(b().status)) return false;
+    const linkedTask = task();
+    if (linkedTask && !REVIEWABLE_TASK_STATUSES.has(linkedTask.status)) return false;
+    const ended = Date.parse(b().end_at);
+    return linkedTask?.status === 'missed' || b().status === 'missed' ||
+      (Number.isFinite(ended) && ended <= Date.parse(props.nowISO()));
+  };
   // Linked subtasks of this chip's task (excludes thrown-away). Drives the count badge.
   const subCount = () => { const t = task(); return t ? (tasks() ?? []).filter((x) => x.parent_id === t.id && x.status !== 'cancelled').length : 0; };
   const pat = () => patternForTask(b().task_id);
@@ -522,8 +533,8 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
     <div
       class="absolute z-10 rounded-none overflow-hidden border bg-card text-[11px] leading-tight select-none touch-none transition-shadow"
       classList={{
-        'opacity-40': settled() && b().status !== 'completed',
-        'opacity-70': completed(),
+        'opacity-40': settled() && b().status !== 'completed' && !needsCloseReminder(),
+        'opacity-70': completed() || (settled() && needsCloseReminder()),
         'border-2 border-dotted border-orange-400': awaitingReview(),
         'anim-done-glow': glow(),
         'border-l-[3px] border-l-primary border-border': !props.isNextUp && !stranded(),
@@ -547,8 +558,8 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
         // box-shadow, which would clobber the tailwind ring's shadow-based rings.
         ...(objAccent() ? { 'border-left-color': accentColor(objAccent()!) } : {}),
         ...(awaitingReview() ? {
-          border: '2px dotted #f97316',
-          'border-left': '2px dotted #f97316',
+          border: '2px dotted var(--auto-generated-outline)',
+          'border-left': '2px dotted var(--auto-generated-outline)',
         } : {}),
       }}
       title={`${b().title}${tag() ? ` · #${tag()}` : ''} · ${fmtTime(b().start_at)}–${fmtTime(b().end_at)}${b().status === 'cancelled' ? ' · cancelled' : b().status === 'missed' ? ' · missed' : ''}${props.nested ? ' · in a Plan (drag moves the group; Alt-drag to pull out)' : ''}`}
@@ -577,6 +588,19 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
         {(t) => <div style={t()} />}
       </Show>
 
+      {/* A past, unfinished task is uncertain, not automatically missed. Let the
+          owner confirm before opening the normal close-task reflection flow. */}
+      <Show when={needsCloseReminder()}>
+        <button
+          type="button"
+          class="absolute top-0.5 right-0.5 z-20 grid h-4 w-4 place-items-center rounded-full bg-background/90 text-warning shadow-sm hover:text-warning pointer-events-auto"
+          title="Scheduled time passed — review whether this task is complete"
+          aria-label={`Review whether ${task()?.title ?? b().title} is complete`}
+          onPointerDown={(ev) => ev.stopPropagation()}
+          onClick={(ev) => { ev.stopPropagation(); openCloseRitual(task(), b().id, true); }}
+        ><AlertTriangle size={11} /></button>
+      </Show>
+
       {/* Update-mode checkbox (top-left) — the explicit affordance; tapping the
           chip body anywhere toggles too. */}
       <Show when={props.updateMode}>
@@ -598,7 +622,7 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
       </Show>
 
       <div class="relative px-1.5 py-0.5" classList={{ 'pl-6': props.updateMode }}>
-        <div class="flex w-fit max-w-full items-center gap-1 bg-background px-0.5 font-medium text-foreground truncate">
+        <div class="flex w-fit max-w-full items-center gap-1 bg-background px-0.5 font-medium text-foreground truncate" classList={{ 'pr-5': needsCloseReminder() }}>
           <Show when={props.isNextUp}><Play size={9} class="text-primary flex-shrink-0 fill-primary" /></Show>
           <Show when={b().is_locked}><Lock size={9} class="text-muted-foreground flex-shrink-0" /></Show>
           <Show when={props.nested}><Star size={8} class="text-primary/60 flex-shrink-0" /></Show>
@@ -700,7 +724,7 @@ function clampLiveDMinFor(b: Block, day: string, all: Block[], mode: GestureMode
   return clampLiveDelta(b, day, mode, dMin, neighboursFor(b, day, all));
 }
 
-export function Planner() {
+export function Planner(props: { taskLookup?: (id: string) => Task | undefined } = {}) {
   const day = () => selectedDay();
   // Now-line and next-up are today-relative — gated off other days.
   const isToday = () => day() === localISODate();
@@ -1073,13 +1097,11 @@ export function Planner() {
 
   return (
     <div class="rounded-xl border border-border bg-card overflow-hidden flex flex-col">
-      {/* Header — region label + day-type control + actions (no zoom control: the
-          whole day is shown). Day-type select relocated here from the Today
-          header card (UI backlog request) — it drives this same grid's shading. */}
+      {/* Header — region label + actions (no zoom control: the whole day is shown).
+          Day type is managed from the selected day's Details drawer. */}
       <div class="flex items-center justify-between px-3 py-2 border-b border-border flex-shrink-0 flex-wrap gap-y-1.5">
         <div class="flex items-center gap-2">
           <span class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary">Planner</span>
-          <DayTypeControl date={day()} hideLabel hideEditWindows />
         </div>
         <div class="flex items-center gap-3">
           {/* Multi-select → Routine: a one-click entry point for the Shift++ chord,
@@ -1182,14 +1204,14 @@ export function Planner() {
                 <>
                   <ContainerOutline block={c} day={day()} state={axisState} gridY={gridY} group={groupCtx} onDelete={requestDeletePlan} />
                   <For each={placedChildren(c.id)}>
-                    {(p) => <PlannerChip placed={p} day={day()} state={axisState} gridY={gridY} isNextUp={p.block.id === nextUp()?.id} nested={true} updateMode={updateMode()} group={groupCtx} />}
+                    {(p) => <PlannerChip placed={p} day={day()} nowISO={nowISO} isToday={isToday()} taskLookup={props.taskLookup} state={axisState} gridY={gridY} isNextUp={p.block.id === nextUp()?.id} nested={true} updateMode={updateMode()} group={groupCtx} />}
                   </For>
                 </>
               )}
             </For>
             {/* Loose chips tile across the full width (in the gaps between Time-Blocks). */}
             <For each={placedLoose()}>
-              {(p) => <PlannerChip placed={p} day={day()} state={axisState} gridY={gridY} isNextUp={p.block.id === nextUp()?.id} nested={false} updateMode={updateMode()} group={groupCtx} />}
+              {(p) => <PlannerChip placed={p} day={day()} nowISO={nowISO} isToday={isToday()} taskLookup={props.taskLookup} state={axisState} gridY={gridY} isNextUp={p.block.id === nextUp()?.id} nested={false} updateMode={updateMode()} group={groupCtx} />}
             </For>
             <Show when={isToday()}><NowLine day={day()} now={nowISO()} state={axisState} /></Show>
             {/* Expander bars over the two night regions (grid column only). Labels track

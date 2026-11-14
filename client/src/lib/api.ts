@@ -923,6 +923,10 @@ export const api = {
       const q = anchor ? `?anchor=${anchor}` : '';
       return request<WeekReview>('GET', `/review/week${q}`);
     },
+    month: (end?: string) => {
+      const q = end ? `?end=${end}` : '';
+      return request<MonthReview>('GET', `/review/month${q}`);
+    },
     calibration: () => request<Calibration>('GET', '/calibration'),
     // The top-bar refresh: run the review sweep now (owner-scoped review_day engine).
     // Auto-defers past-due tasks, revives stuck 'missed' one-offs, and (Schedule mode)
@@ -1821,9 +1825,22 @@ export interface WeekReview {
   days: string[];
   tasks_completed: number;
   tasks_overdue: number;
+  open_due_tasks: Array<{ id: string; title: string; due_at: string }>;
   blocks_count: number;
   weekly_goals: Array<{ position: number; body: string; done_at: string | null }>;
   objectives_rotting: number;
+  objectives_need_attention: Array<{ id: string; title: string }>;
+}
+
+export interface MonthReview {
+  range_start: string;
+  range_end: string;
+  tasks_completed: number;
+  tasks_overdue: number;
+  open_due_tasks: Array<{ id: string; title: string; due_at: string }>;
+  blocks_count: number;
+  objectives_rotting: number;
+  objectives_need_attention: Array<{ id: string; title: string }>;
 }
 
 export type Calibration =

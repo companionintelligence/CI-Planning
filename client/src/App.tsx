@@ -193,7 +193,7 @@ function Shell(props: { children?: any }) {
           <span class="text-xs font-mono text-foreground flex-shrink-0 whitespace-nowrap">
             {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
           </span>
-          <DetailsToggle />
+          <DetailsToggle mobileFloating={location.pathname === '/'} />
         </div>
 
         {/* Phase L: persistent conflict banner — shown when sync ops lost a LWW race */}
@@ -241,11 +241,11 @@ function Shell(props: { children?: any }) {
       <Show when={hasFab()}>
         <button
           class="fab bottom-20 md:bottom-6"
+          classList={{ 'today-mobile-add-hidden': location.pathname === '/' }}
           onClick={() => setElementModal({ open: true, mode: 'add', kind: null })}
           title="Add to calendar"
         >
           <Plus size={18} />
-          <span class="hidden sm:inline">Add</span>
         </button>
       </Show>
 
@@ -259,6 +259,7 @@ function Shell(props: { children?: any }) {
           <CloseRitual
             task={entry.task}
             preferBlockId={entry.blockId}
+            review={entry.review}
             remaining={Math.max(0, closeRitualQueue().length - 1)}
             onAdvance={advanceCloseRitual}
             onSkipAll={clearCloseRitual}

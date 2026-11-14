@@ -659,6 +659,8 @@ export interface CloseRitualEntry {
    *  the Focus ritual both do. Pins the duration default to the span actually worked
    *  instead of the task's earliest placement, which differs for multi-session tasks. */
   blockId?: string | null;
+  /** Opens with a completion check when the task's scheduled time passed without being closed. */
+  review?: boolean;
 }
 
 export const [closeRitualQueue, setCloseRitualQueue] = createSignal<CloseRitualEntry[]>([]);
@@ -667,13 +669,13 @@ export const [closeRitualQueue, setCloseRitualQueue] = createSignal<CloseRitualE
 export const closeRitualTask = (): CloseRitualEntry | null => closeRitualQueue()[0] ?? null;
 
 /**
- * Enqueue a completed task for rating. Idempotent per task id: double-firing paths (a
+ * Enqueue a task for close review. Idempotent per task id: double-firing paths (a
  * block PATCH that mirrors onto its task AND the task refetch that follows) must not ask
  * about the same task twice.
  */
-export function openCloseRitual(task: Task | null | undefined, blockId?: string | null): void {
+export function openCloseRitual(task: Task | null | undefined, blockId?: string | null, review = false): void {
   if (!task) return;
-  setCloseRitualQueue((q) => (q.some((e) => e.task.id === task.id) ? q : [...q, { task, blockId }]));
+  setCloseRitualQueue((q) => (q.some((e) => e.task.id === task.id) ? q : [...q, { task, blockId, review }]));
 }
 
 /** Drop the head — the user rated it or skipped it. The next task surfaces immediately. */
