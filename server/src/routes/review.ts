@@ -1,5 +1,5 @@
 import Router from '@koa/router';
-import { weeklyReview, globalCalibrationReadout } from '../services/weekly-review.js';
+import { weeklyReview, monthlyReview, globalCalibrationReadout } from '../services/weekly-review.js';
 import { reviewAndReschedule } from '../engine/review.js';
 import { localISODate } from '../lib/dates.js';
 import { currentOwnerId } from '../lib/context.js';
@@ -22,6 +22,13 @@ export function reviewRouter() {
   router.get('/api/review/week', async (ctx) => {
     const anchor = (ctx.query.anchor as string | undefined) ?? localISODate();
     ctx.body = await weeklyReview(anchor);
+  });
+
+  // GET /api/review/month?end=YYYY-MM-DD
+  // Returns a rolling 30-day recap ending on `end`; defaults to today.
+  router.get('/api/review/month', async (ctx) => {
+    const end = (ctx.query.end as string | undefined) ?? localISODate();
+    ctx.body = await monthlyReview(end);
   });
 
   // GET /api/calibration

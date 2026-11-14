@@ -1,4 +1,4 @@
-import { createSignal, createMemo, createEffect, createResource, onCleanup, For, Show } from 'solid-js';
+import { createSignal, createMemo, createEffect, createResource, onCleanup, onMount, For, Show } from 'solid-js';
 import { ChevronLeft, ChevronRight, Zap, Filter, X, Download, ClipboardList, CalendarRange, Palette, CalendarCheck, CalendarClock } from 'lucide-solid';
 import { useNavigate } from '@solidjs/router';
 import {
@@ -32,7 +32,7 @@ import { DayReflowBanner } from '../components/DayReflowBanner.js';
 import { CalendarGrid } from '../components/CalendarGrid.js';
 import { DayTypeControl } from '../components/DayTypeControl.js';
 import { ViewHeader } from '../components/ViewHeader.js';
-import { WeeklyReview } from '../components/WeeklyReview.js';
+import { CalendarReview } from '../components/CalendarReview.js';
 import type { Block, DayStar } from '../lib/api.js';
 
 type ViewMode = 'day' | 'week' | 'month';
@@ -49,6 +49,9 @@ function defaultView(): ViewMode {
 export function Calendar() {
   const navigate = useNavigate();
   const [view, setView] = createSignal<ViewMode>(defaultView());
+  const [isMobile, setIsMobile] = createSignal(
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches,
+  );
   const [anchor, setAnchor] = createSignal(localISODate());
   const [runningSchedule, setRunningSchedule] = createSignal(false);
 
@@ -57,6 +60,16 @@ export function Calendar() {
   // keeps its always-on control, so this signal only drives week/month. Per-session,
   // default none.
   const [selectedDate, setSelectedDate] = createSignal<string | null>(null);
+
+  // Week view keeps the full calendar range for navigation, fetches, and recaps,
+  // while phones only render the remaining days when viewing the current week.
+  onMount(() => {
+    const query = window.matchMedia('(max-width: 767px)');
+    const update = () => setIsMobile(query.matches);
+    update();
+    query.addEventListener('change', update);
+    onCleanup(() => query.removeEventListener('change', update));
+  });
   // The date the day-type picker targets: the anchor in day view, else the selection.
   const dayTypeDate = createMemo(() => (view() === 'day' ? anchor() : selectedDate()));
 
@@ -67,6 +80,13 @@ export function Calendar() {
       case 'week':  return weekDaysOf(anchor());
       case 'month': return monthGridOf(anchor());
     }
+  });
+
+  const gridDays = createMemo(() => {
+    const days = visibleDays();
+    const today = localISODate();
+    if (view() !== 'week' || !isMobile() || !days.includes(today)) return days;
+    return days.filter((day) => day >= today);
   });
 
   // Widen the shared blocks fetch to cover exactly the visible window (tz-correct,
@@ -218,12 +238,18 @@ export function Calendar() {
 
   const views: ViewMode[] = ['day', 'week', 'month'];
 
-  // ── Weekly review toggle (week view only) ───────────────────────────────────
+  // ── Calendar review: weekly recap or rolling 30-day recap ────────────────────
   const [showReview, setShowReview] = createSignal(false);
-  const reviewEnabled = () => view() === 'week' && showReview();
+  const weeklyReviewEnabled = () => view() === 'week' && showReview();
+  const monthlyReviewEnabled = () => view() === 'month' && showReview();
+  const reviewEnabled = () => weeklyReviewEnabled() || monthlyReviewEnabled();
   const [weekReview] = createResource(
-    () => (reviewEnabled() ? anchor() : null),
+    () => (weeklyReviewEnabled() ? anchor() : null),
     (a) => api.review.week(a),
+  );
+  const [monthReview] = createResource(
+    () => (monthlyReviewEnabled() ? localISODate() : null),
+    (end) => api.review.month(end),
   );
   // Calibration is owner-wide; fetch once when the review panel opens, then cache.
   const [calibration] = createResource(
@@ -344,13 +370,13 @@ export function Calendar() {
               <Download size={13} /> <span class="hidden sm:inline">Export</span>
             </a>
           </Show>
-          <Show when={view() === 'week'}>
+          <Show when={view() === 'week' || view() === 'month'}>
             <button
               onClick={() => setShowReview((s) => !s)}
               class="btn-ghost text-xs gap-1"
               classList={{ 'text-primary': showReview() }}
-              aria-label="Toggle weekly review panel"
-              title="Toggle weekly review panel"
+              aria-label={`Toggle ${view() === 'week' ? 'weekly' : 'monthly'} review panel`}
+              title={`Toggle ${view() === 'week' ? 'weekly' : 'monthly'} review panel`}
             >
               <ClipboardList size={13} /> <span class="hidden sm:inline">Review</span>
             </button>
@@ -521,15 +547,19 @@ export function Calendar() {
         {(date) => <DayReflowBanner date={date()} />}
       </Show>
 
-      {/* Phase N3/N4: weekly review panel — visible only in week view when toggled. */}
-      <Show when={view() === 'week' && showReview()}>
-        <WeeklyReview data={weekReview()} calibration={calibration()} />
+      {/* Weekly and rolling 30-day recaps are available from their matching views. */}
+      <Show when={(view() === 'week' || view() === 'month') && showReview()}>
+        <CalendarReview
+          period={view() === 'week' ? 'week' : 'month'}
+          data={view() === 'week' ? weekReview() : monthReview()}
+          calibration={calibration()}
+        />
       </Show>
 
       <div class="flex-1 overflow-hidden min-h-0">
         <CalendarGrid
           view={view()}
-          days={visibleDays()}
+          days={gridDays()}
           blocksByDay={blocksByDay}
           notedDays={notedDays}
           starsByDay={starsByDay}

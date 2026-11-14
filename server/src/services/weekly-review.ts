@@ -1,6 +1,6 @@
 import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
-import { isoWeekKey, weekDays } from '../lib/tz.js';
+import { addDays, isoWeekKey, weekDays } from '../lib/tz.js';
 
 /** The discriminated shape `GET /api/calibration` has always returned. */
 export type CalibrationReadout =
@@ -65,10 +65,30 @@ export interface WeekReview {
   tasks_completed: number;
   /** Tasks whose due_at falls in this week but are still open. */
   tasks_overdue: number;
+  /** Open tasks with due dates in this review range, for direct attention links. */
+  open_due_tasks: Array<{ id: string; title: string; due_at: string }>;
   blocks_count: number;
   weekly_goals: Array<{ position: number; body: string; done_at: string | null }>;
   /** Active objectives with progress_cache IS NULL. */
   objectives_rotting: number;
+  /** Active objectives with no computed progress, for direct attention links. */
+  objectives_need_attention: Array<{ id: string; title: string }>;
+}
+
+export interface MonthReview {
+  /** Inclusive trailing 30-day range, ending on the requested local date. */
+  range_start: string;
+  range_end: string;
+  tasks_completed: number;
+  /** Tasks whose due_at falls in the range but are still open. */
+  tasks_overdue: number;
+  /** Open tasks with due dates in this review range, for direct attention links. */
+  open_due_tasks: Array<{ id: string; title: string; due_at: string }>;
+  blocks_count: number;
+  /** Active objectives with progress_cache IS NULL. */
+  objectives_rotting: number;
+  /** Active objectives with no computed progress, for direct attention links. */
+  objectives_need_attention: Array<{ id: string; title: string }>;
 }
 
 // Code-review fix: `addDays`/`weekDays` used to be private copies here, byte-identical
@@ -92,13 +112,15 @@ export async function weeklyReview(anchor: string): Promise<WeekReview> {
     )
     .get<{ tasks_completed: number }>(owner, rangeStart, rangeEnd))!;
 
-  const { tasks_overdue } = (await store()
+  const open_due_tasks = await store()
     .prepare(
-      `SELECT COUNT(*) AS tasks_overdue FROM tasks
-       WHERE owner_id = ? AND status NOT IN ('done','dropped','archived')
-         AND due_at >= ? AND due_at <= ?`,
+      `SELECT id, title, due_at FROM tasks
+       WHERE owner_id = ? AND status NOT IN ('done','dropped','cancelled','archived')
+         AND due_at >= ? AND due_at <= ?
+       ORDER BY due_at ASC, priority ASC, title COLLATE NOCASE ASC`,
     )
-    .get<{ tasks_overdue: number }>(owner, rangeStart, rangeEnd))!;
+    .all<{ id: string; title: string; due_at: string }>(owner, rangeStart, rangeEnd);
+  const tasks_overdue = open_due_tasks.length;
 
   const { blocks_count } = (await store()
     .prepare(
@@ -115,12 +137,65 @@ export async function weeklyReview(anchor: string): Promise<WeekReview> {
     )
     .all<{ position: number; body: string; done_at: string | null }>(owner, week_key);
 
-  const { objectives_rotting } = (await store()
+  const objectives_need_attention = await store()
     .prepare(
-      `SELECT COUNT(*) AS objectives_rotting FROM objectives
-       WHERE owner_id = ? AND status = 'active' AND progress_cache IS NULL`,
+      `SELECT id, title FROM objectives
+       WHERE owner_id = ? AND status = 'active' AND progress_cache IS NULL AND archived_at IS NULL
+       ORDER BY updated_at DESC, title COLLATE NOCASE ASC`,
     )
-    .get<{ objectives_rotting: number }>(owner))!;
+    .all<{ id: string; title: string }>(owner);
+  const objectives_rotting = objectives_need_attention.length;
 
-  return { week_key, days, tasks_completed, tasks_overdue, blocks_count, weekly_goals, objectives_rotting };
+  return {
+    week_key, days, tasks_completed, tasks_overdue, open_due_tasks, blocks_count,
+    weekly_goals, objectives_rotting, objectives_need_attention,
+  };
+}
+
+/** Recap activity across the 30 calendar days ending on `endDate` (inclusive). */
+export async function monthlyReview(endDate: string): Promise<MonthReview> {
+  const owner = currentOwnerId();
+  const range_start = addDays(endDate, -29);
+  const range_end = endDate;
+  const rangeStart = range_start + 'T00:00:00.000Z';
+  const rangeEnd = range_end + 'T23:59:59.999Z';
+
+  const { tasks_completed } = (await store()
+    .prepare(
+      `SELECT COUNT(*) AS tasks_completed FROM tasks
+       WHERE owner_id = ? AND status = 'done'
+         AND completed_at >= ? AND completed_at <= ?`,
+    )
+    .get<{ tasks_completed: number }>(owner, rangeStart, rangeEnd))!;
+
+  const open_due_tasks = await store()
+    .prepare(
+      `SELECT id, title, due_at FROM tasks
+       WHERE owner_id = ? AND status NOT IN ('done','dropped','cancelled','archived')
+         AND due_at >= ? AND due_at <= ?
+       ORDER BY due_at ASC, priority ASC, title COLLATE NOCASE ASC`,
+    )
+    .all<{ id: string; title: string; due_at: string }>(owner, rangeStart, rangeEnd);
+  const tasks_overdue = open_due_tasks.length;
+
+  const { blocks_count } = (await store()
+    .prepare(
+      `SELECT COUNT(*) AS blocks_count FROM time_blocks
+       WHERE owner_id = ? AND start_at >= ? AND start_at <= ?`,
+    )
+    .get<{ blocks_count: number }>(owner, rangeStart, rangeEnd))!;
+
+  const objectives_need_attention = await store()
+    .prepare(
+      `SELECT id, title FROM objectives
+       WHERE owner_id = ? AND status = 'active' AND progress_cache IS NULL AND archived_at IS NULL
+       ORDER BY updated_at DESC, title COLLATE NOCASE ASC`,
+    )
+    .all<{ id: string; title: string }>(owner);
+  const objectives_rotting = objectives_need_attention.length;
+
+  return {
+    range_start, range_end, tasks_completed, tasks_overdue, open_due_tasks,
+    blocks_count, objectives_rotting, objectives_need_attention,
+  };
 }

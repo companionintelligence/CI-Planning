@@ -1,7 +1,7 @@
 import { For, Show, createMemo, createSignal, onCleanup } from 'solid-js';
 import { ChevronRight, ChevronDown, Lock, NotebookPen, Star } from 'lucide-solid';
 import type { Block, DayStar } from '../lib/api.js';
-import { isPerfectDay, pipCount, STAR_GOLD } from '../lib/stars.js';
+import { isPerfectDay, pipCount } from '../lib/stars.js';
 import {
   PX_PER_MIN,
   minutesIntoDay,
@@ -750,7 +750,10 @@ export function CalendarGrid(props: Props) {
                   'ring-1 ring-inset ring-accent': props.selectedDate?.() === day,
                 }}
                 // Perfect day (5/5): tint the whole cell gold — the heatmap payoff.
-                style={perfect() ? { 'background-color': `${STAR_GOLD}1a`, 'border-color': `${STAR_GOLD}66` } : undefined}
+                style={perfect() ? {
+                  'background-color': 'color-mix(in srgb, var(--star-gold) 10%, transparent)',
+                  'border-color': 'color-mix(in srgb, var(--star-gold) 40%, transparent)',
+                } : undefined}
                 title={props.onCreateAt ? 'Click to add' : undefined}
                 onClick={() => props.onCreateAt?.(day, '09:00')}
               >
@@ -791,13 +794,13 @@ export function CalendarGrid(props: Props) {
                         fallback={
                           <span class="flex items-center gap-[1px]" title={`${stars()!.total} of 5 stars`}>
                             <For each={Array.from({ length: pipCount(stars()!.total) })}>
-                              {() => <span class="w-1 h-1 rounded-circle" style={{ 'background-color': STAR_GOLD }} />}
+                              {() => <span class="w-1 h-1 rounded-circle" style={{ 'background-color': 'var(--star-gold)' }} />}
                             </For>
                           </span>
                         }
                       >
                         <span title="Perfect day — 5 of 5 stars" class="drop-shadow-[0_0_4px_rgba(244,211,94,0.8)]">
-                          <Star size={12} color={STAR_GOLD} fill={STAR_GOLD} />
+                          <Star size={12} color="var(--star-gold)" fill="var(--star-gold)" />
                         </span>
                       </Show>
                     </Show>

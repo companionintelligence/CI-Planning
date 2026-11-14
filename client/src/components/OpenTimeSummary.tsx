@@ -2,7 +2,7 @@ import { For, Show, createMemo, createResource, createSignal, onCleanup, onMount
 import { ChevronDown, ListFilter } from 'lucide-solid';
 import { api, type Block } from '../lib/api.js';
 import {
-  busyFromBlocks, formatClock, formatDuration, openTime, parseHHMM,
+  busyFromBlocks, formatClock, openTime, parseHHMM,
   type OpenSegment, type TimeRange,
 } from '../lib/open-time.js';
 import { localISODate } from '../lib/dates.js';
@@ -16,7 +16,6 @@ import {
 import { Skeleton } from './Skeleton.js';
 
 const DAY_MINUTES = 24 * 60;
-const DAY_TICKS = [0, 180, 360, 540, 720, 900, 1080, 1260, DAY_MINUTES];
 
 interface OpenSlot extends TimeRange { directions: string[] }
 
@@ -70,14 +69,29 @@ function directionRank(direction: string): number {
 function sameNames(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((name, index) => name === b[index]);
 }
-function percent(minute: number): string {
-  return `${Math.max(0, Math.min(100, (minute / DAY_MINUTES) * 100))}%`;
+function percent(minute: number, range: TimeRange): string {
+  return `${Math.max(0, Math.min(100, ((minute - range.start) / (range.end - range.start)) * 100))}%`;
+}
+function percentSpan(start: number, end: number, range: TimeRange): string {
+  return `${Math.max(0, Math.min(100, ((end - start) / (range.end - range.start)) * 100))}%`;
 }
 function tickLabel(minute: number): string {
-  if (minute === DAY_MINUTES || minute === 0) return minute === DAY_MINUTES ? 'Midnight' : '12am';
+  if (minute === DAY_MINUTES) return 'Midnight';
   const hour = Math.floor(minute / 60);
   if (hour === 12) return '12pm';
   return `${hour % 12 || 12}${hour < 12 ? 'am' : 'pm'}`;
+}
+function ticksForRange(range: TimeRange): number[] {
+  const span = range.end - range.start;
+  const step = span >= 8 * 60 ? 180 : span >= 4 * 60 ? 120 : 60;
+  const ticks = [range.start];
+  let minute = Math.ceil(range.start / step) * step;
+  while (minute < range.end) {
+    if (minute > range.start) ticks.push(minute);
+    minute += step;
+  }
+  if (ticks[ticks.length - 1] !== range.end) ticks.push(range.end);
+  return ticks;
 }
 function localMinute(value: string): number | null {
   const date = new Date(value);
@@ -129,7 +143,6 @@ export function OpenTimeSummary(props: { date: string }) {
   const busy = createMemo<TimeRange[]>(() => busyFromBlocks(blocks() ?? [], props.date));
   const openSegments = createMemo(() => openTime(byDirection(), busy(), visibleDirections(), openTimeRange()));
   const openSlots = createMemo(() => combineOpenSlots(openSegments()));
-  const openMinutes = createMemo(() => openSlots().reduce((total, slot) => total + slot.end - slot.start, 0));
   const loading = () => windows.loading;
 
   const directionColor = (direction: string): string => {
@@ -168,12 +181,27 @@ export function OpenTimeSummary(props: { date: string }) {
         directions: directions.sort((a, b) => directionRank(a) - directionRank(b) || a.localeCompare(b)),
         color,
         title: task?.title ?? block.title,
-        // A direction-only time block already has a letter bug above the bar;
-        // repeating its tag as text inside the bar adds noise without detail.
+        // Direction-only container labels are omitted; their direction remains
+        // available in the accessible name and the selected-block preview.
         showTitle: Boolean(task || (block.title.trim() && !directions.includes(block.title.trim().toLowerCase()))),
       });
     }
     return output.sort((a, b) => a.start - b.start || a.end - b.end);
+  });
+
+  // Fit the strip to visible availability periods, while retaining scheduled
+  // blocks that fall outside those windows so conflicts remain visible.
+  const visibleTimeRange = createMemo<TimeRange | null>(() => {
+    const activity: TimeRange[] = [
+      ...visibleDirections().flatMap((direction) => byDirection()[direction] ?? []),
+      ...timelineBlocks().map(({ start, end }) => ({ start, end })),
+    ];
+    if (!activity.length) return null;
+    const earliest = Math.min(...activity.map((range) => range.start));
+    const latest = Math.max(...activity.map((range) => range.end));
+    const start = Math.max(0, Math.floor(earliest / 60) * 60);
+    const end = Math.min(DAY_MINUTES, Math.ceil(latest / 60) * 60);
+    return end > start ? { start, end } : null;
   });
 
   const windowEdges = createMemo<WindowEdge[]>(() => {
@@ -285,8 +313,9 @@ export function OpenTimeSummary(props: { date: string }) {
   function clickOpenSlot(event: MouseEvent, slot: OpenSlot) {
     event.stopPropagation();
     const rect = trackEl?.getBoundingClientRect();
-    const minute = rect && rect.width > 0
-      ? Math.max(slot.start, Math.min(slot.end - 1, Math.floor(((event.clientX - rect.left) / rect.width) * DAY_MINUTES)))
+    const range = visibleTimeRange();
+    const minute = rect && rect.width > 0 && range
+      ? Math.max(slot.start, Math.min(slot.end - 1, Math.floor(range.start + ((event.clientX - rect.left) / rect.width) * (range.end - range.start))))
       : slot.start;
     setPopup({ kind: 'open', start: minute, end: slot.end, directions: slot.directions });
   }
@@ -318,31 +347,26 @@ export function OpenTimeSummary(props: { date: string }) {
     >
       <div class="open-time-summary-head">
         <span class="section-label !mb-0">Open time</span>
-        <span class="text-[10.5px] text-muted-foreground">{visibleDirections().map((direction) => direction[0].toUpperCase() + direction.slice(1)).join(', ') || 'No directions selected'}</span>
-        <div class="flex-1" />
-        <Show when={!loading()}>
-          <span class="text-[10.5px] text-muted-foreground font-mono whitespace-nowrap">
-            {openSlots().length} window{openSlots().length === 1 ? '' : 's'} · {formatDuration(openMinutes())}
-          </span>
-        </Show>
       </div>
 
       <Show
         when={!loading()}
         fallback={<div role="status" class="open-time-loading"><span class="sr-only">Reading the day's windows</span><Skeleton class="h-8" /></div>}
       >
+        <Show when={visibleTimeRange()} fallback={<div class="open-time-empty">No active time windows for this day.</div>}>
+          {(range) => <>
         <div
           ref={(element) => { trackEl = element; }}
           class="open-time-track"
           role="group"
-          aria-label={`Open-time timeline for ${props.date}`}
+          aria-label={`Open-time timeline for ${props.date}, ${formatClock(range().start)} to ${formatClock(range().end)}`}
         >
           <For each={openSlots()}>{(slot) => (
             <button
               type="button"
               class="open-time-slot"
               classList={{ 'is-dimmed': isDimmed(slot.directions) }}
-              style={{ left: percent(slot.start), width: percent(slot.end - slot.start) }}
+              style={{ left: percent(slot.start, range()), width: percentSpan(slot.start, slot.end, range()) }}
               aria-label={`Open ${slot.directions.join(' and ')} time, ${formatClock(slot.start)} to ${formatClock(slot.end)}. Add a task or block.`}
               title={`Open ${slot.directions.join(' / ')} · ${formatClock(slot.start)}–${formatClock(slot.end)}`}
               onClick={(event) => clickOpenSlot(event, slot)}
@@ -355,11 +379,11 @@ export function OpenTimeSummary(props: { date: string }) {
               class="open-time-scheduled"
               classList={{ 'is-dimmed': isDimmed(item.directions), 'has-label': item.end - item.start >= 90 && item.showTitle }}
               style={{
-                left: percent(item.start),
-                width: percent(item.end - item.start),
+                left: percent(item.start, range()),
+                width: percentSpan(item.start, item.end, range()),
                 '--item-color': item.color,
               }}
-              aria-label={`${item.title}, ${formatClock(item.start)} to ${formatClock(item.end)}. Click to preview; click again to edit.`}
+              aria-label={`${item.title}${item.directions.length ? `, ${item.directions.join(', ')}` : ''}, ${formatClock(item.start)} to ${formatClock(item.end)}. Click to preview; click again to edit.`}
               onPointerEnter={() => {
                 cancelClose();
                 const current = popup();
@@ -372,23 +396,16 @@ export function OpenTimeSummary(props: { date: string }) {
               <Show when={item.showTitle}>
                 <span class="open-time-scheduled-title">{item.title}</span>
               </Show>
-              <Show when={item.directions.length > 0}>
-                <span class="open-time-scheduled-bugs" aria-hidden="true">
-                  <For each={item.directions}>{(direction) => (
-                    <span class="open-time-bug" style={{ '--bug-color': directionColor(direction) }}>{direction.charAt(0).toUpperCase()}</span>
-                  )}</For>
-                </span>
-              </Show>
             </button>
           )}</For>
         </div>
 
         <div class="open-time-axis" aria-hidden="true">
-          <For each={DAY_TICKS}>{(minute, index) => (
+          <For each={ticksForRange(range())}>{(minute, index) => (
             <span
               class="open-time-axis-tick"
-              classList={{ 'is-first': index() === 0, 'is-last': index() === DAY_TICKS.length - 1 }}
-              style={{ left: percent(minute) }}
+              classList={{ 'is-first': index() === 0, 'is-last': index() === ticksForRange(range()).length - 1 }}
+              style={{ left: percent(minute, range()) }}
             >{tickLabel(minute)}</span>
           )}</For>
         </div>
@@ -397,8 +414,8 @@ export function OpenTimeSummary(props: { date: string }) {
           <For each={windowEdges()}>{(edge) => (
             <div
               class="open-time-window-edge"
-              classList={{ 'is-first': edge.minute === 0, 'is-last': edge.minute === DAY_MINUTES }}
-              style={{ left: percent(edge.minute) }}
+              classList={{ 'is-first': edge.minute <= range().start, 'is-last': edge.minute >= range().end }}
+              style={{ left: percent(edge.minute, range()) }}
             >
               <For each={edge.items}>{(item) => (
                 <span
@@ -414,6 +431,8 @@ export function OpenTimeSummary(props: { date: string }) {
             </div>
           )}</For>
         </div>
+          </>}
+        </Show>
 
         <Show when={visibleDirections().length > 0}>
           <div class="open-time-filter-row">

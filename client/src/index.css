@@ -36,17 +36,20 @@
   --secondary: oklch(96.8% 0.007 247.896);
   --secondary-foreground: #0a222e;
   --muted: oklch(96.8% 0.007 247.896);
-  --muted-foreground: oklch(55.4% 0.046 257.417);
+  /* Small helper labels need AA contrast on the light surface (about 4.97:1). */
+  --muted-foreground: oklch(52% 0.046 257.417);
   /* Chevron for <select>, mirroring --muted-foreground above. Inlined per theme because a
      background-image cannot read a colour from a CSS variable, and kept directly beside
      the token it matches so the two are changed together. */
   --select-chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
   --accent: oklch(96.8% 0.007 247.896);
   --accent-foreground: #0a222e;
-  --destructive: oklch(62% 0.22 27);
+  /* Status colors double as small text and icon colors; keep them AA-readable on light surfaces. */
+  --destructive: #b42318;
   --destructive-foreground: oklch(98.4% 0.003 247.858);
   --border: oklch(92.9% 0.013 255.508);
-  --input: oklch(92.9% 0.013 255.508);
+  /* Form controls need a visible edge against the light card and page surfaces. */
+  --input: #818c96;
   --ring: oklch(70.4% 0.04 256.788);
   /* Chart hues also serve as legacy direction-icon defaults. Keep them dark enough
      to read on light surfaces (the dark theme has its own brighter values below). */
@@ -89,12 +92,16 @@
   --radius-3xl: var(--radius-30);
 
   /* enriched — semantic status + gradients + elevation (light) */
-  --success: #16a34a;
+  --success: #147d3f;
   --success-foreground: #ffffff;
-  --warning: #d97706;
+  --warning: #a64b00;
   --warning-foreground: #ffffff;
-  --info: #0284c7;
+  /* Recap warnings use a stable orange that clears AA text contrast on light cards. */
+  --review-warning: #a64b00;
+  --info: #0369a1;
   --info-foreground: #ffffff;
+  --star-gold: #b57800;
+  --auto-generated-outline: #a64b00;
   --gradient-brand: linear-gradient(135deg, #0f717a, #00a9a7);
   --gradient-hero: linear-gradient(135deg, #e8f9f8, #abd4d8);
   --gradient-aurora: radial-gradient(120% 90% at 50% -10%, rgba(80, 150, 150, 0.1), transparent 60%);
@@ -124,7 +131,8 @@
   --accent: #2c676d;
   --accent-foreground: #f5f8fa;
   --destructive: #ef7070;
-  --destructive-foreground: #f5f8fa;
+  /* Dark foreground is intentional: white on this light red falls below 3:1. */
+  --destructive-foreground: #041620;
   --border: #2c676d;
   --input: #6992a2;
   --ring: #58ebbf;
@@ -145,8 +153,11 @@
   --success-foreground: #052e16;
   --warning: #fbbf24;
   --warning-foreground: #422006;
+  --review-warning: #fb923c;
   --info: #38bdf8;
   --info-foreground: #082f49;
+  --star-gold: #f4d35e;
+  --auto-generated-outline: #fb923c;
   --gradient-aurora: radial-gradient(120% 90% at 50% -10%, rgba(64, 155, 155, 0.28), transparent 60%);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
@@ -478,6 +489,30 @@
     letter-spacing: .03em;
   }
 
+  /* Today reuses the shell FAB treatment below its header actions on phones. */
+  .fab.today-mobile-add { position: static; }
+
+  @media (max-width: 767px) {
+    /* The drawer toggle takes the old floating Add position on mobile Today. */
+    .details-toggle-mobile-floating {
+      position: fixed;
+      /* Align with the Add button's inset from the Today card edge. */
+      right: calc(1.5rem + 12px);
+      bottom: 5rem;
+      z-index: 30;
+      padding: .75rem 1.25rem;
+      border: 0;
+      border-radius: var(--radius-3);
+      color: var(--primary-foreground);
+      background: var(--primary);
+      box-shadow: 0 8px 24px color-mix(in oklab, var(--primary) 25%, transparent);
+    }
+    .details-toggle-mobile-floating svg {
+      transform: rotate(90deg);
+    }
+    .today-mobile-add-hidden { display: none; }
+  }
+
   /* ── Nav ─────────────────────────────────────────────────────── */
   .nav-item {
     @apply flex items-center gap-2.5 px-3 py-2 rounded-sm text-sm font-medium
@@ -522,6 +557,13 @@
 .btn-danger:hover   { background-color: rgba(127,29,29,.3); color: #fca5a5; }
 .card-hover:hover   { border-color: var(--ring); box-shadow: 0 4px 20px rgba(88,235,191,.08); transform: translateY(-1px); }
 .fab:hover          { background: color-mix(in srgb, var(--primary) 90%, transparent); box-shadow: 0 12px 32px color-mix(in oklab, var(--primary) 40%, transparent); transform: scale(1.03) translateY(-1px); }
+.details-toggle-mobile-floating.btn-icon:hover,
+.details-toggle-mobile-floating.btn-icon-strong[aria-expanded='true'] {
+  color: var(--primary-foreground);
+  border-color: transparent;
+  background: var(--primary);
+  box-shadow: 0 8px 24px color-mix(in oklab, var(--primary) 25%, transparent);
+}
 .checkbox:hover     { border-color: var(--primary); }
 .nav-item-active    { border-left: 2px solid var(--primary); }
 
@@ -1024,6 +1066,14 @@
   color: var(--muted-foreground);
 }
 .drawer-empty p { margin: 0; font-size: 12.5px; max-width: 24ch; line-height: 1.55; }
+.drawer-day-empty {
+  flex: 0 0 auto;
+  padding: .75rem 1rem;
+  border-bottom: 1px solid var(--border);
+  text-align: center;
+  color: var(--muted-foreground);
+}
+.drawer-day-empty > p { margin: 0; font-size: 12px; }
 
 /* Collapsed navigation rail — every destination stays reachable as an icon.
    Hiding them outright would make the toggle a trap on a narrow window. */
@@ -1045,15 +1095,10 @@
     z-index: 40;
     box-shadow: var(--shadow-lg);
   }
-  /* Nothing selected and no Planner grid to show — don't cover the bottom of the
-     screen (FAB, wizard buttons) with an empty sheet that invites no action. */
-  .details-drawer.details-drawer-empty {
-    display: none;
-  }
 }
 
-/* Open-time summary — one 24-hour strip. Empty availability stays empty; placed
-   work appears as direction-coloured blocks, and open intervals are click targets. */
+/* Open-time summary — fit the strip to the day's active availability and scheduled
+   work; placed items are direction-coloured blocks and open intervals are click targets. */
 .open-time-summary { position: relative; min-width: 0; overflow: visible; }
 .open-time-summary-head { display: flex; align-items: center; gap: .5rem; min-width: 0; flex-wrap: wrap; }
 .open-time-loading { margin-top: .35rem; }
@@ -1079,7 +1124,7 @@
 .open-time-scheduled-title { display: none; max-width: 100%; overflow: hidden; font-size: 9px; line-height: 1; text-overflow: ellipsis; white-space: nowrap; }
 .open-time-scheduled-title { color: var(--foreground); }
 .open-time-scheduled.has-label .open-time-scheduled-title { display: block; }
-.open-time-scheduled-bugs { position: absolute; top: -10px; left: 1px; display: flex; flex-direction: row; gap: 1px; }
+.open-time-empty { margin-top: .35rem; color: var(--muted-foreground); font-size: 10px; }
 .open-time-filter-row { display: flex; justify-content: flex-end; margin-top: .3rem; }
 .open-time-filter-wrap { position: relative; }
 .open-time-filter-trigger { display: inline-flex; align-items: center; gap: .3rem; padding: 2px 6px; border: 1px solid var(--border); border-radius: var(--radius-3); color: var(--muted-foreground); background: transparent; font-size: 9px; line-height: 1.3; }
@@ -1095,11 +1140,19 @@
 .open-time-popup-copy small { color: var(--muted-foreground); text-transform: capitalize; }
 .planner-undo { border-color: var(--tag-7); color: var(--foreground); background: color-mix(in srgb, var(--tag-7) 10%, var(--card)); }
 .planner-undo:hover { border-color: var(--tag-7); color: var(--foreground); background: color-mix(in srgb, var(--tag-7) 20%, var(--card)); }
+
+/* Monthly/weekly recap attention cues — theme-aware orange with readable text contrast. */
+.calendar-review-warning { color: var(--review-warning); }
+.calendar-review-warning-card {
+  border-color: color-mix(in srgb, var(--review-warning) 42%, var(--border));
+  background: color-mix(in srgb, var(--review-warning) 5%, var(--card));
+}
+.auto-generated-approval { color: var(--auto-generated-outline); }
+.auto-generated-approval:hover { filter: brightness(.9); }
 .open-time-popup-actions { display: flex; flex: 0 0 auto; gap: .3rem; }
 @media (max-width: 520px) {
   .open-time-axis-tick:nth-child(even) { display: none; }
   .open-time-summary-head { column-gap: .35rem; }
-  .open-time-summary-head > span:nth-child(2) { font-size: 9px; }
   .open-time-popup { align-items: flex-start; flex-direction: column; }
 }
 
