@@ -1,4 +1,4 @@
-import { createSignal, createMemo, createEffect, createResource, onCleanup, For, Show } from 'solid-js';
+import { createSignal, createMemo, createEffect, createResource, onCleanup, onMount, For, Show } from 'solid-js';
 import { ChevronLeft, ChevronRight, Zap, Filter, X, Download, ClipboardList, CalendarRange, Palette, CalendarCheck, CalendarClock } from 'lucide-solid';
 import { useNavigate } from '@solidjs/router';
 import {
@@ -49,6 +49,9 @@ function defaultView(): ViewMode {
 export function Calendar() {
   const navigate = useNavigate();
   const [view, setView] = createSignal<ViewMode>(defaultView());
+  const [isMobile, setIsMobile] = createSignal(
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches,
+  );
   const [anchor, setAnchor] = createSignal(localISODate());
   const [runningSchedule, setRunningSchedule] = createSignal(false);
 
@@ -57,6 +60,16 @@ export function Calendar() {
   // keeps its always-on control, so this signal only drives week/month. Per-session,
   // default none.
   const [selectedDate, setSelectedDate] = createSignal<string | null>(null);
+
+  // Week view keeps the full calendar range for navigation, fetches, and recaps,
+  // while phones only render the remaining days when viewing the current week.
+  onMount(() => {
+    const query = window.matchMedia('(max-width: 767px)');
+    const update = () => setIsMobile(query.matches);
+    update();
+    query.addEventListener('change', update);
+    onCleanup(() => query.removeEventListener('change', update));
+  });
   // The date the day-type picker targets: the anchor in day view, else the selection.
   const dayTypeDate = createMemo(() => (view() === 'day' ? anchor() : selectedDate()));
 
@@ -67,6 +80,13 @@ export function Calendar() {
       case 'week':  return weekDaysOf(anchor());
       case 'month': return monthGridOf(anchor());
     }
+  });
+
+  const gridDays = createMemo(() => {
+    const days = visibleDays();
+    const today = localISODate();
+    if (view() !== 'week' || !isMobile() || !days.includes(today)) return days;
+    return days.filter((day) => day >= today);
   });
 
   // Widen the shared blocks fetch to cover exactly the visible window (tz-correct,
@@ -539,7 +559,7 @@ export function Calendar() {
       <div class="flex-1 overflow-hidden min-h-0">
         <CalendarGrid
           view={view()}
-          days={visibleDays()}
+          days={gridDays()}
           blocksByDay={blocksByDay}
           notedDays={notedDays}
           starsByDay={starsByDay}
