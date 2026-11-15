@@ -1146,17 +1146,23 @@ is connected or configured for this server through `CI_SERVER_URL`, and whether 
 model is ready. It reads that state and changes nothing. Connect or change either under
 **Settings → Connections**. Replay the walkthrough from **Settings → Profile**.
 
-## Walkthrough video
+## Della Planning videos
 
-> 📹 A full video walkthrough is coming soon.
+The Della Bradley use-case videos are eight short landscape clips that follow one person
+using the planner:
 
-<!--
-  Video placeholder. To embed a walkthrough, drag an .mp4/.mov into a GitHub issue
-  or release to get a hosted URL, then replace this block with the rendered link,
-  e.g.:
+1. Della Doesn't Want to Burn Out
+2. Capture It, Then Close the Loop
+3. Focus on the Next Step
+4. Repeat What Works
+5. Reuse Time, Keep It Sorted
+6. See How the Week Feels
+7. Fit the Plan to Real Life
+8. Keep Connections Optional
 
-  https://github.com/companionintelligence/CI-Planning/assets/<id>/walkthrough.mp4
--->
+The video files are not committed. Git ignores MP4s under `video/`, so keep the clips
+locally in `video/della-how-to/assets/video/`. See the [video README](video/della-how-to/README.md)
+and [storyboard](video/della-how-to/storyboard.json) for the full set and production notes.
 
 ## Screenshots
 
