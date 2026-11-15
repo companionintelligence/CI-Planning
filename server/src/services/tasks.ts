@@ -436,6 +436,7 @@ export async function updateTask(
   id: string,
   input: UpdateTaskInput,
   scope: UpdateTaskScope = 'instance',
+  actor = 'owner',
 ): Promise<UpdateTaskResult> {
   const targetId = scope === 'series' ? ((await resolveTemplateId(id)) ?? id) : id;
 
@@ -729,7 +730,7 @@ export async function updateTask(
     }
   }
 
-  writeAudit({ ownerId, actor: 'owner', action: 'update', entity: `task:${targetId}` });
+  writeAudit({ ownerId, actor, action: 'update', entity: `task:${targetId}` });
   // Phase L: stamp version/field_ts so concurrent sync ops from other devices compare
   // correctly against this online edit using field-level LWW. Moved in from
   // routes/tasks.ts at W3.3b (was route-side for W3.1) so REST and the coming GraphQL
@@ -756,7 +757,7 @@ export type DeleteTaskScope = 'instance' | 'following';
  * GC its parent's objective when now empty; and recompute any objective still
  * linking it so progress doesn't count the abandoned task.
  */
-export async function deleteTask(ownerId: string, id: string, scope: DeleteTaskScope = 'instance'): Promise<DeleteTaskResult> {
+export async function deleteTask(ownerId: string, id: string, scope: DeleteTaskScope = 'instance', actor = 'owner'): Promise<DeleteTaskResult> {
   const [task] = await db
     .update(tasks)
     .set({ status: 'cancelled' })
@@ -781,7 +782,7 @@ export async function deleteTask(ownerId: string, id: string, scope: DeleteTaskS
     .prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`)
     .run(ownerId, id);
   if (unstaged.changes > 0) {
-    writeAudit({ ownerId, actor: 'owner', action: 'remove', entity: `flight-plan:${id}` });
+    writeAudit({ ownerId, actor, action: 'remove', entity: `flight-plan:${id}` });
   }
   await dropSourceObjective(id, ownerId);
   if (task.parentId) await unpromoteIfEmpty(task.parentId, ownerId);
@@ -794,7 +795,7 @@ export async function deleteTask(ownerId: string, id: string, scope: DeleteTaskS
     const r = await truncateSeriesFrom(ownerId, 'tasks', task.recurrenceParentId, task.occurrenceDate);
     seriesTruncated = r.ok;
   }
-  writeAudit({ ownerId, actor: 'owner', action: 'delete', entity: `task:${id}` });
+  writeAudit({ ownerId, actor, action: 'delete', entity: `task:${id}` });
   return { ok: true, task, cancelledBlockIds, seriesTruncated };
 }
 

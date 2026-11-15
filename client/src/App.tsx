@@ -41,6 +41,7 @@ import {
   type ReminderTask,
 } from './lib/notifications.js';
 import { RecurringScopeDialog } from './components/RecurringScopeDialog.js';
+import { GuestPlanner } from './components/GuestPlanner.js';
 
 /**
  * T7 — wire browser reminders into the app root. Ask once for permission, then
@@ -313,21 +314,26 @@ function ObjectivesRedirect() {
 function SessionGate(props: { children?: any }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const [me] = createResource(() => api.auth.me().then(() => true).catch(() => false));
+  const [me] = createResource(() => api.auth.me().catch(() => null));
 
   // The account resources in stores/index.ts load once this is true (lib/session.ts).
   createEffect(() => {
     if (me.loading) return;
-    setSignedIn(me() === true);
+    setSignedIn(!!me() && me()?.role !== 'guest');
   });
   onCleanup(() => setSignedIn(false));
 
   createEffect(() => {
     if (me.loading) return;
-    if (me() === false && location.pathname !== '/login') {
+    if (me() === null && location.pathname !== '/login') {
       // Keep the page they asked for, so signing in can bring them back to it (see Login.tsx).
       navigate('/login', { replace: true, state: { from: location.pathname + location.search } });
     }
+  });
+
+  createEffect(() => {
+    if (me()?.role !== 'guest') return;
+    if (!['/', '/calendar', '/shared'].includes(location.pathname)) navigate('/', { replace: true });
   });
 
   // The session can end while the app is open; a 401 from any request takes the same route.
@@ -340,7 +346,9 @@ function SessionGate(props: { children?: any }) {
   return (
     <Show when={!me.loading} fallback={<BootScreen />}>
       <Show when={me()} fallback={<BootScreen />}>
-        <Shell>{props.children}</Shell>
+        <Show when={me()?.role === 'guest'} fallback={<Shell>{props.children}</Shell>}>
+          <GuestPlanner me={me()!} />
+        </Show>
       </Show>
     </Show>
   );
@@ -382,6 +390,7 @@ export function App() {
                 "New Today" section; redirect stale /inbox deep-links there. */}
             <Route path="/inbox"    component={() => <Navigate href="/tasks" />} />
             <Route path="/tasks"       component={AllTasks} />
+            <Route path="/shared" component={() => null} />
             {/* AF-1: Objectives is a Tasks tab now; redirect preserves ?focus=. */}
             <Route path="/objectives"  component={ObjectivesRedirect} />
             <Route path="/patterns" component={() => <Navigate href="/tasks" />} />

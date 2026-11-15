@@ -23,7 +23,7 @@ export function SharedTasksPanel() {
       <div>
         <h2 id="shared-tasks-heading" class="text-sm font-semibold text-foreground">Shared with you</h2>
         <p class="text-xs text-muted-foreground mt-1">
-          This read-only list shows tasks you help with or benefit from.
+          Shared tasks also appear in Tasks. Edits sync to their owner.
         </p>
       </div>
 
@@ -60,7 +60,7 @@ export function SharedTasksPanel() {
                 <For each={task.shared_as}>
                   {(role) => (
                     <span class="rounded-sm border border-border px-1.5 py-0.5">
-                      {role === 'responsible' ? 'Responsible' : 'Beneficiary'}
+                      {role === 'shared' ? 'Shared' : role === 'responsible' ? 'Responsible' : 'Beneficiary'}
                     </span>
                   )}
                 </For>
