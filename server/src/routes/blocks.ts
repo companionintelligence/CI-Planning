@@ -179,6 +179,8 @@ export function blocksRouter() {
     // mutation versions on the same path; the route no longer stamps.
     broadcast(owner, 'block:updated', result.api);
     if (result.syncedTaskId) broadcast(owner, 'task:updated', { id: result.syncedTaskId });
+    for (const blockId of result.hierarchyUpdatedBlockIds) broadcast(owner, 'block:updated', { id: blockId });
+    for (const taskId of result.hierarchyUpdatedTaskIds) broadcast(owner, 'task:updated', { id: taskId });
 
     await enqueueOutbound(id); // I9 + writeback gate handled inside enqueueOutbound
     ctx.body = { block: result.api };

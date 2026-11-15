@@ -296,11 +296,11 @@ export function OnboardingWizard() {
           </Show>
 
           <Show when={onboardingStep() === 3}>
-            <PatternTagsSetup onBack={() => setOnboardingStep(2)} onNext={() => setOnboardingStep(4)} busy={busy()} />
+            <PatternTagsSetup onBack={() => setOnboardingStep(2)} onNext={() => setOnboardingStep(4)} onSkip={() => setOnboardingStep(4)} busy={busy()} />
           </Show>
 
           <Show when={onboardingStep() === 4}>
-            <DayTypeSetup dayType={setupDayType()} onBack={() => setOnboardingStep(3)} onNext={() => { setSetupDayType('workday'); setOnboardingStep(5); }} onAddType={async () => {
+            <DayTypeSetup dayType={setupDayType()} onBack={() => setOnboardingStep(3)} onNext={() => { setSetupDayType('workday'); setOnboardingStep(5); }} onSkip={() => { setSetupDayType('workday'); setOnboardingStep(5); }} skipLabel="Skip Workday setup" onAddType={async () => {
               const label = window.prompt('Name your day type (for example, Holiday):')?.trim();
               if (!label) return;
               const key = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `day-${Date.now()}`;
@@ -315,11 +315,11 @@ export function OnboardingWizard() {
           </Show>
 
           <Show when={onboardingStep() === 5}>
-            <DayTypeSetup dayType="weekend" onBack={() => setOnboardingStep(4)} onNext={() => setOnboardingStep(6)} onSkip={() => setOnboardingStep(6)} busy={busy()} />
+            <DayTypeSetup dayType="weekend" onBack={() => setOnboardingStep(4)} onNext={() => setOnboardingStep(6)} onSkip={() => setOnboardingStep(6)} skipLabel="Skip Weekend" busy={busy()} />
           </Show>
 
           <Show when={onboardingStep() === 6}>
-            <WeekdayTypesStep onBack={() => setOnboardingStep(5)} onNext={() => setOnboardingStep(7)} busy={busy()} />
+            <WeekdayTypesStep onBack={() => setOnboardingStep(5)} onNext={() => setOnboardingStep(7)} onSkip={() => setOnboardingStep(7)} busy={busy()} />
           </Show>
 
           <Show when={onboardingStep() === 7}>

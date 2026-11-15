@@ -53,7 +53,7 @@ export function ConflictBanner() {
             /* Multiple conflicts — collapsed summary with expand toggle */
             <div>
               <div class="flex items-center gap-2 py-2">
-                <AlertTriangle size={14} class="text-amber-400 flex-shrink-0" />
+                <AlertTriangle size={14} class="text-orange-300 dark:text-amber-400 flex-shrink-0" />
                 <span class="flex-1 text-xs text-amber-200">
                   {count()} edits need your attention
                 </span>
@@ -86,7 +86,7 @@ export function ConflictBanner() {
         >
           {/* Single conflict — always fully visible */}
           <div class="flex items-center gap-2 py-2">
-            <AlertTriangle size={14} class="text-amber-400 flex-shrink-0" />
+            <AlertTriangle size={14} class="text-orange-300 dark:text-amber-400 flex-shrink-0" />
             <span class="flex-1 text-xs text-amber-200 min-w-0 truncate">
               <span class="font-medium">"{single()!.entityTitle}"</span>
               {' '}— {single()!.fields.join(', ')} {conflictReason(single()!)}

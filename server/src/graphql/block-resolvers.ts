@@ -175,6 +175,8 @@ export const blockResolvers = {
       // stampRow already fired inside updateBlock (W3.3c commit 1).
       broadcast(owner, 'block:updated', res.api);
       if (res.syncedTaskId) broadcast(owner, 'task:updated', { id: res.syncedTaskId });
+      for (const blockId of res.hierarchyUpdatedBlockIds) broadcast(owner, 'block:updated', { id: blockId });
+      for (const taskId of res.hierarchyUpdatedTaskIds) broadcast(owner, 'task:updated', { id: taskId });
       await enqueueOutbound(args.input.id);
       return { timeBlock: res.block, success: true };
     },

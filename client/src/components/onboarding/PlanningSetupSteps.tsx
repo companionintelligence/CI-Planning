@@ -19,7 +19,7 @@ const ICONS: [string, Component<{ size?: number; strokeWidth?: number } >][] = [
   ['HandHeart', HandHeart], ['Activity', Activity], ['ClipboardList', ClipboardList],
 ];
 
-export function PatternTagsSetup(props: { onBack: () => void; onNext: () => void; busy: boolean }) {
+export function PatternTagsSetup(props: { onBack: () => void; onNext: () => void; onSkip: () => void; busy: boolean }) {
   const [tagRows] = createResource(() => api.tags.list().then((r) => r.tags.filter((t) => t.kind === 'direction')));
   const [prefs] = createResource(() => api.patternPrefs.list().then((r) => r.prefs));
   const [drafts, setDrafts] = createSignal<Record<string, { name: string; icon: string; color: string }>>({});
@@ -58,11 +58,11 @@ export function PatternTagsSetup(props: { onBack: () => void; onNext: () => void
         </div>;
       }}</For>
     </div>
-    <div class="flex justify-between"><button class="btn-ghost text-xs" onClick={props.onBack}>Back</button><button class="btn-primary text-xs" disabled={props.busy || !tagRows() || !prefs()} onClick={() => void save().then(props.onNext).catch((e) => showToast((e as Error).message, 'error'))}>Save and continue</button></div>
+    <div class="flex justify-between"><div class="flex gap-2"><button class="btn-ghost text-xs" disabled={props.busy} onClick={props.onBack}>Back</button><button class="btn-ghost text-xs" disabled={props.busy} onClick={props.onSkip}>Skip</button></div><button class="btn-primary text-xs" disabled={props.busy || !tagRows() || !prefs()} onClick={() => void save().then(props.onNext).catch((e) => showToast((e as Error).message, 'error'))}>Save and continue</button></div>
   </div>;
 }
 
-export function DayTypeSetup(props: { dayType: string; onBack: () => void; onNext: () => void; onSkip?: () => void; onAddType?: () => void; busy: boolean }) {
+export function DayTypeSetup(props: { dayType: string; onBack: () => void; onNext: () => void; onSkip?: () => void; skipLabel?: string; onAddType?: () => void; busy: boolean }) {
   const [dirs] = createResource(() => api.tags.list().then((r) => r.tags.filter((t) => t.kind === 'direction')));
   const [base] = createResource(() => api.patternBlocks.forDay(props.dayType).then((r) => r.windows));
   const [rows, setRows] = createSignal<Record<string, { start_time: string; end_time: string }[]>>({});
@@ -83,11 +83,11 @@ export function DayTypeSetup(props: { dayType: string; onBack: () => void; onNex
         <button class="text-xs text-primary self-start" onClick={() => add(dir.id)}>+ Add window</button>
       </section>}</For>
     </div>
-    <div class="flex flex-wrap justify-between gap-2"><div class="flex gap-2"><button class="btn-ghost text-xs" onClick={props.onBack}>Back</button><Show when={props.onSkip}><button class="btn-ghost text-xs" onClick={props.onSkip}>Skip Weekend</button></Show></div><div class="flex gap-2"><Show when={props.dayType === 'workday'}><button class="btn-secondary text-xs" onClick={props.onAddType}>Add another day type</button></Show><button class="btn-primary text-xs" disabled={props.busy || !base() || !dirs()} onClick={() => void save().then(props.onNext).catch((e) => showToast((e as Error).message, 'error'))}>Save and continue</button></div></div>
+    <div class="flex flex-wrap justify-between gap-2"><div class="flex gap-2"><button class="btn-ghost text-xs" disabled={props.busy} onClick={props.onBack}>Back</button><Show when={props.onSkip}><button class="btn-ghost text-xs" disabled={props.busy} onClick={props.onSkip}>{props.skipLabel ?? 'Skip'}</button></Show></div><div class="flex gap-2"><Show when={props.dayType === 'workday'}><button class="btn-secondary text-xs" disabled={props.busy} onClick={props.onAddType}>Add another day type</button></Show><button class="btn-primary text-xs" disabled={props.busy || !base() || !dirs()} onClick={() => void save().then(props.onNext).catch((e) => showToast((e as Error).message, 'error'))}>Save and continue</button></div></div>
   </div>;
 }
 
-export function WeekdayTypesStep(props: { onBack: () => void; onNext: () => void; busy: boolean }) {
+export function WeekdayTypesStep(props: { onBack: () => void; onNext: () => void; onSkip: () => void; busy: boolean }) {
   const [map] = createResource(() => api.dayTypes.weekMap().then((r) => r.map));
   const [types] = createResource(() => api.dayTypes.list().then((r) => r.day_types));
   const [days, setDays] = createSignal<Record<number, string>>({});
@@ -96,7 +96,7 @@ export function WeekdayTypesStep(props: { onBack: () => void; onNext: () => void
   async function save() { await api.dayTypes.setWeekMap(days()); refetchPatternBlocks(); props.onNext(); }
   return <div class="flex flex-col gap-3"><div><h2 class="text-base font-semibold text-foreground">Choose your default days</h2><p class="text-xs text-muted-foreground mt-0.5">Pick which days use Workday and Weekend availability. You can change this any time.</p></div>
     <div class="flex flex-col gap-1.5">{labels.map((label, dow) => <label class="flex items-center justify-between gap-3 border border-border rounded px-2.5 py-2 text-sm">{label}<select class="input py-1 text-sm w-36" value={days()[dow] ?? (dow === 0 || dow === 6 ? 'weekend' : 'workday')} onChange={(e) => setDays((d) => ({ ...d, [dow]: e.currentTarget.value }))}><For each={types()}>{(type) => <option value={type.key}>{type.name}</option>}</For></select></label>)}</div>
-    <div class="flex justify-between"><button class="btn-ghost text-xs" onClick={props.onBack}>Back</button><button class="btn-primary text-xs" disabled={props.busy || !map() || !types()} onClick={() => void save().catch((e) => showToast((e as Error).message, 'error'))}>Save and continue</button></div>
+    <div class="flex justify-between"><div class="flex gap-2"><button class="btn-ghost text-xs" disabled={props.busy} onClick={props.onBack}>Back</button><button class="btn-ghost text-xs" disabled={props.busy} onClick={props.onSkip}>Skip</button></div><button class="btn-primary text-xs" disabled={props.busy || !map() || !types()} onClick={() => void save().catch((e) => showToast((e as Error).message, 'error'))}>Save and continue</button></div>
   </div>;
 }
 

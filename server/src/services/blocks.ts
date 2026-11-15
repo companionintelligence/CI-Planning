@@ -19,6 +19,7 @@ import { syncTaskFromBlock, mirrorBlockStatusToTask, applyTaskPlacementStatus, r
 import { recordPlacementMove } from './placement-learning.js';
 import { canonicalValue, recordCorrection } from './classification-learning.js';
 import { resolveAutoNestParent } from './auto-nest.js';
+import { recomputeTaskHierarchy } from './task-hierarchy.js';
 
 /**
  * Time-Block CRUD orchestration (Phase W step 3.2) — extracted from routes/blocks.ts so
@@ -583,6 +584,9 @@ export type UpdateBlockResult =
       /** Task id synced by the REQ2 forward mirror (time/status change), for the
        *  caller's task:updated broadcast. */
       syncedTaskId: string | null;
+      /** Ancestor task status changes caused by the block's task completion. */
+      hierarchyUpdatedTaskIds: string[];
+      hierarchyUpdatedBlockIds: string[];
     }
   | { ok: false; error: 'not_found' }
   | { ok: false; error: 'inbound_readonly' }
@@ -752,6 +756,9 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
   let syncedTaskId: string | null = null;
   if (input.start_at !== undefined || input.end_at !== undefined) syncedTaskId = await syncTaskFromBlock(id, ownerId);
   if (input.status !== undefined) syncedTaskId = await mirrorBlockStatusToTask(id, ownerId) ?? syncedTaskId;
+  const hierarchy = input.status !== undefined && syncedTaskId
+    ? await recomputeTaskHierarchy(ownerId, [syncedTaskId])
+    : { taskIds: [], blockIds: [] };
 
   // Placement-learning wave ticket 3: close the placement_log row this block's
   // auto-placement opened (ticket 2), recording where the owner actually put it — the
@@ -771,7 +778,11 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
   if (updatedKeys.length > 0) await stampRow('block', id, updatedKeys);
 
   writeAudit({ ownerId, actor: 'owner', action: 'update', entity: `block:${id}` });
-  return { ok: true, block, api: out, updatedKeys, syncedTaskId };
+  return {
+    ok: true, block, api: out, updatedKeys, syncedTaskId,
+    hierarchyUpdatedTaskIds: hierarchy.taskIds,
+    hierarchyUpdatedBlockIds: hierarchy.blockIds,
+  };
 }
 
 export type MoveBlockGroupResult =

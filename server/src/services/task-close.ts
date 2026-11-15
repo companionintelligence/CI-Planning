@@ -1,5 +1,6 @@
 import { store } from '../db/store.js';
 import { writeAudit } from '../lib/audit.js';
+import { recomputeTaskHierarchy } from './task-hierarchy.js';
 
 /**
  * The close ritual (0137, rescored 0161): record how a finished task FELT, why, and how
@@ -55,7 +56,7 @@ export interface CloseTaskInput {
 }
 
 export type CloseTaskResult =
-  | { ok: true; taskId: string; completedAt: string; reactionAt: string | null; score: Score | null; actualMinutes: number }
+  | { ok: true; taskId: string; completedAt: string | null; reactionAt: string | null; score: Score | null; actualMinutes: number; hierarchyUpdatedTaskIds: string[]; hierarchyUpdatedBlockIds: string[] }
   | { ok: false; error: 'not_found' };
 
 // SQL at module scope, prepare at the use site (§5.5).
@@ -113,12 +114,19 @@ export async function closeTask(owner: string, taskId: string, input: CloseTaskI
     writeAudit({ ownerId: owner, actor, action: 'update', entity: `task:${taskId}` });
   }
 
+  const hierarchy = await recomputeTaskHierarchy(owner, [taskId]);
+  const finalTask = await store().prepare(
+    `SELECT completed_at FROM tasks WHERE id = ? AND owner_id = ?`,
+  ).get<{ completed_at: string | null }>(taskId, owner);
+
   return {
     ok: true,
     taskId,
-    completedAt,
+    completedAt: finalTask?.completed_at ?? null,
     reactionAt: hasReaction ? now : null,
     score,
     actualMinutes: minutes ?? task.actual_minutes,
+    hierarchyUpdatedTaskIds: hierarchy.taskIds,
+    hierarchyUpdatedBlockIds: hierarchy.blockIds,
   };
 }
