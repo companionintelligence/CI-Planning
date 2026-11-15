@@ -44,6 +44,7 @@ import {
 } from '../services/classification-learning.js';
 import { getEntityPeople, getEntityPeopleBulk } from '../services/people.js';
 import { listSharedTasks } from '../services/shared-tasks.js';
+import { listTasksSharedWithOwner, sharedTaskOwnerForRecipient } from '../services/shared-planner.js';
 
 // Task business logic lives in services/tasks.ts (Phase W step 3.1, shared with the
 // coming GraphQL resolvers). These handlers are thin HTTP shells: parse → call the
@@ -225,7 +226,7 @@ export function tasksRouter() {
         ? Math.min(parsedLimit, DEFAULT_TASKS_LIMIT)
         : DEFAULT_TASKS_LIMIT;
 
-    const result = await db
+    const ownedResult = await db
       .select()
       .from(tasks)
       .where(and(...conditions))
@@ -234,6 +235,23 @@ export function tasksRouter() {
       // tied row the engine happens to return first — different on every call.
       .orderBy(asc(tasks.priority), asc(tasks.dueAt), asc(tasks.id))
       .limit(effectiveLimit);
+
+    // A member sees explicitly shared/assigned tasks in the same feed as their own.
+    // These are canonical source rows (not local clones), marked for the client and
+    // writable only through the source-owner check in PATCH below.
+    const sharedRows = owner_id ? [] : (await listTasksSharedWithOwner(currentOwnerId())).filter((t) =>
+      (!status || t.status === status)
+      && (!priority || Number(t.priority) === Number(priority))
+      && (!due_before || (typeof t.due_at === 'string' && t.due_at <= due_before))
+      && (!q || String(t.title ?? '').toLowerCase().includes(q.toLowerCase()))
+      && (include_fast === '1' || t.subtype !== 'quick'),
+    );
+    const result: Array<Record<string, unknown>> = [...ownedResult, ...sharedRows] as Array<Record<string, unknown>>;
+    const dueKey = (row: Record<string, unknown>) => String(row.due_at ?? row.dueAt ?? '9999-12-31');
+    result.sort((a, b) => Number(a.priority ?? 3) - Number(b.priority ?? 3)
+      || dueKey(a).localeCompare(dueKey(b))
+      || String(a.id).localeCompare(String(b.id)));
+    result.splice(effectiveLimit);
 
     // A full page is the cheap, standard heuristic for "there may be more" — exactly
     // `effectiveLimit` real matches with nothing beyond it is indistinguishable from
@@ -250,29 +268,50 @@ export function tasksRouter() {
 
     // Attach tags + dependency info, serialize to snake_case
     const blocked = await blockedTaskIds();
-    const ids = result.map((t) => t.id);
+    const ids = result.map((t) => String(t.id));
     const tagsById = await taskTagNamesByIds(ids);
     const secondaryById = await taskSecondaryTagNamesByIds(ids);
     const categoriesById = await entityCategoryNamesByIds('task', ids); // Phase B: 1–3, position order
-    const objectivesById = await objectiveIdsByTaskIds(currentOwnerId(), ids); // AF-10: ALL links (created_at,id order)
+    const ownerByTaskId = new Map<string, string>(result.map((row) => {
+      return [String(row.id), String(row.source_owner_id ?? row.owner_id ?? row.ownerId ?? currentOwnerId())];
+    }));
+    const objectivesById = new Map<string, string[]>(); // AF-10: ALL links (created_at,id order)
+    const taskIdsBySourceOwner = new Map<string, string[]>();
+    for (const [id, sourceOwnerId] of ownerByTaskId) {
+      const list = taskIdsBySourceOwner.get(sourceOwnerId) ?? [];
+      list.push(id);
+      taskIdsBySourceOwner.set(sourceOwnerId, list);
+    }
+    for (const [sourceOwnerId, sourceTaskIds] of taskIdsBySourceOwner) {
+      for (const [id, objectiveIds] of await objectiveIdsByTaskIds(sourceOwnerId, sourceTaskIds)) objectivesById.set(id, objectiveIds);
+    }
     // Resolved up front so the map below can stay synchronous — an async .map callback
     // would put a Promise in every depends_on field, and ctx.body would serialize `{}`.
     const dependsById = new Map<string, string[]>();
-    for (const id of ids) dependsById.set(id, await getDependencies(id));
-    const peopleById = await getEntityPeopleBulk('task', ids); // 0151: batched, same reason
-    const withTags = result.map((t) => ({
+    for (const id of ids) {
+      const sourceOwnerId = ownerByTaskId.get(id);
+      dependsById.set(id, sourceOwnerId === currentOwnerId() ? await getDependencies(id) : []);
+    }
+    const peopleById = await getEntityPeopleBulk('task', ids.filter((id) => ownerByTaskId.get(id) === currentOwnerId())); // 0151: batched; foreign people stay private
+    const withTags = result.map((t) => {
+      const row = t;
+      const taskId = String(row.id);
+      const isShared = ownerByTaskId.get(taskId) !== currentOwnerId();
+      return {
       ...taskToApi(t),
-      responsible: peopleById.get(t.id)?.responsible ?? [],
-      beneficiaries: peopleById.get(t.id)?.beneficiaries ?? [],
-      tags: tagsById.get(t.id) ?? [],
-      secondary_tags: secondaryById.get(t.id) ?? [],
-      categories: categoriesById.get(t.id) ?? [],
-      depends_on: dependsById.get(t.id) ?? [],
-      blocked: blocked.has(t.id),
+      ...(isShared ? { shared: true, shared_by: row.shared_by, parent_id: null, recurrence_parent_id: null } : {}),
+      responsible: isShared ? [] : peopleById.get(taskId)?.responsible ?? [],
+      beneficiaries: isShared ? [] : peopleById.get(taskId)?.beneficiaries ?? [],
+      tags: tagsById.get(taskId) ?? [],
+      secondary_tags: secondaryById.get(taskId) ?? [],
+      categories: categoriesById.get(taskId) ?? [],
+      depends_on: dependsById.get(taskId) ?? [],
+      blocked: isShared ? false : blocked.has(taskId),
       // §I star + AF-10 card picker. objective_id = objective_ids[0] ?? null (back compat).
-      objective_ids: objectivesById.get(t.id) ?? [],
-      objective_id: objectivesById.get(t.id)?.[0] ?? null,
-    }));
+      objective_ids: isShared ? [] : objectivesById.get(taskId) ?? [],
+      objective_id: isShared ? null : objectivesById.get(taskId)?.[0] ?? null,
+    };
+    });
 
     // Filter by tag after attachment (simple approach for v1). AF-11 (D1): match
     // level 1 ∪ level 2 — intentions live at level 2 since 0121, and ?tag=<intention>
@@ -808,11 +847,12 @@ export function tasksRouter() {
       return;
     }
 
-    // scope=series edits the whole recurring series (the template); scope=instance
-    // (default) edits just this row. For a non-recurring task the two coincide.
-    const scope = (ctx.query.scope as string) === 'series' ? 'series' : 'instance';
-
-    const res = await updateTask(owner, id, body, scope);
+    const sharedOwner = await sharedTaskOwnerForRecipient(owner, id);
+    // A recipient may change only the instance they were given access to, never
+    // expand that grant into an unshared recurring series.
+    const scope = !sharedOwner && (ctx.query.scope as string) === 'series' ? 'series' : 'instance';
+    const mutationOwner = sharedOwner ?? owner;
+    const res = await updateTask(mutationOwner, id, body, scope, sharedOwner ? `shared:${owner}` : 'owner');
     if (!res.ok) {
       if (res.error === 'invalid_rule') { ctx.status = 422; ctx.body = { error: res.message }; return; }
       if (res.error === 'not_found') { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
@@ -826,28 +866,29 @@ export function tasksRouter() {
     // GraphQL both version their column writes; the route no longer stamps.
 
     // REQ2 (reverse sync): the service moved the placed block in lockstep.
-    if (res.syncedBlockId) broadcast(owner, 'block:updated', { id: res.syncedBlockId });
+    if (res.syncedBlockId) broadcast(mutationOwner, 'block:updated', { id: res.syncedBlockId });
     // Task→block done-state mirror: checking the task off completed its block(s) (or a
     // reopen revived them) — tell the Planner to refresh each.
-    for (const blockId of res.mirroredBlockIds) broadcast(owner, 'block:updated', { id: blockId });
+    for (const blockId of res.mirroredBlockIds) broadcast(mutationOwner, 'block:updated', { id: blockId });
     // Clearing the start intent unscheduled the task (its block was removed) — tell the
     // Planner to drop it.
-    if (res.unscheduled) broadcast(owner, 'block:updated', { unscheduled: id });
+    if (res.unscheduled) broadcast(mutationOwner, 'block:updated', { unscheduled: id });
 
     const out = {
       ...taskToApi(res.task),
-      ...(await peopleFor(res.task.id)),
+      ...(sharedOwner ? { shared: true } : await peopleFor(res.task.id)),
       tags: await taskTagNames(res.targetId),
       secondary_tags: await taskSecondaryTags(res.targetId),
       categories: await entityCategoryNames('task', res.targetId),
       depends_on: await getDependencies(res.targetId),
-      blocked: (await blockedTaskIds()).has(res.targetId),
+      blocked: sharedOwner ? false : (await blockedTaskIds()).has(res.targetId),
     };
-    broadcast(owner, 'task:updated', out);
-    if (res.generated) broadcast(owner, 'recurrence:generated', res.generated);
+    broadcast(mutationOwner, 'task:updated', out);
+    if (sharedOwner) broadcast(owner, 'task:updated', out);
+    if (res.generated) broadcast(mutationOwner, 'recurrence:generated', res.generated);
     // B2: only a scheduling-relevant column change can re-order the day — a title/notes/
     // tag edit must not churn the plan (and, pre-AE, could surface the reflow wipe).
-    if (updateTouchesSchedule(res.updatedFields)) requestReplan('task:updated');
+    if (!sharedOwner && updateTouchesSchedule(res.updatedFields)) requestReplan('task:updated');
     ctx.body = { task: out, ...(res.generated ? { generated: res.generated } : {}) };
   });
 
@@ -855,14 +896,17 @@ export function tasksRouter() {
   router.delete('/api/tasks/:id', async (ctx) => {
     const id = ctx.params.id;
     const owner = currentOwnerId();
+    const sharedOwner = await sharedTaskOwnerForRecipient(owner, id);
     // ?scope=following also truncates the recurring series at this occurrence.
-    const scope = (ctx.query.scope as string) === 'following' ? 'following' : 'instance';
-    const res = await deleteTask(owner, id, scope);
+    const scope = !sharedOwner && (ctx.query.scope as string) === 'following' ? 'following' : 'instance';
+    const mutationOwner = sharedOwner ?? owner;
+    const res = await deleteTask(mutationOwner, id, scope, sharedOwner ? `shared:${owner}` : 'owner');
     if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
-    const out = { ...taskToApi(res.task), tags: [] as string[], ...(await peopleFor(res.task.id)) };
-    broadcast(owner, 'task:updated', out);
-    for (const blockId of res.cancelledBlockIds) broadcast(owner, 'block:updated', { id: blockId });
-    requestReplan('task:deleted'); // B2: a cancelled task frees its slot — re-pack the day
+    const out = { ...taskToApi(res.task), ...(sharedOwner ? { shared: true } : await peopleFor(res.task.id)), tags: [] as string[] };
+    broadcast(mutationOwner, 'task:updated', out);
+    if (sharedOwner) broadcast(owner, 'task:updated', out);
+    for (const blockId of res.cancelledBlockIds) broadcast(mutationOwner, 'block:updated', { id: blockId });
+    if (!sharedOwner) requestReplan('task:deleted'); // B2: re-pack only the caller's own plan
     ctx.body = { task: out };
   });
 
@@ -901,20 +945,23 @@ export function tasksRouter() {
       ctx.body = { error: `score must be an integer ${DECLINED_SCORE} (declined) or ${MIN_SCORE}-${MAX_SCORE}` };
       return;
     }
-    const res = await closeTask(owner, id, { score: body.score, note: body.note, actualMinutes: body.actual_minutes });
+    const sharedOwner = await sharedTaskOwnerForRecipient(owner, id);
+    const mutationOwner = sharedOwner ?? owner;
+    const res = await closeTask(mutationOwner, id, { score: body.score, note: body.note, actualMinutes: body.actual_minutes }, sharedOwner ? `shared:${owner}` : 'owner');
     if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
-    const [task] = await db.select().from(tasks).where(and(eq(tasks.id, id), eq(tasks.ownerId, owner)));
+    const [task] = await db.select().from(tasks).where(and(eq(tasks.id, id), eq(tasks.ownerId, mutationOwner)));
     const out = {
       ...taskToApi(task),
-      ...(await peopleFor(task.id)),
+      ...(sharedOwner ? { shared: true } : await peopleFor(task.id)),
       tags: await taskTagNames(id),
       secondary_tags: await taskSecondaryTags(id),
       categories: await entityCategoryNames('task', id),
       depends_on: await getDependencies(id),
-      blocked: (await blockedTaskIds()).has(id),
+      blocked: sharedOwner ? false : (await blockedTaskIds()).has(id),
     };
-    broadcast(owner, 'task:updated', out);
+    broadcast(mutationOwner, 'task:updated', out);
+    if (sharedOwner) broadcast(owner, 'task:updated', out);
     ctx.body = { task: out, closed: { completed_at: res.completedAt, reaction_at: res.reactionAt, score: res.score, actual_minutes: res.actualMinutes } };
   });
 

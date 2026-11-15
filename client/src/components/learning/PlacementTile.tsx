@@ -50,77 +50,72 @@ import { useReadout } from './useReadout.js';
 
 const F = LEARNING_FACTS.placement;
 
-/** 'one hour' for the 60 minute budget, else minutes, so the sentence follows the constant. */
-const FRAGMENT_BUDGET = F.maxExtraFragmentMinutes === 60 ? 'one hour' : `${F.maxExtraFragmentMinutes} minutes`;
-
-const TITLE = 'Where Auto places your blocks';
+const TITLE = 'Auto schedule times';
 
 const MEANING =
-  'What it counts: blocks the Auto scheduler placed that have settled. A block is moved when you put it at a different hour. ' +
-  'It is kept when its start time has passed and it is still there, or when you only nudged it within the same hour or resized it. ' +
-  'Not counted: blocks Auto had to shorten to fit, auto blocks that are gone when the weekly pass runs (re-planning deletes and re-places them all the time) unless you had already moved them, ' +
-  'untouched blocks whose time has not come yet, and anything placed by routines or patterns. ' +
-  `Window: blocks Auto placed in the ${F.periodDays} days before each reading, one reading every Monday (early on Monday, server time), so readings overlap. ` +
-  'Cases behind it: the number of settled blocks, printed in every line. Direction: higher is better.';
+  'Tracks blocks Auto puts on calendars. ' +
+  'Moved means you changed the hour. ' +
+  'Untouched blocks count after they start. ' +
+  `Each reading checks the last ${F.periodDays} days. ` +
+  'Small samples can mislead.';
 
 const CHANGES =
-  `What it changes: once at least ${F.correctionFloor} of your moves of one direction to a different hour fall in the last ${F.windowDays} days, ` +
-  `and the middle half of the hours that direction's settled blocks sit at (kept or moved) spans no more than ${F.maxBandHours} hours, ` +
-  `Auto leans toward that band when several gaps fit, by at most ${FRAGMENT_BUDGET} of extra fragmentation. ` +
-  "A direction is the task's top-level direction tag (for example Work, Home or Community); untagged tasks share one group. " +
-  'It never moves a block you placed and never overrides a lock, a pin or a deadline. No model is needed.';
+  'Auto groups tasks by tags. ' +
+  'Five moves can teach Auto your hours. ' +
+  'Those times must fit six hours. ' +
+  'Auto may favor those hours. ' +
+  'Auto still respects pins and deadlines. ' +
+  'No model is needed.';
 
 /** The first entry is always visible above the data; the rest sit in the details block. */
 const CAVEATS: readonly string[] = [
-  'Kept does not mean liked. A block you never looked at counts as kept, so this goes up if you stop opening your calendar.',
-  'A move counts as soon as you make it, even for a block days away. A block you leave alone counts as kept only after its start time passes. ' +
-    'So each reading leans toward moved blocks, and it can read lower than it will once those blocks have passed.',
-  'Only blocks that survived long enough to be judged are counted. An auto block that is gone when the weekly pass runs is counted neither way unless you had already moved it, so this describes survivors.',
-  'Only the hour of day is compared. A nudge inside the same hour, a resize, or a move to another day at the same hour counts as kept.',
-  `Each reading covers ${F.periodDays} days but one is added every week, so neighbouring readings share about three quarters of their blocks. A smooth line is partly the overlap, and comparisons use readings at least ${F.periodDays} days apart.`,
-  'People move blocks for reasons that have nothing to do with where Auto put them: a meeting came up, the phone rang.',
-  "Only Auto's choices are logged. Blocks placed by routines and patterns are not, and shortened fits are left out.",
-  'A comparison is between two stretches of time. A preference built from your moves cannot be separated from you simply moving fewer blocks, and a reset changes the baseline.',
-  "A week with nothing settled is 'not measured', not a bad week.",
+  'Kept does not always mean liked. ' +
+    'Moves count right away.',
+  'Only Auto-placed blocks count here. Other blocks are left out.',
+  'Auto checks the hour, not minutes. Same-hour changes count as kept.',
+  `Readings cover ${F.periodDays} overlapping days. Nearby results share many blocks.`,
+  'Other reasons may cause moves. Meetings can change your plans.',
+  'Comparisons do not prove why blocks moved. A reset changes future learning.',
+  'No finished blocks means no score. ' +
+    'It does not mean a bad week.',
 ];
 
 const HOW_TO_START =
-  'Use Auto to place tasks on your calendar (it is the only thing logged), and let the day arrive. Move the blocks that land at the wrong hour. ' +
-  `After ${F.correctionFloor} moves of one direction (for example Work, Home or Community, or untagged) to a different hour within ${F.windowDays} days, ` +
-  `and if the middle half of the hours that direction's settled blocks sit at spans no more than ${F.maxBandHours} hours, ` +
-  'the next Monday pass writes an hour preference for that direction. ' +
-  "Readings begin on the first Monday after install and stay 'not measured' until some block settles. " +
-  'No model is needed and there is no setting that turns this off.';
+  'Let Auto place some tasks. ' +
+  'Move Auto blocks at poor hours. ' +
+  `${F.correctionFloor} moves in one group may teach Auto. ` +
+  'Those times must fit six hours. ' +
+  'Auto checks again each Monday. ' +
+  'No model is needed.';
 
 const EMPTY_TEXT =
-  'No readings yet. A reading is added every Monday, even when no blocks were settled. If this stays empty after a Monday, the weekly pass has not run.';
+  'No readings yet. New readings arrive each Monday. No finished blocks means no score.';
 
-const OVERLAP_CAPTION = `Each dot covers the ${F.periodDays} days before its date, and one is added every week, so neighbouring dots share most of their blocks. The line is smoother than the evidence.`;
+const OVERLAP_CAPTION = `Each dot covers ${F.periodDays} overlapping days. Nearby dots share many blocks.`;
 
 const MARKER_LEGEND =
-  'The dashed line marks the first reading taken after Auto had stored hour preferences. It does not show that any block was placed using one.';
+  'The dashed line marks saved preferences. It does not prove Auto used them.';
 
 /** Added when the first reading in the window already has preferences in place: the start is older than the window. */
 const MARKER_BEFORE_WINDOW =
-  'Auto already had hour preferences at the earliest reading shown, so no marker is drawn.';
+  'Auto had saved preferences before these readings.';
 
 const STATUS_NO_PREFERENCES =
-  `Auto has no hour preferences yet. They start after you move at least ${F.correctionFloor} blocks of one direction to a different hour.`;
+  `Auto needs ${F.correctionFloor} moves before learning your hours.`;
 
 const RESET: ResetSpec = {
   label: 'Clear learned hours',
   hint:
-    "Auto goes back to choosing gaps with no hour preference. Your move history is kept, so Monday's pass can learn the hours again. " +
-    'Past readings stay, and they describe the old preferences. There is no setting that turns this off.',
-  confirmText: "Clear the hours Auto has learned? Your move history is kept and Monday's pass can learn them again.",
+    'Auto stops using learned hours. Your move history stays saved. Monday’s update can learn again. Past readings stay unchanged.',
+  confirmText: 'Clear Auto’s learned hours? Your move history stays saved.',
   run: () => api.learning.resetPlacement(),
   clearedMessage: (n) =>
     n === 1
-      ? 'Cleared 1 hour preference. It is learned again from your moves on Monday.'
-      : `Cleared ${n} hour preferences. They are learned again from your moves on Monday.`,
-  emptyMessage: 'Nothing to clear. No hour preferences are stored.',
-  doneStatus: 'Cleared. Auto chooses with no hour preference until Monday.',
-  nothingToClear: 'No hour preferences are stored, so there is nothing to clear.',
+      ? 'Cleared one hour preference. Monday’s update can learn again.'
+      : `Cleared ${n} hour preferences. Monday’s update can learn again.`,
+  emptyMessage: 'Nothing to clear. No hours are saved.',
+  doneStatus: 'Your saved hours were cleared. Monday’s update can learn again.',
+  nothingToClear: 'No saved hours are ready to clear.',
 };
 
 // ── Builders ─────────────────────────────────────────────────────────────────
@@ -135,28 +130,24 @@ const countOf = (r: Reading, key: string): number => {
 function movedSentence(r: Reading): string {
   const moved = countOf(r, 'corrected');
   if (r.hits + moved !== r.n) return '';
-  return ` ${moved} ${moved === 1 ? 'was' : 'were'} moved to a different hour.`;
+  return moved === 1 ? ' One block moved to another hour.' : ` ${moved} blocks moved to another hour.`;
 }
 
 function measuredHeadline(r: Reading): string {
   const d = describeRate(r.hits, r.n);
-  const span = `in the ${r.periodDays} days to ${shortDate(r.date)}`;
   const moved = movedSentence(r);
   if (d.percent === null || d.range === null) {
-    const one = r.n === 1;
-    // "Not moved to a different hour", not "kept where Auto put it": a nudge inside the same
-    // hour, a resize, or a move to another day at the same hour counts here too.
-    return `${d.fraction} settled ${one ? 'block was' : 'blocks were'} not moved to a different hour, ${span}.${moved}`;
+    const kept = r.n === 1 ? 'One block stayed in its hour.' : `${d.fraction} blocks stayed in their hours.`;
+    return `${kept}${moved}`;
   }
-  return `${d.percent} kept (${d.fraction}) ${span}.${moved} With this many cases the true figure could be anywhere from ${d.range}.`;
+  return `${d.percent} stayed in their hour (${d.fraction}). Possible rates range from ${d.range}.${moved}`;
 }
 
 function notMeasuredHeadline(r: Reading): string {
-  const span = `in the ${r.periodDays} days to ${shortDate(r.date)}`;
   // The server writes a null rate only when nothing settled. If a row has cases but no
   // usable rate, say that instead, so the sentence is never false.
-  if (r.n > 0) return `Not measured: the reading for the ${r.periodDays} days to ${shortDate(r.date)} could not be used.`;
-  return `Not measured: no auto-placed block was settled ${span}.`;
+  if (r.n > 0) return 'Not measured: this reading could not be used.';
+  return 'Not measured: no Auto blocks settled.';
 }
 
 /** The newest earlier reading that WAS measured, as a counts-only note. It names what is
@@ -165,8 +156,7 @@ function lastMeasuredNote(readings: readonly Reading[]): string | null {
   for (let i = readings.length - 1; i >= 0; i--) {
     const r = readings[i];
     if (r.measured) {
-      const what = r.n === 1 ? 'settled block was' : 'settled blocks were';
-      return `Last measured: ${describeRate(r.hits, r.n).fraction} ${what} not moved to a different hour, on ${shortDate(r.date)}.`;
+      return `Last score: ${describeRate(r.hits, r.n).fraction} blocks stayed put.`;
     }
   }
   return null;
@@ -200,7 +190,7 @@ export function placementView(res: PlacementSurvivalResponse, ctx: LearningConte
 
   const when = shortDate(newest.date);
   const age = describeAge(ageInDays(newest.date, ctx.now));
-  const latestLine = `Latest reading: ${when} (${age}).`;
+  const latestLine = `Latest reading: ${when}, ${age}.`;
   const keys = countOf(newest, 'keys_learned');
 
   // The first reading taken with preferences already in place. "by", not "from": they were
@@ -218,7 +208,7 @@ export function placementView(res: PlacementSurvivalResponse, ctx: LearningConte
     label: null,
     state: newest.measured ? 'measured' : 'not-measured',
     headline: newest.measured ? measuredHeadline(newest) : notMeasuredHeadline(newest),
-    detail: newest.measured ? `Higher is better. ${latestLine}` : latestLine,
+    detail: newest.measured ? `Higher scores mean more blocks stayed put. ${latestLine}` : latestLine,
     notes: newest.measured ? [] : [lastMeasuredNote(readings)].filter((n): n is string => n !== null),
     comparison: describeComparison(compareRecent(readings, F.periodDays), { unit: 'kept', noun: 'settled blocks' }),
     empty: null,
@@ -241,16 +231,16 @@ export function placementView(res: PlacementSurvivalResponse, ctx: LearningConte
 
   // Placement writes a row every Monday, so a long quiet stretch is a real signal.
   const contextLines = isStale(newest.date, ctx.now)
-    ? [`No new reading for ${ageInDays(newest.date, ctx.now)} days. The weekly pass may not have run; it needs the server to be on early on Monday.`]
+    ? [`No new reading for ${ageInDays(newest.date, ctx.now)} days. The server may need to run Monday.`]
     : [];
 
   return {
     series: [series],
     contextLines,
     status: cleared
-      ? `Cleared on ${shortDate(clearedOn as string)}. Auto chooses with no hour preference until Monday's pass.`
+      ? `Cleared on ${shortDate(clearedOn as string)}. Monday’s update can learn again.`
       : keys > 0
-        ? `At the ${when} reading, Auto had hour preferences for ${keys} ${keys === 1 ? 'direction' : 'directions'}.`
+        ? `Auto saved hours for ${keys} groups.`
         : STATUS_NO_PREFERENCES,
     startOpen: !newest.measured,
     // As of the last Monday run, unless this session has cleared since.

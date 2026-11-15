@@ -1,4 +1,4 @@
-import { SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN } from './types.js';
+import { SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN, SCOPE_GUEST } from './types.js';
 
 /**
  * The scope a request needs, derived from its HTTP method: safe (GET/HEAD) reads
@@ -28,24 +28,25 @@ export function hasAdminScope(scopes: string[]): boolean {
 
 /**
  * Phase AG — the role→scopes map, the single place an `owners.role` becomes a scope
- * set (verifySession + any future path). Three roles map 1:1 onto the existing
- * scopes, so no per-feature permission table exists:
+ * set (verifySession + any future path):
  *
  *   operator → [read, write, admin]  (account management, system jobs, Google config)
  *   member   → [read, write]         (a normal tenant — full access to their own data)
  *   viewer   → [read]                (read-only tenant)
+ *   guest    → [read, guest]         (only the explicitly shared guest surface)
  *
  * An unrecognized value (a hand-edited row, a role from a newer schema) degrades to
  * read-only — the fail-closed direction, matching verifySession's malformed-epoch
  * handling: never grant write/admin on input we don't understand.
  */
-export const OWNER_ROLES = ['operator', 'member', 'viewer'] as const;
+export const OWNER_ROLES = ['operator', 'member', 'viewer', 'guest'] as const;
 export type OwnerRole = (typeof OWNER_ROLES)[number];
 
 export function roleToScopes(role: string | null | undefined): string[] {
   switch (role) {
     case 'operator': return [SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN];
     case 'member':   return [SCOPE_READ, SCOPE_WRITE];
+    case 'guest':    return [SCOPE_READ, SCOPE_GUEST];
     default:         return [SCOPE_READ]; // 'viewer' + anything unrecognized
   }
 }

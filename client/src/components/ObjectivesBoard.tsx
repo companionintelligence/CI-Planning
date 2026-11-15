@@ -165,7 +165,9 @@ export function ObjectivesBoard(props: {
   }
 
   function leaveDropTarget(columnId: string, ev: DragEvent) {
-    if (!ev.currentTarget.contains(ev.relatedTarget as Node | null) && dropColumnId() === columnId) {
+    const target = ev.currentTarget;
+    const related = ev.relatedTarget;
+    if (target instanceof Node && !target.contains(related instanceof Node ? related : null) && dropColumnId() === columnId) {
       setDropColumnId(null);
     }
   }

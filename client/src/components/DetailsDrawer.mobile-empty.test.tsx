@@ -42,9 +42,11 @@ vi.mock('../stores/ui.js', () => ({
 }));
 vi.mock('../stores/index.js', () => ({
   blocks: () => [],
+  selectedDay: () => '2026-11-14',
   tasks: () => [{ id: 't-1', title: 'Test task', status: 'open', priority: 2 }],
   taskOf: (id: string) => (id === 't-1' ? { id: 't-1', title: 'Test task', status: 'open', priority: 2 } : undefined),
   tags: () => [], objectives: () => [], suggestions: () => [],
+  integrations: () => undefined, openQuickConnect: vi.fn(),
   refetchSuggestions: vi.fn(), isSuggestionBusy: () => false, setSuggestionBusy: vi.fn(),
   connections: () => [], showToast: vi.fn(), refetchTasks: vi.fn(), setElementModal: vi.fn(),
 }));

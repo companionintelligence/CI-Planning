@@ -27,3 +27,5 @@ export const SCOPE_WRITE = 'planning:write';
  * admin; an API key gets admin ONLY if it was explicitly issued with it.
  */
 export const SCOPE_ADMIN = 'planning:admin';
+/** Guest sessions may read only the explicit shared-planner endpoints. */
+export const SCOPE_GUEST = 'planning:guest';

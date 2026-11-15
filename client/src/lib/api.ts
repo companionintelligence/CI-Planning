@@ -101,7 +101,37 @@ export interface SharedTask {
   priority: number;
   due_at: string | null;
   estimated_minutes: number | null;
-  shared_as: Array<'responsible' | 'beneficiary'>;
+  shared_as: Array<'shared' | 'responsible' | 'beneficiary'>;
+}
+
+export interface SharedPlannerItem {
+  entity_kind: 'task' | 'objective';
+  entity_id: string;
+  title?: string;
+}
+export interface SharedPlannerInvite {
+  id: string;
+  email: string;
+  status: 'pending' | 'active' | 'revoked';
+  recipient_owner_id: string | null;
+  recipient_name: string | null;
+  recipient_role: string | null;
+  items: SharedPlannerItem[];
+  created_at: string;
+  updated_at: string;
+}
+export interface GuestSharedContent {
+  tasks: Array<{
+    id: string; title: string; description: string | null; status: string;
+    priority: number; due_at: string | null; scheduled_for: string | null; task_time: string | null;
+    estimated_minutes: number | null; objective_id: string | null; objective_title: string | null;
+    shared_as: Array<'shared' | 'beneficiary' | 'responsible'>;
+  }>;
+  objectives: Array<{
+    id: string; title: string; description: string | null;
+    target_date: string | null; status: string; priority: number;
+  }>;
+  blocks: Array<{ id: string; task_id: string; title: string; start_at: string; end_at: string }>;
 }
 
 export interface Task {
@@ -122,6 +152,9 @@ export interface Task {
   status: string;
   parent_id?: string;
   owner_id: string;
+  /** Canonical task shared by another planner; edits sync to the source owner. */
+  shared?: boolean;
+  shared_by?: string;
   source_kind: string;
   auto_generated?: boolean;
   human_approved_at?: string | null;
@@ -579,6 +612,9 @@ export const api = {
   },
   sharedTasks: {
     list: () => request<{ tasks: SharedTask[] }>('GET', '/shared-tasks'),
+  },
+  guest: {
+    shared: () => request<GuestSharedContent>('GET', '/guest/shared'),
   },
   tasks: {
     list: (params?: Record<string, string>) => {
@@ -1281,6 +1317,15 @@ export const api = {
      *  whenever the user picks somebody off the roster. */
     fromAccount: (accountId: string) =>
       request<{ person: Person }>('POST', `/people/accounts/${accountId}`),
+    shares: {
+      list: () => request<{ invites: SharedPlannerInvite[] }>('GET', '/people/shares'),
+      create: (email: string, items: SharedPlannerItem[]) =>
+        request<{ invite: SharedPlannerInvite; delivery: 'email' | 'link'; invite_link?: string }>('POST', '/people/shares', { email, items }),
+      update: (id: string, items: SharedPlannerItem[]) =>
+        request<{ invite: SharedPlannerInvite }>('PATCH', `/people/shares/${id}`, { items }),
+      resend: (id: string) => request<{ ok: boolean; delivery: 'email' | 'link'; invite_link?: string }>('POST', `/people/shares/${id}/resend`, {}),
+      revoke: (id: string) => request<{ ok: boolean }>('DELETE', `/people/shares/${id}`),
+    },
   },
 };
 
@@ -1388,7 +1433,7 @@ export interface AuthMe {
   isOperator: boolean; // derived server-side: role === 'operator'
 }
 // Phase AG — the operator/tenant role split (docs/AG-multitenant-rbac.md).
-export type OwnerRole = 'operator' | 'member' | 'viewer';
+export type OwnerRole = 'operator' | 'member' | 'viewer' | 'guest';
 export interface OwnerAccount {
   id: string;
   name: string;

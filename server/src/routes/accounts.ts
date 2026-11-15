@@ -54,7 +54,7 @@ export type InviteResult = { delivery: 'email'; to: string } | { delivery: 'link
  * link back to the operator when SMTP is unconfigured OR the send fails — an
  * invite must never be silently lost. Precondition: target.email is set.
  */
-async function sendInvite(target: OwnerAccount): Promise<InviteResult> {
+export async function sendAccountInvite(target: OwnerAccount): Promise<InviteResult> {
   const fresh = !target.hasPassword; // first invite vs. reset of an active account
   const raw = await issueResetToken(target.id, fresh ? INVITE_TTL_MS : undefined);
   const link = `${config.mail.appBaseUrl}/reset-password?token=${encodeURIComponent(raw)}`;
@@ -191,7 +191,7 @@ export function accountsRouter() {
       throw err;
     }
     const account = (await getAccount(id))!;
-    const invite = await sendInvite(account);
+    const invite = await sendAccountInvite(account);
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `account:${id}` });
     ctx.status = 201;
     ctx.body = { account, invite };
@@ -212,7 +212,7 @@ export function accountsRouter() {
     if (!target.email) {
       ctx.status = 409; ctx.body = { error: 'this account has no email on file — set one first' }; return;
     }
-    const invite = await sendInvite(target);
+    const invite = await sendAccountInvite(target);
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'invite', entity: `account:${target.id}` });
     ctx.body = { ok: true, invite };
   });
