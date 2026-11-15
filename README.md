@@ -1146,17 +1146,23 @@ is connected or configured for this server through `CI_SERVER_URL`, and whether 
 model is ready. It reads that state and changes nothing. Connect or change either under
 **Settings → Connections**. Replay the walkthrough from **Settings → Profile**.
 
-## Walkthrough video
+## Della Planning videos
 
-> 📹 A full video walkthrough is coming soon.
+The Della Bradley use-case videos are committed in [`video/della-how-to/assets/video/`](video/della-how-to/assets/video/).
+These eight short landscape clips follow one person using the planner:
 
-<!--
-  Video placeholder. To embed a walkthrough, drag an .mp4/.mov into a GitHub issue
-  or release to get a hosted URL, then replace this block with the rendered link,
-  e.g.:
+- [Della Doesn't Want to Burn Out](video/della-how-to/assets/video/della-howto-01.mp4)
+- [Capture It, Then Close the Loop](video/della-how-to/assets/video/della-howto-02.mp4)
+- [Focus on the Next Step](video/della-how-to/assets/video/della-howto-03.mp4)
+- [Repeat What Works](video/della-how-to/assets/video/della-howto-04.mp4)
+- [Reuse Time, Keep It Sorted](video/della-how-to/assets/video/della-howto-05.mp4)
+- [See How the Week Feels](video/della-how-to/assets/video/della-howto-06.mp4)
+- [Fit the Plan to Real Life](video/della-how-to/assets/video/della-howto-07.mp4)
+- [Keep Connections Optional](video/della-how-to/assets/video/della-howto-08.mp4)
 
-  https://github.com/companionintelligence/CI-Planning/assets/<id>/walkthrough.mp4
--->
+The same folder has 16 feature walkthrough clips, from Today through Scheduled Jobs.
+See the [video README](video/della-how-to/README.md) and [storyboard](video/della-how-to/storyboard.json)
+for the full set and production notes.
 
 ## Screenshots
 
