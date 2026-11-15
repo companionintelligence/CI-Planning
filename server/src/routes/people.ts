@@ -113,7 +113,12 @@ export function peopleRouter() {
     if (typeof body.merge_id !== 'string' || !body.merge_id) {
       ctx.status = 422; ctx.body = { error: 'merge_id is required' }; return;
     }
-    const person = await mergePeople(owner, ctx.params.id, body.merge_id);
+    let person;
+    try {
+      person = await mergePeople(owner, ctx.params.id, body.merge_id);
+    } catch (err) {
+      ctx.status = 422; ctx.body = { error: (err as Error).message }; return;
+    }
     if (!person) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     writeAudit({ ownerId: owner, actor: 'owner', action: 'person.merge', entity: `person:${person.id}` });
     broadcast(owner, 'person:updated', { id: person.id });

@@ -21,6 +21,7 @@ import { partitionTaskSections, headerOpenCount } from '../lib/task-sections.js'
 import { SuggestionsSection } from '../components/SuggestionsSection.js';
 import { splitBlockTag } from '../lib/element.js';
 import { Skeleton } from '../components/Skeleton.js';
+import { SharedTasksPanel } from '../components/SharedTasksPanel.js';
 
 export function AllTasks() {
   const [showFilters, setShowFilters] = createSignal(false);
@@ -87,12 +88,25 @@ export function AllTasks() {
   // URL-driven (`/tasks?tab=…`) so deep-links and reloads land on the same tab.
   const [searchParams, setSearchParams] = useSearchParams();
   const view = () => parseTasksTab(searchParams.tab);
+  const [authConfig] = createResource(() => api.auth.config().catch(() => null));
+  const taskTabs = (): Array<[TasksTab, string]> => {
+    const tabs: Array<[TasksTab, string]> = [
+      ['tasks', 'Tasks'],
+      ['objectives', 'Objectives'],
+      ['habits', 'Habits'],
+      ['routines', 'Routines'],
+      ['timeblocks', 'Timeblock'],
+    ];
+    if (authConfig()?.mode === 'sso') tabs.splice(1, 0, ['shared', 'Shared']);
+    return tabs;
+  };
   const isTaskTab = () => view() === 'tasks' || view() === 'habits';
   // Switching to a panel tab drops the Tasks-only archive/filter state; the
   // objectives deep-link focus (`?focus=`) is cleared on any explicit tab change.
   const selectTab = (v: TasksTab) => {
     setSearchParams({ tab: v, focus: undefined, task: undefined });
     if (v !== 'tasks' && v !== 'habits') { setShowArchive(false); setShowFilters(false); }
+    if (v === 'shared') { setActiveTask(null); setDetailsOpen(false); }
   };
 
   // AF-D: `?task=<id>` selects a task and opens the drawer on it. This is what makes the
@@ -211,7 +225,7 @@ export function AllTasks() {
 
   return (
     <div class="view-container page-enter">
-      <ViewHeader title="Tasks" sub={`${activeTaskCount()} open`}>
+      <ViewHeader title="Tasks" sub={view() === 'shared' ? 'Read-only shared tasks' : `${activeTaskCount()} open`}>
         <Show when={isTaskTab()}>
           <button
             onClick={() => setPlanWeekModal({ open: true })}
@@ -237,14 +251,8 @@ export function AllTasks() {
       {/* Tabs — always visible; sort sits to the right on the Task/Habit tabs. */}
       <div class="view-tabs justify-between" role="tablist">
         <div class="flex flex-wrap">
-          {/* AF-1 order: Tasks · Objectives · Habits · Routines · Timeblock. */}
-          <For each={[
-            ['tasks', 'Tasks'],
-            ['objectives', 'Objectives'],
-            ['habits', 'Habits'],
-            ['routines', 'Routines'],
-            ['timeblocks', 'Timeblock'],
-          ] as const}>
+          {/* Shared tasks are available when app accounts are enabled. */}
+          <For each={taskTabs()}>
             {([v, label]) => (
               <button role="tab" class="view-tab" aria-selected={view() === v} onClick={() => selectTab(v)}>
                 {label}
@@ -419,6 +427,7 @@ export function AllTasks() {
       {/* ── Routines / Timeblock — panels lifted from the Patterns view ── */}
       <Show when={view() === 'routines'}><RoutinesPanel /></Show>
       <Show when={view() === 'timeblocks'}><TimeBlocksPanel /></Show>
+      <Show when={view() === 'shared'}><SharedTasksPanel /></Show>
     </div>
   );
 }

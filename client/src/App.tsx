@@ -102,8 +102,11 @@ const FAB_ROUTES = ['/', '/tasks', '/calendar', '/tags', '/focus', '/jobs'];
 
 function Shell(props: { children?: any }) {
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   useTaskReminders();
-  const hasFab = () => FAB_ROUTES.includes(location.pathname);
+  const hasFab = () =>
+    FAB_ROUTES.includes(location.pathname)
+    && !(location.pathname === '/tasks' && searchParams.tab === 'shared');
 
   // The trust dial (scheduling_prefs.trust_mode, 0070) — all three positions, via a
   // button that shows the one in force. The old Suggest/Schedule toggle here could only

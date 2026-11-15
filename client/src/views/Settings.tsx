@@ -945,202 +945,7 @@ export function Settings() {
             </section>
           </Show>
 
-          {/* Phase AG — Accounts (operator-only; non-operators never see this card,
-              and the server 403s them anyway). Only rendered behind the auth gate:
-              test/standalone deployments have no login accounts to manage. */}
-          <Show when={authCfg()?.mode === 'sso' && me()?.isOperator && accounts()}>
-            <section class="card">
-              <div class="flex items-center justify-between mb-3">
-                <div class="section-label flex items-center gap-1.5" title="Operators manage accounts, system jobs, and the Google connection. Members plan their own days. Viewers are read-only. Role changes sign the user out everywhere."><Users size={12} /> Team</div>
-                {/* A4: local accounts can be invited whenever local login is served — both
-                    sso sub-modes since A3 — not only under DISABLE_OIDC. The native shells leave
-                    this out: they do not create accounts (see the mobile section of the README). */}
-                <Show when={authCfg()?.local && !acctFormOpen() && !isNativeShell()}>
-                  <button type="button" onClick={() => setAcctFormOpen(true)} class="btn-secondary text-xs px-3 py-1.5">
-                    <Plus size={12} /> New account
-                  </button>
-                </Show>
-              </div>
-              {/* Create form (local accounts — Companion Portal users are provisioned on their first portal sign-in, after confirming) */}
-              <Show when={acctFormOpen()}>
-                <div class="flex flex-col gap-2 p-3 mb-3 rounded-md bg-muted/40 border border-border">
-                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                    <label class="flex flex-col gap-1">
-                      <span class="text-[11px] text-muted-foreground">Username</span>
-                      <input class="input py-1 text-sm" type="text" autocomplete="off"
-                        value={acctUsername()} onInput={(e) => setAcctUsername(e.currentTarget.value)} />
-                    </label>
-                    <label class="flex flex-col gap-1">
-                      <span class="text-[11px] text-muted-foreground">Email <span class="opacity-70">· the invite goes there</span></span>
-                      <input class="input py-1 text-sm" type="email" autocomplete="off" placeholder="them@example.com"
-                        value={acctEmail()} onInput={(e) => setAcctEmail(e.currentTarget.value)} />
-                    </label>
-                    <label class="flex flex-col gap-1">
-                      <span class="text-[11px] text-muted-foreground">Role</span>
-                      <select class="input py-1 text-sm" value={acctRole()}
-                        onChange={(e) => setAcctRole(e.currentTarget.value as import('../lib/api.js').OwnerRole)}>
-                        <option value="member">Member</option>
-                        <option value="viewer">Viewer</option>
-                        <option value="operator">Operator</option>
-                      </select>
-                    </label>
-                  </div>
-                  <p class="text-[11px] text-muted-foreground">
-                    They get a single-use link to set their own password (valid 7 days) — you never handle it.
-                  </p>
-                  <div class="flex items-center gap-2 justify-end">
-                    <button type="button" onClick={() => setAcctFormOpen(false)} class="btn-ghost text-xs px-2 py-1">Cancel</button>
-                    <button type="button" onClick={createAccount}
-                      disabled={acctBusy() || !acctUsername().trim() || !acctEmail().trim().includes('@')}
-                      class="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
-                      <Plus size={12} /> {acctBusy() ? 'Creating…' : 'Create & send invite'}
-                    </button>
-                  </div>
-                </div>
-              </Show>
 
-              {/* SMTP-free fallback: the server handed the link back — shown once. */}
-              <Show when={inviteLink()}>
-                <div class="flex flex-col gap-1.5 p-3 mb-3 rounded-md border border-amber-500/40 bg-amber-500/10">
-                  <div class="flex items-center justify-between gap-2">
-                    <span class="text-xs text-foreground font-medium">
-                      Set-password link for “{inviteLink()!.username}” — no outgoing email is configured, so send it to them yourself.
-                    </span>
-                    <button type="button" onClick={() => setInviteLink(null)} class="btn-ghost text-xs px-2 py-1"><X size={12} /></button>
-                  </div>
-                  <code class="text-[11px] font-mono break-all select-all">{inviteLink()!.link}</code>
-                  <span class="text-[11px] text-muted-foreground">Single use · shown only once — it isn't stored anywhere else.</span>
-                </div>
-              </Show>
-
-              <div class="flex flex-col gap-2">
-                <For each={accounts() ?? []}>
-                  {(a) => (
-                    <div class="flex flex-col gap-1.5 rounded-md border border-border px-3 py-2">
-                      <div class="flex items-center justify-between gap-2 flex-wrap">
-                        <div class="min-w-0">
-                          <span class="text-xs text-foreground font-medium truncate">{a.name}</span>
-                          <span class="text-[11px] text-muted-foreground ml-2">
-                            {a.username ?? a.email ?? '—'}{a.id === me()!.ownerId ? ' · you' : ''}
-                            {!a.username ? ' · signs in via Companion Portal' : ''}
-                          </span>
-                          <Show when={a.username && !a.hasPassword}>
-                            <span class="text-[10px] px-1.5 py-0.5 ml-2 rounded-sm bg-amber-500/15 text-amber-400">invite pending</span>
-                          </Show>
-                        </div>
-                        <div class="flex items-center gap-1.5 shrink-0">
-                          <select
-                            class="input py-0.5 text-xs w-auto"
-                            value={a.role}
-                            disabled={a.id === me()!.ownerId}
-                            title={a.id === me()!.ownerId ? 'Another operator must change your role' : 'Set this account\'s role'}
-                            onChange={(e) => changeRole(a.id, e.currentTarget.value as import('../lib/api.js').OwnerRole)}
-                          >
-                            <option value="operator">Operator</option>
-                            <option value="member">Member</option>
-                            <option value="viewer">Viewer</option>
-                          </select>
-                          <Show when={a.username}>
-                            <button type="button" class="btn-ghost text-xs px-2 py-1" disabled={acctBusy()}
-                              title={a.hasPassword
-                                ? 'Email them a single-use password-reset link'
-                                : 'Send the set-password invite again (replaces the previous link)'}
-                              onClick={() => sendInvite(a)}>
-                              <KeyRound size={12} /> {a.hasPassword ? 'Send reset link' : 'Resend invite'}
-                            </button>
-                          </Show>
-                          <Show when={a.id !== me()!.ownerId}>
-                            <button type="button" class="btn-ghost text-xs px-2 py-1 text-destructive"
-                              title="Delete this account and all of its data"
-                              onClick={() => deleteAccount(a)}>
-                              <Trash2 size={12} />
-                            </button>
-                          </Show>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </For>
-              </div>
-
-              {/* B2 — invite codes (AUTH_SIGNUP=invite only; under `open` nobody needs one and
-                  under `off` nobody can use one). Someone with a code creates their OWN
-                  account at /signup — you never see their password. The native shells leave
-                  this out (see the mobile section of the README). */}
-              <Show when={signupReq()?.enabled && signupReq()?.codeRequired && !isNativeShell()}>
-                <div class="mt-4 pt-3 border-t border-border flex flex-col gap-2">
-                  <div class="flex items-center justify-between gap-2 flex-wrap">
-                    <div class="section-label flex items-center gap-1.5" title="Single-use codes that let someone create their own account at /signup. They pick their own username and password; you never handle it. Codes expire after 7 days.">
-                      <Ticket size={12} /> Invite codes
-                    </div>
-                    <div class="flex items-center gap-1.5">
-                      <input class="input py-1 text-xs w-36" type="text" placeholder="Note (optional)" maxlength="120"
-                        value={codeNote()} onInput={(e) => setCodeNote(e.currentTarget.value)} />
-                      <button type="button" onClick={mintSignupCode} disabled={codeBusy()}
-                        class="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
-                        <Plus size={12} /> {codeBusy() ? 'Minting…' : 'New invite code'}
-                      </button>
-                    </div>
-                  </div>
-                  <p class="text-[11px] text-muted-foreground">
-                    Hand a code to someone and send them to <code class="font-mono">/signup</code>. Single use · expires in 7 days.
-                  </p>
-
-                  {/* Shown once — the server keeps only a hash. */}
-                  <Show when={freshCode()}>
-                    <div class="flex flex-col gap-1.5 p-3 rounded-md border border-amber-500/40 bg-amber-500/10">
-                      <div class="flex items-center justify-between gap-2">
-                        <span class="text-xs text-foreground font-medium">
-                          Invite code{freshCode()!.note ? ` for “${freshCode()!.note}”` : ''} — copy it now, it isn't shown again.
-                        </span>
-                        <button type="button" onClick={() => setFreshCode(null)} class="btn-ghost text-xs px-2 py-1"><X size={12} /></button>
-                      </div>
-                      <code class="text-base font-mono tracking-widest select-all" data-testid="fresh-signup-code">{freshCode()!.code}</code>
-                    </div>
-                  </Show>
-
-                  <Show when={(signupCodes() ?? []).length > 0} fallback={<span class="text-[11px] text-muted-foreground">No invite codes yet.</span>}>
-                    <div class="flex flex-col gap-1">
-                      <For each={signupCodes() ?? []}>
-                        {(c) => (
-                          <div class="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-1.5 text-xs">
-                            <div class="min-w-0 flex items-center gap-2 flex-wrap">
-                              <span class="text-foreground truncate">{c.note ?? 'Untitled code'}</span>
-                              <span
-                                class="text-[10px] px-1.5 py-0.5 rounded-sm"
-                                classList={{
-                                  'bg-emerald-500/15 text-emerald-400': c.status === 'active',
-                                  'bg-muted text-muted-foreground': c.status === 'used',
-                                  'bg-amber-500/15 text-amber-400': c.status === 'expired',
-                                  'bg-destructive/15 text-destructive': c.status === 'revoked',
-                                }}
-                              >
-                                {c.status}
-                              </span>
-                              <span class="text-[11px] text-muted-foreground">
-                                {c.status === 'used' && c.usedByName
-                                  ? `used by ${c.usedByName}`
-                                  : c.status === 'active'
-                                    ? `expires ${fmtDay(c.expiresAt)}`
-                                    : `created ${fmtDay(c.createdAt)}`}
-                              </span>
-                            </div>
-                            <Show when={c.status === 'active'}>
-                              <button type="button" class="btn-ghost text-xs px-2 py-1 text-destructive shrink-0"
-                                title="Revoke this code — it can no longer be used to sign up"
-                                onClick={() => revokeSignupCode(c)}>
-                                <X size={12} /> Revoke
-                              </button>
-                            </Show>
-                          </div>
-                        )}
-                      </For>
-                    </div>
-                  </Show>
-                </div>
-              </Show>
-            </section>
-          </Show>
 
 
           {/* Backup / Restore / Export */}
@@ -2338,10 +2143,234 @@ export function Settings() {
 
       {/* ── PEOPLE TAB ────────────────────────────────────────────────────────── */}
       <Show when={activeTab() === 'people'}>
+          {/* Phase AG — Accounts (operator-only; non-operators never see this card,
+              and the server 403s them anyway). Only rendered behind the auth gate:
+              test/standalone deployments have no login accounts to manage. */}
+          <Show when={authCfg()?.mode === 'sso' && me()?.isOperator}>
+            <section class="card">
+              <div class="flex items-center justify-between mb-3">
+                <div class="section-label flex items-center gap-1.5" title="Operators manage sign-in accounts, roles, and invitations."><Users size={12} /> Account administration</div>
+                {/* A4: local accounts can be invited whenever local login is served — both
+                    sso sub-modes since A3 — not only under DISABLE_OIDC. The native shells leave
+                    this out: they do not create accounts (see the mobile section of the README). */}
+                <Show when={authCfg()?.local && !acctFormOpen() && !isNativeShell()}>
+                  <button type="button" onClick={() => setAcctFormOpen(true)} class="btn-secondary text-xs px-3 py-1.5">
+                    <Plus size={12} /> New account
+                  </button>
+                </Show>
+              </div>
+              <p class="text-xs text-muted-foreground mb-3">
+                Manage app sign-ins and roles here. This does not grant access to another person's full task details.
+              </p>
+              <Show when={accounts.loading}>
+                <p class="text-xs text-muted-foreground mb-3" role="status">Loading accounts…</p>
+              </Show>
+              <Show when={!accounts.loading && accounts() === null}>
+                <div class="flex items-center justify-between gap-3 text-xs mb-3" role="alert">
+                  <span class="text-muted-foreground">Accounts could not load.</span>
+                  <button type="button" class="btn-secondary" onClick={() => refetchAccounts()}>Try again</button>
+                </div>
+              </Show>
+              <Show when={accounts()?.length === 0}>
+                <p class="text-xs text-muted-foreground mb-3">No app accounts yet.</p>
+              </Show>
+              {/* Create form (local accounts — Companion Portal users are provisioned on their first portal sign-in, after confirming) */}
+              <Show when={acctFormOpen()}>
+                <div class="flex flex-col gap-2 p-3 mb-3 rounded-md bg-muted/40 border border-border">
+                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <label class="flex flex-col gap-1">
+                      <span class="text-[11px] text-muted-foreground">Username</span>
+                      <input class="input py-1 text-sm" type="text" autocomplete="off"
+                        value={acctUsername()} onInput={(e) => setAcctUsername(e.currentTarget.value)} />
+                    </label>
+                    <label class="flex flex-col gap-1">
+                      <span class="text-[11px] text-muted-foreground">Email <span class="opacity-70">· the invite goes there</span></span>
+                      <input class="input py-1 text-sm" type="email" autocomplete="off" placeholder="them@example.com"
+                        value={acctEmail()} onInput={(e) => setAcctEmail(e.currentTarget.value)} />
+                    </label>
+                    <label class="flex flex-col gap-1">
+                      <span class="text-[11px] text-muted-foreground">Role</span>
+                      <select class="input py-1 text-sm" value={acctRole()}
+                        onChange={(e) => setAcctRole(e.currentTarget.value as import('../lib/api.js').OwnerRole)}>
+                        <option value="member">Member</option>
+                        <option value="viewer">Viewer</option>
+                        <option value="operator">Operator</option>
+                      </select>
+                    </label>
+                  </div>
+                  <p class="text-[11px] text-muted-foreground">
+                    They get a single-use link to set their own password (valid 7 days) — you never handle it.
+                  </p>
+                  <div class="flex items-center gap-2 justify-end">
+                    <button type="button" onClick={() => setAcctFormOpen(false)} class="btn-ghost text-xs px-2 py-1">Cancel</button>
+                    <button type="button" onClick={createAccount}
+                      disabled={acctBusy() || !acctUsername().trim() || !acctEmail().trim().includes('@')}
+                      class="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
+                      <Plus size={12} /> {acctBusy() ? 'Creating…' : 'Create & send invite'}
+                    </button>
+                  </div>
+                </div>
+              </Show>
+
+              {/* SMTP-free fallback: the server handed the link back — shown once. */}
+              <Show when={inviteLink()}>
+                <div class="flex flex-col gap-1.5 p-3 mb-3 rounded-md border border-amber-500/40 bg-amber-500/10">
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="text-xs text-foreground font-medium">
+                      Set-password link for “{inviteLink()!.username}” — no outgoing email is configured, so send it to them yourself.
+                    </span>
+                    <button type="button" onClick={() => setInviteLink(null)} class="btn-ghost text-xs px-2 py-1"><X size={12} /></button>
+                  </div>
+                  <code class="text-[11px] font-mono break-all select-all">{inviteLink()!.link}</code>
+                  <span class="text-[11px] text-muted-foreground">Single use · shown only once — it isn't stored anywhere else.</span>
+                </div>
+              </Show>
+
+              <div class="flex flex-col gap-2">
+                <For each={accounts() ?? []}>
+                  {(a) => (
+                    <div class="flex flex-col gap-1.5 rounded-md border border-border px-3 py-2">
+                      <div class="flex items-center justify-between gap-2 flex-wrap">
+                        <div class="min-w-0">
+                          <span class="text-xs text-foreground font-medium truncate">{a.name}</span>
+                          <span class="text-[11px] text-muted-foreground ml-2">
+                            {a.username ?? a.email ?? '—'}{a.id === me()!.ownerId ? ' · you' : ''}
+                            {!a.username ? ' · signs in via Companion Portal' : ''}
+                          </span>
+                          <Show when={a.username && !a.hasPassword}>
+                            <span class="text-[10px] px-1.5 py-0.5 ml-2 rounded-sm bg-amber-500/15 text-amber-400">invite pending</span>
+                          </Show>
+                        </div>
+                        <div class="flex items-center gap-1.5 shrink-0">
+                          <select
+                            class="input py-0.5 text-xs w-auto"
+                            value={a.role}
+                            disabled={a.id === me()!.ownerId}
+                            title={a.id === me()!.ownerId ? 'Another operator must change your role' : 'Set this account\'s role'}
+                            onChange={(e) => changeRole(a.id, e.currentTarget.value as import('../lib/api.js').OwnerRole)}
+                          >
+                            <option value="operator">Operator</option>
+                            <option value="member">Member</option>
+                            <option value="viewer">Viewer</option>
+                          </select>
+                          <Show when={a.username}>
+                            <button type="button" class="btn-ghost text-xs px-2 py-1" disabled={acctBusy()}
+                              title={a.hasPassword
+                                ? 'Email them a single-use password-reset link'
+                                : 'Send the set-password invite again (replaces the previous link)'}
+                              onClick={() => sendInvite(a)}>
+                              <KeyRound size={12} /> {a.hasPassword ? 'Send reset link' : 'Resend invite'}
+                            </button>
+                          </Show>
+                          <Show when={a.id !== me()!.ownerId}>
+                            <button type="button" class="btn-ghost text-xs px-2 py-1 text-destructive"
+                              title="Delete this account and all of its data"
+                              onClick={() => deleteAccount(a)}>
+                              <Trash2 size={12} />
+                            </button>
+                          </Show>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </For>
+              </div>
+
+              {/* B2 — invite codes (AUTH_SIGNUP=invite only; under `open` nobody needs one and
+                  under `off` nobody can use one). Someone with a code creates their OWN
+                  account at /signup — you never see their password. The native shells leave
+                  this out (see the mobile section of the README). */}
+              <Show when={signupReq()?.enabled && signupReq()?.codeRequired && !isNativeShell()}>
+                <div class="mt-4 pt-3 border-t border-border flex flex-col gap-2">
+                  <div class="flex items-center justify-between gap-2 flex-wrap">
+                    <div class="section-label flex items-center gap-1.5" title="Single-use codes that let someone create their own account at /signup. They pick their own username and password; you never handle it. Codes expire after 7 days.">
+                      <Ticket size={12} /> Invite codes
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                      <input class="input py-1 text-xs w-36" type="text" placeholder="Note (optional)" maxlength="120"
+                        value={codeNote()} onInput={(e) => setCodeNote(e.currentTarget.value)} />
+                      <button type="button" onClick={mintSignupCode} disabled={codeBusy()}
+                        class="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
+                        <Plus size={12} /> {codeBusy() ? 'Minting…' : 'New invite code'}
+                      </button>
+                    </div>
+                  </div>
+                  <p class="text-[11px] text-muted-foreground">
+                    Hand a code to someone and send them to <code class="font-mono">/signup</code>. Single use · expires in 7 days.
+                  </p>
+
+                  {/* Shown once — the server keeps only a hash. */}
+                  <Show when={freshCode()}>
+                    <div class="flex flex-col gap-1.5 p-3 rounded-md border border-amber-500/40 bg-amber-500/10">
+                      <div class="flex items-center justify-between gap-2">
+                        <span class="text-xs text-foreground font-medium">
+                          Invite code{freshCode()!.note ? ` for “${freshCode()!.note}”` : ''} — copy it now, it isn't shown again.
+                        </span>
+                        <button type="button" onClick={() => setFreshCode(null)} class="btn-ghost text-xs px-2 py-1"><X size={12} /></button>
+                      </div>
+                      <code class="text-base font-mono tracking-widest select-all" data-testid="fresh-signup-code">{freshCode()!.code}</code>
+                    </div>
+                  </Show>
+
+                  <Show when={(signupCodes() ?? []).length > 0} fallback={<span class="text-[11px] text-muted-foreground">No invite codes yet.</span>}>
+                    <div class="flex flex-col gap-1">
+                      <For each={signupCodes() ?? []}>
+                        {(c) => (
+                          <div class="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-1.5 text-xs">
+                            <div class="min-w-0 flex items-center gap-2 flex-wrap">
+                              <span class="text-foreground truncate">{c.note ?? 'Untitled code'}</span>
+                              <span
+                                class="text-[10px] px-1.5 py-0.5 rounded-sm"
+                                classList={{
+                                  'bg-emerald-500/15 text-emerald-400': c.status === 'active',
+                                  'bg-muted text-muted-foreground': c.status === 'used',
+                                  'bg-amber-500/15 text-amber-400': c.status === 'expired',
+                                  'bg-destructive/15 text-destructive': c.status === 'revoked',
+                                }}
+                              >
+                                {c.status}
+                              </span>
+                              <span class="text-[11px] text-muted-foreground">
+                                {c.status === 'used' && c.usedByName
+                                  ? `used by ${c.usedByName}`
+                                  : c.status === 'active'
+                                    ? `expires ${fmtDay(c.expiresAt)}`
+                                    : `created ${fmtDay(c.createdAt)}`}
+                              </span>
+                            </div>
+                            <Show when={c.status === 'active'}>
+                              <button type="button" class="btn-ghost text-xs px-2 py-1 text-destructive shrink-0"
+                                title="Revoke this code — it can no longer be used to sign up"
+                                onClick={() => revokeSignupCode(c)}>
+                                <X size={12} /> Revoke
+                              </button>
+                            </Show>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+                </div>
+              </Show>
+            </section>
+          </Show>
+
+        <Show when={authCfg()?.mode === 'sso' && me()?.isOperator === false}>
+          <section class="card">
+            <div class="section-label flex items-center gap-1.5 mb-1"><Users size={12} /> Account administration</div>
+            <p class="text-xs text-muted-foreground">Only app operators can manage accounts, roles, and invitations.</p>
+          </section>
+        </Show>
+
         <section class="card">
           <div class="section-label flex items-center gap-1.5 mb-1" title="The people you can name as Responsible or Beneficiaries on a task or time block. Entries detected from calendar invites and email arrive here unconfirmed — rename, merge, or delete them."><Users size={12} /> People</div>
+          <p class="text-xs text-muted-foreground mb-3">
+            Add people to tasks or time blocks. App accounts can see only a read-only list of tasks shared with them.
+          </p>
           <PeopleSettings />
         </section>
+
+
       </Show>
 
       {/* ── LEARNING TAB ── Outside the <form> on purpose: its buttons act at once

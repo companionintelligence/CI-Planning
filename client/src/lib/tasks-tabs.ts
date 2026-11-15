@@ -6,8 +6,8 @@
  * so the validation is unit-testable without jsdom.
  */
 
-/** Tab order as rendered: Tasks · Objectives · Habits · Routines · Timeblock. */
-export const TASKS_TABS = ['tasks', 'objectives', 'habits', 'routines', 'timeblocks'] as const;
+/** Tab order as rendered: Tasks · Shared · Objectives · Habits · Routines · Timeblock. */
+export const TASKS_TABS = ['tasks', 'shared', 'objectives', 'habits', 'routines', 'timeblocks'] as const;
 
 export type TasksTab = (typeof TASKS_TABS)[number];
 

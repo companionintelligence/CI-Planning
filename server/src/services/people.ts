@@ -303,7 +303,20 @@ export async function mergePeople(owner: string, keepId: string, mergeId: string
   const [into, from] =
     merge.account_id != null && merge.account_id === merge.owner_id ? [merge, keep] : [keep, merge];
 
+  // A directory row is the link that grants an account its read-only shared-task
+  // summaries. Preserve a single account identity when merging a manual/detected row
+  // with an account row; two distinct login accounts are never the same identity.
+  if (into.account_id && from.account_id && into.account_id !== from.account_id) {
+    throw new Error('Two different app accounts cannot be merged.');
+  }
+  const accountId = into.account_id ?? from.account_id;
+
   await store().transaction(async () => {
+    if (accountId && !into.account_id) {
+      await store()
+        .prepare(`UPDATE people SET account_id = ?, source = 'account', confirmed = 1 WHERE id = ? AND owner_id = ?`)
+        .run(accountId, into.id, owner);
+    }
     await store()
       .prepare(`UPDATE OR IGNORE person_emails SET person_id = ? WHERE person_id = ? AND owner_id = ?`)
       .run(into.id, from.id, owner);
