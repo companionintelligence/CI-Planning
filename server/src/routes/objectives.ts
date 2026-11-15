@@ -10,6 +10,10 @@ import { taskTagNames, entityCategoryNames } from '../services/tags.js';
 import { taskSecondaryTags, createTask, deleteTask } from '../services/tasks.js';
 import { getEntityPeople } from '../services/people.js';
 import {
+  addObjectiveBoardColumn, listObjectiveBoard, moveObjectiveBoardCard,
+  removeObjectiveBoardColumn,
+} from '../services/objective-board.js';
+import {
   buildTree, createObjective, updateObjective,
   archiveObjective, restoreObjective, requestPurge, cancelPurge, listArchivedObjectiveRows,
   linkTaskToObjective, unlinkTaskFromObjective, moveTaskBetweenObjectives, recomputeObjective,
@@ -23,6 +27,50 @@ import {
  */
 export function objectivesRouter() {
   const router = new Router();
+
+  // Persistent Kanban settings and task placement for the Objectives view. Task
+  // completion itself still uses the normal task route; board columns do not replace
+  // task scheduling fields.
+  router.get('/api/objectives/board', async (ctx) => {
+    ctx.body = await listObjectiveBoard(currentOwnerId());
+  });
+
+  router.post('/api/objectives/board/columns', async (ctx) => {
+    const name = ((ctx.request.body ?? {}) as { name?: string }).name ?? '';
+    const res = await addObjectiveBoardColumn(currentOwnerId(), name);
+    if (!res.ok) {
+      ctx.status = 422;
+      ctx.body = { error: res.error === 'invalid_name' ? 'column name must be 1–32 characters' : res.error === 'duplicate_name' ? 'a column with that name already exists' : 'you can have up to 12 columns' };
+      return;
+    }
+    broadcast(currentOwnerId(), 'objective_board:updated', { column_id: res.column.id });
+    ctx.status = 201;
+    ctx.body = { column: res.column };
+  });
+
+  router.delete('/api/objectives/board/columns/:columnId', async (ctx) => {
+    const res = await removeObjectiveBoardColumn(currentOwnerId(), ctx.params.columnId);
+    if (!res.ok) {
+      ctx.status = res.error === 'not_found' ? 404 : 422;
+      ctx.body = { error: res.error === 'not_found' ? 'column not found' : 'default columns cannot be deleted' };
+      return;
+    }
+    broadcast(currentOwnerId(), 'objective_board:updated', { column_id: ctx.params.columnId });
+    ctx.body = { ok: true };
+  });
+
+  router.post('/api/objectives/board/tasks/:taskId/move', async (ctx) => {
+    const body = (ctx.request.body ?? {}) as { column_id?: string; before_task_id?: string };
+    if (!body.column_id) { ctx.status = 422; ctx.body = { error: 'column_id is required' }; return; }
+    const res = await moveObjectiveBoardCard(currentOwnerId(), ctx.params.taskId, body.column_id, body.before_task_id);
+    if (!res.ok) {
+      ctx.status = res.error === 'task_not_found' ? 404 : 422;
+      ctx.body = { error: res.error === 'task_not_found' ? 'objective task not found' : 'column not found' };
+      return;
+    }
+    broadcast(currentOwnerId(), 'objective_board:updated', { task_id: ctx.params.taskId, column_id: body.column_id });
+    ctx.body = { ok: true };
+  });
 
   // ?archived=1 returns the ARCHIVE: a flat list (an archived subtree is not a tree
   // the panel can render meaningfully). The default tree excludes archived rows.

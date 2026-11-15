@@ -1141,6 +1141,15 @@ export const api = {
     unlinkTask: (id: string, task_id: string) => request<{ ok: boolean }>('DELETE', `/objectives/${id}/tasks/${task_id}`),
     moveTask: (sourceObjectiveId: string, taskId: string, targetObjectiveId: string) =>
       request<{ ok: boolean }>('POST', `/objectives/${sourceObjectiveId}/tasks/${taskId}/move`, { target_objective_id: targetObjectiveId }),
+    board: {
+      list: () => request<ObjectiveBoard>('GET', '/objectives/board'),
+      addColumn: (name: string) => request<{ column: ObjectiveBoardColumn }>('POST', '/objectives/board/columns', { name }),
+      removeColumn: (id: string) => request<{ ok: boolean }>('DELETE', `/objectives/board/columns/${encodeURIComponent(id)}`),
+      moveTask: (taskId: string, columnId: string, beforeTaskId?: string) =>
+        request<{ ok: boolean }>('POST', `/objectives/board/tasks/${encodeURIComponent(taskId)}/move`, {
+          column_id: columnId, before_task_id: beforeTaskId,
+        }),
+    },
     // Dead surface (zero callers — see #392); progress recomputes server-side on link
     // and task changes — no UI needs the manual kick.
     recompute: (id: string) => request<{ ok: boolean }>('POST', `/objectives/${id}/recompute`),
@@ -2168,6 +2177,34 @@ export interface ObjectiveTaskSummary {
   estimated_minutes?: number | null;
   auto_generated?: boolean;
   human_approved_at?: string | null;
+}
+
+export interface ObjectiveBoardColumn {
+  id: string;
+  name: string;
+  system_key: 'open' | 'in_work' | 'done' | null;
+  position: number;
+}
+
+export interface ObjectiveBoardCard {
+  id: string;
+  title: string;
+  /** Task-only search corpus (description, notes, tags, and categories). */
+  search_text?: string;
+  status: string;
+  priority: number | null;
+  due_at: string | null;
+  estimated_minutes: number | null;
+  auto_generated?: boolean;
+  human_approved_at?: string | null;
+  objective_ids: string[];
+  column_id: string;
+  position: number;
+}
+
+export interface ObjectiveBoard {
+  columns: ObjectiveBoardColumn[];
+  cards: ObjectiveBoardCard[];
 }
 
 export interface Objective {

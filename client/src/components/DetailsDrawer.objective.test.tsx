@@ -67,6 +67,7 @@ vi.mock('../stores/ui.js', () => ({
 }));
 vi.mock('../stores/index.js', () => ({
   blocks: () => [], tasks: () => [], taskOf: () => undefined, tags: () => [],
+  selectedDay: () => '2026-11-14',
   objectives: () => [OBJ_ROOT], suggestions: () => [], refetchSuggestions: vi.fn(),
   isSuggestionBusy: () => false, setSuggestionBusy: vi.fn(), connections: () => [],
   showToast: vi.fn(), refetchTasks: vi.fn(), setElementModal: vi.fn(),

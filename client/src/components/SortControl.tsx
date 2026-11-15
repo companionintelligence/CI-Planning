@@ -28,9 +28,9 @@ export function SortControl(props: SortControlProps) {
     // `self-stretch` + `items-stretch`: both controls take their height from the tallest
     // item in the parent row (the search input), instead of a hard-coded pixel value that
     // would silently drift the moment `.input`'s padding or type scale changes.
-    <div class="flex items-stretch gap-2 self-stretch">
+    <div class="task-sort-control flex items-stretch gap-2 self-stretch">
       <div
-        class="inline-flex items-stretch rounded-sm border border-border overflow-hidden text-[11px] flex-shrink-0"
+        class="task-sort-order inline-flex items-stretch rounded-sm border border-border overflow-hidden text-[11px] flex-shrink-0"
         role="group"
         title="Priority: highest-priority first. Due Date: nearest due date first."
       >
@@ -60,7 +60,7 @@ export function SortControl(props: SortControlProps) {
 
       <Show when={props.showDirection}>
         <select
-          class="input py-0 text-[11px] self-stretch"
+          class="task-direction-select input py-0 text-[11px] self-stretch"
           value={props.direction ?? ''}
           onChange={(e) => props.onDirection?.(e.currentTarget.value)}
           title="Filter / group by direction"

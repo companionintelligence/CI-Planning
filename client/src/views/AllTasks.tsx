@@ -1,7 +1,7 @@
 import { createSignal, createResource, createMemo, createEffect, onCleanup, Show, For } from 'solid-js';
 import { ViewHeader } from '../components/ViewHeader.js';
 import { useSearchParams } from '@solidjs/router';
-import { SlidersHorizontal, Search, Archive, ChevronDown, ChevronRight, X, CalendarRange, Pencil, Pentagon, Clock3 } from 'lucide-solid';
+import { SlidersHorizontal, Search, Archive, ChevronDown, ChevronRight, X, CalendarRange, Pencil, Pentagon, Clock3, Target } from 'lucide-solid';
 import { tasks, tags, concepts, prefs, taskFilter, setTaskFilter, refetchTasks, showToast, isRoutineTask, scheduledByTaskId, patternForTask, setPlanWeekModal, setElementModal } from '../stores/index.js';
 import { api, type Block, type Task } from '../lib/api.js';
 import { colorVar } from '../lib/pattern-meta.js';
@@ -32,18 +32,28 @@ export function AllTasks() {
   // Distinct from the Filters panel's server `q` — that mutates the SHARED taskFilter
   // store and would filter Today/Focus too; this is local to the Tasks view.
   const [search, setSearch] = createSignal('');
+  const searchTerms = () => normalizeSearch(search()).split(/\s+/).filter(Boolean);
+  const matchesSearchText = (values: Array<string | null | undefined>): boolean => {
+    const terms = searchTerms();
+    if (terms.length === 0) return true;
+    const corpus = normalizeSearch(values.filter(Boolean).join(' '));
+    return terms.every((term) => corpus.includes(term));
+  };
   const matchesSearch = (t: Task): boolean => {
-    const q = search().trim().toLowerCase();
-    if (!q) return true;
-    if (t.title.toLowerCase().includes(q)) return true;
-    return [...(t.tags ?? []), ...(t.secondary_tags ?? [])].some((n) => n.toLowerCase().includes(q));
+    return matchesSearchText([
+      t.title,
+      t.description,
+      t.notes,
+      ...(t.tags ?? []),
+      ...(t.secondary_tags ?? []),
+      ...(t.categories ?? []),
+      ...(t.responsible ?? []).map((person) => person.display_name),
+      ...(t.beneficiaries ?? []).map((person) => person.display_name),
+    ]);
   };
   const matchesConceptSearch = (b: Block): boolean => {
-    const q = search().trim().toLowerCase();
-    if (!q) return true;
     const { primary, secondary } = splitBlockTag(b.tag);
-    return [b.title, b.note ?? '', primary, ...secondary, ...(b.secondary_tags ?? [])]
-      .some((value) => value.toLowerCase().includes(q));
+    return matchesSearchText([b.title, b.note, primary, ...secondary, ...(b.secondary_tags ?? [])]);
   };
   const [doneOpen, setDoneOpen] = createSignal(true);
   const [cancelledOpen, setCancelledOpen] = createSignal(true);
@@ -82,9 +92,9 @@ export function AllTasks() {
   // Derived from the shared `sections` memo (defined below) — no second partition run.
   const activeTaskCount = () => headerOpenCount(sections());
 
-  // Tasks/Objectives/Habits/Routines/Timeblock tabs. Tasks & Habits list the backlog
+  // Tasks/Shared/Objectives/Habits/Routines/Timeblock tabs. Tasks & Habits list the backlog
   // (both exclude subtasks + recurrence instances — a series collapses to its template);
-  // Objectives, Routines & Timeblock mount extracted panels. AF-1: the active tab is
+  // Shared is list-only; Objectives, Routines & Timeblock mount extracted panels. AF-1: the active tab is
   // URL-driven (`/tasks?tab=…`) so deep-links and reloads land on the same tab.
   const [searchParams, setSearchParams] = useSearchParams();
   const view = () => parseTasksTab(searchParams.tab);
@@ -103,8 +113,13 @@ export function AllTasks() {
   const isTaskTab = () => view() === 'tasks' || view() === 'habits';
   // Switching to a panel tab drops the Tasks-only archive/filter state; the
   // objectives deep-link focus (`?focus=`) is cleared on any explicit tab change.
-  const selectTab = (v: TasksTab) => {
-    setSearchParams({ tab: v, focus: undefined, task: undefined });
+  const selectTab = (v: TasksTab, objectiveView?: 'board' | 'list') => {
+    setSearchParams({
+      tab: v,
+      view: v === 'objectives' && objectiveView === 'board' ? 'board' : undefined,
+      focus: undefined,
+      task: undefined,
+    });
     if (v !== 'tasks' && v !== 'habits') { setShowArchive(false); setShowFilters(false); }
     if (v === 'shared') { setActiveTask(null); setDetailsOpen(false); }
   };
@@ -227,6 +242,15 @@ export function AllTasks() {
     <div class="view-container page-enter">
       <ViewHeader title="Tasks" sub={view() === 'shared' ? 'Read-only shared tasks' : `${activeTaskCount()} open`}>
         <Show when={isTaskTab()}>
+          <Show when={view() === 'tasks'}>
+            <button
+              onClick={() => selectTab('objectives', 'board')}
+              class="btn-secondary gap-2 whitespace-nowrap"
+              title="Open the Objectives board"
+            >
+              <Target size={14} /> Objectives board
+            </button>
+          </Show>
           <button
             onClick={() => setPlanWeekModal({ open: true })}
             class="btn-secondary gap-2 whitespace-nowrap"
@@ -249,9 +273,9 @@ export function AllTasks() {
       </ViewHeader>
 
       {/* Tabs — always visible; sort sits to the right on the Task/Habit tabs. */}
-      <div class="view-tabs justify-between" role="tablist">
-        <div class="flex flex-wrap">
-          {/* Shared tasks are available when app accounts are enabled. */}
+      <div class="view-tabs tasks-view-tabs justify-between" role="tablist">
+        <div class="task-tab-strip flex flex-wrap">
+          {/* AF-1 order: Tasks · Shared · Objectives · Habits · Routines · Timeblock. */}
           <For each={taskTabs()}>
             {([v, label]) => (
               <button role="tab" class="view-tab" aria-selected={view() === v} onClick={() => selectTab(v)}>
@@ -261,34 +285,39 @@ export function AllTasks() {
           </For>
         </div>
         <Show when={isTaskTab() && !showArchive()}>
-          <SortControl
-            order={order()}
-            onOrder={setOrder}
-            showDirection
-            direction={direction()}
-            directions={directions()}
-            onDirection={setDirection}
-          />
-          {/* Always-visible task search — filters the loaded list by title + tag names. */}
-          <div class="relative flex-1 min-w-[10rem] max-w-md">
-            <Search size={13} class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-            <input
-              class="input pl-8 pr-8 w-full"
-              type="search"
-              placeholder="Search tasks…"
-              value={search()}
-              onInput={(e) => setSearch(e.currentTarget.value)}
+          <div class="task-view-controls">
+            <SortControl
+              order={order()}
+              onOrder={setOrder}
+              showDirection
+              direction={direction()}
+              directions={directions()}
+              onDirection={setDirection}
             />
-            <Show when={search()}>
-              <button
-                type="button"
-                onClick={() => setSearch('')}
-                title="Clear search"
-                class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-foreground"
-              >
-                <X size={13} />
-              </button>
-            </Show>
+            {/* Always-visible task search — searches titles, notes, tags, categories, people. */}
+            <div class="task-search relative flex-1 min-w-[10rem] max-w-md">
+              <Search size={13} class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+              <input
+                class="input pl-8 pr-8 w-full"
+                type="text"
+                role="searchbox"
+                aria-label="Search tasks"
+                autocomplete="off"
+                placeholder="Search tasks…"
+                value={search()}
+                onInput={(e) => setSearch(e.currentTarget.value)}
+              />
+              <Show when={search()}>
+                <button
+                  type="button"
+                  onClick={() => setSearch('')}
+                  title="Clear search"
+                  class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-foreground"
+                >
+                  <X size={13} />
+                </button>
+              </Show>
+            </div>
           </div>
         </Show>
       </div>
@@ -430,6 +459,10 @@ export function AllTasks() {
       <Show when={view() === 'shared'}><SharedTasksPanel /></Show>
     </div>
   );
+}
+
+function normalizeSearch(value: string): string {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase();
 }
 
 /** A collapsible Archive container (Completed / Thrown away). */
