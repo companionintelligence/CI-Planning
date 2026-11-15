@@ -10,3 +10,10 @@ build/
 .auth/
 
 node_modules/
+
+# video files — kept locally, never committed (too large for the repo)
+*.mp4
+*.mov
+*.webm
+*.mkv
+*.m4v

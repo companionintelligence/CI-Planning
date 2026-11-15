@@ -1148,21 +1148,21 @@ model is ready. It reads that state and changes nothing. Connect or change eithe
 
 ## Della Planning videos
 
-The Della Bradley use-case videos are committed in [`video/della-how-to/assets/video/`](video/della-how-to/assets/video/).
-These eight short landscape clips follow one person using the planner:
+The Della Bradley use-case videos are eight short landscape clips that follow one person
+using the planner:
 
-- [Della Doesn't Want to Burn Out](video/della-how-to/assets/video/della-howto-01.mp4)
-- [Capture It, Then Close the Loop](video/della-how-to/assets/video/della-howto-02.mp4)
-- [Focus on the Next Step](video/della-how-to/assets/video/della-howto-03.mp4)
-- [Repeat What Works](video/della-how-to/assets/video/della-howto-04.mp4)
-- [Reuse Time, Keep It Sorted](video/della-how-to/assets/video/della-howto-05.mp4)
-- [See How the Week Feels](video/della-how-to/assets/video/della-howto-06.mp4)
-- [Fit the Plan to Real Life](video/della-how-to/assets/video/della-howto-07.mp4)
-- [Keep Connections Optional](video/della-how-to/assets/video/della-howto-08.mp4)
+1. Della Doesn't Want to Burn Out
+2. Capture It, Then Close the Loop
+3. Focus on the Next Step
+4. Repeat What Works
+5. Reuse Time, Keep It Sorted
+6. See How the Week Feels
+7. Fit the Plan to Real Life
+8. Keep Connections Optional
 
-The same folder has 16 feature walkthrough clips, from Today through Scheduled Jobs.
-See the [video README](video/della-how-to/README.md) and [storyboard](video/della-how-to/storyboard.json)
-for the full set and production notes.
+The video files are not committed. Git ignores MP4s under `video/`, so keep the clips
+locally in `video/della-how-to/assets/video/`. See the [video README](video/della-how-to/README.md)
+and [storyboard](video/della-how-to/storyboard.json) for the full set and production notes.
 
 ## Screenshots
 
