@@ -335,11 +335,11 @@ export function LearningCard(props: LearningCardProps) {
                           class={`mt-1 overflow-x-auto ${FOCUS}`}
                           tabindex="0"
                           role="region"
-                          aria-label={`${s().label ?? props.title}: readings table`}
+                          aria-label={`${s().label ?? props.title}: readings table, scrolls sideways`}
                         >
                           <table class="w-full text-left text-[11px] tabular-nums">
                             <caption class="sr-only">
-                              {`${s().label ?? props.title}: readings, newest first`}
+                              {`${s().label ?? props.title}: every weekly reading, newest first`}
                             </caption>
                             <thead class="text-muted-foreground">
                               <tr>

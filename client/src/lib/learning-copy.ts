@@ -22,6 +22,7 @@ import {
   formatRange,
   wilsonRange,
   type Comparison,
+  type Pooled,
   type Reading,
 } from './learning-stats.js';
 
@@ -48,26 +49,26 @@ export const LEARNING_FACTS = {
 } as const;
 
 export const COMMON = {
-  loading: 'Loading readings...',
+  loading: 'Loading...',
   tryAgain: 'Try again',
-  errorFailed: 'Could not load readings. Try again soon.',
-  errorOffline: 'Could not connect. Check your connection.',
-  errorUnsupported: 'This server has no readings yet. Update it to see them.',
+  errorFailed: 'Could not load these readings. Try again in a moment.',
+  errorOffline: 'Could not reach the server. Check your connection and try again.',
+  errorUnsupported: 'This server does not report this yet. Update the server to see it.',
   // Said to a screen reader (not drawn) once a Try again has finished loading.
-  loaded: 'Readings are ready.',
+  loaded: 'Readings loaded.',
   showReadings: 'Show the readings',
-  whatItCounts: 'What this shows',
-  moreAbout: 'More details',
-  howItStarts: 'How this starts',
+  whatItCounts: 'What this counts and changes',
+  moreAbout: 'More about this number',
+  howItStarts: 'How it starts',
   notMeasured: 'not measured',
-  readOnlyNote: 'You can view these readings. You cannot clear them.',
-  forbiddenToast: 'You can view learning data. You cannot clear it.',
+  readOnlyNote: 'Your account is read-only, so you can see this but not clear it.',
+  forbiddenToast: 'This account can read learning but not clear it.',
   // A clear that failed. Fixed sentences, like the read errors: the server's own text and the
   // browser's transport text are never shown.
-  clearFailed: 'Could not clear this. Try again soon.',
-  clearOffline: 'Could not connect. Nothing was cleared. Check your connection.',
+  clearFailed: 'Could not clear this. Try again in a moment.',
+  clearOffline: 'Could not reach the server, so nothing was cleared. Check your connection and try again.',
   // Built from MIN_N, never a typed 10, so the caption and the dot rule cannot disagree.
-  chartCaption: `Each dot shows one weekly reading. Hollow dots have under ${MIN_N} cases. Dashed marks show weeks without scores. Gaps mean no reading was saved.`,
+  chartCaption: `Each dot is one weekly reading. A hollow dot has fewer than ${MIN_N} cases behind it. A dashed tick means the week was checked but nothing could be measured. A break means no reading was recorded.`,
 } as const;
 
 /**
@@ -85,7 +86,18 @@ export function describeRate(hits: number, n: number): { fraction: string; perce
 }
 
 const TOO_FEW = (noun: string) =>
-  `Too few readings to compare. Each ${BLOCK_DAYS}-day span needs ${MIN_N} ${noun}.`;
+  `Not enough cases to compare yet. Each ${BLOCK_DAYS}-day period needs at least ${MIN_N} ${noun}.`;
+
+/**
+ * What went into one side of a comparison, so "the 28 days" is never claimed for fewer
+ * readings than that: how many readings were pooled and the dates of the first and last.
+ * A side built from three weekly readings, or from a reading 35 days back, says so.
+ */
+function sideNote(p: Pooled): string {
+  const count = `${p.readings} ${p.readings === 1 ? 'reading' : 'readings'}`;
+  if (p.readings === 1 || p.from === p.to) return `${count}, ${shortDate(p.to)}`;
+  return `${count}, ${shortDate(p.from)} to ${shortDate(p.to)}`;
+}
 
 /**
  * The comparison sentence. It states a change, never a cause, never which direction is
@@ -99,14 +111,17 @@ const TOO_FEW = (noun: string) =>
 export function describeComparison(c: Comparison, labels: { unit: string; noun: string }): string {
   const { latest, earlier, anchor } = c;
   if (c.verdict === 'too-few' || !latest || !earlier || !anchor) return TOO_FEW(labels.noun);
-  const first = `Latest: ${latest.hits} of ${latest.n} ${labels.unit}.`;
-  const second = `Earlier: ${earlier.hits} of ${earlier.n} ${labels.unit}.`;
-  const uncertainty = `Latest rates may range from ${formatRange(latest.range)}.`;
-  const earlierUncertainty = `Earlier rates may range from ${formatRange(earlier.range)}.`;
-  const tail = c.verdict === 'no-clear-change'
-    ? 'The ranges overlap. Change is unclear.'
-    : 'The ranges differ. This does not explain why.';
-  return `${first} ${second} ${uncertainty} ${earlierUncertainty} ${tail}`;
+  const first =
+    `The ${BLOCK_DAYS} days to ${shortDate(anchor)} (${sideNote(latest)}): ` +
+    `${formatPct(latest.hits, latest.n)} ${labels.unit} (${latest.hits} of ${latest.n}, could be ${formatRange(latest.range)}).`;
+  const second =
+    `The ${BLOCK_DAYS} days before (${sideNote(earlier)}): ` +
+    `${formatPct(earlier.hits, earlier.n)} (${earlier.hits} of ${earlier.n}, could be ${formatRange(earlier.range)}).`;
+  const tail =
+    c.verdict === 'no-clear-change'
+      ? 'The ranges overlap, so this is no clear change. A gap this size could be chance.'
+      : `That is ${c.verdict} by more than chance would explain. It shows a change, not the reason for it.`;
+  return `${first} ${second} ${tail}`;
 }
 
 /**
@@ -118,7 +133,7 @@ export function pointLabel(r: Reading): string {
   if (!r.measured || !(r.n > 0) || r.hits < 0 || r.hits > r.n) return `${when}: ${COMMON.notMeasured}`;
   const d = describeRate(r.hits, r.n);
   if (d.percent === null || d.range === null) return `${when}: ${d.fraction}`;
-  return `${when}: ${d.fraction} (${d.percent}; range ${d.range})`;
+  return `${when}: ${d.fraction} (${d.percent}, could be ${d.range})`;
 }
 
 /** The Share cell of a readings table: a percent at MIN_N cases or more, 'under 10 cases'

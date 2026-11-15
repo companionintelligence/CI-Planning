@@ -10,6 +10,7 @@ import {
   LEARNING_LIMITS,
   MIN_N,
   daysBetween,
+  formatPct,
   formatRange,
   readingValue,
   wilsonRange,
@@ -51,14 +52,24 @@ const F = LEARNING_FACTS.classification;
 
 // ── Copy ─────────────────────────────────────────────────────────────────────
 
-const TITLE = 'Task label guesses';
+const TITLE = 'Category and motivation guesses';
+
+const ordinal = (n: number): string => {
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 13) return `${n}th`;
+  return `${n}${({ 1: 'st', 2: 'nd', 3: 'rd' } as Record<number, string>)[n % 10] ?? 'th'}`;
+};
 
 const MEANING =
-  'Tracks how often guesses match your corrections. ' +
-  `It checks guesses from the past ${F.windowDays} days. ` +
-  'Each week, it tests some corrected guesses. ' +
-  'Only hard guesses get tested. ' +
-  'Small samples can mislead.';
+  "What it counts: when your local model fills in a task's category, or who it is for (me, us, them), " +
+  'the app logs the guess, and a change you make is a correction. ' +
+  `Once a week (early on Monday, server time) it builds a set of examples from your corrections to guesses made in the last ${F.windowDays} days, ` +
+  `holds back every ${ordinal(F.heldOutStride)} correction, ` +
+  `asks the model about up to ${F.maxScored} of the held-back ones per field using the examples it just built, ` +
+  'and counts how many answers match what you chose. ' +
+  'The days run from when the app made the guess, not from when you corrected it, so a correction to a guess that is now over that old stops counting. ' +
+  'Cases behind it: the held-back count printed in every line, often 1 to 5 early on. ' +
+  'Direction: higher is better.';
 
 // The examples reach a prompt in THREE places, and the copy keeps them apart because they
 // differ in what picks the examples and in what they need:
@@ -81,14 +92,23 @@ const MEANING =
 // and a field needs CORRECTION_FLOOR learnable corrections (a cleared category is logged but not
 // learned from). "Exactly one place" or "never shown to the model" would claim less than the
 // code does; "when the model guesses" would claim more.
-const MEMORY_FILL_IN = 'Memory suggestions need Companion Memory.';
+const MEMORY_FILL_IN = 'It runs only when Companion Memory is connected and finds something related to the task.';
 
 const CHANGES =
-  'Your corrections teach the model over time. ' +
-  `After ${F.correctionFloor} similar corrections, examples can guide guesses. ` +
-  'New examples appear after Monday’s update. ' +
-  'The model never replaces your entries. ' +
-  `${MEMORY_FILL_IN}`;
+  'What it changes: your past corrections reach the model in three places. ' +
+  `The Describe-it line in the Add dialog (and quick add through the API) shows up to ${F.retrieveK} of the corrections you make most often, ` +
+  'for each field, at the end of its prompt, whatever you typed. ' +
+  'This needs no Companion Memory, and it is sent only when the model answering is one that was tested with it ' +
+  '(gemma3n:e4b, qwen2.5:3b and gemma3:4b; the others tried answered worse), so on any other model the prompt is the usual one. ' +
+  'The category part needs the model to name one of your categories, as a list or as one word; ' +
+  'an answer that names none of them gives nothing to learn from. ' +
+  `The fill-in from memory (the "Fill in details from memory" button and the nightly fill-in) shows up to ${F.retrieveK} corrections that look like the task, ` +
+  'or your most frequent ones with no embedding model. ' +
+  `${MEMORY_FILL_IN} ` +
+  "The third is Monday's test, described above. " +
+  `Nothing changes before the next Monday run, and a field starts after ${F.correctionFloor} corrections it can learn from; ` +
+  'a category you clear is kept but not learned from. ' +
+  'The model never overwrites a value you already filled in.';
 
 // Deliberately NOT "the stock model got it wrong the first time". The model that made the
 // first guess is not always a stock one: services/task-enrich.ts puts the current examples
@@ -96,80 +116,90 @@ const CHANGES =
 // is a miss by the model WITH examples. What is true for every held-back case is that the
 // first guess was not what the owner chose.
 const PRIMARY_CAVEAT =
-  'These are guesses you corrected. ' +
-  'A high score means more matches. ' +
-  'It cannot prove the model is right.';
+  "Every held-back case is a task where the model's first guess was not what you chose, so these are the hard ones. " +
+  'A high score means the model now answers the way you corrected it. ' +
+  'It cannot show that the examples helped, because nothing was measured without them, ' +
+  'and it does not show the model is right in general. ' +
+  'It is also not a score of the Describe-it line, which asks the model a longer question.';
 
 // Built from wilsonRange, never typed, so the example cannot drift from the maths.
 const SMALL_NUMBERS_RANGE = formatRange(wilsonRange(3, 4) ?? { lo: 0, hi: 1 });
 
 const MORE_CAVEATS: readonly string[] = [
-  'The test skips guesses already right. ' +
-    'Failed model calls do not count. ' +
-    'Answers must match your full choice.',
-  'This score does not rate other features. ' +
-    'Memory suggestions use different examples. ' +
-    'The app may answer differently each time.',
-  'Only corrected guesses are tested. ' +
-    'Other tasks may work differently. ' +
-    'Small samples can change quickly.',
-  `Each week checks guesses from ${F.windowDays} days. ` +
-    'Some guesses appear in several readings. ' +
-    'Weekly results are not separate tests.',
-  `The app scores up to ${F.maxScored} guesses weekly. ` +
-    `It shows rates only with ${MIN_N} cases. ` +
-    `With four, rates may range ${SMALL_NUMBERS_RANGE}.`,
-  'Not measured does not mean bad. ' +
-    'It means nothing could be scored.',
+  'The score is over the answers the model actually gave. ' +
+    'A call that failed or returned nothing is skipped, not counted as wrong, ' +
+    'so the count behind a reading can be lower than the number of corrections held back. ' +
+    'A category answer counts only when it matches your whole choice, in the same order.',
+  'The test asks one narrow question for each held-back correction, the category or me/us/them, in the same words every time, ' +
+    'with examples picked by how closely they match the task (your most frequent ones with no embedding model). ' +
+    'The Describe-it line asks a longer question with your most frequent corrections at the end, and the memory fill-in adds what Companion Memory found. ' +
+    'So this number is not a score of either, and it is not a recording of what the app did on your tasks.',
+  'Answers it already gets right are not tested, so this cannot show whether the examples made any of those worse. ' +
+    'The same question asked twice can also come out differently, so one weekly score has some noise of its own.',
+  `The test questions change. Each week's test is every ${ordinal(F.heldOutStride)} correction to a guess made in the last ${F.windowDays} days; ` +
+    'many repeat from one week to the next and the set shifts as corrections arrive or age out. ' +
+    'Readings from different weeks are not independent, so they are never added together or compared.',
+  `Small numbers. At most ${F.maxScored} corrections are scored per field per week, and early on it is 1 to 5. ` +
+    `3 right out of 4 looks like ${formatPct(3, 4)}, but the true figure could be anywhere from about ${SMALL_NUMBERS_RANGE}. ` +
+    `That is why a percent appears only at ${MIN_N} or more cases.`,
+  'It is about tasks like the ones you corrected. It says nothing about tasks unlike them.',
+  "A 'not measured' week, or a week with no reading, is not a bad week. It means nothing could be scored.",
 ];
 
 const HOW_TO_START =
-  'Correct a guess when it is wrong. ' +
-  `${F.correctionFloor} recent, similar corrections start learning. ` +
-  'The app checks again each Monday. ' +
-  'Your local model must be ready. ' +
-  'Memory suggestions need Companion Memory.';
+  'Change a category the Describe-it line picked (before you press Add, or later on the task), ' +
+  'or a category or me/us/them label the app filled in from memory. ' +
+  'A value you typed yourself on a task the app did not guess is not a correction, and the Add dialog does not record who a task is for. ' +
+  `${F.correctionFloor} corrections of one kind, to guesses made in the last ${F.windowDays} days, start the examples. ` +
+  `With ${F.heldOutStride}, the weekly test can hold one back and score it. ` +
+  "Nothing reaches a prompt until Monday's run has built the examples. " +
+  'The score also needs your local model (Ollama) running early on Monday; the examples themselves do not. ' +
+  'The Describe-it line needs no Companion Memory. The fill-in from memory does, and Companion Memory is connected under Settings → Connections. ' +
+  'There is no switch to start it earlier and no setting that turns it off.';
 
 const NO_VERDICT =
-  'Too few readings to compare fairly.';
+  'No week-to-week verdict is given here. ' +
+  'The test questions change between weeks, so a verdict would not mean what it says.';
 
 // "Not ready", not "not reachable": the flag behind this is false both when Ollama is down and
 // when it is running without the models this needs (lib/ollama-health.ts), and the second
 // case is not "unreachable".
 const AI_OFF =
-  'Your local model is not ready. New guesses are paused. Monday’s check cannot run.';
+  "Your local model is not ready right now. New guesses are not being made and Monday's test cannot be scored.";
 
 const NO_ROWS_AT_ALL =
   'No readings yet. ' +
-  `It needs ${F.correctionFloor} similar corrections. ` +
-  'The app checks early each Monday.';
+  `A reading appears after the weekly pass (early on Monday, server time) finds at least ${F.correctionFloor} of your corrections to guesses made in the last ${F.windowDays} days. ` +
+  'Until then the model is shown no examples of your choices and nothing is measured.';
 
-const TABLE_COLUMNS = ['Date', 'Matched', 'Scored', 'Rate'];
+const TABLE_COLUMNS = ['Date', 'Right', 'Scored', 'Share'];
 
 // ── Reset ────────────────────────────────────────────────────────────────────
 
 const RESET: ResetSpec = {
   label: 'Clear learned examples',
   hint:
-    'Removes examples shown to the model. ' +
-    'Your corrections stay saved. ' +
-    'Monday’s update can rebuild the examples. ' +
-    'Past readings stay unchanged.',
-  confirmText: 'Clear the model’s learned examples? Your corrections stay saved.',
+    'Removes the examples shown to the model, for category and motivation. ' +
+    "Your corrections are kept, so Monday's pass builds the examples again from them. " +
+    'Past readings stay, and they describe the old examples. ' +
+    'There is no setting that turns this learning off.',
+  confirmText:
+    'Clear the learned examples for category and motivation guesses? ' +
+    'Your corrections are kept and will be used again on Monday.',
   run: () => api.learning.resetClassification(),
   clearedMessage: (n) =>
     n === 1
-      ? 'Cleared one example. Monday’s update can rebuild it.'
-      : `Cleared ${n} examples. Monday’s update can rebuild them.`,
-  emptyMessage: 'Nothing to clear. No examples are saved.',
-  doneStatus: 'Your examples were cleared. Monday’s update can rebuild them.',
-  nothingToClear: 'No examples are saved to clear.',
+      ? 'Cleared 1 learned example. It is rebuilt from your corrections on Monday.'
+      : `Cleared ${n} learned examples. They are rebuilt from your corrections on Monday.`,
+  emptyMessage: 'Nothing to clear. No learned examples are stored.',
+  doneStatus: "Cleared. The model is shown no examples until Monday's pass.",
+  nothingToClear: 'No learned examples are stored, so there is nothing to clear.',
 };
 
 // ── The pure builder ─────────────────────────────────────────────────────────
 
-const FIELD_LABEL: Record<string, string> = { category: 'Task type', motivation: "Who it's for (me, us, them)" };
-const FIELD_SHORT: Record<string, string> = { category: 'Task type', motivation: "Who it's for" };
+const FIELD_LABEL: Record<string, string> = { category: 'Category', motivation: 'Motivation (me, us, them)' };
+const FIELD_SHORT: Record<string, string> = { category: 'Category', motivation: 'Motivation' };
 const labelOf = (field: string): string => FIELD_LABEL[field] ?? field;
 
 /** What a guess was about, as the line under the card names it. Order is the order printed. */
@@ -192,12 +222,12 @@ export function evidenceLine(res: ClassificationAccuracyResponse): string | null
       const n = (res.evidence ?? [])
         .filter((e) => e.field === field && e.entity_kind === kind)
         .reduce((sum, e) => sum + (isCount(e.corrections) ? Math.floor(e.corrections) : 0), 0);
-      return n > 0 ? [`${n} ${KIND_LABEL[kind]}`] : [];
+      return n > 0 ? [`${n} to ${KIND_LABEL[kind]}`] : [];
     });
-    if (byKind.length > 0) parts.push(`${shortOf(field)}: ${byKind.join(', ')}`);
+    if (byKind.length > 0) parts.push(`${shortOf(field)}: ${byKind.join(', ')}.`);
   }
   if (parts.length === 0) return null;
-  return `Recent corrections: ${parts.join('; ')}.`;
+  return `Corrections the examples are built from, by what the guess was about (guesses made in the last ${F.windowDays} days). ${parts.join(' ')}`;
 }
 const shortOf = (field: string): string => FIELD_SHORT[field] ?? field;
 
@@ -205,7 +235,7 @@ const shortOf = (field: string): string => FIELD_SHORT[field] ?? field;
 const isMeasured = (r: Reading): boolean => readingValue(r) !== null;
 
 function noReadingYet(field: string): string {
-  return `${shortOf(field)}: no reading yet. It needs ${F.correctionFloor} similar corrections.`;
+  return `${shortOf(field)}: no reading yet. It needs at least ${F.correctionFloor} corrections of this kind, to guesses made in the last ${F.windowDays} days.`;
 }
 
 /** Fraction first. A percent only at MIN_N scored cases, and then always with its range.
@@ -213,18 +243,23 @@ function noReadingYet(field: string): string {
 function measuredHeadline(field: string, r: Reading, stale: boolean): string {
   const d = describeRate(r.hits, r.n);
   const when = shortDate(r.date);
-  const reading = stale ? 'Last reading' : 'Latest reading';
+  const reading = stale ? `last reading, ${when}` : `reading of ${when}`;
   if (d.percent === null || d.range === null) {
-    return `${d.fraction} guesses matched your choice. ${reading}: ${when}.`;
+    const noun = r.n === 1 ? 'correction' : 'corrections';
+    return `${shortOf(field)}: ${d.fraction} held-back ${noun} answered the way you chose (${reading}).`;
   }
   return (
-    `${d.percent} matched (${d.fraction}). ` +
-    `Possible rates range from ${d.range}. ${reading}: ${when}.`
+    `${shortOf(field)}: ${d.percent} (${d.fraction}) of held-back corrections answered the way you chose (${reading}). ` +
+    `With this many cases the true figure could be anywhere from ${d.range}.`
   );
 }
 
 function notMeasuredHeadline(r: Reading): string {
-  return `Not measured on ${shortDate(r.date)}. No score was ready.`;
+  return (
+    `Not measured on ${shortDate(r.date)}. The weekly test could not score anything. ` +
+    'That happens when your local model was off or did not answer, or when there were too few corrections to hold one back. ' +
+    'The app does not record which.'
+  );
 }
 
 function tableRow(r: Reading): { key: string; cells: string[] } {
@@ -241,11 +276,16 @@ function tableRow(r: Reading): { key: string; cells: string[] } {
  * never ran looks the same, so the cause is named only when the OTHER field has a newer
  * reading, which proves the pass ran since.
  */
-function staleNote(newest: Reading): string {
-  return `No reading since ${shortDate(newest.date)}. The reason is unknown.`;
+function staleNote(newest: Reading, latestAnywhere: string): string {
+  const since = `No reading since ${shortDate(newest.date)}.`;
+  const floor = `${F.correctionFloor} corrections to guesses made in the last ${F.windowDays} days`;
+  if (daysBetween(newest.date, latestAnywhere) > 0) {
+    return `${since} The weekly pass has run since, and this field had fewer than ${floor}, so its examples were removed.`;
+  }
+  return `${since} Either the weekly pass has not run, or this field has fewer than ${floor} and its examples were removed.`;
 }
 
-function fieldView(fs: FieldSeries, ctx: LearningContext, emptyText: string): SeriesView {
+function fieldView(fs: FieldSeries, ctx: LearningContext, emptyText: string, latestAnywhere: string): SeriesView {
   const readings = fs.readings; // ascending: the normaliser orders by date, never the wire
   const key = fs.field;
   const label = labelOf(fs.field);
@@ -267,17 +307,18 @@ function fieldView(fs: FieldSeries, ctx: LearningContext, emptyText: string): Se
 
   const newest = readings[readings.length - 1];
   const measured = isMeasured(newest);
-  const latest = `Latest reading: ${shortDate(newest.date)}, ${describeAge(ageInDays(newest.date, ctx.now))}.`;
+  const latest = `Latest reading: ${shortDate(newest.date)} (${describeAge(ageInDays(newest.date, ctx.now))}).`;
 
   const stale = isStale(newest.date, ctx.now);
-  const notes: string[] = stale ? [staleNote(newest)] : [];
+  const notes: string[] = stale ? [staleNote(newest, latestAnywhere)] : [];
   if (!measured) {
     // The old number is a note, never the headline.
     const lastMeasured = [...readings].reverse().find(isMeasured);
     if (lastMeasured) {
       // Names what is counted: '3 of 4' on its own could be the right answers or the wrong ones.
+      const noun = lastMeasured.n === 1 ? 'correction' : 'corrections';
       const fraction = describeRate(lastMeasured.hits, lastMeasured.n).fraction;
-      notes.push(`Last score: ${fraction} matched.`);
+      notes.push(`Last measured: ${fraction} held-back ${noun} answered the way you chose, on ${shortDate(lastMeasured.date)}.`);
     }
   }
 
@@ -293,7 +334,7 @@ function fieldView(fs: FieldSeries, ctx: LearningContext, emptyText: string): Se
     label,
     state: measured ? 'measured' : 'not-measured',
     headline: measured ? measuredHeadline(fs.field, newest, stale) : notMeasuredHeadline(newest),
-    detail: measured ? `Higher scores mean more matches. ${latest}` : latest,
+    detail: measured ? `Higher is better. ${latest}` : latest,
     notes,
     comparison: NO_VERDICT,
     empty: null,
@@ -321,7 +362,7 @@ export function classificationView(res: ClassificationAccuracyResponse, ctx: Lea
   const series = fields.map((fs, i) =>
     // With no rows at all the long explanation is said once, on the first block, instead of
     // twice in a row; every other empty block keeps its own per-field sentence.
-    fieldView(fs, ctx, !anyReading && i === 0 ? NO_ROWS_AT_ALL : noReadingYet(fs.field)),
+    fieldView(fs, ctx, !anyReading && i === 0 ? NO_ROWS_AT_ALL : noReadingYet(fs.field), latestAnywhere),
   );
 
   return {
@@ -331,7 +372,7 @@ export function classificationView(res: ClassificationAccuracyResponse, ctx: Lea
     // The wire does not say how many examples are stored, so there is no status line, except
     // after a clear made this session, which it can state as a fact of its own.
     status: cleared
-      ? `Cleared on ${shortDate(clearedOn as string)}. Monday’s update can rebuild examples.`
+      ? `Cleared on ${shortDate(clearedOn as string)}. The model is shown no examples until Monday's pass.`
       : null,
     startOpen: !series.some((s) => s.state === 'measured'),
     // The wire does not report the example count either, so a reading is the best sign

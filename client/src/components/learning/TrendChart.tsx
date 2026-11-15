@@ -39,12 +39,13 @@ export function chartLabel(title: string, points: ChartPoint[]): string {
   const dated = points
     .filter((p) => shortDate(p.date) !== '')
     .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-  if (dated.length === 0) return `${title} chart has no readings.`;
+  if (dated.length === 0) return `${title}: no readings to plot.`;
   const first = shortDate(dated[0].date);
   const last = dated[dated.length - 1];
   const count = `${dated.length} ${dated.length === 1 ? 'reading' : 'readings'}`;
-  const span = dated.length === 1 ? `${first}` : `${first} to ${shortDate(last.date)}`;
-  return `${title} chart shows ${count}. Dates: ${span}. Scale runs from 0 to 100 percent. See the table for every value.`;
+  const span = dated.length === 1 ? `on ${first}` : `from ${first} to ${shortDate(last.date)}`;
+  const latest = last.value === null ? 'Latest reading not measured.' : `Latest reading ${last.label}.`;
+  return `${title}: ${count} ${span}, on a scale of 0 to 100 percent. ${latest} The table of readings below has every value.`;
 }
 
 const LABEL_SIZE = 11;

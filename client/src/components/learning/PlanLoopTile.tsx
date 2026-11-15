@@ -49,62 +49,58 @@ function stageLabel(stage: string): string {
 
 // ── Copy ─────────────────────────────────────────────────────────────────────
 
-const TITLE = 'AI day plan checks';
+const TITLE = 'AI day ordering checks';
 
 const MEANING =
-  'AI checks plans for rule breaks. ' +
-  'A second AI check scores plans. ' +
-  'Plans must follow rules. ' +
-  `Scores need ${FACTS.passMark * 100}% to pass. ` +
-  `AI can try ${FACTS.maxTries} times. ` +
-  'Readings show checked and passed plans. ' +
-  'They also show average tries.';
+  `Each time AI day ordering orders your day, one model call writes the order and a second call scores it ${FACTS.judgeSamples} times, ` +
+  `and the middle score counts. The plan passes when it breaks none of the fixed rules and that score is at least ${FACTS.passMark} out of 1. ` +
+  `If it has not passed after ${FACTS.maxTries} tries, or the score barely moves between tries, or the call budget runs out, ` +
+  'the app gives up and uses the plain rule-based order. ' +
+  `A reading is added early on Monday (server time) and counts the plans finished in the ${FACTS.periodDays} days before it: ` +
+  'plans checked, passed, passed on the first try, gave up, and average tries.';
 
 const CHANGES =
-  'This screen only shows results. ' +
-  'It does not change future plans.';
+  'This changes nothing about how plans are made. It is a readout for a person to read, and no part of it adjusts the next plan.';
 
 /** The first entry is the one that is always visible; the rest sit under "More about this number". */
 const CAVEATS: readonly string[] = [
-  'AI checks plans with separate calls. ' +
-    'Those calls may use one model. ' +
-    'Passing does not mean you liked it.',
-  'Only finished checks count here. ' +
-    'Failed runs may not appear.',
-  'Rule-based plans are not counted. ' +
-    'Only AI day ordering counts.',
-  `Fewer than ${MIN_N} plans is a small sample. ` +
-    'Small samples can change quickly.',
-  'This checks only the day order. ' +
-    'It does not check every plan part.',
-  'Empty weeks mean no plans checked. ' +
-    'They do not mean plans were bad.',
+  `A model is checking another model's work. The writer and the checker are separate calls, and they can be the same model. ` +
+    'Nothing here records whether you kept or changed the plan, so this cannot say whether plans are good for you.',
+  `Passing means the checker was satisfied. A stricter or looser scoring prompt would give a different rate for the same plans, ` +
+    `so the rate is comparable only with itself, and only while the prompt and the ${FACTS.passMark} pass mark stay the same.`,
+  'Only finished runs are counted. A run that stopped with an error before it finished may not appear here at all.',
+  'Days planned with the plain rule-based order (AI day ordering off, or no model available) are not counted.',
+  `A week with fewer than ${MIN_N} plans is a small sample, and is drawn as a hollow dot. One week's share can swing a lot on so few plans.`,
+  'Only the day-order step is measured today.',
+  'A week with no reading is a week with no plans checked, not a bad week.',
 ];
 
 const HOW_TO_START =
-  'Turn on AI day ordering in Settings. ' +
-  'Start your local model first. ' +
-  `Keep ${FACTS.minTasksToOrder} tasks ready to place. ` +
-  'New readings appear each Monday.';
+  'Turn on AI day ordering (Settings → Preferences; the switch only shows when your local model, Ollama, is reachable, so start Ollama first), ' +
+  `then plan your day as usual. A day needs at least ${FACTS.minTasksToOrder} tasks waiting to be placed before a model order is written. ` +
+  'A reading appears on the next Monday for any week in which at least one plan was written that way. ' +
+  'Nothing else is needed and there is nothing to configure.';
 
 const NO_RESET_NOTE =
-  'This screen only reports checks. ' +
-  'It does not change plans.';
+  'Nothing to clear. This readout does not change how plans are made, so there is nothing learned to remove.';
 
 const EMPTY =
-  'No readings yet. AI must check plans first.';
+  'No readings yet. A week gets a reading only if AI day ordering produced at least one plan that week. ' +
+  'Nothing here means nothing was checked; it does not mean plans were bad.';
 
-const SMART_OFF_LINE = 'AI day ordering is off. No plans are checked.';
+const SMART_OFF_LINE = 'AI day ordering is off, so no new plans are being checked.';
 // "Not ready", not "not reachable": the flag behind this is false when Ollama is down and also when
 // it is running without the models this needs, and the second case is not "unreachable".
-const MODEL_OFF_LINE = 'Your local model is not ready. No plans are checked.';
+const MODEL_OFF_LINE = 'Your local model is not ready right now, so no new plans are being checked.';
 
 const TABLE_COLUMNS = ['Date', 'Plans checked', 'Passed', 'First try', 'Gave up', 'Average tries'];
-const NOT_RECORDED = 'not saved';
+const NOT_RECORDED = 'not recorded';
 
 // ── Building blocks ──────────────────────────────────────────────────────────
 
 const days = (n: number) => `${n} ${n === 1 ? 'day' : 'days'}`;
+const plansWord = (n: number) => (n === 1 ? 'plan' : 'plans');
+
 interface Extras {
   /** null = not reported, or it contradicts the headline count, so it is left out. */
   firstTry: number | null;
@@ -135,30 +131,34 @@ function extrasOf(r: Reading): Extras {
 
 const oneDecimal = (v: number) => v.toFixed(1);
 
-function measuredHeadline(_label: string, r: Reading): string {
+function measuredHeadline(label: string, r: Reading): string {
   const rate = describeRate(r.hits, r.n);
+  const span = days(r.periodDays);
+  const when = shortDate(r.date);
   const parts: string[] = [];
   if (rate.percent !== null && rate.range !== null) {
     parts.push(
-      `${rate.percent} passed (${rate.fraction}).`,
-      `Possible rates range from ${rate.range}.`,
+      `${label}: ${rate.percent} passed (${rate.fraction} ${plansWord(r.n)}) in the ${span} to ${when}.`,
+      `With this many cases the true figure could be anywhere from ${rate.range}.`,
     );
   } else {
-    parts.push(`Passed: ${rate.fraction} plans.`);
+    parts.push(`${label}: ${rate.fraction} ${plansWord(r.n)} passed the checker in the ${span} to ${when}.`);
   }
   const x = extrasOf(r);
-  if (x.firstTry !== null) parts.push(`Passed first try: ${x.firstTry}.`);
-  if (x.gaveUp !== null) parts.push(`Gave up: ${x.gaveUp} used plain order.`);
-  parts.push(x.avgTries !== null ? `Average tries: ${oneDecimal(x.avgTries)}.` : 'Average tries were not saved.');
+  if (x.firstTry !== null) parts.push(`${x.firstTry} passed on the first try.`);
+  if (x.gaveUp !== null) parts.push(`${x.gaveUp} gave up and used the plain order.`);
+  parts.push(x.avgTries !== null ? `Average tries per plan: ${oneDecimal(x.avgTries)}.` : 'Average tries: not recorded.');
   return parts.join(' ');
 }
 
 function notMeasuredHeadline(r: Reading): string {
+  const span = days(r.periodDays);
+  const when = shortDate(r.date);
   // n of 0 is the real "nothing was checked". A row that counts plans but has no usable
   // rate is a different thing, and saying "no plans were checked" about it would be false.
   return r.n === 0
-    ? 'Not measured: no plans were checked.'
-    : 'Not measured: these figures could not be read.';
+    ? `Not measured: no plans were checked in the ${span} to ${when}.`
+    : `Not measured: the figures for the ${span} to ${when} could not be read.`;
 }
 
 /** The newest measured reading before the newest one, as a note. Null when there is none. */
@@ -166,19 +166,19 @@ function lastMeasuredNote(readings: Reading[]): string | null {
   for (let i = readings.length - 2; i >= 0; i--) {
     const r = readings[i];
     if (!r.measured) continue;
-    return `Last measured: ${describeRate(r.hits, r.n).fraction} passed on ${shortDate(r.date)}.`;
+    return `Last measured: ${describeRate(r.hits, r.n).fraction} ${plansWord(r.n)} passed on ${shortDate(r.date)}.`;
   }
   return null;
 }
 
 function chartCaption(readings: Reading[], periodDays: number): string {
   const parts = [
-    `Each dot shows plans checked over ${days(periodDays)}.`,
-    `Hollow dots have fewer than ${MIN_N} plans.`,
-    'Gaps mean no plans were checked.',
+    `Each dot is one weekly reading of the plans checked in the ${days(periodDays)} before it.`,
+    `A hollow dot has fewer than ${MIN_N} plans behind it.`,
+    'Blank stretches are weeks with no plans checked.',
   ];
   // Only when one is actually drawn: the server does not write such a row today.
-  if (readings.some((r) => !r.measured)) parts.push('Dashed marks show plans without scores.');
+  if (readings.some((r) => !r.measured)) parts.push('A dashed tick marks a reading with nothing measured in it.');
   return parts.join(' ');
 }
 
@@ -220,7 +220,7 @@ function seriesView(s: StageSeries, labelled: boolean, ctx: LearningContext): Se
     state: measured ? 'measured' : 'not-measured',
     headline: measured ? measuredHeadline(label, newest) : notMeasuredHeadline(newest),
     // No "higher is better" here, on purpose: a model is grading a model.
-    detail: `Latest reading: ${shortDate(newest.date)}, ${describeAge(ageInDays(newest.date, ctx.now))}.`,
+    detail: `Latest reading: ${shortDate(newest.date)} (${describeAge(ageInDays(newest.date, ctx.now))}).`,
     notes: measured ? [] : [lastMeasuredNote(s.readings)].filter((n): n is string => n !== null),
     comparison: null,
     empty: null,
