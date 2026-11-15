@@ -13,6 +13,7 @@ import { CalibrationPins } from '../components/CalibrationPins.js';
 import { PatternBlockSettings } from '../components/PatternBlockSettings.js';
 import { CategorySettings } from '../components/CategorySettings.js';
 import { PeopleSettings } from '../components/PeopleSettings.js';
+import { SharedAccessSettings } from '../components/SharedAccessSettings.js';
 import { enablePush, disablePush, pushState } from '../lib/push.js';
 import { apiUrl, isNativeShell, supportsRedirectFlows } from '../lib/server-config.js';
 import { ServerConnection } from '../components/ServerConnection.js';
@@ -2252,6 +2253,7 @@ export function Settings() {
                             <option value="operator">Operator</option>
                             <option value="member">Member</option>
                             <option value="viewer">Viewer</option>
+                            <option value="guest">Guest</option>
                           </select>
                           <Show when={a.username}>
                             <button type="button" class="btn-ghost text-xs px-2 py-1" disabled={acctBusy()}
@@ -2365,10 +2367,14 @@ export function Settings() {
         <section class="card">
           <div class="section-label flex items-center gap-1.5 mb-1" title="The people you can name as Responsible or Beneficiaries on a task or time block. Entries detected from calendar invites and email arrive here unconfirmed — rename, merge, or delete them."><Users size={12} /> People</div>
           <p class="text-xs text-muted-foreground mb-3">
-            Add people to tasks or time blocks. App accounts can see only a read-only list of tasks shared with them.
+            Manage people, then share selected tasks or objectives with app accounts.
           </p>
           <PeopleSettings />
         </section>
+
+        <Show when={authCfg()?.mode === 'sso' && me()?.role !== 'viewer' && me()?.role !== 'guest'}>
+          <SharedAccessSettings />
+        </Show>
 
 
       </Show>

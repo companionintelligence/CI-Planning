@@ -1,7 +1,7 @@
 import { createSignal, Show, For, createResource } from 'solid-js';
 import { setActiveTask } from '../stores/selection.js';
 import { revealDetails } from '../stores/ui.js';
-import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward, CalendarDays, Rocket, X, Shapes, Target, Check, Sparkles } from 'lucide-solid';
+import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward, CalendarDays, Rocket, X, Shapes, Target, Check, Sparkles, Share2 } from 'lucide-solid';
 import { type Task, type RecurringScope, api } from '../lib/api.js';
 import { tasks, refetchTasks, showToast, setElementModal, tags, patternPrefs, patterns, patternTypes, refetchPatterns, patternForTask, isRoutineTask, flightPlanTaskIds, scheduledByTaskId, texturesEnabled, categoryPrefs, openCloseRitual, askRecurringScope, isRecurringOccurrence } from '../stores/index.js';
 import { buildLinkablePickerRows, linkableObjectives, PICKER_SEARCH_THRESHOLD } from '../lib/objective-picker.js';
@@ -592,6 +592,12 @@ export function TaskCard(props: Props) {
             {props.task.title}
           </span>
 
+          <Show when={props.task.shared}>
+            <span class="inline-flex items-center gap-1 text-[10px] text-muted-foreground shrink-0" title={`Shared task${props.task.shared_by ? ` from ${props.task.shared_by}` : ''}; edits sync to the owner`}>
+              <Share2 size={11} /> Shared
+            </span>
+          </Show>
+
           <Show when={awaitingHumanApproval()}>
             <button
               class="inline-flex items-center gap-1 text-[10px] auto-generated-approval flex-shrink-0"
@@ -630,9 +636,11 @@ export function TaskCard(props: Props) {
                   automatic: it costs a memory round-trip plus a model call. Reports its
                   own no-ops honestly ("memory is off", "nothing related") instead of
                   silently doing nothing. */}
-              <button onClick={enrich} disabled={enriching()} class="btn-icon" title="Fill in details from memory">
-                <Sparkles size={13} classList={{ 'animate-pulse': enriching() }} />
-              </button>
+              <Show when={!props.task.shared}>
+                <button onClick={enrich} disabled={enriching()} class="btn-icon" title="Fill in details from memory">
+                  <Sparkles size={13} classList={{ 'animate-pulse': enriching() }} />
+                </button>
+              </Show>
               <button class="btn-icon" title="Edit" onClick={() => setElementModal({ open: true, mode: 'edit', kind: props.task.is_habit ? 'habit' : 'task', editTarget: { kind: props.task.is_habit ? 'habit' : 'task', id: props.task.id } })}><Pencil size={13} /></button>
               <button onClick={remove} class="btn-icon hover:text-red-400" title="Cancel task"><Trash2 size={13} /></button>
             </div>
@@ -733,6 +741,7 @@ export function TaskCard(props: Props) {
             One row of uniform 32px (h-8) controls, hairline-separated. Accent = the
             reference mint (accent-hi / --mint #58ebbf), the same teal the P3 chip uses. */}
         <div class="flex items-center gap-2 flex-wrap mt-2.5 pt-2.5 border-t border-border/60">
+          <Show when={!props.task.shared}>
           {/* subtask count (expand) — only when there are subtasks */}
           <Show when={subtaskCount() > 0}>
             <button
@@ -838,6 +847,7 @@ export function TaskCard(props: Props) {
               </Show>
             </div>
           </div>
+          </Show>
 
           {/* spacer — pushes dates/priority/flight to the right, balancing the two clusters */}
           <div class="flex-1 min-w-[8px]" />
@@ -847,6 +857,7 @@ export function TaskCard(props: Props) {
             <DateField label="Due" value={props.task.due_at} overdue={dueOverdue()} onSet={setDue} />
             <DateField label="Start" value={props.task.scheduled_for} highlight={startHighlight()} onSet={setStart} />
             <PriorityToggle value={p()} onPick={setPriority} />
+            <Show when={!props.task.shared}>
             <button
               onClick={sendToFlightPlan}
               class="flex items-center justify-center h-8 w-8 rounded-sm flex-shrink-0 transition-all"
@@ -858,6 +869,7 @@ export function TaskCard(props: Props) {
             >
               <Rocket size={15} />
             </button>
+            </Show>
           </div>
         </div>
       </div>

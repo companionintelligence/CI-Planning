@@ -19,6 +19,7 @@ import { setPortalIntent, readPortalIntent, clearPortalIntent, csrfMatches, type
 import { setPortalRedirect, readPortalRedirect, clearPortalRedirect } from '../lib/auth/safeRedirect.js';
 import { writeAudit } from '../lib/audit.js';
 import { sendMail } from '../lib/mail/index.js';
+import { activatePendingSharedInvites, hasPendingSharedInvite } from '../services/shared-planner.js';
 
 /**
  * The `/api/auth/*` router.
@@ -748,7 +749,8 @@ export function authRouter() {
     const owner = await findOwnerBySub(claims.sub);
 
     if (!owner) {
-      if (!config.auth.autoProvision) {
+      const shareInvitation = await hasPendingSharedInvite(typeof claims.email === 'string' ? claims.email : null);
+      if (!config.auth.autoProvision && !shareInvitation) {
         // The person came from the Portal button, so send them back to the sign-in screen
         // with the reason, the same as every other refusal here. A bare JSON 403 left them
         // on a blank page with no way forward.
@@ -829,7 +831,8 @@ export function authRouter() {
       ctx.redirect('/login');
       return;
     }
-    if (!config.auth.autoProvision) {
+    const shareInvitation = await hasPendingSharedInvite(intent.email);
+    if (!config.auth.autoProvision && !shareInvitation) {
       logger.warn('CI-Portal account confirmation refused: auto-provision is off');
       clearPortalRedirect(ctx);
       ctx.redirect('/login?sso_error=unknown_account');
@@ -889,10 +892,15 @@ function portalIdentity(claims: Record<string, unknown>): { sub: string; name: s
 async function provisionPortalOwner(identity: Pick<PortalIntent, 'sub' | 'name' | 'email'>): Promise<{ id: string } | 'subject_unavailable'> {
   const existing = await findOwnerBySub(identity.sub);
   if (existing) return existing;
+  const isGuestInvite = await hasPendingSharedInvite(identity.email);
   try {
     const id = await provisionOwner({
-      name: identity.name, email: identity.email, externalSubject: identity.sub, claimOperatorIfNone: true,
+      name: identity.name,
+      email: identity.email,
+      externalSubject: identity.sub,
+      ...(isGuestInvite ? { role: 'guest' as const } : { claimOperatorIfNone: true }),
     });
+    if (isGuestInvite) await activatePendingSharedInvites(id, identity.email);
     const minted = await store().prepare(`SELECT role FROM owners WHERE id = ?`).get<{ role: string }>(id);
     logger.info('CI-Portal provisioned a new owner', { owner: id, role: minted?.role ?? 'member' });
     if (minted?.role === 'operator') {
