@@ -43,6 +43,7 @@ import {
   classificationHint, classificationInput, logAssignment, type Exemplar,
 } from '../services/classification-learning.js';
 import { getEntityPeople, getEntityPeopleBulk } from '../services/people.js';
+import { listSharedTasks } from '../services/shared-tasks.js';
 
 // Task business logic lives in services/tasks.ts (Phase W step 3.1, shared with the
 // coming GraphQL resolvers). These handlers are thin HTTP shells: parse → call the
@@ -190,6 +191,13 @@ function modelPicks(
 
 export function tasksRouter() {
   const router = new Router();
+
+  // GET /api/shared-tasks — deliberately returns a small, read-only list. The only
+  // cross-owner visibility is an explicit Responsible or Beneficiary assignment to
+  // the signed-in account; normal task detail and mutation routes stay owner-scoped.
+  router.get('/api/shared-tasks', async (ctx) => {
+    ctx.body = { tasks: await listSharedTasks(currentOwnerId()) };
+  });
 
   // GET /api/tasks
   router.get('/api/tasks', async (ctx) => {

@@ -93,6 +93,17 @@ export interface AccountRosterEntry {
   person_id: string | null;
 }
 
+/** Read-only summary for a task explicitly shared to this signed-in account. */
+export interface SharedTask {
+  id: string;
+  title: string;
+  status: string;
+  priority: number;
+  due_at: string | null;
+  estimated_minutes: number | null;
+  shared_as: Array<'responsible' | 'beneficiary'>;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -565,6 +576,9 @@ export const api = {
     promote: (id: string, body: { title?: string; due_at?: string; priority?: number } = {}) =>
       request<{ task: Task }>('POST', `/possible-tasks/${id}/promote`, body),
     dismiss: (id: string) => request<{ ok: boolean }>('POST', `/possible-tasks/${id}/dismiss`),
+  },
+  sharedTasks: {
+    list: () => request<{ tasks: SharedTask[] }>('GET', '/shared-tasks'),
   },
   tasks: {
     list: (params?: Record<string, string>) => {

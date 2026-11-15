@@ -28,9 +28,10 @@ query filters on, and `possible_tasks.proposed_owner_id` is the same thing (T4,
 | **Responsible** | the people doing the work | `entity_people.role='responsible'` |
 | **Beneficiary** | the people the work is for | `entity_people.role='beneficiary'` |
 
-Every account is a person; most people are not accounts. Accounts are therefore a
-convenience — they make a roster available to pre-fill from — never a condition on who
-can be named on an item.
+Every account is a person; most people are not accounts. Accounts make a roster
+available to pre-fill from, but anyone can be named on an item. When an account is
+explicitly attached to another owner's task, it can see that task in a read-only,
+summary-only list; it does not gain access to the task itself.
 
 ---
 
@@ -523,12 +524,22 @@ Behaviour, identical for both fields:
 | [SuggestionsSection.tsx:92-124](../client/src/components/SuggestionsSection.tsx#L92) | show detected Responsible/Beneficiaries in the meta line **before** approval — the whole point of detecting at suggestion time (shipped for Responsible only: ingest detects only that set) |
 | [DetailsDrawer.tsx](../client/src/components/DetailsDrawer.tsx) | both sets as read-only chip rows, on tasks **and** blocks (editing stays in the wizard) |
 | [TaskCard.tsx](../client/src/components/TaskCard.tsx) / [BlockCard.tsx](../client/src/components/BlockCard.tsx) | compact initials cluster for Responsible (lead first), no names (shipped on `TaskCard.tsx` and the Planner's [`PlannerEntityCard.tsx`](../client/src/components/PlannerEntityCard.tsx); `BlockCard.tsx` has none) |
-| [Settings.tsx](../client/src/views/Settings.tsx) | new **People** panel: list, rename, merge, delete, review unconfirmed |
-| [AllTasks.tsx](../client/src/views/AllTasks.tsx) | filter by person **and by role** — "what am I on the hook for" vs "what I'm doing for Mom" are different questions (**not built**: `AllTasks.tsx` has no person filter) |
+| [Settings.tsx](../client/src/views/Settings.tsx) | **People** panel: list, rename, merge, delete, review unconfirmed; operators manage app accounts here |
+| [AllTasks.tsx](../client/src/views/AllTasks.tsx) | **Shared** tab lists summary-only tasks for linked accounts. Filtering the owner's task backlog by person and role is still not built. |
 
 ---
 
 ## 8. Out of scope — but note the coupling
+
+### Shipped addendum — account task list (2026-11-14)
+
+`GET /api/shared-tasks` and Tasks → Shared expose a minimal list for the signed-in
+account. A task appears only when its owner attached that account as **Responsible** or
+**Beneficiary**. The list includes title, status, priority, due date, estimate, and which
+role(s) were assigned. It omits notes, descriptions, tags, objectives, and time blocks.
+The recipient cannot open task details or edit, complete, schedule, or delete the task.
+Normal task routes remain scoped to the signed-in owner's data. This is explicit
+visibility for an assignment, not full task sharing or delegation.
 
 **Pushing Responsible to Google Calendar as attendees.** `RemoteEventInput`
 ([connectors/base.ts:34](../server/src/connectors/base.ts#L34)) has no attendee field, and
@@ -581,8 +592,9 @@ install, the same person occupying both roles, and promotion carrying both sets 
 
 ## 10. Decisions needed before step 1
 
-1. **Tenancy (§4)** — reference-only, or real cross-tenant sharing? Changes the data
-   model, not just the UI.
+1. **Tenancy (§4)** — resolved as reference-only task assignments plus a read-only,
+   summary-only list for explicitly assigned accounts. Full cross-tenant task access is
+   still out of scope.
 2. **Account pre-fill (§1)** — should **us** pre-select every known account (planned), or
    open empty with just you pinned? Pre-filling is one tap to prune on a small team and
    several on a large one.

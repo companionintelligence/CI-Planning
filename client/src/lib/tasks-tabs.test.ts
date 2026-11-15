@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { TASKS_TABS, parseTasksTab } from './tasks-tabs.js';
 
 describe('TASKS_TABS', () => {
-  it('renders in the AF-1 order: Tasks, Objectives, Habits, Routines, Timeblock', () => {
-    expect(TASKS_TABS).toEqual(['tasks', 'objectives', 'habits', 'routines', 'timeblocks']);
+  it('includes the shared list in the Tasks tab order', () => {
+    expect(TASKS_TABS).toEqual(['tasks', 'shared', 'objectives', 'habits', 'routines', 'timeblocks']);
   });
 });
 

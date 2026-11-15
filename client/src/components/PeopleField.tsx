@@ -292,7 +292,7 @@ export function PeopleField(props: {
                 >
                   <span class="truncate text-foreground">{person.display_name}</span>
                   <span class="text-[10px] text-muted-foreground flex-shrink-0">
-                    {person.is_self ? 'you' : person.account_id ? 'account' : person.emails[0] ?? ''}
+                    {person.is_self ? 'you' : person.account_id ? 'app account' : person.emails[0] ?? ''}
                   </span>
                 </button>
               )}
