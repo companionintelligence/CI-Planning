@@ -44,8 +44,9 @@ import { httpError } from '../lib/http-error.js';
 // with SELECT *, so those columns joined the payload the moment the migration landed —
 // giving two different shapes under one version string, which is exactly what the
 // version exists to prevent. '13': per-date window overrides. Purely additive; older
-// exports restore with no overrides, inheriting the day-type defaults.
-const EXPORT_VERSION = '13';
+// exports restore with no overrides, inheriting the day-type defaults. '14': objective
+// Kanban columns and task placements are owner data and must round-trip with objectives.
+const EXPORT_VERSION = '14';
 
 /**
  * Older payloads this build can still read. Every change since '6' has been ADDITIVE —
@@ -54,7 +55,7 @@ const EXPORT_VERSION = '13';
  * ageing out. Append each version as it ships; only remove one when its payload
  * genuinely cannot be read any more.
  */
-export const RESTORABLE_VERSIONS = ['6', '7', '8', '9', '10', '11', '12', '13'] as const;
+export const RESTORABLE_VERSIONS = ['6', '7', '8', '9', '10', '11', '12', '13', '14'] as const;
 export { EXPORT_VERSION };
 
 // Owner-scoped tables exported/restored via a direct `WHERE owner_id = ?` query.
@@ -84,6 +85,8 @@ const OWNER_TABLES = [
   // day-type calendar, plan order, calibration, and pattern opt-outs. Each carries an
   // owner_id, so a direct query is enough (objective_tasks is a junction, handled below).
   'objectives',
+  'objective_board_columns',
+  'objective_board_cards',
   'reflections',
   'daily_plan',
   'day_types',
@@ -219,6 +222,7 @@ const JUNCTION_FKS: Record<string, [string, string][]> = {
   possible_task_tags: [['possible_task_id', 'possible_tasks'], ['tag_id', 'tags']],
   possible_task_people: [['possible_task_id', 'possible_tasks'], ['person_id', 'people']],
   objective_tasks: [['objective_id', 'objectives'], ['task_id', 'tasks']],
+  objective_board_cards: [['task_id', 'tasks'], ['column_id', 'objective_board_columns']],
 };
 const ENTITY_KIND_PARENT: Record<string, string> = { task: 'tasks', routine: 'patterns', time_block: 'time_blocks' };
 
@@ -398,6 +402,8 @@ export function backupRouter() {
       // v4 owner-scoped tables (G-EXPORT-MISSING).
       objectives: ownerData['objectives'],
       objective_tasks: objectiveTasks,
+      objective_board_columns: ownerData['objective_board_columns'],
+      objective_board_cards: ownerData['objective_board_cards'],
       reflections: ownerData['reflections'],
       daily_plan: ownerData['daily_plan'],
       day_types: ownerData['day_types'],
@@ -552,6 +558,8 @@ export function backupRouter() {
       // intra-transaction insert order FK-safe; listed parents-before-children for clarity.
       counts['objectives']          = await insertRows('objectives', g('objectives'), ownerId);
       counts['objective_tasks']     = await insertJunctionRows('objective_tasks', g('objective_tasks'), ownerId);
+      counts['objective_board_columns'] = await insertRows('objective_board_columns', g('objective_board_columns'), ownerId);
+      counts['objective_board_cards'] = await insertJunctionRows('objective_board_cards', g('objective_board_cards'), ownerId);
       counts['reflections']         = await insertRows('reflections', g('reflections'), ownerId);
       counts['daily_plan']          = await insertRows('daily_plan', g('daily_plan'), ownerId);
       counts['day_types']           = await insertRows('day_types', g('day_types'), ownerId);

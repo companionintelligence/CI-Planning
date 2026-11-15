@@ -1,8 +1,8 @@
-import { A, useNavigate } from '@solidjs/router';
+import { A, useLocation, useNavigate } from '@solidjs/router';
 import { Show, createResource } from 'solid-js';
 import {
   CheckSquare, Tag, Settings, Activity,
-  Sun, CalendarDays, LogOut, Crosshair, Scale,
+  Sun, CalendarDays, LogOut, Crosshair, Scale, Target,
 } from 'lucide-solid';
 import { showToast } from '../stores/index.js';
 import { api, authGateActive } from '../lib/api.js';
@@ -24,6 +24,11 @@ const utilityLinks = [
 
 export function Nav() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const isObjectiveBoard = () => {
+    const params = new URLSearchParams(location.search);
+    return location.pathname === '/tasks' && params.get('tab') === 'objectives' && params.get('view') === 'board';
+  };
   // Sign-out is only meaningful when the deployment gates on auth (sso mode);
   // test/standalone have no session to end, so the affordance stays hidden.
   const [cfg] = createResource(() => api.auth.config().catch(() => null));
@@ -86,6 +91,21 @@ export function Nav() {
             >
               <l.Icon size={15} class="flex-shrink-0" />
               <Show when={!navCollapsed()}><span class="flex-1">{l.label}</span></Show>
+            </A>
+          </Show>
+          <Show when={l.href === '/tasks'}>
+            <A
+              href="/tasks?tab=objectives&view=board"
+              class="nav-item text-xs"
+              classList={{
+                'nav-item-active': isObjectiveBoard(),
+                'ml-4 pl-4 border-l border-border/60': !navCollapsed(),
+              }}
+              title="Objectives board"
+              aria-label="Objectives board"
+            >
+              <Target size={14} class="flex-shrink-0" />
+              <Show when={!navCollapsed()}><span class="flex-1">Objectives board</span></Show>
             </A>
           </Show>
         </>

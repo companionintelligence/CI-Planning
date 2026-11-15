@@ -13,8 +13,9 @@ import { showToast } from '../stores/index.js';
  * them the directory would slowly fill with near-duplicates ("A. Hartman" and "Alex
  * Hartman" from two sources) that nobody can tidy.
  *
- * The self row and account-linked rows are shown but not deletable — self anchors the
- * "me" shortcut, and an account row is re-materialized on the next pick anyway.
+ * The self row cannot be deleted because it anchors the "me" shortcut. Deleting an
+ * account-linked directory row removes its email matches and item assignments, but does
+ * not disable its login; account administration is a separate operator-only action.
  */
 export function PeopleSettings() {
   const [people, { refetch }] = createResource(async () => (await api.people.list()).people);
@@ -49,7 +50,16 @@ export function PeopleSettings() {
   };
 
   const label = (p: Person) =>
-    p.is_self ? 'you' : p.account_id ? 'account' : p.emails[0] ?? '';
+    p.is_self ? 'you' : p.account_id ? 'app account' : p.emails[0] ?? '';
+
+  function remove(p: Person) {
+    if (p.is_self) return;
+    const message = p.account_id
+      ? `Remove ${p.display_name} and their assignments from tasks, time blocks, and suggestions? Their app account will stay active.`
+      : `Remove ${p.display_name} and their assignments from tasks, time blocks, and suggestions?`;
+    if (!window.confirm(message)) return;
+    void guard(() => api.people.delete(p.id));
+  }
 
   return (
     <div class="flex flex-col gap-3">
@@ -134,9 +144,9 @@ export function PeopleSettings() {
               <button
                 type="button"
                 disabled={busy() || p.is_self}
-                onClick={() => void guard(() => api.people.delete(p.id))}
+                onClick={() => remove(p)}
                 class="text-muted-foreground hover:text-destructive disabled:opacity-30"
-                title={p.is_self ? 'Your own row cannot be deleted' : 'Delete — also removes them from every item'}
+                title={p.is_self ? 'Your own row cannot be deleted' : 'Remove all assignments for this person'}
               >
                 <Trash2 size={13} />
               </button>

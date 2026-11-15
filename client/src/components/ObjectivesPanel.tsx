@@ -4,13 +4,14 @@ import { on } from '../lib/sse.js';
 import {
   Plus, ChevronRight, ChevronDown, Circle, Square, Diamond,
   AlertTriangle, Clock, ArrowRight, Pencil, Trash2, Star,
-  CheckCircle2, ListPlus, Archive, RotateCcw,
+  CheckCircle2, ListPlus, Archive, RotateCcw, Target,
 } from 'lucide-solid';
 import { api, type Objective, type ObjectiveTaskSummary } from '../lib/api.js';
 import { showToast, refetchTasks, setElementModal, elementModal, openCloseRitual, taskOf } from '../stores/index.js';
 import { localISODate } from '../lib/dates.js';
 import { visibleLeafTasks as visibleObjectiveTasks } from '../lib/objectives-quickadd.js';
 import { ObjectiveModal } from './ObjectiveModal.js';
+import { ObjectivesBoard } from './ObjectivesBoard.js';
 import { setActiveEntity } from '../stores/selection.js';
 
 /** Whether `id` is `o` or anywhere in its subtree — used to auto-expand to a focused node. */
@@ -62,11 +63,14 @@ function purgeCountdown(purgeAfter: string): string {
 
 export function ObjectivesPanel() {
   const [data, { refetch }] = createResource(() => api.objectives.list());
+  const [params, setSearchParams] = useSearchParams();
+  // Objectives opens as the hierarchy/list. `view=board` is a deep-link used by the
+  // Tasks header and navigation, so the board is reachable without hiding the list.
+  const [viewMode, setViewMode] = createSignal<'board' | 'hierarchy'>(params.view === 'board' ? 'board' : 'hierarchy');
   // AF-5: refetch() recreates every ObjectiveNode, which used to reset each node's
   // expand/collapse to the depth default — collapsing the objective you just changed
   // to. Panel-scoped (non-reactive) memory of explicit toggles survives refetches.
   const expandState = new Map<string, boolean>();
-  const [params] = useSearchParams();
   const focusId = () => (typeof params.focus === 'string' ? params.focus : undefined); // §K: clicking a task's star deep-links here
   // AF-CU2: the ?focus scroll must be ONE-SHOT. Nothing consumes the param, so
   // every refetch (quick-add, toggle-done, delete, wizard-close) used to remount
@@ -180,6 +184,15 @@ export function ObjectivesPanel() {
   // (AllTasks gates its showArchive flag on isTaskTab() and force-clears it on tab
   // change), and its ArchiveSection is hard-typed to Task[].
   const [showArchive, setShowArchive] = createSignal(false);
+  createEffect(() => {
+    const fromUrl = params.view === 'board' ? 'board' : 'hierarchy';
+    if (viewMode() !== fromUrl) setViewMode(fromUrl);
+  });
+  function chooseView(next: 'board' | 'hierarchy') {
+    setViewMode(next);
+    if (next === 'board') setShowArchive(false);
+    setSearchParams({ view: next === 'board' ? 'board' : undefined });
+  }
   const [archived, { refetch: refetchArchive }] = createResource(
     showArchive, // only fetches once opened
     () => api.objectives.list({ archived: '1' }).then((r) => r.objectives),
@@ -230,11 +243,18 @@ export function ObjectivesPanel() {
       {/* Panel header — the page-level header belongs to the Tasks view. */}
       <div class="flex items-center justify-between gap-x-3 gap-y-2 flex-wrap">
         <h2 class="text-sm font-semibold text-foreground">Goals · Projects · Objectives</h2>
-        <div class="flex items-center gap-2 flex-shrink-0">
+        <div class="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end">
+          <button
+            class="btn-secondary text-xs px-2.5 py-1.5"
+            onClick={() => chooseView(viewMode() === 'board' ? 'hierarchy' : 'board')}
+            title={viewMode() === 'board' ? 'Show objectives as a list' : 'Open the Objectives board'}
+          >
+            <Target size={13} /> {viewMode() === 'board' ? 'Objectives list' : 'Objectives board'}
+          </button>
           <button
             class="btn-ghost text-xs px-2 py-1"
             classList={{ 'text-primary': showArchive() }}
-            onClick={() => setShowArchive((v) => !v)}
+            onClick={() => { chooseView('hierarchy'); setShowArchive((v) => !v); }}
             title={showArchive() ? 'Hide the archive' : 'Show archived objectives'}
           >
             <Archive size={13} /> Archive
@@ -248,6 +268,15 @@ export function ObjectivesPanel() {
         </div>
       </div>
 
+      <Show when={viewMode() === 'board'}>
+        <ObjectivesBoard
+          objectives={data()?.objectives ?? []}
+          objectivesLoading={data.loading}
+          onNewObjective={() => setModal({ mode: 'create' })}
+        />
+      </Show>
+
+      <Show when={viewMode() === 'hierarchy'}>
       {/* Archive — a FLAT list: an archived subtree is not a tree worth rendering.
           Restore is free (the row never left the table); permanent deletion is a
           deadline that stays undoable until the hourly purge job passes it. */}
@@ -335,6 +364,7 @@ export function ObjectivesPanel() {
             )}
           </For>
         </div>
+      </Show>
       </Show>
 
       {/* Modal */}
@@ -445,7 +475,7 @@ function ObjectiveNode(props: {
 
   /** Create and link the task on the server; new tasks remain top-level so they show
    *  in the main Tasks list, while inheriting the objective's source task settings. */
-  async function submitQuickAdd(openWizardAfter = false) {
+  async function submitQuickAdd() {
     const title = qaTitle().trim();
     if (!title || qaBusy()) return;
     setQaBusy(true);
@@ -454,11 +484,7 @@ function ObjectiveNode(props: {
       closeQuickAdd();
       refetchTasks();
       props.onRefetch();
-      if (openWizardAfter) {
-        setElementModal({ open: true, mode: 'edit', kind: 'task', editTarget: { kind: 'task', id: task.id } });
-      } else {
-        showToast('Task added', 'default');
-      }
+      setElementModal({ open: true, mode: 'edit', kind: 'task', editTarget: { kind: 'task', id: task.id } });
     } catch (err) {
       // Surface the failure and re-sync the tree.
       showToast((err as Error).message, 'error');
@@ -466,11 +492,6 @@ function ObjectiveNode(props: {
     } finally {
       setQaBusy(false);
     }
-  }
-
-  /** Create the task through the same estimate/inheritance path, then open its editor. */
-  function moreDetails() {
-    if (qaTitle().trim()) { void submitQuickAdd(true); return; }
   }
 
   async function approveTask(t: ObjectiveTaskSummary) {
@@ -694,15 +715,17 @@ function ObjectiveNode(props: {
                     <CheckCircle2 size={12} class="text-primary" />
                   </Show>
                 </button>
-                <span
-                  class="text-xs truncate"
+                <button
+                  class="text-xs truncate text-left hover:text-primary"
                   classList={{
                     'text-muted-foreground line-through': t.status === 'done',
                     'text-foreground': t.status !== 'done',
                   }}
+                  onClick={() => setElementModal({ open: true, mode: 'edit', kind: 'task', editTarget: { kind: 'task', id: t.id } })}
+                  title="Open task details"
                 >
                   {t.title}
-                </span>
+                </button>
                 <Show when={t.due_at}>
                   {/* Same normalization as TaskCard's DateField: due_at may carry a
                       full timestamp — display the plain YYYY-MM-DD only. */}
@@ -725,7 +748,7 @@ function ObjectiveNode(props: {
             )}
           </For>
 
-          {/* Inline quick-add: Enter creates the task; Esc cancels; More details opens its editor. */}
+          {/* Inline quick-add: Enter creates the task and opens its full editor. */}
           <Show when={quickAdd()}>
             <div class="flex items-center gap-2 pl-6 py-1">
               <ListPlus size={12} class="text-muted-foreground flex-shrink-0" />
@@ -739,7 +762,7 @@ function ObjectiveNode(props: {
                 }}
                 type="text"
                 class="flex-1 min-w-0 bg-background border border-border rounded-md px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary"
-                placeholder="Task title — Enter to add, Esc to cancel"
+                placeholder="Task name — Enter to add and edit"
                 value={qaTitle()}
                 disabled={qaBusy()}
                 onInput={(e) => setQaTitle(e.currentTarget.value)}
@@ -752,9 +775,9 @@ function ObjectiveNode(props: {
                 class="text-[11px] text-muted-foreground hover:text-primary flex-shrink-0 disabled:opacity-40 disabled:hover:text-muted-foreground"
                 disabled={qaBusy() || !qaTitle().trim()}
                 title="Create this task and open its details"
-                onClick={moreDetails}
+                onClick={() => void submitQuickAdd()}
               >
-                More details
+                Add & edit
               </button>
             </div>
           </Show>

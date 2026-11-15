@@ -371,11 +371,11 @@ export function FlightPlan() {
   return (
     <div class="rounded-xl border border-border bg-card overflow-hidden">
       {/* Header */}
-      <div class="flex items-center gap-2 px-3 py-2" classList={{ 'border-b border-border': !collapsed() }}>
+      <div class="flight-plan-header flex items-center gap-2 px-3 py-2" classList={{ 'border-b border-border': !collapsed() }}>
         {/* Collapse toggle + label — takes all available space on the left */}
         <button
           onClick={() => setCollapsed((v) => !v)}
-          class="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.15em] text-primary mr-auto"
+          class="flight-plan-title inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.15em] text-primary mr-auto"
           title={collapsed() ? 'Expand flight-plan' : 'Collapse flight-plan'}
         >
           <Show when={collapsed()} fallback={<ChevronDown size={13} />}><ChevronRight size={13} /></Show>
@@ -392,7 +392,7 @@ export function FlightPlan() {
               "New Today" is `fill_order='new_today'`, which gives the Tasks tab's New
               Today set the earliest slots and orders each half by due date. */}
           <div
-            class="inline-flex rounded-sm border border-border overflow-hidden text-[11px] flex-shrink-0"
+            class="flight-plan-actions inline-flex rounded-sm border border-border overflow-hidden text-[11px] flex-shrink-0"
             role="group"
             title="Priority: place highest-priority tasks first. Due Date: place soonest-due tasks first. New Today: give tasks that arrived today the earliest slots."
           >
@@ -421,7 +421,7 @@ export function FlightPlan() {
               <button
                 onClick={runFill}
                 disabled={running()}
-                class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-sm border border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground transition-colors disabled:opacity-40 flex-shrink-0"
+                class="flight-plan-action inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-sm border border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground transition-colors disabled:opacity-40 flex-shrink-0"
                 title="Propose open tasks into the flight-plan (never places anything)"
               >
                 <Zap size={11} classList={{ 'animate-pulse': running() }} /> Fill Plan
@@ -431,7 +431,7 @@ export function FlightPlan() {
             <button
               onClick={reset}
               disabled={running()}
-              class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-sm border border-border text-muted-foreground hover:border-destructive/50 hover:text-destructive transition-colors disabled:opacity-40 flex-shrink-0"
+              class="flight-plan-action inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-sm border border-border text-muted-foreground hover:border-destructive/50 hover:text-destructive transition-colors disabled:opacity-40 flex-shrink-0"
               title="Clear all tasks from the flight-plan"
             >
               <Trash2 size={11} /> Clear Plan

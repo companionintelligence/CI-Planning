@@ -102,8 +102,11 @@ const FAB_ROUTES = ['/', '/tasks', '/calendar', '/tags', '/focus', '/jobs'];
 
 function Shell(props: { children?: any }) {
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   useTaskReminders();
-  const hasFab = () => FAB_ROUTES.includes(location.pathname);
+  const hasFab = () =>
+    FAB_ROUTES.includes(location.pathname)
+    && !(location.pathname === '/tasks' && searchParams.tab === 'shared');
 
   // The trust dial (scheduling_prefs.trust_mode, 0070) — all three positions, via a
   // button that shows the one in force. The old Suggest/Schedule toggle here could only
@@ -193,7 +196,7 @@ function Shell(props: { children?: any }) {
           <span class="text-xs font-mono text-foreground flex-shrink-0 whitespace-nowrap">
             {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
           </span>
-          <DetailsToggle mobileFloating={location.pathname === '/'} />
+          <DetailsToggle />
         </div>
 
         {/* Phase L: persistent conflict banner — shown when sync ops lost a LWW race */}
@@ -235,13 +238,10 @@ function Shell(props: { children?: any }) {
           shell so it is one surface for every route rather than per-view panels. */}
       <DetailsDrawer />
 
-      {/* Floating Create button — lifted above the bottom nav on mobile. On Today,
-          Tasks, Calendar, Tags, Focus, and Jobs; other views own their own create
-          affordance (e.g. the Planner grid's click-to-create). */}
+      {/* One shared mobile/desktop Create button across the planner's primary views. */}
       <Show when={hasFab()}>
         <button
           class="fab bottom-20 md:bottom-6"
-          classList={{ 'today-mobile-add-hidden': location.pathname === '/' }}
           onClick={() => setElementModal({ open: true, mode: 'add', kind: null })}
           title="Add to calendar"
         >

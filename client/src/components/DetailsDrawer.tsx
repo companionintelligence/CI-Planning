@@ -1821,12 +1821,11 @@ export function DetailsDrawer() {
 }
 
 /** Top-bar toggle for the drawer. Lives in the bar so it survives the drawer closing. */
-export function DetailsToggle(props: { mobileFloating?: boolean }) {
+export function DetailsToggle() {
   return (
     <button
       type="button"
-      class="btn-icon btn-icon-strong flex-shrink-0 min-w-9 min-h-9 justify-center"
-      classList={{ 'details-toggle-mobile-floating': !!props.mobileFloating }}
+      class="btn-icon btn-icon-strong details-toggle-button flex-shrink-0 min-w-9 min-h-9 justify-center"
       aria-expanded={detailsOpen()}
       aria-label={detailsOpen() ? 'Hide details drawer' : 'Show details drawer'}
       title={detailsOpen() ? 'Hide details drawer' : 'Show details drawer'}

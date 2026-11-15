@@ -435,67 +435,61 @@ export function Focus() {
 
   return (
     <div class="view-container page-enter">
-      {/* Header — the Today-style card container (backlog-3 parity, 2026-07-21): same
-          rounded card + right-column button cluster (Brief · Focus goals · day note).
-          No day-stepper on purpose: FOCUS is today-only by design (see the view doc
-          comment) — other days live in Today/Calendar. "Plan my week" lives only in
-          the Calendar header now; FOCUS carries no planning entry point at all. */}
-      <div class="rounded-xl border border-border bg-card p-4 mb-5">
-        <div class="flex items-start justify-between gap-3">
-          <div class="flex items-baseline gap-2">
-            <h1 class="view-title flex items-center gap-2">
-              <Crosshair size={18} class="text-accent-hi" /> Focus
-            </h1>
-            <span class="text-sm text-muted-foreground">
-              · {new Date(`${today}T12:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
-            </span>
-          </div>
-          {/* Right column — the same cluster as Today's header. */}
-          <div class="flex items-center gap-1.5 flex-shrink-0 self-start">
-            <BriefMenu date={today} />
-            <FocusMenu date={today} />
-            {/* Focus Lab — session length + the timer's colour. Display-only settings;
-                the style itself is a standing pref in Settings. */}
-            <button
-              onClick={() => setLabOpen(true)}
-              class="btn-icon"
-              title="Focus Lab — session length and timer colour"
-            >
-              <SlidersHorizontal size={16} />
-            </button>
-            <button
-              onClick={startEditNote}
-              class="btn-icon"
-              classList={{ 'text-primary': !!note(), 'text-muted-foreground': !note() }}
-              title={note() ? 'Edit day note' : 'Add a note for the day'}
-            >
-              <NotebookPen size={16} fill={note() ? 'currentColor' : 'none'} />
-            </button>
+      {/* Open header like Calendar. Focus is today-only, so it has no day-stepper;
+          other dates live in Today/Calendar. */}
+      <div class="view-head">
+        <div class="min-w-0">
+          <h1 class="view-title flex items-center gap-2">
+            <Crosshair size={18} class="text-accent-hi" /> Focus
+          </h1>
+          <p class="view-sub">
+            {new Date(`${today}T12:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+          </p>
+        </div>
+        <div class="view-actions">
+          <BriefMenu date={today} />
+          <FocusMenu date={today} />
+          {/* Focus Lab — session length + the timer's colour. Display-only settings;
+              the style itself is a standing pref in Settings. */}
+          <button
+            onClick={() => setLabOpen(true)}
+            class="btn-icon"
+            title="Focus Lab — session length and timer colour"
+          >
+            <SlidersHorizontal size={16} />
+          </button>
+          <button
+            onClick={startEditNote}
+            class="btn-icon"
+            classList={{ 'text-primary': !!note(), 'text-muted-foreground': !note() }}
+            title={note() ? 'Edit day note' : 'Add a note for the day'}
+          >
+            <NotebookPen size={16} fill={note() ? 'currentColor' : 'none'} />
+          </button>
+        </div>
+      </div>
+
+      {/* Inline day-note editor + display (the Today idiom — no modal). */}
+      <Show when={editingNote()}>
+        <div class="mb-5 flex flex-col gap-2">
+          <textarea
+            class="input text-sm min-h-[64px]"
+            placeholder="A note for today…"
+            value={noteDraft()}
+            onInput={(e) => setNoteDraft(e.currentTarget.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void saveNote(); }}
+          />
+          <div class="flex gap-2">
+            <button class="btn-primary text-xs px-3 py-1" onClick={() => void saveNote()}>Save note</button>
+            <button class="btn-ghost text-xs px-3 py-1" onClick={() => setEditingNote(false)}>Cancel</button>
           </div>
         </div>
-
-        {/* Inline day-note editor + display (the Today idiom — no modal). */}
-        <Show when={editingNote()}>
-          <div class="mt-3 flex flex-col gap-2">
-            <textarea
-              class="input text-sm min-h-[64px]"
-              placeholder="A note for today…"
-              value={noteDraft()}
-              onInput={(e) => setNoteDraft(e.currentTarget.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void saveNote(); }}
-            />
-            <div class="flex gap-2">
-              <button class="btn-primary text-xs px-3 py-1" onClick={() => void saveNote()}>Save note</button>
-              <button class="btn-ghost text-xs px-3 py-1" onClick={() => setEditingNote(false)}>Cancel</button>
-            </div>
-          </div>
-        </Show>
-        <Show when={!editingNote() && note()}>
-          <button class="mt-2 text-left text-xs text-muted-foreground italic hover:text-foreground" onClick={startEditNote}>
-            {note()!.body}
-          </button>
-        </Show>
-      </div>
+      </Show>
+      <Show when={!editingNote() && note()}>
+        <button class="mb-5 text-left text-xs text-muted-foreground italic hover:text-foreground" onClick={startEditNote}>
+          {note()!.body}
+        </button>
+      </Show>
 
       {/* Time-Sense hero — the in-progress block, live countdown, Focus Ritual launcher. */}
       <Show when={currentBlock()}>

@@ -257,6 +257,8 @@ export async function purgeOwnerData(ownerId: string): Promise<void> {
   await run('DELETE FROM possible_tasks WHERE proposed_owner_id = ?', ownerId);
   await run(`DELETE FROM objective_tasks
        WHERE objective_id IN (SELECT id FROM objectives WHERE owner_id = ?)`, ownerId);
+  await run('DELETE FROM objective_board_cards WHERE owner_id = ?', ownerId);
+  await run('DELETE FROM objective_board_columns WHERE owner_id = ?', ownerId);
   await run('DELETE FROM objectives WHERE owner_id = ?', ownerId);
   await run('DELETE FROM reflections WHERE owner_id = ?', ownerId);
   await run('DELETE FROM daily_plan WHERE owner_id = ?', ownerId);

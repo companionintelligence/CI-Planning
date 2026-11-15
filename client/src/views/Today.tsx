@@ -1,5 +1,5 @@
 import { createResource, createMemo, createSignal, createEffect, onCleanup, onMount, Show, For } from 'solid-js';
-import { AlertCircle, CalendarClock, X, Repeat, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, CalendarDays, NotebookPen, Zap, ListFilter, Plus } from 'lucide-solid';
+import { AlertCircle, CalendarClock, X, Repeat, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, CalendarDays, NotebookPen, Zap, ListFilter } from 'lucide-solid';
 import { blocks, tasks, taskOf, tags, isRoutineTask, setElementModal, refetchPatterns, refetchFlightPlan, refetchTasks, refetchBlocks, showToast, selectedDay, setSelectedDay, prefs } from '../stores/index.js';
 import { dueFilterActive, passesDueFilter } from '../lib/due-filter.js';
 import { dueFilter, toggleDirection, setHideHabits, setHideRoutines } from '../stores/due-filter.js';
@@ -177,12 +177,11 @@ export function Today() {
         <DayStarsRow date={selectedDay()} />
       </div>
 
-      {/* Day Overview — date controls and day actions. */}
-      <div class="rounded-xl border border-border bg-card p-4">
-        {/* Wraps, deliberately. The right-hand icon column is four 32px buttons and was
-            flex-shrink-0, so at 360px it overflowed the card (two icons hung off the
-            right edge) and shoved the date group into a three-line "Wednesday / · June
-            / 3". Letting the two columns wrap keeps both intact. */}
+      {/* Day Overview — uncontained date controls and day actions, matching the
+          Calendar view's open header treatment. */}
+      <div class="today-header">
+        {/* Wraps deliberately on narrow screens so the date and action controls keep
+            their space instead of pushing each other off the edge. */}
         <div class="flex items-start justify-between gap-3 flex-wrap">
           <div class="min-w-0">
             <div class="flex items-center gap-1.5 flex-wrap">
@@ -206,9 +205,9 @@ export function Today() {
               </Show>
             </div>
           </div>
-          {/* Right column, aligned with the date: actions followed by the mobile
-              Add affordance. Desktop keeps the shared shell FAB. */}
-          <div class="ml-auto flex w-full items-start gap-2 flex-shrink-0 self-start md:w-auto">
+          {/* Right column, aligned with the date. The shared shell FAB handles Add
+              at the same bottom-right position used by the other mobile views. */}
+          <div class="ml-auto flex w-full flex-shrink-0 self-start md:w-auto">
             <div class="flex min-w-0 flex-1 flex-col items-stretch gap-2 md:flex-none md:items-start">
               <div class="flex items-center justify-end gap-1.5">
                 {/* Due — was an always-open card; now a button + popup modal. */}
@@ -262,13 +261,6 @@ export function Today() {
                 </div>
               </Show>
             </div>
-            <button
-              class="fab today-mobile-add md:hidden"
-              onClick={() => setElementModal({ open: true, mode: 'add', kind: null })}
-              title="Add to calendar"
-            >
-              <Plus size={18} />
-            </button>
           </div>
         </div>
 
