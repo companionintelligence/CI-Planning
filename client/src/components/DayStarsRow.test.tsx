@@ -15,7 +15,8 @@ import type { DayStar } from '../lib/api.js';
  *
  * SEAMS mocked (smallest set that still exercises the resource re-running):
  *  - `../lib/api.js`  — so `api.stars.range` returns total:3 first, total:4 next,
- *                       with NO network. We assert 3/5 → 4/5 across a refetch.
+ *                       with NO network. We assert "3 of 5" → "4 of 5" (the star
+ *                       group's accessible name) across a refetch.
  *  - `../lib/sse.js`  — `on()` in the real module constructs an `EventSource`,
  *                       which jsdom does not provide, and there'd be no stream to
  *                       drive anyway. We capture the handler DayStarsRow registers
@@ -86,24 +87,25 @@ describe('DayStarsRow — live header reactivity', () => {
   });
 
   it('renders the served tally, then refetches + updates the DOM on a reflection event', async () => {
-    const { findByText, getByText } = render(() => <DayStarsRow date="2026-07-01" />);
+    const { findByRole, getByRole } = render(() => <DayStarsRow date="2026-07-01" />);
 
-    // First render: the resource resolves to total:3.
-    expect(await findByText('3/5')).toBeInTheDocument();
+    // First render: the resource resolves to total:3. The tally is the star group's
+    // accessible name; the visible "n/5" count was removed in #684.
+    expect(await findByRole('group', { name: '3 of 5 stars earned today' })).toBeInTheDocument();
     expect(rangeMock).toHaveBeenCalledTimes(1);
 
     // A reflection change (e.g. saving the day note) broadcasts reflection:updated.
     // DayStarsRow's handler calls refetch() → the resource re-runs → total:4.
     fireSse('reflection:updated');
 
-    await waitFor(() => expect(getByText('4/5')).toBeInTheDocument());
+    await waitFor(() => expect(getByRole('group', { name: '4 of 5 stars earned today' })).toBeInTheDocument());
     expect(rangeMock).toHaveBeenCalledTimes(2);
   });
 
   it('also refetches + updates the DOM when the tasks store signal changes', async () => {
-    const { findByText, getByText } = render(() => <DayStarsRow date="2026-07-01" />);
+    const { findByRole, getByRole } = render(() => <DayStarsRow date="2026-07-01" />);
 
-    expect(await findByText('3/5')).toBeInTheDocument();
+    expect(await findByRole('group', { name: '3 of 5 stars earned today' })).toBeInTheDocument();
     expect(rangeMock).toHaveBeenCalledTimes(1);
 
     // A task completion updates the app-wide `tasks()` store signal directly —
@@ -117,7 +119,7 @@ describe('DayStarsRow — live header reactivity', () => {
     // would make the resource's dependency tracking miss this signal entirely.
     setTasks([{ id: 'task-1' }]);
 
-    await waitFor(() => expect(getByText('4/5')).toBeInTheDocument());
+    await waitFor(() => expect(getByRole('group', { name: '4 of 5 stars earned today' })).toBeInTheDocument());
     expect(rangeMock).toHaveBeenCalledTimes(2);
   });
 });
