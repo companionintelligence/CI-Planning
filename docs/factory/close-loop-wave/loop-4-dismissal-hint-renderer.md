@@ -66,9 +66,10 @@ reader will otherwise "simplify" it back to `oneLine`.
 
 ## Before implementation
 
-Read `server/src/services/classification-learning.ts` lines 308–448 — `EmbedFn`,
-`retrieveExemplars`, `exemplarPrompt`, `oneLine`, `classificationHint`. That block is the
-shape to copy. Then `server/src/lib/vector.ts`.
+Read `server/src/services/classification-learning.ts` from `EmbedFn` through
+`classificationHint` (`EmbedFn`, `retrieveExemplars`, `exemplarPrompt`, `oneLine`,
+`classificationHint`; the file has grown since this ticket was written, so find them by name).
+That block is the shape to copy. Then `server/src/lib/vector.ts`.
 
 ## Files impacted
 

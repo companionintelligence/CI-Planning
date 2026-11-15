@@ -8,12 +8,15 @@ import { canonicalValue, type ScoreFn } from './classification-learning.js';
  * The grader `calibrate_classification` measures itself with (Phase 8, plan point 4:
  * "better" is measured, not vibes).
  *
- * It asks the model the SAME question the enrichment path asks, with the same rubric
- * text and the same exemplar hint, and nothing else — no memory graph, no description
- * task. That isolation is deliberate: an old held-out task's knowledge-graph context is
- * long gone and unreproducible, so scoring the full enrichment prompt would measure
- * drift in the graph rather than in the thing learning actually changes. What varies
- * between runs here is the exemplar set, which is exactly what the trend should track.
+ * It asks the model the question the memory enrichment path asks (a narrow one-field
+ * question), with the same rubric text and an exemplar hint retrieved the way enrichment
+ * retrieves it (similarity when an embedder answers), and nothing else — no memory graph,
+ * no description task. It is NOT quick-add's wide prompt, whose hint is frequency-only and
+ * sits last, so the trend it feeds does not measure quick-add's own classifier. That
+ * isolation is deliberate: an old held-out task's knowledge-graph context is long gone and
+ * unreproducible, so scoring the full enrichment prompt would measure drift in the graph
+ * rather than in the thing learning actually changes. What varies between runs here is the
+ * exemplar set, which is exactly what the trend should track.
  *
  * Returns `undefined` when Ollama cannot answer at all, which the calibration reads as
  * "not measured" and records as a null accuracy — a gap in the trend, never a zero.
@@ -31,6 +34,10 @@ export async function ollamaScorer(owner: string): Promise<ScoreFn | undefined> 
       // No category vocabulary ⇒ there is no right answer to grade against, so decline
       // rather than score every example wrong.
       if (vocab.categories.length === 0) return null;
+      // The hint is built from the index calibrate has just written, which never holds a
+      // category answered with '' (a cleared picker is not a label), so no "the user chose
+      // (nothing)" lesson can reach this prompt. If one could, the model would follow it
+      // with [], and that is skipped below rather than counted wrong.
       const out = await llmOrNull('classification-score:category', () =>
         generateJson<{ categories?: unknown }>(
           `Classify this task into the user's life-balance categories.\n` +

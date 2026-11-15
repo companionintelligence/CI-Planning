@@ -1,5 +1,5 @@
 import { createMemo, createSignal, For, Show } from 'solid-js';
-import { Smile, Meh, Frown, X } from 'lucide-solid';
+import { Smile, Meh, Frown, X, AlertTriangle } from 'lucide-solid';
 import { api, DECLINED_SCORE, type Block, type Score, type Task } from '../lib/api.js';
 import { blocks, refetchTasks, showToast } from '../stores/index.js';
 import { defaultDuration, pickBlock } from '../lib/close-ritual-duration.js';
@@ -48,12 +48,15 @@ export function CloseRitual(props: {
   onSkipAll: () => void;
   /** The block the completion came from, when the caller knows it. */
   preferBlockId?: string | null;
+  /** The scheduled time passed while this task remained open; ask before closing it. */
+  review?: boolean;
   /** Injectable clock — the tests need a fixed `now`, the app never passes it. */
   nowMs?: number;
 }) {
   const [picked, setPicked] = createSignal<FaceKey[]>([]);
   const [note, setNote] = createSignal('');
   const [saving, setSaving] = createSignal(false);
+  const [reviewConfirmed, setReviewConfirmed] = createSignal(!props.review);
 
   /**
    * The instant the sheet OPENED, frozen — not a live clock.
@@ -138,6 +141,26 @@ export function CloseRitual(props: {
   }
 
   return (
+    <Show when={reviewConfirmed()} fallback={
+      <div class="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4" onClick={props.onAdvance}>
+        <div class="card w-full max-w-sm p-0 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+          <div class="flex items-center gap-2 px-4 py-3 border-b border-border">
+            <AlertTriangle size={16} class="text-amber-500 flex-shrink-0" />
+            <span class="text-sm font-semibold text-foreground">Review this task</span>
+          </div>
+          <div class="p-4 flex flex-col gap-3">
+            <div class="text-sm font-medium text-foreground">{props.task.title}</div>
+            <p class="text-xs text-muted-foreground">
+              Its scheduled time has passed, but it is still open. Did you finish it?
+            </p>
+            <div class="flex gap-2">
+              <button type="button" class="btn-ghost text-xs flex-1" onClick={props.onAdvance}>Not yet</button>
+              <button type="button" class="btn-primary text-xs flex-1" onClick={() => setReviewConfirmed(true)}>Yes, close task</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    }>
     <div class="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4" onClick={skip}>
       <div class="card w-full max-w-sm p-0 overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div class="flex items-center gap-2 px-4 py-3 border-b border-border">
@@ -254,5 +277,6 @@ export function CloseRitual(props: {
         </Show>
       </div>
     </div>
+    </Show>
   );
 }

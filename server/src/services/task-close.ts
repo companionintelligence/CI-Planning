@@ -70,7 +70,7 @@ const SQL_TASK = `SELECT id, status, completed_at, actual_minutes FROM tasks WHE
  * make the reaction-latency metric a lie — and a DECLINED is the explicit absence of a
  * reflection, so it does not stamp either.
  */
-export async function closeTask(owner: string, taskId: string, input: CloseTaskInput): Promise<CloseTaskResult> {
+export async function closeTask(owner: string, taskId: string, input: CloseTaskInput, actor = 'owner'): Promise<CloseTaskResult> {
   const task = await store()
     .prepare(SQL_TASK)
     .get<{ id: string; status: string; completed_at: string | null; actual_minutes: number }>(taskId, owner);
@@ -110,7 +110,7 @@ export async function closeTask(owner: string, taskId: string, input: CloseTaskI
     sets.push(`version = version + 1`, `updated_at = ?`);
     args.push(now);
     await store().prepare(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ? AND owner_id = ?`).run(...args, taskId, owner);
-    writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: `task:${taskId}` });
+    writeAudit({ ownerId: owner, actor, action: 'update', entity: `task:${taskId}` });
   }
 
   return {

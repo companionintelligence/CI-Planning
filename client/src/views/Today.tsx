@@ -1,4 +1,4 @@
-import { createResource, createMemo, createSignal, onCleanup, onMount, Show, For } from 'solid-js';
+import { createResource, createMemo, createSignal, createEffect, onCleanup, onMount, Show, For } from 'solid-js';
 import { AlertCircle, CalendarClock, X, Repeat, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, CalendarDays, NotebookPen, Zap, ListFilter } from 'lucide-solid';
 import { blocks, tasks, taskOf, tags, isRoutineTask, setElementModal, refetchPatterns, refetchFlightPlan, refetchTasks, refetchBlocks, showToast, selectedDay, setSelectedDay, prefs } from '../stores/index.js';
 import { dueFilterActive, passesDueFilter } from '../lib/due-filter.js';
@@ -7,9 +7,10 @@ import { FocusRitual } from '../components/FocusRitual.js';
 import { EmptyStateConnectCTA } from '../components/EmptyStateConnectCTA.js';
 import { selection, clearSelection, selectedTaskIds, selectedTitles, routineModal, setRoutineModal } from '../stores/selection.js';
 import { api, type Task } from '../lib/api.js';
-import { splitTagNames } from '../lib/multi-tag.js';
 import { localISODate, addDays, durationLabel } from '../lib/dates.js';
+import { busyFromBlocks, mergeRanges } from '../lib/open-time.js';
 import { dueItems } from '../lib/task-buckets.js';
+import { whenSignedIn } from '../lib/session.js';
 import { Planner } from '../components/Planner.js';
 import { OpenTimeSummary } from '../components/OpenTimeSummary.js';
 import { DayStarsRow } from '../components/DayStarsRow.js';
@@ -50,18 +51,6 @@ export function Today() {
   const monthDay = () => viewedDate().toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
   const stepDay = (n: number) => setSelectedDay(addDays(selectedDay(), n));
 
-  // The tag set of everything scheduled today — the shape of the day at a glance.
-  // AF-11 Slice 5: a block tag can be a comma-joined multi-direction union — add
-  // each split name, never the raw joined string.
-  const todayTags = createMemo(() => {
-    const set = new Set<string>();
-    for (const b of blocks() ?? []) {
-      for (const n of splitTagNames(b.tag)) set.add(n);
-      for (const t of taskOf(b.task_id)?.tags ?? []) set.add(t);
-    }
-    return [...set];
-  });
-
   function openTask(t: Task) {
     setElementModal({ open: true, mode: 'edit', kind: 'task', editTarget: { kind: 'task', id: t.id } });
   }
@@ -99,21 +88,36 @@ export function Today() {
 
   // ── Due — button + popup modal (was an always-open card; UI backlog request:
   // collapse it behind a button so the day-header stays short). Badge count uses
-  // the same predicate as the card itself so the two never disagree.
+  // the same predicate as the card itself so the two never disagree. Use an
+  // unfiltered, owner-scoped task request: the shared Tasks resource can be
+  // narrowed by search/status/tag filters on the Tasks page.
   const [dueOpen, setDueOpen] = createSignal(false);
+  const [dueTasks, { refetch: refetchDueTasks }] = createResource(
+    whenSignedIn(() => true),
+    () => api.tasks.list().then((r) => r.tasks),
+  );
+  const dueTaskById = createMemo(() => new Map((dueTasks() ?? []).map((t) => [t.id, t] as const)));
+  let observedSharedTasks = false;
+  createEffect(() => {
+    if (tasks() === undefined) return;
+    if (observedSharedTasks) void refetchDueTasks();
+    observedSharedTasks = true;
+  });
   const dueBadgeCount = createMemo(() => {
-    const raw = dueItems(tasks() ?? [], selectedDay());
+    const raw = dueItems(dueTasks() ?? [], selectedDay());
     const f = dueFilter();
     const keep = (t: Task) => passesDueFilter(t, isRoutineTask(t.id), f);
     return raw.overdue.filter(keep).length + raw.dueToday.filter(keep).length + raw.missed.filter(keep).length;
   });
 
   // ── Capacity bar (relocated from the removed Morning Briefing, Phase O · O3) ──
-  const capacity = () => summary()?.capacity;
+  const workdayMinutes = () => summary()?.capacity.workday_minutes ?? 0;
+  const scheduledMinutes = createMemo(() => mergeRanges(busyFromBlocks(blocks() ?? [], selectedDay()))
+    .reduce((sum, range) => sum + range.end - range.start, 0));
   const capacityPct = () => {
-    const c = capacity();
-    if (!c || c.workday_minutes === 0) return 0;
-    return Math.min(100, Math.round((c.scheduled_minutes / c.workday_minutes) * 100));
+    const available = workdayMinutes();
+    if (!available) return 0;
+    return Math.min(100, Math.round((scheduledMinutes() / available) * 100));
   };
 
   // ── Multi-select → "Create Routine" (Phase F) ──────────────────────────────
@@ -151,6 +155,16 @@ export function Today() {
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
+  // A new owner has no tasks or blocks yet. The open-time windows come from the day type, not from
+  // anything they made, so on that first day they add noise above the connect prompt. The day
+  // header and the prompt are the whole story until something exists. Nothing is hidden while
+  // either list is still loading, so a returning owner does not see the card flicker in.
+  const firstRun = () => {
+    const t = tasks();
+    const b = blocks();
+    return t !== undefined && b !== undefined && t.length === 0 && b.length === 0;
+  };
+
   return (
     <div class="flex flex-col gap-4 p-4 md:p-6 page-enter min-h-full">
       {/* The one-line NL quick entry moved into the FAB's Add modal (T14 #350 /
@@ -163,12 +177,11 @@ export function Today() {
         <DayStarsRow date={selectedDay()} />
       </div>
 
-      {/* Day Overview — date · tag set · counts, with + New Task top-right */}
-      <div class="rounded-xl border border-border bg-card p-4">
-        {/* Wraps, deliberately. The right-hand icon column is four 32px buttons and was
-            flex-shrink-0, so at 360px it overflowed the card (two icons hung off the
-            right edge) and shoved the date group into a three-line "Wednesday / · June
-            / 3". Letting the two columns wrap keeps both intact. */}
+      {/* Day Overview — uncontained date controls and day actions, matching the
+          Calendar view's open header treatment. */}
+      <div class="today-header">
+        {/* Wraps deliberately on narrow screens so the date and action controls keep
+            their space instead of pushing each other off the edge. */}
         <div class="flex items-start justify-between gap-3 flex-wrap">
           <div class="min-w-0">
             <div class="flex items-center gap-1.5 flex-wrap">
@@ -192,55 +205,74 @@ export function Today() {
               </Show>
             </div>
           </div>
-          {/* Right column, aligned with the date: Today's Brief · Focus · Note
-              (Phase AC — collapsed from the removed FOCUS card). The FAB (App.tsx)
-              is the create affordance now; the Add button is gone. */}
-          <div class="flex items-center gap-1.5 flex-shrink-0 self-start">
-            {/* Due — was an always-open card; now a button + popup modal (UI backlog). */}
-            <button
-              onClick={() => setDueOpen(true)}
-              class="btn-icon relative"
-              classList={{ 'text-destructive': dueBadgeCount() > 0, 'text-muted-foreground': dueBadgeCount() === 0 }}
-              title="Due — deadlines for this day"
-            >
-              <CalendarClock size={16} />
-              <Show when={dueBadgeCount() > 0}>
-                <span class="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-[3px] rounded-full bg-destructive text-[9px] leading-[14px] text-white text-center font-semibold">
-                  {dueBadgeCount()}
-                </span>
+          {/* Right column, aligned with the date. The shared shell FAB handles Add
+              at the same bottom-right position used by the other mobile views. */}
+          <div class="ml-auto flex w-full flex-shrink-0 self-start md:w-auto">
+            <div class="flex min-w-0 flex-1 flex-col items-stretch gap-2 md:flex-none md:items-start">
+              <div class="flex items-center justify-end gap-1.5">
+                {/* Due — was an always-open card; now a button + popup modal. */}
+                <button
+                  onClick={() => setDueOpen(true)}
+                  class="btn-icon relative"
+                  classList={{ 'text-destructive': dueBadgeCount() > 0, 'text-muted-foreground': dueBadgeCount() === 0 }}
+                  title="Due — deadlines for this day"
+                >
+                  <CalendarClock size={16} />
+                  <Show when={dueBadgeCount() > 0}>
+                    <span class="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-[3px] rounded-sm bg-destructive text-[9px] leading-[14px] text-white text-center font-semibold">
+                      {dueBadgeCount()}
+                    </span>
+                  </Show>
+                </button>
+                {/* Today's Brief — popover (same idiom as Focus). */}
+                <BriefMenu date={selectedDay()} />
+                {/* Focus — bullseye popover: today & this-week focus. */}
+                <FocusMenu date={selectedDay()} />
+                {/* Day note. */}
+                <button
+                  onClick={startEditNote}
+                  class="btn-icon"
+                  classList={{ 'text-primary': !!note(), 'text-muted-foreground': !note() }}
+                  title={note() ? 'Edit day note' : 'Add a note for the day'}
+                >
+                  <NotebookPen size={16} fill={note() ? 'currentColor' : 'none'} />
+                </button>
+                {/* Focus Ritual entry — only while a block is in progress (Time-Sense). */}
+                <Show when={currentFocusBlock()}>
+                  <button onClick={() => setFocusOpen(true)} class="btn-ghost text-xs px-3 py-1.5 border border-primary/50 text-primary" title="Enter the Focus Ritual for the block in progress">
+                    <Zap size={13} /> Focus
+                  </button>
+                </Show>
+              </div>
+              {/* On phones, expand the capacity indicator alongside the icons so
+                  this group fills the space and stays right-aligned beside Add. */}
+              <Show when={!firstRun() && workdayMinutes() > 0}>
+                <div class="flex w-full items-center gap-2 md:hidden">
+                  <span class="text-[10px] tabular-nums text-muted-foreground whitespace-nowrap">
+                    {durationLabel(scheduledMinutes())} / {durationLabel(workdayMinutes())}
+                  </span>
+                  <div class="relative h-1.5 min-w-0 flex-1 rounded-sm bg-background border border-border overflow-hidden">
+                    <div
+                      class="absolute inset-y-0 left-0 rounded-sm bg-primary transition-all"
+                      classList={{ 'bg-amber-400': capacityPct() >= 70, 'bg-destructive': capacityPct() >= 90 }}
+                      style={{ width: `${capacityPct()}%` }}
+                    />
+                  </div>
+                </div>
               </Show>
-            </button>
-            {/* Today's Brief — popover (same idiom as Focus). */}
-            <BriefMenu date={selectedDay()} />
-            {/* Focus — bullseye popover: today & this-week focus (add/edit/delete/complete). */}
-            <FocusMenu date={selectedDay()} />
-            {/* Day note. */}
-            <button
-              onClick={startEditNote}
-              class="btn-icon"
-              classList={{ 'text-primary': !!note(), 'text-muted-foreground': !note() }}
-              title={note() ? 'Edit day note' : 'Add a note for the day'}
-            >
-              <NotebookPen size={16} fill={note() ? 'currentColor' : 'none'} />
-            </button>
-            {/* Focus Ritual entry — only while a block is in progress (Time-Sense). */}
-            <Show when={currentFocusBlock()}>
-              <button onClick={() => setFocusOpen(true)} class="btn-ghost text-xs px-3 py-1.5 border border-primary/50 text-primary" title="Enter the Focus Ritual for the block in progress">
-                <Zap size={13} /> Focus
-              </button>
-            </Show>
+            </div>
           </div>
         </div>
 
         {/* Capacity bar — directly below the date (AC follow-up). */}
-        <Show when={capacity() && capacity()!.workday_minutes > 0}>
-          <div class="mt-2 flex items-center gap-2">
-            <span class={`text-[10px] tabular-nums ${capacityPct() >= 90 ? 'text-destructive' : capacityPct() >= 70 ? 'text-amber-400' : 'text-primary'}`}>
-              {durationLabel(capacity()!.scheduled_minutes)} / {durationLabel(capacity()!.workday_minutes)}
+        <Show when={!firstRun() && workdayMinutes() > 0}>
+          <div class="mt-2 hidden items-center gap-2 md:flex">
+            <span class="text-[10px] tabular-nums text-muted-foreground">
+              {durationLabel(scheduledMinutes())} / {durationLabel(workdayMinutes())}
             </span>
-            <div class="relative h-1.5 w-32 rounded-full bg-background border border-border overflow-hidden">
+            <div class="relative h-1.5 w-32 rounded-sm bg-background border border-border overflow-hidden">
               <div
-                class="absolute inset-y-0 left-0 rounded-full bg-primary transition-all"
+                class="absolute inset-y-0 left-0 rounded-sm bg-primary transition-all"
                 classList={{ 'bg-amber-400': capacityPct() >= 70, 'bg-destructive': capacityPct() >= 90 }}
                 style={{ width: `${capacityPct()}%` }}
               />
@@ -252,9 +284,11 @@ export function Today() {
             schedule is subtracted. Replaces re-listing the blocks here: the Planner
             drawer tab and the Calendar already show those, and the question this
             header answers is where something new could go. */}
-        <div class="mt-3">
-          <OpenTimeSummary date={selectedDay()} />
-        </div>
+        <Show when={!firstRun()}>
+          <div class="mt-3">
+            <OpenTimeSummary date={selectedDay()} />
+          </div>
+        </Show>
 
         {/* Phase O · O1 — inline day-note editor (matches the card inline-edit idiom) */}
         <Show when={editingNote()}>
@@ -287,17 +321,6 @@ export function Today() {
           </button>
         </Show>
 
-        <Show
-          when={todayTags().length > 0}
-          fallback={<>
-            <p class="mt-2 text-sm text-muted-foreground">Nothing scheduled yet.</p>
-            <EmptyStateConnectCTA />
-          </>}
-        >
-          <div class="mt-2 flex flex-wrap gap-1.5">
-            <For each={todayTags()}>{(t) => <span class="badge-neutral text-[11px]">#{t}</span>}</For>
-          </div>
-        </Show>
       </div>
 
       {/* Due — popup modal (button lives in the day-header icon row above). */}
@@ -306,6 +329,7 @@ export function Today() {
           <div class="modal max-w-md max-h-[85vh] overflow-auto p-4" onClick={(e) => e.stopPropagation()}>
             <DueCard
               date={selectedDay()}
+              taskList={() => dueTasks() ?? []}
               onOpen={(t) => { openTask(t); setDueOpen(false); }}
               onClose={() => setDueOpen(false)}
               bare
@@ -322,11 +346,11 @@ export function Today() {
           grid — the grid is the thing you're looking at most of the time, and the
           staging list is what you dip into. Someday Time Blocks render on their goal
           day in the Planner header lane (the ConceptLane is retired — CON-2d). */}
-      <Planner />
+      <Planner taskLookup={(id) => dueTaskById().get(id)} />
 
       {/* Multi-select indicator (Phase F) — appears when items are picked. */}
       <Show when={selection().size > 0 && !routineModal().open}>
-        <div class="fixed bottom-24 left-1/2 -translate-x-1/2 z-30 rounded-full border border-border bg-popover px-4 py-2 shadow-lg flex items-center gap-3 text-xs">
+        <div class="fixed bottom-24 left-1/2 -translate-x-1/2 z-30 rounded-sm border border-border bg-popover px-4 py-2 shadow-lg flex items-center gap-3 text-xs">
           <span class="font-medium text-foreground">{selection().size} selected</span>
           <span class="text-muted-foreground">Shift+= → Routine · Esc to clear</span>
           <button onClick={() => clearSelection()} class="btn-icon"><X size={14} /></button>
@@ -383,12 +407,12 @@ export function Today() {
  * on demand — a destructive-toned pill mirroring the overdue count button. Rows
  * reuse the bucket-list row styling and open the task editor the same way.
  */
-function DueCard(props: { date: string; onOpen: (t: Task) => void; bare?: boolean; onClose?: () => void }) {
+function DueCard(props: { date: string; taskList: () => Task[]; onOpen: (t: Task) => void; bare?: boolean; onClose?: () => void }) {
   // The day's dues + overdue rollup, then narrowed by the persisted filter
   // (direction include-set · hide habits · hide routines — habits & routines
   // hidden by default). Both lists share one predicate so they stay consistent.
   const items = createMemo(() => {
-    const raw = dueItems(tasks() ?? [], props.date);
+    const raw = dueItems(props.taskList(), props.date);
     const f = dueFilter();
     const keep = (t: Task) => passesDueFilter(t, isRoutineTask(t.id), f);
     return { overdue: raw.overdue.filter(keep), dueToday: raw.dueToday.filter(keep), missed: raw.missed.filter(keep) };
@@ -396,10 +420,13 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void; bare?: boolea
   const [showOverdue, setShowOverdue] = createSignal(false);
   const [showMissed, setShowMissed] = createSignal(false);
   const [expanded, setExpanded] = createSignal(true); // AC — the whole due list is collapsible
-  const fmtTime = (iso: string) =>
-    new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  const isDateOnly = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const asLocalDate = (value: string) => new Date(isDateOnly(value) ? `${value}T12:00:00` : value);
+  const fmtTime = (iso: string) => isDateOnly(iso)
+    ? 'All day'
+    : asLocalDate(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
   const fmtDay = (iso: string) =>
-    new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    asLocalDate(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
   // Overdue defer — pushes the DEADLINE out from today (AB: due_at is the deadline
   // axis, so this is what clears the debt; engine reschedule moves scheduled_for
@@ -438,7 +465,10 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void; bare?: boolea
   }
 
   const Row = (p: { task: Task; when: string; danger?: boolean; missed?: boolean }) => (
-    <li class="flex items-center">
+    <li
+      class="flex items-center"
+      classList={{ 'border border-dotted border-orange-400': !!p.task.auto_generated && !p.task.human_approved_at }}
+    >
       <button
         class="flex-1 min-w-0 flex items-center gap-2 px-3 py-1.5 text-left text-foreground hover:bg-primary/5 transition-colors"
         classList={{ 'text-xs': !!p.danger, 'text-sm': !p.danger }}
@@ -462,7 +492,7 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void; bare?: boolea
               <button
                 type="button"
                 onClick={() => deferDue(p.task, s.days, s.label)}
-                class="text-[10px] tabular-nums px-1.5 py-0.5 rounded-full border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors"
+                class="text-[10px] tabular-nums px-1.5 py-0.5 rounded-sm border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors"
                 title={`Defer due date ${s.label}`}
               >{s.label}</button>
             )}
@@ -477,7 +507,7 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void; bare?: boolea
               <button
                 type="button"
                 onClick={() => reviveMissed(p.task, s.days, s.label)}
-                class="text-[10px] tabular-nums px-1.5 py-0.5 rounded-full border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors"
+                class="text-[10px] tabular-nums px-1.5 py-0.5 rounded-sm border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors"
                 title={s.days === 0 ? 'Reopen and reschedule for today' : `Reopen and reschedule ${s.label}`}
               >{s.label}</button>
             )}
@@ -512,7 +542,7 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void; bare?: boolea
               type="button"
               aria-expanded={showOverdue()}
               onClick={() => setShowOverdue((v) => !v)}
-              class="inline-flex items-center gap-1.5 rounded-full border border-destructive/40 bg-destructive/5 px-2.5 py-1 text-xs transition-colors hover:border-destructive"
+              class="inline-flex items-center gap-1.5 rounded-sm border border-destructive/40 bg-destructive/5 px-2.5 py-1 text-xs transition-colors hover:border-destructive"
               title={showOverdue() ? 'Hide overdue tasks' : 'Show overdue tasks'}
             >
               <AlertCircle size={12} class="text-destructive" />
@@ -531,11 +561,11 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void; bare?: boolea
               type="button"
               aria-expanded={showMissed()}
               onClick={() => setShowMissed((v) => !v)}
-              class="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/5 px-2.5 py-1 text-xs transition-colors hover:border-amber-500"
+              class="inline-flex items-center gap-1.5 rounded-sm border border-warning/40 bg-warning/5 px-2.5 py-1 text-xs transition-colors hover:border-warning"
               title={showMissed() ? 'Hide missed tasks' : 'Show missed tasks — reopen them with the chips'}
             >
-              <AlertCircle size={12} class="text-amber-400" />
-              <span class="tabular-nums font-semibold text-amber-400">{items().missed.length}</span>
+              <AlertCircle size={12} class="text-warning" />
+              <span class="tabular-nums font-semibold text-warning">{items().missed.length}</span>
               <span class="text-muted-foreground">missed</span>
               <Show when={showMissed()} fallback={<ChevronDown size={12} class="text-muted-foreground" />}>
                 <ChevronUp size={12} class="text-muted-foreground" />

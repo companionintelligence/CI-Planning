@@ -91,8 +91,8 @@ export interface PinConfig {
 // lib/crypto (loadKek/rotateKek) reads process.env.CP_KEK_B64 directly — it must resolve
 // a key before this module exists. CP_KEK_B64 itself is unchanged.
 /**
- * B2 — self-serve local sign-up policy (`AUTH_SIGNUP`). `invite` (the default, and the
- * CI-Hub manifest's value) opens `POST /api/auth/signup` only to someone holding a
+ * B2 — self-serve local sign-up policy (`AUTH_SIGNUP`). `open` (the default) allows
+ * `POST /api/auth/signup` without an invite code; `invite` restricts it to someone holding a
  * single-use invite code an operator minted in Settings → Accounts; `open` needs no
  * code; `off` removes the endpoint (404) and the /signup page. Meaningful only under
  * `AUTH_MODE=sso`. Companion Portal sign-up (B1) is independent of this: whenever the
@@ -110,7 +110,7 @@ export interface AuthConfig {
   defaultPassword?: string; // required to seed that owner; boot fails closed without a login path
   sessionSecret?: string;   // Koa app.keys secret signing the local-login session cookie
   resetTokenTtlMs: number;  // V: password-reset token lifetime (default 60 min)
-  signup: AuthSignupPolicy; // B2: local self-serve sign-up — open | invite (default) | off
+  signup: AuthSignupPolicy; // B2: local self-serve sign-up — open (default) | invite | off
 }
 
 /**
@@ -512,10 +512,9 @@ export const config: Config = {
     defaultPassword: process.env.AUTH_DEFAULT_PASSWORD,
     sessionSecret: resolveSessionSecret(),
     resetTokenTtlMs: Number(process.env.AUTH_RESET_TOKEN_TTL_MS ?? 3_600_000), // 60 min
-    // Validated below (unknown values fail boot, like AUTH_MODE). Unset ⇒ invite-only:
-    // the safe default for a reachable deployment — nobody can mint themselves an
-    // account without an operator's code.
-    signup: (process.env.AUTH_SIGNUP as AuthSignupPolicy | undefined) ?? 'invite',
+    // Validated below (unknown values fail boot, like AUTH_MODE). Operators can still
+    // set AUTH_SIGNUP=invite for code-gated registration or off to disable local signup.
+    signup: (process.env.AUTH_SIGNUP as AuthSignupPolicy | undefined) ?? 'open',
   },
   ciportal: {
     // The PRODUCTION portal's discovery base. Until 2026-10-21 this defaulted to

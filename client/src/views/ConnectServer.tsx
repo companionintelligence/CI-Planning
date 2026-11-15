@@ -1,5 +1,6 @@
 import { Show, createSignal } from 'solid-js';
-import { Cpu, Loader2, Server } from 'lucide-solid';
+import { Loader2, Server } from 'lucide-solid';
+import { BrandMark } from '../components/BrandMark.js';
 import { connectTo, probeServer, type ProbeFailure } from '../lib/server-config.js';
 
 /**
@@ -46,12 +47,7 @@ export function ConnectServer() {
     <div class="min-h-screen flex items-center justify-center p-4 bg-surface-950">
       <div class="w-full max-w-sm">
         <div class="flex flex-col items-center gap-3 mb-8">
-          <div
-            class="w-12 h-12 rounded-2xl flex items-center justify-center text-surface-950"
-            style={{ background: 'linear-gradient(135deg, #58ebbf, #409b9b)' }}
-          >
-            <Cpu size={22} />
-          </div>
+          <BrandMark size={48} />
           <div class="text-center">
             <div class="text-[10px] font-medium tracking-[0.2em] uppercase text-primary/80">
               Companion

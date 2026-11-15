@@ -1,0 +1,5 @@
+# Cloudflare Pages project for planning.ci.computer. The static lander lives in
+# site/ and is deployed with `wrangler pages deploy site --project-name=ci-planning`.
+name = "ci-planning"
+pages_build_output_dir = "site"
+compatibility_date = "2026-11-02"

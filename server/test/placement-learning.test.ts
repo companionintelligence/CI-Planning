@@ -25,13 +25,13 @@ function at(days: number, hh: number): Date {
   return d;
 }
 
-function insertBlock(id: string, ownerId: string, startAt: string, endAt: string): void {
+function insertBlock(id: string, ownerId: string, startAt: string, endAt: string, status = 'planned'): void {
   sqlite
     .prepare(
       `INSERT INTO time_blocks (id, owner_id, title, block_kind, start_at, end_at, is_auto, status)
-       VALUES (?, ?, 'Auto block', 'task', ?, ?, 1, 'planned')`,
+       VALUES (?, ?, 'Auto block', 'task', ?, ?, 1, ?)`,
     )
-    .run(id, ownerId, startAt, endAt);
+    .run(id, ownerId, startAt, endAt, status);
 }
 
 let seq = 0;
@@ -50,12 +50,14 @@ function placement(opts: {
   chosenAt: Date;
   movedAt?: Date | null;
   blockGone?: boolean;
+  /** The block's status when the batch pass reads it (default 'planned'). */
+  blockStatus?: string;
 }): { blockId: string } {
   const owner = opts.owner ?? OWNER;
   const blockId = `block-${seq++}`;
   const chosenStart = opts.chosenAt.toISOString();
   const chosenEnd = new Date(opts.chosenAt.getTime() + 30 * 60_000).toISOString();
-  if (!opts.blockGone) insertBlock(blockId, owner, chosenStart, chosenEnd);
+  if (!opts.blockGone) insertBlock(blockId, owner, chosenStart, chosenEnd, opts.blockStatus);
   const movedStart = opts.movedAt ? opts.movedAt.toISOString() : null;
   const movedEnd = opts.movedAt ? new Date(opts.movedAt.getTime() + 30 * 60_000).toISOString() : null;
   const movedHour = opts.movedAt ? opts.movedAt.getUTCHours() : null;
@@ -145,6 +147,50 @@ describe('calibratePlacement', () => {
     const work = r.keys.find((k) => k.slotKey === 'work')!;
     expect(work.decided).toBe(CORRECTION_FLOOR); // the ghost row did not count
     expect(preferenceRows().find((p) => p.slot_key === 'work')).toBeDefined();
+  });
+
+  // The block still exists, but it did not happen: the owner skipped it, the missed-block
+  // sweep marked it skipped, its task was cancelled, or it was never done. The owner did not
+  // live with that placement, so it is no more an acceptance than a vanished block is.
+  it.each(['skipped', 'cancelled', 'missed'])('a %s block that was never moved is not evidence', async (status) => {
+    placement({ slotKey: 'work', chosenAt: at(5, 9), blockStatus: status });
+    for (let i = 0; i < CORRECTION_FLOOR; i++) {
+      placement({ slotKey: 'work', chosenAt: at(4, 9), movedAt: at(4, 19) });
+    }
+    const r = await calibratePlacement(OWNER, NOW);
+    expect(r.keys.find((k) => k.slotKey === 'work')!.decided).toBe(CORRECTION_FLOOR);
+    expect(r.survival.decided).toBe(CORRECTION_FLOOR);
+    expect(r.survival.accepted).toBe(0);
+  });
+
+  it.each(['planned', 'completed', 'done'])('a %s block whose slot has passed is still an acceptance', async (status) => {
+    placement({ slotKey: 'work', chosenAt: at(5, 9), blockStatus: status });
+    for (let i = 0; i < CORRECTION_FLOOR; i++) {
+      placement({ slotKey: 'work', chosenAt: at(4, 9), movedAt: at(4, 19) });
+    }
+    const r = await calibratePlacement(OWNER, NOW);
+    expect(r.keys.find((k) => k.slotKey === 'work')!.decided).toBe(CORRECTION_FLOOR + 1);
+    expect(r.survival.accepted).toBe(1);
+  });
+
+  it('a block with no status counts as planned, so it still stands', async () => {
+    const { blockId } = placement({ slotKey: 'work', chosenAt: at(5, 9) });
+    sqlite.prepare(`UPDATE time_blocks SET status = NULL WHERE id = ?`).run(blockId);
+    for (let i = 0; i < CORRECTION_FLOOR; i++) {
+      placement({ slotKey: 'work', chosenAt: at(4, 9), movedAt: at(4, 19) });
+    }
+    const r = await calibratePlacement(OWNER, NOW);
+    expect(r.keys.find((k) => k.slotKey === 'work')!.decided).toBe(CORRECTION_FLOOR + 1);
+  });
+
+  it('a move the owner made still counts after the block is later skipped', async () => {
+    for (let i = 0; i < CORRECTION_FLOOR; i++) {
+      placement({ slotKey: 'work', chosenAt: at(4, 9), movedAt: at(4, 19), blockStatus: 'skipped' });
+    }
+    const r = await calibratePlacement(OWNER, NOW);
+    const work = r.keys.find((k) => k.slotKey === 'work')!;
+    expect(work.decided).toBe(CORRECTION_FLOOR);
+    expect(work.corrections).toBe(CORRECTION_FLOOR);
   });
 
   it('teaches nothing below the floor, and deletes a stale row for that key', async () => {

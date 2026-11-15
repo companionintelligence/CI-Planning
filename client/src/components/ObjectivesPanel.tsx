@@ -4,14 +4,14 @@ import { on } from '../lib/sse.js';
 import {
   Plus, ChevronRight, ChevronDown, Circle, Square, Diamond,
   AlertTriangle, Clock, ArrowRight, Pencil, Trash2, Star,
-  CheckCircle2, ListPlus, Archive, RotateCcw,
+  CheckCircle2, ListPlus, Archive, RotateCcw, Target,
 } from 'lucide-solid';
-import { STAR_GOLD } from '../lib/stars.js';
 import { api, type Objective, type ObjectiveTaskSummary } from '../lib/api.js';
 import { showToast, refetchTasks, setElementModal, elementModal, openCloseRitual, taskOf } from '../stores/index.js';
 import { localISODate } from '../lib/dates.js';
-import { isLeafObjective, visibleLeafTasks, executeQuickAdd } from '../lib/objectives-quickadd.js';
+import { visibleLeafTasks as visibleObjectiveTasks } from '../lib/objectives-quickadd.js';
 import { ObjectiveModal } from './ObjectiveModal.js';
+import { ObjectivesBoard } from './ObjectivesBoard.js';
 import { setActiveEntity } from '../stores/selection.js';
 
 /** Whether `id` is `o` or anywhere in its subtree — used to auto-expand to a focused node. */
@@ -63,11 +63,14 @@ function purgeCountdown(purgeAfter: string): string {
 
 export function ObjectivesPanel() {
   const [data, { refetch }] = createResource(() => api.objectives.list());
+  const [params, setSearchParams] = useSearchParams();
+  // Objectives opens as the hierarchy/list. `view=board` is a deep-link used by the
+  // Tasks header and navigation, so the board is reachable without hiding the list.
+  const [viewMode, setViewMode] = createSignal<'board' | 'hierarchy'>(params.view === 'board' ? 'board' : 'hierarchy');
   // AF-5: refetch() recreates every ObjectiveNode, which used to reset each node's
-  // expand/collapse to the depth default — collapsing the leaf you just added a task
+  // expand/collapse to the depth default — collapsing the objective you just changed
   // to. Panel-scoped (non-reactive) memory of explicit toggles survives refetches.
   const expandState = new Map<string, boolean>();
-  const [params] = useSearchParams();
   const focusId = () => (typeof params.focus === 'string' ? params.focus : undefined); // §K: clicking a task's star deep-links here
   // AF-CU2: the ?focus scroll must be ONE-SHOT. Nothing consumes the param, so
   // every refetch (quick-add, toggle-done, delete, wizard-close) used to remount
@@ -78,6 +81,74 @@ export function ObjectivesPanel() {
   const [modal, setModal] = createSignal<
     null | { mode: 'create'; parentId?: string } | { mode: 'edit'; objective: Objective }
   >(null);
+  const [draggedTask, setDraggedTask] = createSignal<{
+    taskId: string; sourceObjectiveId: string; groupRootId: string;
+  } | null>(null);
+  const [dropTargetId, setDropTargetId] = createSignal<string | null>(null);
+
+  function findObjective(nodes: Objective[], id: string): Objective | undefined {
+    for (const node of nodes) {
+      if (node.id === id) return node;
+      const nested = findObjective(node.children ?? [], id);
+      if (nested) return nested;
+    }
+    return undefined;
+  }
+
+  function groupRootId(id: string): string | undefined {
+    let node = findObjective(data()?.objectives ?? [], id);
+    if (!node) return undefined;
+    while (node.parent_id) {
+      const parent = findObjective(data()?.objectives ?? [], node.parent_id);
+      if (!parent) break;
+      node = parent;
+    }
+    return node.id;
+  }
+
+  function startTaskDrag(taskId: string, sourceObjectiveId: string, ev: DragEvent) {
+    const groupRootId = groupRootIdFor(sourceObjectiveId);
+    if (!groupRootId || !ev.dataTransfer) return;
+    const payload = { taskId, sourceObjectiveId, groupRootId };
+    setDraggedTask(payload);
+    ev.dataTransfer.effectAllowed = 'move';
+    ev.dataTransfer.setData('application/x-ci-objective-task', JSON.stringify(payload));
+  }
+
+  function groupRootIdFor(id: string): string | undefined { return groupRootId(id); }
+
+  function dragOverObjective(id: string, ev: DragEvent) {
+    const drag = draggedTask();
+    if (!drag) return;
+    ev.stopPropagation();
+    if (drag.sourceObjectiveId === id || drag.groupRootId !== groupRootId(id)) return;
+    ev.preventDefault();
+    if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+    setDropTargetId(id);
+  }
+
+  async function dropTaskOnObjective(targetObjectiveId: string, ev: DragEvent) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const drag = draggedTask();
+    setDropTargetId(null);
+    setDraggedTask(null);
+    if (!drag || drag.sourceObjectiveId === targetObjectiveId || drag.groupRootId !== groupRootId(targetObjectiveId)) return;
+    try {
+      await api.objectives.moveTask(drag.sourceObjectiveId, drag.taskId, targetObjectiveId);
+      refetchTasks();
+      refetchBoth();
+      showToast('Task moved to objective', 'success');
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+      refetchBoth();
+    }
+  }
+
+  function leaveObjective(id: string, ev: DragEvent) {
+    const current = ev.currentTarget as HTMLElement;
+    if (!current.contains(ev.relatedTarget as Node | null) && dropTargetId() === id) setDropTargetId(null);
+  }
 
   // AF-5: "More details" hands off to the global ElementWizard (add or edit mode).
   // The wizard has no save callback we can reach without editing it (file fence),
@@ -113,6 +184,15 @@ export function ObjectivesPanel() {
   // (AllTasks gates its showArchive flag on isTaskTab() and force-clears it on tab
   // change), and its ArchiveSection is hard-typed to Task[].
   const [showArchive, setShowArchive] = createSignal(false);
+  createEffect(() => {
+    const fromUrl = params.view === 'board' ? 'board' : 'hierarchy';
+    if (viewMode() !== fromUrl) setViewMode(fromUrl);
+  });
+  function chooseView(next: 'board' | 'hierarchy') {
+    setViewMode(next);
+    if (next === 'board') setShowArchive(false);
+    setSearchParams({ view: next === 'board' ? 'board' : undefined });
+  }
   const [archived, { refetch: refetchArchive }] = createResource(
     showArchive, // only fetches once opened
     () => api.objectives.list({ archived: '1' }).then((r) => r.objectives),
@@ -163,11 +243,18 @@ export function ObjectivesPanel() {
       {/* Panel header — the page-level header belongs to the Tasks view. */}
       <div class="flex items-center justify-between gap-x-3 gap-y-2 flex-wrap">
         <h2 class="text-sm font-semibold text-foreground">Goals · Projects · Objectives</h2>
-        <div class="flex items-center gap-2 flex-shrink-0">
+        <div class="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end">
+          <button
+            class="btn-secondary text-xs px-2.5 py-1.5"
+            onClick={() => chooseView(viewMode() === 'board' ? 'hierarchy' : 'board')}
+            title={viewMode() === 'board' ? 'Show objectives as a list' : 'Open the Objectives board'}
+          >
+            <Target size={13} /> {viewMode() === 'board' ? 'Objectives list' : 'Objectives board'}
+          </button>
           <button
             class="btn-ghost text-xs px-2 py-1"
             classList={{ 'text-primary': showArchive() }}
-            onClick={() => setShowArchive((v) => !v)}
+            onClick={() => { chooseView('hierarchy'); setShowArchive((v) => !v); }}
             title={showArchive() ? 'Hide the archive' : 'Show archived objectives'}
           >
             <Archive size={13} /> Archive
@@ -181,6 +268,15 @@ export function ObjectivesPanel() {
         </div>
       </div>
 
+      <Show when={viewMode() === 'board'}>
+        <ObjectivesBoard
+          objectives={data()?.objectives ?? []}
+          objectivesLoading={data.loading}
+          onNewObjective={() => setModal({ mode: 'create' })}
+        />
+      </Show>
+
+      <Show when={viewMode() === 'hierarchy'}>
       {/* Archive — a FLAT list: an archived subtree is not a tree worth rendering.
           Restore is free (the row never left the table); permanent deletion is a
           deadline that stays undoable until the hourly purge job passes it. */}
@@ -257,10 +353,18 @@ export function ObjectivesPanel() {
                 onDelete={deleteObjective}
                 onAddChild={(parentId) => setModal({ mode: 'create', parentId })}
                 onRefetch={refetch}
+                draggedTask={draggedTask}
+                dropTargetId={dropTargetId()}
+                onTaskDragStart={startTaskDrag}
+                onTaskDragEnd={() => { setDraggedTask(null); setDropTargetId(null); }}
+                onObjectiveDragOver={dragOverObjective}
+                onObjectiveDrop={dropTaskOnObjective}
+                onObjectiveDragLeave={leaveObjective}
               />
             )}
           </For>
         </div>
+      </Show>
       </Show>
 
       {/* Modal */}
@@ -303,6 +407,13 @@ function ObjectiveNode(props: {
   onDelete: (o: Objective) => void;
   onAddChild: (parentId: string) => void;
   onRefetch: () => void;
+  draggedTask: () => { taskId: string; sourceObjectiveId: string; groupRootId: string } | null;
+  dropTargetId: string | null;
+  onTaskDragStart: (taskId: string, sourceObjectiveId: string, ev: DragEvent) => void;
+  onTaskDragEnd: () => void;
+  onObjectiveDragOver: (objectiveId: string, ev: DragEvent) => void;
+  onObjectiveDrop: (objectiveId: string, ev: DragEvent) => void;
+  onObjectiveDragLeave: (objectiveId: string, ev: DragEvent) => void;
 }) {
   // Expand: a remembered explicit toggle wins; otherwise the top two levels by
   // default, or any branch on the path to a focused node.
@@ -344,18 +455,14 @@ function ObjectiveNode(props: {
 
   const hasChildren = () => (obj().children?.length ?? 0) > 0;
 
-  // ── AF-5: linked tasks under a leaf + title-only quick-add ────────────────────
-  const leaf = () => isLeafObjective(obj());
   // Visible rows: open/scheduled always; done only if completed today (shown checked);
-  // cancelled never. completed_at is a UTC timestamp → compare on the LOCAL date.
-  const leafTasks = () =>
-    leaf()
-      ? visibleLeafTasks(obj().tasks ?? [], localISODate(), (ts) => localISODate(new Date(ts)))
-      : [];
+  // cancelled never. Parent objectives retain their own tasks when children are added.
+  const objectiveTasks = () =>
+    visibleObjectiveTasks(obj().tasks ?? [], localISODate(), (ts) => localISODate(new Date(ts)));
   const [quickAdd, setQuickAdd] = createSignal(false);
   const [qaTitle, setQaTitle] = createSignal('');
   const [qaBusy, setQaBusy] = createSignal(false);
-  const expandable = () => hasChildren() || leafTasks().length > 0;
+  const expandable = () => hasChildren() || objectiveTasks().length > 0 || quickAdd();
 
   function openQuickAdd() {
     setQuickAdd(true);
@@ -366,30 +473,20 @@ function ObjectiveNode(props: {
     setQaTitle('');
   }
 
-  /** Enter on the inline input: create per plan (subtask when source_task_id, else
-   *  create-then-link), then refresh tree + task store. `openWizardAfter` = the
-   *  "More details" path — same create, then jump into the wizard in EDIT mode on
-   *  the new task (guarantees the link without touching ElementWizard). */
-  async function submitQuickAdd(openWizardAfter = false) {
+  /** Create and link the task on the server; new tasks remain top-level so they show
+   *  in the main Tasks list, while inheriting the objective's source task settings. */
+  async function submitQuickAdd() {
     const title = qaTitle().trim();
     if (!title || qaBusy()) return;
     setQaBusy(true);
     try {
-      const { taskId } = await executeQuickAdd(obj(), title, {
-        createTask: (input) => api.tasks.create(input),
-        linkTask: (oid, tid) => api.objectives.linkTask(oid, tid),
-      });
+      const { task } = await api.objectives.createTask(obj().id, title);
       closeQuickAdd();
       refetchTasks();
       props.onRefetch();
-      if (openWizardAfter) {
-        setElementModal({ open: true, mode: 'edit', kind: 'task', editTarget: { kind: 'task', id: taskId } });
-      } else {
-        showToast('Task added', 'default');
-      }
+      setElementModal({ open: true, mode: 'edit', kind: 'task', editTarget: { kind: 'task', id: task.id } });
     } catch (err) {
-      // Defensive non_leaf 422 (stale tree: the node grew children elsewhere) or any
-      // other failure: surface it and re-sync the tree.
+      // Surface the failure and re-sync the tree.
       showToast((err as Error).message, 'error');
       props.onRefetch();
     } finally {
@@ -397,18 +494,13 @@ function ObjectiveNode(props: {
     }
   }
 
-  /** "More details": with a typed title → create now (link guaranteed) + open the
-   *  wizard in edit mode. With an EMPTY title → only possible for auto-promoted
-   *  objectives (source_task_id): open the add-task wizard nested under the source
-   *  task; task-promotion links the save. (Manual objectives disable the button
-   *  until a title is typed — post-save linking isn't reachable without editing
-   *  ElementWizard, which another lane owns.) */
-  function moreDetails() {
-    if (qaTitle().trim()) { void submitQuickAdd(true); return; }
-    const src = obj().source_task_id;
-    if (!src) return; // button is disabled in this state
-    closeQuickAdd();
-    setElementModal({ open: true, mode: 'add', kind: 'task', parentId: src });
+  async function approveTask(t: ObjectiveTaskSummary) {
+    try {
+      await api.tasks.approve(t.id);
+      refetchTasks();
+      props.onRefetch();
+      showToast('Task approved', 'success');
+    } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
   async function toggleTaskDone(t: ObjectiveTaskSummary) {
@@ -439,8 +531,15 @@ function ObjectiveNode(props: {
   // borders already carry the hierarchy at that width.
   return (
     <div ref={rowRef} class="rounded-xl border bg-card overflow-hidden transition-shadow ml-[var(--obj-indent-sm)] sm:ml-[var(--obj-indent)]"
-         classList={{ 'border-primary ring-1 ring-primary': isFocus(), 'border-border': !isFocus() }}
-         style={{ '--obj-indent': `${props.depth * 20}px`, '--obj-indent-sm': `${props.depth * 8}px` }}>
+         classList={{
+           'border-primary ring-1 ring-primary': isFocus(),
+           'border-border': !isFocus(),
+           'border-orange-400 border-dashed bg-orange-400/5': props.dropTargetId === obj().id,
+         }}
+         style={{ '--obj-indent': `${props.depth * 20}px`, '--obj-indent-sm': `${props.depth * 8}px` }}
+         onDragOver={(ev) => props.onObjectiveDragOver(obj().id, ev)}
+         onDrop={(ev) => props.onObjectiveDrop(obj().id, ev)}
+         onDragLeave={(ev) => props.onObjectiveDragLeave(obj().id, ev)}>
       {/* Row header */}
       <div class="flex items-center gap-2 px-3 py-2.5 group">
         {/* Expand/collapse chevron */}
@@ -466,26 +565,26 @@ function ObjectiveNode(props: {
             />
           </span>
           <Show when={isRotting()}>
-            <span class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-400" title="Needs attention" />
+            <span class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-circle bg-amber-400" title="Needs attention" />
           </Show>
         </span>
 
         {/* Progress track — completion reads as color filling in (Phase O · O3). A
             done objective fills the ring gold; NULL progress stays the rot dashes. */}
-        <div class="relative flex-shrink-0 w-8 sm:w-16 h-1.5 rounded-full bg-background border border-border overflow-hidden"
+        <div class="relative flex-shrink-0 w-8 sm:w-16 h-1.5 rounded-sm bg-background border border-border overflow-hidden"
              title={obj().status === 'done' ? 'Complete' : (progressPct() ?? 'No plan yet')}>
           <Show when={obj().status === 'done'}>
-            <div class="absolute inset-0 rounded-full" style={{ 'background-color': STAR_GOLD }} />
+            <div class="absolute inset-0 rounded-sm" style={{ 'background-color': 'var(--star-gold)' }} />
           </Show>
           <Show when={obj().status !== 'done' && obj().progress_cache != null}>
             <div
-              class="absolute inset-y-0 left-0 rounded-full bg-primary"
+              class="absolute inset-y-0 left-0 rounded-sm bg-primary"
               style={{ width: progressPct()! }}
             />
           </Show>
           <Show when={obj().status !== 'done' && obj().progress_cache === null}>
             {/* Dashed — no plan */}
-            <div class="absolute inset-0 border border-dashed border-border rounded-full" />
+            <div class="absolute inset-0 border border-dashed border-border rounded-sm" />
           </Show>
         </div>
 
@@ -503,7 +602,7 @@ function ObjectiveNode(props: {
               {obj().title}
             </span>
             <Show when={obj().status === 'done'}>
-              <Star size={12} color={STAR_GOLD} fill={STAR_GOLD} class="flex-shrink-0" />
+              <Star size={12} color="var(--star-gold)" fill="var(--star-gold)" class="flex-shrink-0" />
             </Show>
             {/* Hidden below `sm`: the level icon to the left already says this, and at
                 360px the word was outbidding the title for the last of the row. */}
@@ -538,16 +637,13 @@ function ObjectiveNode(props: {
 
         {/* Actions (hover reveal) */}
         <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-          {/* AF-5: task quick-add — LEAF objectives only (server rejects non-leaf links). */}
-          <Show when={leaf()}>
-            <button
-              class="btn-icon text-muted-foreground hover:text-primary"
-              onClick={openQuickAdd}
-              title="Add task"
-            >
-              <ListPlus size={13} />
-            </button>
-          </Show>
+          <button
+            class="btn-icon text-muted-foreground hover:text-primary"
+            onClick={openQuickAdd}
+            title="Add task"
+          >
+            <ListPlus size={13} />
+          </button>
           <button
             class="btn-icon text-muted-foreground hover:text-foreground"
             onClick={() => props.onAddChild(obj().id)}
@@ -578,23 +674,35 @@ function ObjectiveNode(props: {
           {progressPct()} complete
         </div>
       </Show>
-      {/* Leaf-only. `progress_cache` is null for a parent precisely when it is null for
-          every descendant, so rendering this at each level repeated the same sentence
+      {/* `progress_cache` is null for a parent precisely when it is null for every
+          descendant, so rendering this at each level repeated the same sentence
           once per row — a goal > project > 2 objectives tree printed "No plan yet" five
           times and read as an empty app rather than an unplanned branch. The dashed
           progress track above still marks the state at every level, and the track's
-          title attribute keeps the wording for assistive tech. On a leaf the label is
-          also the only actionable one: the fix is to link tasks *here*. */}
+          title attribute keeps the wording for assistive tech. On a childless node the
+          label is also the clearest actionable one: add or link tasks here. */}
       <Show when={obj().progress_cache === null && obj().status === 'active' && !hasChildren()}>
         <div class="px-3 pb-1.5 text-[10px] text-muted-foreground italic">No plan yet</div>
       </Show>
 
-      {/* AF-5: linked tasks under an expanded LEAF + inline title-only quick-add */}
-      <Show when={expanded() && leaf() && (leafTasks().length > 0 || quickAdd())}>
+      {/* Expandable linked task list + inline title-only quick-add. */}
+      <Show when={expanded() && (objectiveTasks().length > 0 || quickAdd())}>
         <div class="border-t border-border/50 px-3 py-1.5 flex flex-col">
-          <For each={leafTasks()}>
+          <For each={objectiveTasks()}>
             {(t) => (
-              <div class="flex items-center gap-2 pl-6 py-1 min-w-0">
+              <div
+                draggable={true}
+                onDragStart={(ev) => props.onTaskDragStart(t.id, obj().id, ev)}
+                onDragEnd={props.onTaskDragEnd}
+                class="flex items-center gap-2 pl-2 sm:pl-6 py-1 min-w-0 border border-transparent"
+                classList={{
+                  'border-dotted bg-warning/5': !!t.auto_generated && !t.human_approved_at,
+                  'cursor-grab': true,
+                  'opacity-50': props.draggedTask()?.taskId === t.id,
+                }}
+                style={!!t.auto_generated && !t.human_approved_at ? { 'border-color': 'var(--auto-generated-outline)' } : undefined}
+                title="Drag to another objective in this group"
+              >
                 <button
                   class="btn-icon flex-shrink-0"
                   onClick={() => toggleTaskDone(t)}
@@ -607,15 +715,17 @@ function ObjectiveNode(props: {
                     <CheckCircle2 size={12} class="text-primary" />
                   </Show>
                 </button>
-                <span
-                  class="text-xs truncate"
+                <button
+                  class="text-xs truncate text-left hover:text-primary"
                   classList={{
                     'text-muted-foreground line-through': t.status === 'done',
                     'text-foreground': t.status !== 'done',
                   }}
+                  onClick={() => setElementModal({ open: true, mode: 'edit', kind: 'task', editTarget: { kind: 'task', id: t.id } })}
+                  title="Open task details"
                 >
                   {t.title}
-                </span>
+                </button>
                 <Show when={t.due_at}>
                   {/* Same normalization as TaskCard's DateField: due_at may carry a
                       full timestamp — display the plain YYYY-MM-DD only. */}
@@ -623,11 +733,22 @@ function ObjectiveNode(props: {
                     <Clock size={9} /> {t.due_at!.slice(0, 10)}
                   </span>
                 </Show>
+                <Show when={!!t.auto_generated && !t.human_approved_at}>
+                  <button
+                    class="btn-icon flex-shrink-0 auto-generated-approval"
+                    onDragStart={(ev) => ev.stopPropagation()}
+                    onClick={(ev) => { ev.stopPropagation(); void approveTask(t); }}
+                    title="Approve this AI-created task"
+                    aria-label={`Approve ${t.title}`}
+                  >
+                    <CheckCircle2 size={13} />
+                  </button>
+                </Show>
               </div>
             )}
           </For>
 
-          {/* Inline quick-add: Enter = create+link, Esc = cancel, "More details" = wizard. */}
+          {/* Inline quick-add: Enter creates the task and opens its full editor. */}
           <Show when={quickAdd()}>
             <div class="flex items-center gap-2 pl-6 py-1">
               <ListPlus size={12} class="text-muted-foreground flex-shrink-0" />
@@ -641,7 +762,7 @@ function ObjectiveNode(props: {
                 }}
                 type="text"
                 class="flex-1 min-w-0 bg-background border border-border rounded-md px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary"
-                placeholder="Task title — Enter to add, Esc to cancel"
+                placeholder="Task name — Enter to add and edit"
                 value={qaTitle()}
                 disabled={qaBusy()}
                 onInput={(e) => setQaTitle(e.currentTarget.value)}
@@ -652,15 +773,11 @@ function ObjectiveNode(props: {
               />
               <button
                 class="text-[11px] text-muted-foreground hover:text-primary flex-shrink-0 disabled:opacity-40 disabled:hover:text-muted-foreground"
-                disabled={qaBusy() || (!qaTitle().trim() && !obj().source_task_id)}
-                title={
-                  !qaTitle().trim() && !obj().source_task_id
-                    ? 'Type a title first'
-                    : 'Open the full task wizard'
-                }
-                onClick={moreDetails}
+                disabled={qaBusy() || !qaTitle().trim()}
+                title="Create this task and open its details"
+                onClick={() => void submitQuickAdd()}
               >
-                More details
+                Add & edit
               </button>
             </div>
           </Show>
@@ -682,6 +799,13 @@ function ObjectiveNode(props: {
                 onDelete={props.onDelete}
                 onAddChild={props.onAddChild}
                 onRefetch={props.onRefetch}
+                draggedTask={props.draggedTask}
+                dropTargetId={props.dropTargetId}
+                onTaskDragStart={props.onTaskDragStart}
+                onTaskDragEnd={props.onTaskDragEnd}
+                onObjectiveDragOver={props.onObjectiveDragOver}
+                onObjectiveDrop={props.onObjectiveDrop}
+                onObjectiveDragLeave={props.onObjectiveDragLeave}
               />
             )}
           </For>

@@ -1,4 +1,5 @@
 import { createSignal, createEffect, Show, createResource, For, onMount } from 'solid-js';
+import { useSearchParams } from '@solidjs/router';
 import { ViewHeader } from '../components/ViewHeader.js';
 import { BellRing, Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, Database, AlertTriangle, Users, KeyRound, ScrollText, Eye, FileJson, FileText, Mail, Ticket } from 'lucide-solid';
 import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast, texturesEnabled, setTexturesEnabled, focusAppearance, setFocusAppearance, plannerAxisState, setPlannerCollapseBounds, integrations, refetchIntegrations, recheckIntegrations, aiAvailable, connections, refetchConnections, openOnboardingAt, openTimeRange, setOpenTimeRange, refetchPatternTypes,
@@ -12,14 +13,18 @@ import { CalibrationPins } from '../components/CalibrationPins.js';
 import { PatternBlockSettings } from '../components/PatternBlockSettings.js';
 import { CategorySettings } from '../components/CategorySettings.js';
 import { PeopleSettings } from '../components/PeopleSettings.js';
+import { SharedAccessSettings } from '../components/SharedAccessSettings.js';
 import { enablePush, disablePush, pushState } from '../lib/push.js';
 import { apiUrl, isNativeShell, supportsRedirectFlows } from '../lib/server-config.js';
 import { ServerConnection } from '../components/ServerConnection.js';
 import { on } from '../lib/sse.js';
 import { GOOGLE_CONNECT_ENABLED } from '../lib/flags.js';
 import { ollamaHealth, ollamaHealthDescription } from '../lib/ollama-health.js';
+import { editableOwnerName } from '../lib/owner-name.js';
 import { ConnectionAppearance } from '../components/ConnectionAppearance.js';
 import { FOCUS_STYLES, type FocusStyle } from '../lib/focus-appearance.js';
+import { LearningPanel } from '../components/learning/LearningPanel.js';
+import { learningCanReset } from '../lib/learning-access.js';
 
 const BROWSER_TZ = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
@@ -44,7 +49,6 @@ interface SettingsForm {
   memory_pull_enabled: boolean; // Phase AA — pull memory graph into suggestions
   // Ingestion windows (0147). memory looks FORWARD (upcoming events), email looks BACK.
   memory_window_days: number; email_lookback_days: number;
-  recall_keeps_pattern: boolean; // cockpit-v2 Phase 6
   enable_routines: boolean; enable_rituals: boolean; // feature flags (0073 / 0024), off by default
   time_sense_enabled: boolean; // Phase Z master flag
   focus_ritual_enabled: boolean; haptic_cues_enabled: boolean; // Phase Z · Z5 per-cue matrix
@@ -56,12 +60,14 @@ interface SettingsForm {
   // 0164 (balance-targets wave, bal-2): bias gate — nudges auto-planning toward life
   // dimensions running behind their weekly target. NOT a Time-Sense channel; default ON.
   balance_bias_enabled: boolean;
+  // 0176: me / us / them balance block in the weekly recap. Opt-in; default OFF.
+  motivation_recap_enabled: boolean;
 }
 
 /** The boolean fields of the form — for the reusable Toggle. */
 type BoolField =
-  | 'auto_fill_workday' | 'plan_allday_always' | 'plan_daylong_for_promoted' | 'plan_autofill_gaps' | 'concept_autosurface' | 'recall_keeps_pattern' | 'enable_routines' | 'enable_rituals' | 'time_sense_enabled'
-  | 'focus_ritual_enabled' | 'haptic_cues_enabled' | 'ambient_color_enabled' | 'calibration_loop_enabled' | 'triality_enabled' | 'llm_thinking_enabled' | 'balance_bias_enabled';
+  | 'auto_fill_workday' | 'plan_allday_always' | 'plan_daylong_for_promoted' | 'plan_autofill_gaps' | 'concept_autosurface' | 'enable_routines' | 'enable_rituals' | 'time_sense_enabled'
+  | 'focus_ritual_enabled' | 'haptic_cues_enabled' | 'ambient_color_enabled' | 'calibration_loop_enabled' | 'triality_enabled' | 'llm_thinking_enabled' | 'balance_bias_enabled' | 'motivation_recap_enabled';
 
 const DEFAULTS: SettingsForm = {
   auto_fill_workday: true,
@@ -76,7 +82,6 @@ const DEFAULTS: SettingsForm = {
   memory_sync_habits: true, memory_sync_reflections: true,
   memory_pull_enabled: false,
   memory_window_days: 2, email_lookback_days: 7,
-  recall_keeps_pattern: false,
   enable_routines: false, enable_rituals: false,
   time_sense_enabled: false,
   focus_ritual_enabled: true, haptic_cues_enabled: true,
@@ -84,6 +89,7 @@ const DEFAULTS: SettingsForm = {
   triality_enabled: false,
   capacity_hours_per_week: 56,
   balance_bias_enabled: true,
+  motivation_recap_enabled: false,
 };
 
 /** Minute-of-day -> "9 AM" / "12 PM" / "8 PM". 1440 is the end of the day, not 12 AM
@@ -97,7 +103,12 @@ function fmtHourLabel(min: number): string {
 }
 
 export function Settings() {
-  const [activeTab, setActiveTab] = createSignal<'profile' | 'preferences' | 'connections' | 'logs'>('profile');
+  const [searchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = createSignal<'profile' | 'preferences' | 'people' | 'connections' | 'learning' | 'logs'>('profile');
+  createEffect(() => {
+    if (searchParams.tab === 'preferences') setActiveTab('preferences');
+    if (searchParams.tab === 'people') setActiveTab('people');
+  });
   const [form, setForm] = createSignal<SettingsForm>({ ...DEFAULTS });
 
   // V8 — account (local sign-in only): the backup reset-email. Fetch auth config + the
@@ -128,14 +139,14 @@ export function Settings() {
   const [profileSaving, setProfileSaving] = createSignal(false);
   createEffect(() => {
     if (me()) {
-      setProfileName(me()!.name ?? '');
+      setProfileName(editableOwnerName(me()!.name));
       setProfileEmail(me()!.email ?? '');
       setProfileUsername(me()!.username ?? '');
     }
   });
   const hasUsername = () => me()?.username != null;
   const profileDirty = () =>
-    profileName().trim() !== (me()?.name ?? '')
+    profileName().trim() !== editableOwnerName(me()?.name)
     || profileEmail().trim() !== (me()?.email ?? '')
     || (hasUsername() && profileUsername().trim() !== (me()?.username ?? ''));
   async function saveProfile() {
@@ -146,7 +157,8 @@ export function Settings() {
       // uniqueness check.
       const changedUsername = hasUsername() && profileUsername().trim() !== (me()?.username ?? '');
       await api.owner.updateProfile({
-        name: profileName().trim(),
+        // A blank name is not sent: the server rejects an empty one, and the owner may be saving only an email.
+        ...(profileName().trim() ? { name: profileName().trim() } : {}),
         email: profileEmail().trim() || null,
         ...(changedUsername ? { username: profileUsername().trim() } : {}),
       });
@@ -239,7 +251,6 @@ export function Settings() {
       quality_model:              p.quality_model ?? '',
       embed_model:                p.embed_model ?? '',
       llm_thinking_enabled:       p.llm_thinking_enabled ?? false,
-      recall_keeps_pattern:       p.recall_keeps_pattern ?? false,
       enable_routines:            p.enable_routines ?? false,
       enable_rituals:             p.enable_rituals ?? false,
       time_sense_enabled:         p.time_sense_enabled ?? false,
@@ -257,6 +268,7 @@ export function Settings() {
       triality_enabled:           p.triality_enabled ?? false,
       capacity_hours_per_week:    p.capacity_hours_per_week ?? 56,
       balance_bias_enabled:       p.balance_bias_enabled ?? true,
+      motivation_recap_enabled:   p.motivation_recap_enabled ?? false,
     });
   });
 
@@ -323,9 +335,9 @@ export function Settings() {
     <label class="flex items-start gap-2 cursor-pointer select-none">
       <button type="button" role="switch" aria-checked={form()[props.field]}
         onClick={() => setField(props.field, !form()[props.field])}
-        class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+        class="relative w-9 h-5 rounded-sm transition-colors flex-shrink-0 mt-0.5"
         classList={{ 'bg-primary': form()[props.field], 'bg-muted border border-border': !form()[props.field] }}>
-        <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform"
+        <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-circle bg-card transition-transform"
           classList={{ 'translate-x-4': form()[props.field] }} />
       </button>
       <div>
@@ -799,11 +811,27 @@ export function Settings() {
         </button>
         <button
           type="button"
+          onClick={() => setActiveTab('people')}
+          role="tab" class="view-tab"
+          aria-selected={activeTab() === 'people'}
+        >
+          People
+        </button>
+        <button
+          type="button"
           onClick={() => setActiveTab('connections')}
           role="tab" class="view-tab"
           aria-selected={activeTab() === 'connections'}
         >
           Connections
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('learning')}
+          role="tab" class="view-tab"
+          aria-selected={activeTab() === 'learning'}
+        >
+          Learning
         </button>
         <button
           type="button"
@@ -918,202 +946,7 @@ export function Settings() {
             </section>
           </Show>
 
-          {/* Phase AG — Accounts (operator-only; non-operators never see this card,
-              and the server 403s them anyway). Only rendered behind the auth gate:
-              test/standalone deployments have no login accounts to manage. */}
-          <Show when={authCfg()?.mode === 'sso' && me()?.isOperator && accounts()}>
-            <section class="card">
-              <div class="flex items-center justify-between mb-3">
-                <div class="section-label flex items-center gap-1.5" title="Operators manage accounts, system jobs, and the Google connection. Members plan their own days. Viewers are read-only. Role changes sign the user out everywhere."><Users size={12} /> Team</div>
-                {/* A4: local accounts can be invited whenever local login is served — both
-                    sso sub-modes since A3 — not only under DISABLE_OIDC. The native shells leave
-                    this out: they do not create accounts (see the mobile section of the README). */}
-                <Show when={authCfg()?.local && !acctFormOpen() && !isNativeShell()}>
-                  <button type="button" onClick={() => setAcctFormOpen(true)} class="btn-secondary text-xs px-3 py-1.5">
-                    <Plus size={12} /> New account
-                  </button>
-                </Show>
-              </div>
-              {/* Create form (local accounts — Companion Portal users are provisioned on their first portal sign-in, after confirming) */}
-              <Show when={acctFormOpen()}>
-                <div class="flex flex-col gap-2 p-3 mb-3 rounded-md bg-muted/40 border border-border">
-                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                    <label class="flex flex-col gap-1">
-                      <span class="text-[11px] text-muted-foreground">Username</span>
-                      <input class="input py-1 text-sm" type="text" autocomplete="off"
-                        value={acctUsername()} onInput={(e) => setAcctUsername(e.currentTarget.value)} />
-                    </label>
-                    <label class="flex flex-col gap-1">
-                      <span class="text-[11px] text-muted-foreground">Email <span class="opacity-70">· the invite goes there</span></span>
-                      <input class="input py-1 text-sm" type="email" autocomplete="off" placeholder="them@example.com"
-                        value={acctEmail()} onInput={(e) => setAcctEmail(e.currentTarget.value)} />
-                    </label>
-                    <label class="flex flex-col gap-1">
-                      <span class="text-[11px] text-muted-foreground">Role</span>
-                      <select class="input py-1 text-sm" value={acctRole()}
-                        onChange={(e) => setAcctRole(e.currentTarget.value as import('../lib/api.js').OwnerRole)}>
-                        <option value="member">Member</option>
-                        <option value="viewer">Viewer</option>
-                        <option value="operator">Operator</option>
-                      </select>
-                    </label>
-                  </div>
-                  <p class="text-[11px] text-muted-foreground">
-                    They get a single-use link to set their own password (valid 7 days) — you never handle it.
-                  </p>
-                  <div class="flex items-center gap-2 justify-end">
-                    <button type="button" onClick={() => setAcctFormOpen(false)} class="btn-ghost text-xs px-2 py-1">Cancel</button>
-                    <button type="button" onClick={createAccount}
-                      disabled={acctBusy() || !acctUsername().trim() || !acctEmail().trim().includes('@')}
-                      class="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
-                      <Plus size={12} /> {acctBusy() ? 'Creating…' : 'Create & send invite'}
-                    </button>
-                  </div>
-                </div>
-              </Show>
 
-              {/* SMTP-free fallback: the server handed the link back — shown once. */}
-              <Show when={inviteLink()}>
-                <div class="flex flex-col gap-1.5 p-3 mb-3 rounded-md border border-amber-500/40 bg-amber-500/10">
-                  <div class="flex items-center justify-between gap-2">
-                    <span class="text-xs text-foreground font-medium">
-                      Set-password link for “{inviteLink()!.username}” — no outgoing email is configured, so send it to them yourself.
-                    </span>
-                    <button type="button" onClick={() => setInviteLink(null)} class="btn-ghost text-xs px-2 py-1"><X size={12} /></button>
-                  </div>
-                  <code class="text-[11px] font-mono break-all select-all">{inviteLink()!.link}</code>
-                  <span class="text-[11px] text-muted-foreground">Single use · shown only once — it isn't stored anywhere else.</span>
-                </div>
-              </Show>
-
-              <div class="flex flex-col gap-2">
-                <For each={accounts() ?? []}>
-                  {(a) => (
-                    <div class="flex flex-col gap-1.5 rounded-md border border-border px-3 py-2">
-                      <div class="flex items-center justify-between gap-2 flex-wrap">
-                        <div class="min-w-0">
-                          <span class="text-xs text-foreground font-medium truncate">{a.name}</span>
-                          <span class="text-[11px] text-muted-foreground ml-2">
-                            {a.username ?? a.email ?? '—'}{a.id === me()!.ownerId ? ' · you' : ''}
-                            {!a.username ? ' · signs in via Companion Portal' : ''}
-                          </span>
-                          <Show when={a.username && !a.hasPassword}>
-                            <span class="text-[10px] px-1.5 py-0.5 ml-2 rounded-full bg-amber-500/15 text-amber-400">invite pending</span>
-                          </Show>
-                        </div>
-                        <div class="flex items-center gap-1.5 shrink-0">
-                          <select
-                            class="input py-0.5 text-xs w-auto"
-                            value={a.role}
-                            disabled={a.id === me()!.ownerId}
-                            title={a.id === me()!.ownerId ? 'Another operator must change your role' : 'Set this account\'s role'}
-                            onChange={(e) => changeRole(a.id, e.currentTarget.value as import('../lib/api.js').OwnerRole)}
-                          >
-                            <option value="operator">Operator</option>
-                            <option value="member">Member</option>
-                            <option value="viewer">Viewer</option>
-                          </select>
-                          <Show when={a.username}>
-                            <button type="button" class="btn-ghost text-xs px-2 py-1" disabled={acctBusy()}
-                              title={a.hasPassword
-                                ? 'Email them a single-use password-reset link'
-                                : 'Send the set-password invite again (replaces the previous link)'}
-                              onClick={() => sendInvite(a)}>
-                              <KeyRound size={12} /> {a.hasPassword ? 'Send reset link' : 'Resend invite'}
-                            </button>
-                          </Show>
-                          <Show when={a.id !== me()!.ownerId}>
-                            <button type="button" class="btn-ghost text-xs px-2 py-1 text-destructive"
-                              title="Delete this account and all of its data"
-                              onClick={() => deleteAccount(a)}>
-                              <Trash2 size={12} />
-                            </button>
-                          </Show>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </For>
-              </div>
-
-              {/* B2 — invite codes (AUTH_SIGNUP=invite only; under `open` nobody needs one and
-                  under `off` nobody can use one). Someone with a code creates their OWN
-                  account at /signup — you never see their password. The native shells leave
-                  this out (see the mobile section of the README). */}
-              <Show when={signupReq()?.enabled && signupReq()?.codeRequired && !isNativeShell()}>
-                <div class="mt-4 pt-3 border-t border-border flex flex-col gap-2">
-                  <div class="flex items-center justify-between gap-2 flex-wrap">
-                    <div class="section-label flex items-center gap-1.5" title="Single-use codes that let someone create their own account at /signup. They pick their own username and password; you never handle it. Codes expire after 7 days.">
-                      <Ticket size={12} /> Invite codes
-                    </div>
-                    <div class="flex items-center gap-1.5">
-                      <input class="input py-1 text-xs w-36" type="text" placeholder="Note (optional)" maxlength="120"
-                        value={codeNote()} onInput={(e) => setCodeNote(e.currentTarget.value)} />
-                      <button type="button" onClick={mintSignupCode} disabled={codeBusy()}
-                        class="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
-                        <Plus size={12} /> {codeBusy() ? 'Minting…' : 'New invite code'}
-                      </button>
-                    </div>
-                  </div>
-                  <p class="text-[11px] text-muted-foreground">
-                    Hand a code to someone and send them to <code class="font-mono">/signup</code>. Single use · expires in 7 days.
-                  </p>
-
-                  {/* Shown once — the server keeps only a hash. */}
-                  <Show when={freshCode()}>
-                    <div class="flex flex-col gap-1.5 p-3 rounded-md border border-amber-500/40 bg-amber-500/10">
-                      <div class="flex items-center justify-between gap-2">
-                        <span class="text-xs text-foreground font-medium">
-                          Invite code{freshCode()!.note ? ` for “${freshCode()!.note}”` : ''} — copy it now, it isn't shown again.
-                        </span>
-                        <button type="button" onClick={() => setFreshCode(null)} class="btn-ghost text-xs px-2 py-1"><X size={12} /></button>
-                      </div>
-                      <code class="text-base font-mono tracking-widest select-all" data-testid="fresh-signup-code">{freshCode()!.code}</code>
-                    </div>
-                  </Show>
-
-                  <Show when={(signupCodes() ?? []).length > 0} fallback={<span class="text-[11px] text-muted-foreground">No invite codes yet.</span>}>
-                    <div class="flex flex-col gap-1">
-                      <For each={signupCodes() ?? []}>
-                        {(c) => (
-                          <div class="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-1.5 text-xs">
-                            <div class="min-w-0 flex items-center gap-2 flex-wrap">
-                              <span class="text-foreground truncate">{c.note ?? 'Untitled code'}</span>
-                              <span
-                                class="text-[10px] px-1.5 py-0.5 rounded-full"
-                                classList={{
-                                  'bg-emerald-500/15 text-emerald-400': c.status === 'active',
-                                  'bg-muted text-muted-foreground': c.status === 'used',
-                                  'bg-amber-500/15 text-amber-400': c.status === 'expired',
-                                  'bg-destructive/15 text-destructive': c.status === 'revoked',
-                                }}
-                              >
-                                {c.status}
-                              </span>
-                              <span class="text-[11px] text-muted-foreground">
-                                {c.status === 'used' && c.usedByName
-                                  ? `used by ${c.usedByName}`
-                                  : c.status === 'active'
-                                    ? `expires ${fmtDay(c.expiresAt)}`
-                                    : `created ${fmtDay(c.createdAt)}`}
-                              </span>
-                            </div>
-                            <Show when={c.status === 'active'}>
-                              <button type="button" class="btn-ghost text-xs px-2 py-1 text-destructive shrink-0"
-                                title="Revoke this code — it can no longer be used to sign up"
-                                onClick={() => revokeSignupCode(c)}>
-                                <X size={12} /> Revoke
-                              </button>
-                            </Show>
-                          </div>
-                        )}
-                      </For>
-                    </div>
-                  </Show>
-                </div>
-              </Show>
-            </section>
-          </Show>
 
 
           {/* Backup / Restore / Export */}
@@ -1170,7 +1003,7 @@ export function Settings() {
         <Show when={activeTab() === 'preferences'}>
 
           {/* Schedule Patterns — per-direction availability windows */}
-          <section class="card">
+          <section id="schedule-patterns" class="card">
             <div class="flex items-center justify-between mb-1">
               <div class="section-label" title="Define day types, assign them to each weekday, and set per-direction availability windows. Auto places direction-tagged tasks only inside these windows. Changes save as you make them.">Schedule Patterns</div>
               <button type="button" onClick={doSave} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
@@ -1189,6 +1022,11 @@ export function Settings() {
             <div class="mt-4 pt-3 border-t border-border">
               <Toggle field="balance_bias_enabled" label="Balance bias"
                 hint="Nudge auto-planning toward life dimensions running behind their weekly target." />
+            </div>
+            {/* 0176: the me / us / them block in the weekly recap. Opt-in, default off. */}
+            <div class="mt-4 pt-3 border-t border-border">
+              <Toggle field="motivation_recap_enabled" label="Me, us, them in the weekly recap"
+                hint="Show how last week's timed hours split between work for you, for us and for them, per category. Off by default." />
             </div>
             {/* 0156: replaces workday_start/workday_end as the source for the AI-authoring
                 "capacity today" hint — not a placement window, just a weekly total. */}
@@ -1267,9 +1105,9 @@ export function Settings() {
             <label class="flex items-start gap-2 cursor-pointer select-none">
               <button type="button" role="switch" aria-checked={texturesEnabled()}
                 onClick={() => setTexturesEnabled(!texturesEnabled())}
-                class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+                class="relative w-9 h-5 rounded-sm transition-colors flex-shrink-0 mt-0.5"
                 classList={{ 'bg-primary': texturesEnabled(), 'bg-muted border border-border': !texturesEnabled() }}>
-                <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform"
+                <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-circle bg-card transition-transform"
                   classList={{ 'translate-x-4': texturesEnabled() }} />
               </button>
               <div>
@@ -1355,14 +1193,6 @@ export function Settings() {
             <CategorySettings />
           </section>
 
-          {/* People (0151) — the directory behind Responsible / Beneficiaries. Sits next
-              to the other vocabulary catalogs (tags, categories) because that is what
-              it is: the set of names those two fields pick from. */}
-          <section class="card">
-            <div class="section-label flex items-center gap-1.5 mb-1" title="The people you can name as Responsible or Beneficiaries on a task or time block. Entries detected from calendar invites and email arrive here unconfirmed — rename, merge, or delete them."><Users size={12} /> People</div>
-            <PeopleSettings />
-          </section>
-
           {/* Time-Block settings — Plan | Concept */}
           <section class="card">
             <div class="flex items-center justify-between mb-3">
@@ -1398,9 +1228,6 @@ export function Settings() {
                   </label>
                 </div>
 
-                <Toggle field="plan_allday_always" label="All-day Plans" hint="Always allow creating all-day Plans." />
-                <Toggle field="plan_daylong_for_promoted" label="Day-long when promoted" hint="A promoted Concept becomes a day-long Plan." />
-
                 <label class="flex flex-col gap-1">
                   <span class="text-[11px] text-muted-foreground">Planning horizon (days)</span>
                   <input type="number" class="input py-1 text-sm" min={1} max={60} step={1}
@@ -1409,7 +1236,7 @@ export function Settings() {
 
                 <div class="pt-2 border-t border-border mt-auto">
                   <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Autoscheduling</div>
-                  <Toggle field="plan_autofill_gaps" label="Auto-fill free gaps" hint="Let Auto place Plans into open time." />
+                  <Toggle field="plan_autofill_gaps" label="Auto-fill free gaps" hint="Let Auto place matching tasks into open gaps inside Scheduled Blocks." />
                   <div class="flex gap-3 mt-2">
                     <label class="flex flex-col gap-1 flex-1">
                       <span class="text-[11px] text-muted-foreground">Max focus (min)</span>
@@ -1428,11 +1255,11 @@ export function Settings() {
               {/* ── CONCEPT ── unscheduled goal (start day + duration) */}
               <div class="rounded-xl border border-border p-3 flex flex-col gap-3">
                 <div class="flex items-center justify-between">
-                  <span class="text-sm font-semibold text-foreground">Someday Block</span>
+                  <span class="text-sm font-semibold text-foreground">Someday Task</span>
                   <Pentagon size={15} class="text-muted-foreground" />
                 </div>
                 <div class="border-t-2 border-dashed border-muted-foreground" />
-                <p class="text-[11px] text-muted-foreground -mt-1.5">A goal with a start day + estimate; no set time until Auto places it.</p>
+                <p class="text-[11px] text-muted-foreground -mt-1.5">An unscheduled task idea with a goal day and estimate. It stays off the Flight Plan until you promote it.</p>
 
                 <div>
                   <span class="text-[11px] text-muted-foreground">Default duration</span>
@@ -1456,11 +1283,12 @@ export function Settings() {
                   <span class="text-[11px] text-muted-foreground">Planning horizon (days)</span>
                   <input type="number" class="input py-1 text-sm" min={1} max={365} step={1}
                     value={form().concept_horizon_days} onInput={e => setField('concept_horizon_days', Number(e.currentTarget.value))} />
+                  <span class="text-[10px] text-muted-foreground">Weekly Review includes dated tasks in this horizon, plus undated tasks.</span>
                 </label>
 
                 <div class="pt-2 border-t border-border mt-auto">
-                  <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Autoscheduling</div>
-                  <Toggle field="concept_autosurface" label="Surface on goal day" hint="Show the Concept on its goal start day." />
+                  <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Visibility</div>
+                  <Toggle field="concept_autosurface" label="Show on goal day" hint="Show Someday Tasks in the Planner header on their goal date. This does not schedule them." />
                 </div>
               </div>
 
@@ -1488,9 +1316,9 @@ export function Settings() {
               <Show when={!isNativeShell()}>
                 <label class="flex items-start gap-2 cursor-pointer select-none">
                   <button type="button" role="switch" aria-checked={pushOn()} disabled={pushBusy()} onClick={togglePush}
-                    class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5 disabled:opacity-50"
+                    class="relative w-9 h-5 rounded-sm transition-colors flex-shrink-0 mt-0.5 disabled:opacity-50"
                     classList={{ 'bg-primary': pushOn(), 'bg-muted border border-border': !pushOn() }}>
-                    <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform" classList={{ 'translate-x-4': pushOn() }} />
+                    <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-circle bg-card transition-transform" classList={{ 'translate-x-4': pushOn() }} />
                   </button>
                   <div>
                     <div class="text-sm text-foreground leading-tight">Push notifications</div>
@@ -1501,9 +1329,9 @@ export function Settings() {
               {/* Start-time reminder */}
               <label class="flex items-start gap-2 cursor-pointer select-none">
                 <button type="button" role="switch" aria-checked={remStartOn()} onClick={() => setRemStartOn((v) => !v)}
-                  class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+                  class="relative w-9 h-5 rounded-sm transition-colors flex-shrink-0 mt-0.5"
                   classList={{ 'bg-primary': remStartOn(), 'bg-muted border border-border': !remStartOn() }}>
-                  <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform" classList={{ 'translate-x-4': remStartOn() }} />
+                  <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-circle bg-card transition-transform" classList={{ 'translate-x-4': remStartOn() }} />
                 </button>
                 <div>
                   <div class="text-sm text-foreground leading-tight">Start-time reminder</div>
@@ -1513,9 +1341,9 @@ export function Settings() {
               {/* Advance reminder (advanced timer) */}
               <label class="flex items-start gap-2 cursor-pointer select-none">
                 <button type="button" role="switch" aria-checked={remAdvOn()} onClick={() => setRemAdvOn((v) => !v)}
-                  class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+                  class="relative w-9 h-5 rounded-sm transition-colors flex-shrink-0 mt-0.5"
                   classList={{ 'bg-primary': remAdvOn(), 'bg-muted border border-border': !remAdvOn() }}>
-                  <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform" classList={{ 'translate-x-4': remAdvOn() }} />
+                  <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-circle bg-card transition-transform" classList={{ 'translate-x-4': remAdvOn() }} />
                 </button>
                 <div class="flex-1">
                   <div class="text-sm text-foreground leading-tight">Advance reminder</div>
@@ -1545,12 +1373,6 @@ export function Settings() {
               hint="Show Routine in the Add dialog and place recurring Routines on the Planner on their own, within your repeat horizon. Off (default): a Routine can still be made and placed by hand from the Routines tab." />
             <Toggle field="enable_rituals" label="Rituals"
               hint="Show the Ritual type (habits and one-off tasks for an occasion, like board-meeting prep) in the Routines tab. Off (default) hides it; any Rituals you made are kept." />
-
-            {/* Orphaned setting (see #392): NO Recall action exists anywhere in the UI
-                (api.tasks.recall has zero callers), so this toggle persists but
-                currently governs nothing. */}
-            <Toggle field="recall_keeps_pattern" label="Recall keeps Routine membership"
-              hint="When recalling a shelved (Past) task, also re-link it to its Routine. Off (default) → recall makes a clean, standalone task." />
 
             {/* Phase Z master flag — gates the Focus Ritual, tag-scoped estimate
                 calibration, and the evening EOD Alignment while the phase ships dark. */}
@@ -1630,9 +1452,9 @@ export function Settings() {
                 <label class="flex items-start gap-2 cursor-pointer select-none">
                   <button type="button" role="switch" aria-checked={smartMode()}
                     onClick={togglePlanningMode}
-                    class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+                    class="relative w-9 h-5 rounded-sm transition-colors flex-shrink-0 mt-0.5"
                     classList={{ 'bg-primary': smartMode(), 'bg-muted border border-border': !smartMode() }}>
-                    <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform"
+                    <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-circle bg-card transition-transform"
                       classList={{ 'translate-x-4': smartMode() }} />
                   </button>
                   <div>
@@ -1877,10 +1699,10 @@ export function Settings() {
                 role="switch"
                 aria-checked={form().memory_pull_enabled}
                 onClick={() => setField('memory_pull_enabled', !form().memory_pull_enabled)}
-                class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+                class="relative w-9 h-5 rounded-sm transition-colors flex-shrink-0 mt-0.5"
                 classList={{ 'bg-primary': form().memory_pull_enabled, 'bg-muted border border-border': !form().memory_pull_enabled }}
               >
-                <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform"
+                <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-circle bg-card transition-transform"
                   classList={{ 'translate-x-4': form().memory_pull_enabled }} />
               </button>
               <div class="flex-1">
@@ -1918,10 +1740,10 @@ export function Settings() {
                 role="switch"
                 aria-checked={form().memory_sync_enabled}
                 onClick={() => setField('memory_sync_enabled', !form().memory_sync_enabled)}
-                class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+                class="relative w-9 h-5 rounded-sm transition-colors flex-shrink-0 mt-0.5"
                 classList={{ 'bg-primary': form().memory_sync_enabled, 'bg-muted border border-border': !form().memory_sync_enabled }}
               >
-                <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform"
+                <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-circle bg-card transition-transform"
                   classList={{ 'translate-x-4': form().memory_sync_enabled }} />
               </button>
               <div class="flex-1">
@@ -2156,7 +1978,7 @@ export function Settings() {
                           </span>
                           <div class="flex items-center gap-2 shrink-0">
                             <span
-                              class="text-[10px] px-1.5 py-0.5 rounded-full capitalize"
+                              class="text-[10px] px-1.5 py-0.5 rounded-sm capitalize"
                               // The three mapped states — the raw connection_tokens
                               // status ('active'/'revoked'/'error') no longer reaches
                               // the client, so there is nothing else to colour.
@@ -2319,6 +2141,254 @@ export function Settings() {
         </Show>
 
       </form>
+
+      {/* ── PEOPLE TAB ────────────────────────────────────────────────────────── */}
+      <Show when={activeTab() === 'people'}>
+          {/* Phase AG — Accounts (operator-only; non-operators never see this card,
+              and the server 403s them anyway). Only rendered behind the auth gate:
+              test/standalone deployments have no login accounts to manage. */}
+          <Show when={authCfg()?.mode === 'sso' && me()?.isOperator}>
+            <section class="card">
+              <div class="flex items-center justify-between mb-3">
+                <div class="section-label flex items-center gap-1.5" title="Operators manage sign-in accounts, roles, and invitations."><Users size={12} /> Account administration</div>
+                {/* A4: local accounts can be invited whenever local login is served — both
+                    sso sub-modes since A3 — not only under DISABLE_OIDC. The native shells leave
+                    this out: they do not create accounts (see the mobile section of the README). */}
+                <Show when={authCfg()?.local && !acctFormOpen() && !isNativeShell()}>
+                  <button type="button" onClick={() => setAcctFormOpen(true)} class="btn-secondary text-xs px-3 py-1.5">
+                    <Plus size={12} /> New account
+                  </button>
+                </Show>
+              </div>
+              <p class="text-xs text-muted-foreground mb-3">
+                Manage app sign-ins and roles here. This does not grant access to another person's full task details.
+              </p>
+              <Show when={accounts.loading}>
+                <p class="text-xs text-muted-foreground mb-3" role="status">Loading accounts…</p>
+              </Show>
+              <Show when={!accounts.loading && accounts() === null}>
+                <div class="flex items-center justify-between gap-3 text-xs mb-3" role="alert">
+                  <span class="text-muted-foreground">Accounts could not load.</span>
+                  <button type="button" class="btn-secondary" onClick={() => refetchAccounts()}>Try again</button>
+                </div>
+              </Show>
+              <Show when={accounts()?.length === 0}>
+                <p class="text-xs text-muted-foreground mb-3">No app accounts yet.</p>
+              </Show>
+              {/* Create form (local accounts — Companion Portal users are provisioned on their first portal sign-in, after confirming) */}
+              <Show when={acctFormOpen()}>
+                <div class="flex flex-col gap-2 p-3 mb-3 rounded-md bg-muted/40 border border-border">
+                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <label class="flex flex-col gap-1">
+                      <span class="text-[11px] text-muted-foreground">Username</span>
+                      <input class="input py-1 text-sm" type="text" autocomplete="off"
+                        value={acctUsername()} onInput={(e) => setAcctUsername(e.currentTarget.value)} />
+                    </label>
+                    <label class="flex flex-col gap-1">
+                      <span class="text-[11px] text-muted-foreground">Email <span class="opacity-70">· the invite goes there</span></span>
+                      <input class="input py-1 text-sm" type="email" autocomplete="off" placeholder="them@example.com"
+                        value={acctEmail()} onInput={(e) => setAcctEmail(e.currentTarget.value)} />
+                    </label>
+                    <label class="flex flex-col gap-1">
+                      <span class="text-[11px] text-muted-foreground">Role</span>
+                      <select class="input py-1 text-sm" value={acctRole()}
+                        onChange={(e) => setAcctRole(e.currentTarget.value as import('../lib/api.js').OwnerRole)}>
+                        <option value="member">Member</option>
+                        <option value="viewer">Viewer</option>
+                        <option value="operator">Operator</option>
+                      </select>
+                    </label>
+                  </div>
+                  <p class="text-[11px] text-muted-foreground">
+                    They get a single-use link to set their own password (valid 7 days) — you never handle it.
+                  </p>
+                  <div class="flex items-center gap-2 justify-end">
+                    <button type="button" onClick={() => setAcctFormOpen(false)} class="btn-ghost text-xs px-2 py-1">Cancel</button>
+                    <button type="button" onClick={createAccount}
+                      disabled={acctBusy() || !acctUsername().trim() || !acctEmail().trim().includes('@')}
+                      class="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
+                      <Plus size={12} /> {acctBusy() ? 'Creating…' : 'Create & send invite'}
+                    </button>
+                  </div>
+                </div>
+              </Show>
+
+              {/* SMTP-free fallback: the server handed the link back — shown once. */}
+              <Show when={inviteLink()}>
+                <div class="flex flex-col gap-1.5 p-3 mb-3 rounded-md border border-amber-500/40 bg-amber-500/10">
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="text-xs text-foreground font-medium">
+                      Set-password link for “{inviteLink()!.username}” — no outgoing email is configured, so send it to them yourself.
+                    </span>
+                    <button type="button" onClick={() => setInviteLink(null)} class="btn-ghost text-xs px-2 py-1"><X size={12} /></button>
+                  </div>
+                  <code class="text-[11px] font-mono break-all select-all">{inviteLink()!.link}</code>
+                  <span class="text-[11px] text-muted-foreground">Single use · shown only once — it isn't stored anywhere else.</span>
+                </div>
+              </Show>
+
+              <div class="flex flex-col gap-2">
+                <For each={accounts() ?? []}>
+                  {(a) => (
+                    <div class="flex flex-col gap-1.5 rounded-md border border-border px-3 py-2">
+                      <div class="flex items-center justify-between gap-2 flex-wrap">
+                        <div class="min-w-0">
+                          <span class="text-xs text-foreground font-medium truncate">{a.name}</span>
+                          <span class="text-[11px] text-muted-foreground ml-2">
+                            {a.username ?? a.email ?? '—'}{a.id === me()!.ownerId ? ' · you' : ''}
+                            {!a.username ? ' · signs in via Companion Portal' : ''}
+                          </span>
+                          <Show when={a.username && !a.hasPassword}>
+                            <span class="text-[10px] px-1.5 py-0.5 ml-2 rounded-sm bg-amber-500/15 text-amber-400">invite pending</span>
+                          </Show>
+                        </div>
+                        <div class="flex items-center gap-1.5 shrink-0">
+                          <select
+                            class="input py-0.5 text-xs w-auto"
+                            value={a.role}
+                            disabled={a.id === me()!.ownerId}
+                            title={a.id === me()!.ownerId ? 'Another operator must change your role' : 'Set this account\'s role'}
+                            onChange={(e) => changeRole(a.id, e.currentTarget.value as import('../lib/api.js').OwnerRole)}
+                          >
+                            <option value="operator">Operator</option>
+                            <option value="member">Member</option>
+                            <option value="viewer">Viewer</option>
+                            <option value="guest">Guest</option>
+                          </select>
+                          <Show when={a.username}>
+                            <button type="button" class="btn-ghost text-xs px-2 py-1" disabled={acctBusy()}
+                              title={a.hasPassword
+                                ? 'Email them a single-use password-reset link'
+                                : 'Send the set-password invite again (replaces the previous link)'}
+                              onClick={() => sendInvite(a)}>
+                              <KeyRound size={12} /> {a.hasPassword ? 'Send reset link' : 'Resend invite'}
+                            </button>
+                          </Show>
+                          <Show when={a.id !== me()!.ownerId}>
+                            <button type="button" class="btn-ghost text-xs px-2 py-1 text-destructive"
+                              title="Delete this account and all of its data"
+                              onClick={() => deleteAccount(a)}>
+                              <Trash2 size={12} />
+                            </button>
+                          </Show>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </For>
+              </div>
+
+              {/* B2 — invite codes (AUTH_SIGNUP=invite only; under `open` nobody needs one and
+                  under `off` nobody can use one). Someone with a code creates their OWN
+                  account at /signup — you never see their password. The native shells leave
+                  this out (see the mobile section of the README). */}
+              <Show when={signupReq()?.enabled && signupReq()?.codeRequired && !isNativeShell()}>
+                <div class="mt-4 pt-3 border-t border-border flex flex-col gap-2">
+                  <div class="flex items-center justify-between gap-2 flex-wrap">
+                    <div class="section-label flex items-center gap-1.5" title="Single-use codes that let someone create their own account at /signup. They pick their own username and password; you never handle it. Codes expire after 7 days.">
+                      <Ticket size={12} /> Invite codes
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                      <input class="input py-1 text-xs w-36" type="text" placeholder="Note (optional)" maxlength="120"
+                        value={codeNote()} onInput={(e) => setCodeNote(e.currentTarget.value)} />
+                      <button type="button" onClick={mintSignupCode} disabled={codeBusy()}
+                        class="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
+                        <Plus size={12} /> {codeBusy() ? 'Minting…' : 'New invite code'}
+                      </button>
+                    </div>
+                  </div>
+                  <p class="text-[11px] text-muted-foreground">
+                    Hand a code to someone and send them to <code class="font-mono">/signup</code>. Single use · expires in 7 days.
+                  </p>
+
+                  {/* Shown once — the server keeps only a hash. */}
+                  <Show when={freshCode()}>
+                    <div class="flex flex-col gap-1.5 p-3 rounded-md border border-amber-500/40 bg-amber-500/10">
+                      <div class="flex items-center justify-between gap-2">
+                        <span class="text-xs text-foreground font-medium">
+                          Invite code{freshCode()!.note ? ` for “${freshCode()!.note}”` : ''} — copy it now, it isn't shown again.
+                        </span>
+                        <button type="button" onClick={() => setFreshCode(null)} class="btn-ghost text-xs px-2 py-1"><X size={12} /></button>
+                      </div>
+                      <code class="text-base font-mono tracking-widest select-all" data-testid="fresh-signup-code">{freshCode()!.code}</code>
+                    </div>
+                  </Show>
+
+                  <Show when={(signupCodes() ?? []).length > 0} fallback={<span class="text-[11px] text-muted-foreground">No invite codes yet.</span>}>
+                    <div class="flex flex-col gap-1">
+                      <For each={signupCodes() ?? []}>
+                        {(c) => (
+                          <div class="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-1.5 text-xs">
+                            <div class="min-w-0 flex items-center gap-2 flex-wrap">
+                              <span class="text-foreground truncate">{c.note ?? 'Untitled code'}</span>
+                              <span
+                                class="text-[10px] px-1.5 py-0.5 rounded-sm"
+                                classList={{
+                                  'bg-emerald-500/15 text-emerald-400': c.status === 'active',
+                                  'bg-muted text-muted-foreground': c.status === 'used',
+                                  'bg-amber-500/15 text-amber-400': c.status === 'expired',
+                                  'bg-destructive/15 text-destructive': c.status === 'revoked',
+                                }}
+                              >
+                                {c.status}
+                              </span>
+                              <span class="text-[11px] text-muted-foreground">
+                                {c.status === 'used' && c.usedByName
+                                  ? `used by ${c.usedByName}`
+                                  : c.status === 'active'
+                                    ? `expires ${fmtDay(c.expiresAt)}`
+                                    : `created ${fmtDay(c.createdAt)}`}
+                              </span>
+                            </div>
+                            <Show when={c.status === 'active'}>
+                              <button type="button" class="btn-ghost text-xs px-2 py-1 text-destructive shrink-0"
+                                title="Revoke this code — it can no longer be used to sign up"
+                                onClick={() => revokeSignupCode(c)}>
+                                <X size={12} /> Revoke
+                              </button>
+                            </Show>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+                </div>
+              </Show>
+            </section>
+          </Show>
+
+        <Show when={authCfg()?.mode === 'sso' && me()?.isOperator === false}>
+          <section class="card">
+            <div class="section-label flex items-center gap-1.5 mb-1"><Users size={12} /> Account administration</div>
+            <p class="text-xs text-muted-foreground">Only app operators can manage accounts, roles, and invitations.</p>
+          </section>
+        </Show>
+
+        <section class="card">
+          <div class="section-label flex items-center gap-1.5 mb-1" title="The people you can name as Responsible or Beneficiaries on a task or time block. Entries detected from calendar invites and email arrive here unconfirmed — rename, merge, or delete them."><Users size={12} /> People</div>
+          <p class="text-xs text-muted-foreground mb-3">
+            Manage people, then share selected tasks or objectives with app accounts.
+          </p>
+          <PeopleSettings />
+        </section>
+
+        <Show when={authCfg()?.mode === 'sso' && me()?.role !== 'viewer' && me()?.role !== 'guest'}>
+          <SharedAccessSettings />
+        </Show>
+
+
+      </Show>
+
+      {/* ── LEARNING TAB ── Outside the <form> on purpose: its buttons act at once
+          (clear learned examples), and nothing here feeds `form()` or Save Settings.
+          `learningCanReset` (lib/learning-access.ts) is null while `me` loads, false for a viewer,
+          true otherwise; the server stays the authority and answers 403 to a clear it will not
+          do. `owner` keys the panel's memory of clears to this account. */}
+      <Show when={activeTab() === 'learning'}>
+        <div class="flex flex-col gap-5">
+          <LearningPanel canReset={learningCanReset(me.loading, me())} owner={me()?.ownerId ?? null} />
+        </div>
+      </Show>
 
       {/* Review modal (T6) — a LOCAL signal, not the global elementModal (reserved
           for the ElementWizard). Closes on backdrop click or the X. */}

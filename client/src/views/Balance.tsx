@@ -8,6 +8,7 @@ import { priorities, prefs, tasks, setElementModal, refetchPrefs, showToast } fr
 import { api } from '../lib/api.js';
 import type { Priority, Task } from '../lib/api.js';
 import { BalanceMetrics } from '../components/BalanceMetrics.js';
+import { SchedulingPreferences } from '../components/SchedulingPreferences.js';
 
 interface CategoryConfig { key: string; name: string; icon: typeof Heart; colorClass: string; }
 
@@ -90,6 +91,10 @@ export function Balance() {
 
       <Show when={tab() === 'metrics'}>
         <BalanceMetrics />
+      </Show>
+
+      <Show when={tab() === 'balance'}>
+        <SchedulingPreferences />
       </Show>
 
       {/* Guarded by the tab OUTSIDE the hasData Show — otherwise the "no priorities yet"
@@ -202,14 +207,14 @@ export function Balance() {
                       <div class="space-y-2">
                         <div class="flex items-center gap-2">
                           <span class="text-[10px] text-muted-foreground font-mono w-14 flex-shrink-0">satisfy</span>
-                          <div class="h-2 flex-1 bg-muted rounded-full overflow-hidden">
-                            <div class="h-full rounded-full bg-accent transition-all duration-300" style={{ width: `${p().satisfaction * 10}%` }} />
+                          <div class="h-2 flex-1 bg-muted rounded-sm overflow-hidden">
+                            <div class="h-full rounded-sm bg-accent transition-all duration-300" style={{ width: `${p().satisfaction * 10}%` }} />
                           </div>
                         </div>
                         <div class="flex items-center gap-2">
                           <span class="text-[10px] text-muted-foreground font-mono w-14 flex-shrink-0">matters</span>
-                          <div class="h-2 flex-1 bg-muted rounded-full overflow-hidden">
-                            <div class="h-full rounded-full bg-foreground/40 transition-all duration-300" style={{ width: `${p().importance * 10}%` }} />
+                          <div class="h-2 flex-1 bg-muted rounded-sm overflow-hidden">
+                            <div class="h-full rounded-sm bg-foreground/40 transition-all duration-300" style={{ width: `${p().importance * 10}%` }} />
                           </div>
                         </div>
                       </div>
@@ -247,6 +252,7 @@ export function Balance() {
                     <button
                       type="button"
                       class="w-full text-left px-2.5 py-2 rounded-lg hover:bg-sidebar-accent flex items-center gap-2.5"
+                      classList={{ 'border border-dotted border-orange-400': !!t.auto_generated && !t.human_approved_at }}
                       onClick={() => { setTasksModal(null); setElementModal({ open: true, mode: 'edit', kind: t.is_habit ? 'habit' : 'task', editTarget: { kind: t.is_habit ? 'habit' : 'task', id: t.id } }); }}
                     >
                       <span class="text-[10px] font-mono text-muted-foreground flex-shrink-0">P{t.priority}</span>

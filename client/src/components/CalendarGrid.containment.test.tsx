@@ -28,6 +28,8 @@ vi.mock('../stores/index.js', async () => {
     categoryPrefs: () => ({ prefs: {} }),
     // Phase 7 — the component reads this for the stranded-block treatment.
     conflictedBlockIds: () => new Set<string>(),
+    // Unapproved auto-created tasks are outlined in the calendar.
+    taskOf: () => undefined,
     calendarAxisState: state,
     toggleCalendarTop: vi.fn(),
     toggleCalendarBottom: vi.fn(),

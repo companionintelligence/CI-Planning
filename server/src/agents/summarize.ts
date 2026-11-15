@@ -323,7 +323,7 @@ async function buildCapacity(g: Awaited<ReturnType<typeof gather>>, focus: Focus
   // tag/windows exist, rather than a silent 9-6 default.
   const owner = currentOwnerId();
   const dayType = await resolveDayType(owner, date);
-  const workRanges = await directionWindowsByName(owner, dayType, [WORK_DIRECTION_NAME]);
+  const workRanges = await directionWindowsByName(owner, dayType, [WORK_DIRECTION_NAME], date);
   const workday_minutes = workRanges.reduce((sum, r) => {
     const [sh, sm] = r.start_time.split(':').map(Number);
     const [eh, em] = r.end_time.split(':').map(Number);

@@ -2,7 +2,7 @@ import Router from '@koa/router';
 import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { writeAudit } from '../lib/audit.js';
-import { accuracyTrend, FIELDS } from '../services/classification-learning.js';
+import { accuracyTrend, evidenceByKind, FIELDS } from '../services/classification-learning.js';
 
 /**
  * Classification-learning REST surface (Phase 8) — thin adapters over
@@ -24,7 +24,13 @@ export function classificationRouter() {
   // to grade with, or nothing held out — and a chart must draw a GAP there, never a 0.
   router.get('/accuracy', async (ctx) => {
     const limit = Math.min(Math.max(Number((ctx.query as Record<string, string>).limit) || 12, 1), 100);
-    ctx.body = { fields: FIELDS, runs: await accuracyTrend(currentOwnerId(), limit) };
+    // `evidence`: what the learner has to work with right now, by field and by what the
+    // guess was about (a task or a Time Block), counted over the same window the pass reads.
+    ctx.body = {
+      fields: FIELDS,
+      runs: await accuracyTrend(currentOwnerId(), limit),
+      evidence: await evidenceByKind(currentOwnerId()),
+    };
   });
 
   // DELETE /api/classification/exemplars — "reset learning", the twin of DELETE

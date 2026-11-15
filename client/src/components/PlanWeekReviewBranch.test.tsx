@@ -83,4 +83,26 @@ describe('PlanWeekReviewBranch — read-only weekly recap', () => {
     fireEvent.click(screen.getByText('Back'));
     await waitFor(() => expect(onBack).toHaveBeenCalledTimes(1));
   });
+  it('shows no me / us / them block when the server sends none (the setting is off)', async () => {
+    mount();
+    await screen.findByText('weekly-stats');
+    expect(screen.queryByTestId('motivation-balance')).toBeNull();
+  });
+
+  it('shows the me / us / them block when the server sends one (the setting is on)', async () => {
+    const base = await reviewMock();
+    reviewMock.mockResolvedValueOnce({
+      ...base,
+      motivation_balance: {
+        week_start: '2026-07-06', basis: 'timed',
+        categories: [{ category: 'health', me: 60, us: 0, them: 0, unlabeled: 0, total: 60 }],
+        overall: { me: 60, us: 0, them: 0, unlabeled: 0, total: 60 },
+      },
+    } as never);
+    reviewMock.mockClear();
+    mount();
+    await screen.findByTestId('motivation-balance');
+    expect(screen.getAllByTestId('motivation-row')).toHaveLength(2); // whole week + health
+    expect(reviewMock).toHaveBeenCalledTimes(1); // still one request
+  });
 });

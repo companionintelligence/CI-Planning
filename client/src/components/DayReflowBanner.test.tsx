@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, fireEvent, waitFor } from '@solidjs/testing-library';
+import { render, fireEvent, waitFor, screen } from '@solidjs/testing-library';
 
 /**
  * Phase 7 — the conflict banner and its confirmation.
@@ -95,7 +95,7 @@ describe('DayReflowBanner — the preview', () => {
       unschedule: [{ block_id: 'b2', task_id: 't2', title: 'Review notes', reason: 'no_room' }],
     }));
     const { getByText, container } = render(() => <DayReflowBanner />);
-    fireEvent.click(getByText('Reflow…'));
+    fireEvent.click(getByText('Reschedule all'));
     await waitFor(() => expect(container.textContent).toContain('Write spec'));
     expect(container.textContent).toContain('Review notes');
     expect(container.textContent).toMatch(/won't fit/i);
@@ -104,21 +104,21 @@ describe('DayReflowBanner — the preview', () => {
   it('names the locked blocks it is leaving alone', async () => {
     previewFn.mockResolvedValue(proposal({ kept_locked: [conflict('b9', 'Pinned thing')] }));
     const { getByText, container } = render(() => <DayReflowBanner />);
-    fireEvent.click(getByText('Reflow…'));
+    fireEvent.click(getByText('Reschedule all'));
     await waitFor(() => expect(container.textContent).toContain('Pinned thing'));
     expect(container.textContent).toMatch(/staying put/i);
   });
 
   it('opening the preview mutates NOTHING', async () => {
     const { getByText } = render(() => <DayReflowBanner />);
-    fireEvent.click(getByText('Reflow…'));
+    fireEvent.click(getByText('Reschedule all'));
     await waitFor(() => expect(previewFn).toHaveBeenCalledWith('2026-06-22'));
     expect(applyFn).not.toHaveBeenCalled();
   });
 
   it('cancelling leaves the day untouched', async () => {
     const { getByText } = render(() => <DayReflowBanner />);
-    fireEvent.click(getByText('Reflow…'));
+    fireEvent.click(getByText('Reschedule all'));
     await waitFor(() => getByText('Cancel'));
     fireEvent.click(getByText('Cancel'));
     expect(applyFn).not.toHaveBeenCalled();
@@ -128,9 +128,11 @@ describe('DayReflowBanner — the preview', () => {
   it('cannot be confirmed when there is nothing it can do', async () => {
     previewFn.mockResolvedValue(proposal({ kept_locked: [conflict('b9', 'Pinned')] }));
     const { getByText } = render(() => <DayReflowBanner />);
-    fireEvent.click(getByText('Reflow…'));
-    await waitFor(() => getByText('Confirm'));
-    expect((getByText('Confirm') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(getByText('Reschedule all'));
+    const dialog = await screen.findByRole('dialog');
+    const confirm = Array.from(dialog.querySelectorAll('button')).find((button) => button.textContent?.trim() === 'Reschedule all');
+    expect(confirm).toBeDefined();
+    expect((confirm as HTMLButtonElement).disabled).toBe(true);
   });
 });
 
@@ -146,9 +148,10 @@ describe('DayReflowBanner — the confirmation', () => {
       }],
     }));
     const { getByText } = render(() => <DayReflowBanner />);
-    fireEvent.click(getByText('Reflow…'));
-    await waitFor(() => getByText('Confirm'));
-    fireEvent.click(getByText('Confirm'));
+    fireEvent.click(getByText('Reschedule all'));
+    const dialog = await screen.findByRole('dialog');
+    const confirm = Array.from(dialog.querySelectorAll('button')).find((button) => button.textContent?.trim() === 'Reschedule all')!;
+    fireEvent.click(confirm);
 
     await waitFor(() => expect(applyFn).toHaveBeenCalledWith('2026-06-22'));
     await waitFor(() => expect(refetchBlocks).toHaveBeenCalled());
@@ -165,9 +168,10 @@ describe('DayReflowBanner — the confirmation', () => {
     }));
     applyFn.mockRejectedValue(new Error('boom'));
     const { getByText } = render(() => <DayReflowBanner />);
-    fireEvent.click(getByText('Reflow…'));
-    await waitFor(() => getByText('Confirm'));
-    fireEvent.click(getByText('Confirm'));
+    fireEvent.click(getByText('Reschedule all'));
+    const dialog = await screen.findByRole('dialog');
+    const confirm = Array.from(dialog.querySelectorAll('button')).find((button) => button.textContent?.trim() === 'Reschedule all')!;
+    fireEvent.click(confirm);
     await waitFor(() => expect(showToast).toHaveBeenCalledWith('boom', 'error'));
   });
 });

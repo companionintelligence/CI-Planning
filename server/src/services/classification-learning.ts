@@ -62,8 +62,11 @@ export const PENDING_MS = 24 * 3_600_000;
  * still not enough — a single edit can be a slip — but the second says it was meant.
  *
  * What keeps a low floor safe is that influence is bounded elsewhere rather than
- * here: at most `RETRIEVE_K` exemplars reach a prompt, only ones similar to the input
- * are retrieved, and they are phrased as past corrections rather than as rules.
+ * here: at most `RETRIEVE_K` exemplars reach a prompt, and they are phrased as past
+ * corrections rather than as rules. Which ones is NOT a similarity threshold: with an
+ * embedder answering they are ranked by similarity to the input, and otherwise they are
+ * the owner's most frequent corrections whatever the input is. Quick-add deliberately
+ * always takes the frequency path, so it never waits on the embedder.
  */
 export const CORRECTION_FLOOR = 2;
 
@@ -94,6 +97,13 @@ export const EMBED_TIMEOUT_MS = 3_000;
 export const FIELDS = ['category', 'motivation'] as const;
 export type ClassifiedField = (typeof FIELDS)[number];
 
+/**
+ * What a log row's id refers to (migration 0173): a `tasks` row or a `time_blocks` row.
+ * Enforced here, not by a CHECK constraint. The id column is still called `task_id`.
+ */
+export const ENTITY_KINDS = ['task', 'time_block'] as const;
+export type EntityKind = (typeof ENTITY_KINDS)[number];
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface Exemplar {
@@ -115,7 +125,15 @@ export interface FieldCalibration {
   field: ClassifiedField;
   /** Decided (non-pending) rows examined in the window. */
   decided: number;
-  /** Corrections among them — the strong labeled examples. */
+  /** Corrections among them that the field's classifier could have chosen — the strong
+   *  labeled examples. A category correction to '' (the owner cleared the picker) is
+   *  decided but is NOT counted here: quick-add's category prompt has no way to answer none
+   *  and the scorer cannot grade '' (it returns null for [], which `scoreHeldOut` skips),
+   *  while memory enrichment's prompt does allow "[]". Leaving these out is a deliberate
+   *  simplification, so that no consumer is shown a "(nothing)" category lesson and the
+   *  floor is not cleared for an index that teaches quick-add nothing; it costs memory
+   *  enrichment the chance to learn 'none'. So this can be below the number of rows the
+   *  owner overrode. Motivation keeps its '' rows (null is a real label there). */
   corrections: number;
   /** Exemplar rows written (0 when the floor was not cleared). */
   indexed: number;
@@ -140,8 +158,16 @@ export interface ClassificationCalibrationResult {
 // ── SQL (module level, prepared inside functions — §5.5) ──────────────────────
 
 const INSERT_LOG = `
-  INSERT INTO classification_log (id, owner_id, task_id, field, input_text, llm_value, assigned_at, local_date)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+  INSERT INTO classification_log (id, owner_id, task_id, field, input_text, llm_value, assigned_at, local_date, entity_kind)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+/**
+ * A row born already answered: `logAssignment` and `recordCorrection` in one statement,
+ * for a caller that knows the owner's answer at the moment it records the model's claim.
+ */
+const INSERT_LOG_ANSWERED = `
+  INSERT INTO classification_log (id, owner_id, task_id, field, input_text, llm_value, final_value, assigned_at, corrected_at, local_date, entity_kind)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
 /**
  * The still-open assignment for a task and field, newest first. "Open" means the owner
@@ -151,7 +177,7 @@ const INSERT_LOG = `
  */
 const SELECT_OPEN_ASSIGNMENT = `
   SELECT id, llm_value FROM classification_log
-   WHERE task_id = ? AND field = ? AND owner_id = ? AND corrected_at IS NULL
+   WHERE task_id = ? AND field = ? AND owner_id = ? AND entity_kind = ? AND corrected_at IS NULL
    ORDER BY assigned_at DESC LIMIT 1`;
 
 const CLOSE_ASSIGNMENT = `
@@ -170,6 +196,13 @@ const INSERT_EXEMPLAR = `
   VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
 const SELECT_EXEMPLARS = `
   SELECT log_id, input_text, llm_value, correct_value, embedding
+    FROM classification_exemplars WHERE owner_id = ? AND field = ?
+   ORDER BY log_id`;
+/** The same rows without the vector, for the frequency path: up to MAX_EXEMPLARS BLOBs of
+ *  ~3 KB each that nothing would read. Same ORDER BY, because "the newest of each value"
+ *  is the last row in log_id order. */
+const SELECT_EXEMPLARS_NO_VECTOR = `
+  SELECT log_id, input_text, llm_value, correct_value
     FROM classification_exemplars WHERE owner_id = ? AND field = ?
    ORDER BY log_id`;
 
@@ -205,7 +238,11 @@ export function canonicalValue(value: string | readonly string[] | null | undefi
  */
 export async function logAssignment(
   ownerId: string,
-  input: { taskId: string | null; field: ClassifiedField; inputText: string; llmValue: string | readonly string[] },
+  input: {
+    taskId: string | null; field: ClassifiedField; inputText: string; llmValue: string | readonly string[];
+    /** What `taskId` refers to; a task unless said otherwise. */
+    entityKind?: EntityKind;
+  },
   now: Date = new Date(),
 ): Promise<void> {
   try {
@@ -215,6 +252,7 @@ export async function logAssignment(
     await store().prepare(INSERT_LOG).run(
       newId(), ownerId, input.taskId, input.field,
       input.inputText, value, now.toISOString(), localDateInTZ(now.toISOString(), tz),
+      input.entityKind ?? 'task',
     );
   } catch (err) {
     logger.warn('classification-learning: could not log assignment', { err: (err as Error).message });
@@ -235,10 +273,11 @@ export async function recordCorrection(
   field: ClassifiedField,
   finalValue: string | readonly string[] | null,
   now: Date = new Date(),
+  entityKind: EntityKind = 'task',
 ): Promise<boolean> {
   try {
     const open = await store().prepare(SELECT_OPEN_ASSIGNMENT)
-      .get<{ id: string; llm_value: string }>(taskId, field, ownerId);
+      .get<{ id: string; llm_value: string }>(taskId, field, ownerId, entityKind);
     if (!open) return false;
     const value = canonicalValue(finalValue);
     const r = await store().prepare(CLOSE_ASSIGNMENT).run(value, now.toISOString(), open.id);
@@ -246,6 +285,51 @@ export async function recordCorrection(
   } catch (err) {
     logger.warn('classification-learning: could not record correction', { err: (err as Error).message });
     return false;
+  }
+}
+
+/**
+ * Record a claim AND the owner's answer to it in one row, for a caller that already
+ * holds both: the wizard shows the model's pick, the owner may edit it, and the create
+ * carries what they left. When the answer differs from the claim the row is born closed
+ * (`final_value` and `corrected_at` set, `rowOutcome` says 'corrected' at once); when it
+ * matches, the row is born OPEN, exactly like `logAssignment`'s, so it is pending for
+ * 24h and a weak accept after unless a later edit closes it first.
+ *
+ * One statement rather than `logAssignment` then `recordCorrection`: both swallow their
+ * errors, so the two-step form can leave an open row carrying the model's value when
+ * the second write fails, and that row ages into an 'accepted' the owner never gave.
+ * The empty string is a real answer ("none of these"), stored as '' and not NULL.
+ *
+ * Never throws, for the same reason as `logAssignment`.
+ */
+export async function logAnsweredAssignment(
+  ownerId: string,
+  input: {
+    taskId: string;
+    field: ClassifiedField;
+    inputText: string;
+    llmValue: string | readonly string[];
+    finalValue: string | readonly string[] | null;
+    /** What `taskId` refers to; a task unless said otherwise. */
+    entityKind?: EntityKind;
+  },
+  now: Date = new Date(),
+): Promise<void> {
+  try {
+    const llm = canonicalValue(input.llmValue);
+    if (!llm || !input.inputText.trim()) return; // nothing was claimed → nothing to learn
+    const final = canonicalValue(input.finalValue);
+    const differs = final !== llm;
+    const at = now.toISOString();
+    const tz = await ownerTimezone(ownerId);
+    await store().prepare(INSERT_LOG_ANSWERED).run(
+      newId(), ownerId, input.taskId, input.field, input.inputText, llm,
+      differs ? final : null, at, differs ? at : null, localDateInTZ(at, tz),
+      input.entityKind ?? 'task',
+    );
+  } catch (err) {
+    logger.warn('classification-learning: could not log answered assignment', { err: (err as Error).message });
   }
 }
 
@@ -306,6 +390,47 @@ export async function decidedRows(
   return out;
 }
 
+/** What the learner has to work with in the window for one field and one kind of thing. */
+export interface EvidenceCount {
+  field: ClassifiedField;
+  entity_kind: EntityKind;
+  /** Rows the owner has decided (corrected, or let stand for a day): the same rows `decidedRows` returns. */
+  decided: number;
+  /** Corrections the field's classifier could learn from: what `calibrateClassification` counts as `corrections`. */
+  corrections: number;
+}
+
+const SELECT_WINDOW_KINDS = `
+  SELECT field, entity_kind, llm_value, final_value, assigned_at, corrected_at
+    FROM classification_log
+   WHERE owner_id = ? AND local_date >= ?`;
+
+/**
+ * The window's evidence split by what each row is about, for the Learning card. Same window
+ * and same rules as `decidedRows` and the calibration pass, so the counts add up to what the
+ * pass reads: the window is the last `LEARNING_WINDOW_DAYS` counted from the day the GUESS was
+ * made, not the day it was corrected. Kinds with no decided row are left out; the order is
+ * `FIELDS`, then `ENTITY_KINDS`.
+ */
+export async function evidenceByKind(ownerId: string, now: Date = new Date()): Promise<EvidenceCount[]> {
+  const tz = await ownerTimezone(ownerId);
+  const since = localDateInTZ(new Date(now.getTime() - LEARNING_WINDOW_DAYS * 86_400_000).toISOString(), tz);
+  const rows = await store().prepare(SELECT_WINDOW_KINDS)
+    .all<LogRow & { field: ClassifiedField; entity_kind: EntityKind }>(ownerId, since);
+  const tally = new Map<string, EvidenceCount>();
+  for (const r of rows) {
+    const outcome = rowOutcome(r, now);
+    if (outcome === null) continue;
+    const key = `${r.field}\u0000${r.entity_kind}`;
+    const c = tally.get(key) ?? { field: r.field, entity_kind: r.entity_kind, decided: 0, corrections: 0 };
+    c.decided++;
+    if (outcome === 'corrected' && isLearnableLabel(r.field, { correctValue: canonicalValue(r.final_value) } as DecidedRow)) c.corrections++;
+    tally.set(key, c);
+  }
+  const rank = (c: EvidenceCount) => FIELDS.indexOf(c.field) * ENTITY_KINDS.length + ENTITY_KINDS.indexOf(c.entity_kind);
+  return [...tally.values()].sort((a, b) => rank(a) - rank(b));
+}
+
 // ── Retrieval: what a live classification reads ───────────────────────────────
 
 /** Injectable embedder (the possibles.ts / triality embedFn idiom). `null` forces the
@@ -316,16 +441,21 @@ interface StoredExemplar extends Exemplar {
   vec: number[] | null;
 }
 
-async function loadExemplars(ownerId: string, field: ClassifiedField): Promise<StoredExemplar[]> {
-  const rows = await store().prepare(SELECT_EXEMPLARS).all<{
-    log_id: string; input_text: string; llm_value: string; correct_value: string; embedding: Buffer | null;
-  }>(ownerId, field);
+/**
+ * The owner's index for a field. `withVectors` false is the frequency path (`embedFn:
+ * null`): the embedding column is not selected and nothing is unpacked, so every row comes
+ * back with `vec: null`. That path is the interactive one, where the cost of a read is
+ * the point.
+ */
+async function loadExemplars(ownerId: string, field: ClassifiedField, withVectors: boolean): Promise<StoredExemplar[]> {
+  type Row = { log_id: string; input_text: string; llm_value: string; correct_value: string; embedding?: Buffer | null };
+  const rows = await store().prepare(withVectors ? SELECT_EXEMPLARS : SELECT_EXEMPLARS_NO_VECTOR).all<Row>(ownerId, field);
   return rows.map((r) => ({
     logId: r.log_id,
     inputText: r.input_text,
     llmValue: r.llm_value,
     correctValue: r.correct_value,
-    vec: unpackVector(r.embedding),
+    vec: withVectors ? unpackVector(r.embedding) : null,
   }));
 }
 
@@ -352,16 +482,26 @@ async function resolveEmbed(ownerId: string, embedFn: EmbedFn): Promise<((t: str
  * stored vector of the wrong length) degrades to fewer or no exemplars, because a
  * classification with no examples is exactly today's behaviour and therefore always a
  * safe answer.
+ *
+ * `accept` lets a caller drop exemplars its prompt cannot use (a value outside the list
+ * the model is allowed to answer from). It runs on the stored rows BEFORE ranking and
+ * the top-k cut, so a lesson it rejects does not cost an acceptable one its slot (a
+ * filter on the rendered hint could not give that back). Absent, nothing is filtered.
  */
 export async function retrieveExemplars(
   ownerId: string,
   field: ClassifiedField,
   text: string,
-  opts: { embedFn?: EmbedFn; k?: number } = {},
+  opts: { embedFn?: EmbedFn; k?: number; accept?: (e: Exemplar) => boolean } = {},
 ): Promise<Exemplar[]> {
   const k = opts.k ?? RETRIEVE_K;
+  const { accept } = opts;
   try {
-    const stored = await loadExemplars(ownerId, field);
+    // `null` is decided before the read, so the frequency path never touches the vectors.
+    // An undefined embedFn still reads them: whether an embedder is ready is only asked
+    // once there is something to rank, so an owner with no index costs no status probe.
+    const all = await loadExemplars(ownerId, field, opts.embedFn !== null);
+    const stored = accept ? all.filter((e) => accept(e)) : all;
     if (stored.length === 0 || k <= 0) return [];
 
     const embed = await resolveEmbed(ownerId, opts.embedFn);
@@ -426,7 +566,7 @@ function frequentCorrections(stored: StoredExemplar[], k: number): Exemplar[] {
 export function exemplarPrompt(exemplars: readonly Exemplar[]): string {
   if (exemplars.length === 0) return '';
   const lines = exemplars
-    .map((e) => `- For "${oneLine(e.inputText)}" you said ${e.llmValue || '(nothing)'}; the user chose ${e.correctValue}.`)
+    .map((e) => `- For "${oneLine(e.inputText)}" you said ${e.llmValue || '(nothing)'}; the user chose ${e.correctValue || '(nothing)'}.`)
     .join('\n');
   return `\nThis user has corrected you before. Follow their vocabulary, not your own:\n${lines}\n`;
 }
@@ -438,7 +578,7 @@ export async function classificationHint(
   ownerId: string,
   field: ClassifiedField,
   text: string,
-  opts: { embedFn?: EmbedFn; k?: number } = {},
+  opts: { embedFn?: EmbedFn; k?: number; accept?: (e: Exemplar) => boolean } = {},
 ): Promise<string> {
   return exemplarPrompt(await retrieveExemplars(ownerId, field, text, opts));
 }
@@ -454,6 +594,28 @@ export type ScoreFn = (args: {
   inputText: string;
   hint: string;
 }) => Promise<string | null>;
+
+/**
+ * Whether a CORRECTED row is a label the field's classifier could have chosen, and so
+ * something the index may teach and the scorer may grade.
+ *
+ * A category correction to '' is the owner clearing the picker: a real answer ("none of
+ * these"), and it stays in the log and in `decided`. The reasons to leave it out of the
+ * index hold for two of the three category prompts, not all three: quick-add's has no way
+ * to answer none, and the scorer returns a pick or null (null for [], which `scoreHeldOut`
+ * skips), never '', so a '' target could only be missed or skipped. Memory enrichment's
+ * prompt does allow "[]". Leaving the rows out is a deliberate simplification: the scorer
+ * and memory enrichment read the index unfiltered, so no consumer is shown a "(nothing)"
+ * category lesson, and counting them would clear CORRECTION_FLOOR for an index that
+ * teaches quick-add nothing and drag the measured accuracy down on questions with no
+ * answerable form. The cost is that memory enrichment cannot learn 'none'. Motivation
+ * keeps its '' rows: null ("the entry does not say who it is for") is a real label in
+ * that prompt, and `scoreHeldOut` leaves them unmeasured (quick-add's hint still drops
+ * them, see `choosable` in routes/tasks.ts).
+ */
+function isLearnableLabel(field: ClassifiedField, row: DecidedRow): boolean {
+  return !(field === 'category' && canonicalValue(row.correctValue) === '');
+}
 
 /**
  * Rebuild one owner's exemplar index and measure it. Deterministic given the same rows
@@ -475,7 +637,9 @@ export async function calibrateClassification(
 
   for (const field of FIELDS) {
     const decided = await decidedRows(ownerId, field, now);
-    const corrections = decided.filter((r) => r.corrected);
+    // Labels only: cleared category pickers are decided but are neither counted toward the
+    // floor nor indexed nor held out (see isLearnableLabel).
+    const corrections = decided.filter((r) => r.corrected && isLearnableLabel(field, r));
 
     // Below the floor the index is EMPTIED, not left stale: an owner who deletes their
     // corrections must stop being taught by them on the next run.
@@ -588,6 +752,10 @@ async function scoreHeldOut(
   let n = 0;
   let correct = 0;
   for (const row of heldOut.slice(0, MAX_SCORED)) {
+    // The scorer answers with a value or null, so it has no way to say '' and a '' target
+    // could only be a guaranteed miss or a skip. Category never gets here (not a label);
+    // a motivation row cleared to null can, and is left unmeasured rather than counted wrong.
+    if (!canonicalValue(row.correctValue)) continue;
     let answer: string | null;
     try {
       const hint = await classificationHint(ownerId, field, row.inputText, { embedFn: opts.embedFn });

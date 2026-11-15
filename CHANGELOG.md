@@ -8,6 +8,15 @@ version at `GET /api/health` (`release`).
 ## [Unreleased]
 
 ### Changed
+- **The weekly plan-loop job's log now names the rules the checker flagged most often.** The Jobs view line for
+  `calibrate_plan_loop` ends each stage with, for example, "most flagged: priority_inversion (9 of 21
+  revision(s)), overlap (4 of 21 revision(s))", or "no rule flagged". The revision log behind it was written on
+  every run and never read; this is its first reader. Nothing about how plans are made changes, and the list is
+  not stored, so Settings → Learning does not show it yet.
+- **The weekly dismissal job's log now says the noise rate.** The Jobs view line for `calibrate_dismissals` ends
+  with how many of the suggestions you decided on in the last 7 days you dismissed, for example "noise rate 42%
+  (21 of 50 decided dismissed, last 7 days)", or "noise rate not measured" when nothing was decided. It is the
+  same reading the job already stored for Settings → Learning.
 - **A new app icon:** a calendar with a check mark on the brand teal, for iOS, Android and the web. The desktop
   app gets it with its own release.
 - **The iOS app is iPhone-only for now.** It has not been tested on iPad.
@@ -24,8 +33,113 @@ version at `GET /api/health` (`release`).
   or configured for this server, and whether an AI model is ready. Connecting stays in Settings.
 - **A Companion Portal sign-in by someone without an account here says so.** The sign-in screen explains that the
   account is not set up on this server, instead of showing a bare error.
+- **Changing the suggested category in the Add dialog now counts as a correction.** When the AI picks a
+  category from the Describe-it line and you press Add, the app records its pick and what you saved. If
+  you changed it (a different order counts), the correction is closed at once; if you kept it, it waits
+  24 hours, then counts as accepted. Nothing is recorded if you never press Add, or if the title or the
+  category names no longer match what the AI saw. This covers new tasks and habits, not Time Blocks or
+  edits. Two related changes: an edit that does not change a task's categories no longer counts as an
+  answer, and a category you clear is kept in the log but not learned from. Learning is still weekly: a
+  correction you make changes no prompt until the next Monday `calibrate_classification` run (or the first
+  start after it, if the server was down), and a field
+  needs at least 2 corrections first.
+- **The Describe-it line shows the AI your most common category corrections again, for the models that can use
+  them.** The prompt carries up to 3 of the corrections you make most often, last, just before your text; with
+  fewer than 2 corrections it is exactly what it was. It is sent only when the model answering is one measured
+  to use it: `gemma3n:e4b` (the default quality model, which quick add asks), `qwen2.5:3b` and `gemma3:4b`. On
+  any other model quick add leaves it out, because in the same test `qwen2.5:0.5b`, `gemma3:1b` and
+  `llama3.2:3b` all answered worse with it (one answered a number for the category, one lost its valid
+  direction, one answered nothing). Names in `QUICK_ADD_HINT_MODELS` (comma separated) add models. In a test
+  with an invented owner, run twice, the three that can use it ended 2 to 3 of 12 held-out titles ahead
+  and kept their natural titles; most of that came by the third correction, more corrections did not add to
+  it, and none learned the owner's exercise rule. With the guard on, the other three models were flat,
+  as they were before the hint, instead of worse. Learning is still weekly: the Monday `calibrate_classification` run builds what the prompt
+  shows, and a field needs at least 2 corrections first. The who-it's-for part was not measured, and the Add
+  dialog does not record those picks, so on a default install it stays empty. See
+  `docs/quick-add-hint-learning-curve-2026-11.md` and `docs/quickadd-hint-guard-2026-11.md`.
+- **Describe-it reads a one-word category answer.** The smallest default AI model, `qwen2.5:0.5b`,
+  answers the category question with one word (`"leisure"`) where the prompt asks for a list, and
+  `gemma3:1b` does on about 4 calls in 5. Describe-it kept lists only, so on those models it never
+  suggested a category, the Add dialog had no pick to record, and no correction could be learned. It now
+  takes a single word as one category when it is exactly one of your categories, ignoring case; several
+  words written as one string still name nothing. The prompt is unchanged. In a test with an invented
+  owner and 42 titles, the share of answers that name one of the owner's categories went from 0% to 80%
+  on `qwen2.5:0.5b` and from 21% to 91% on `gemma3:1b`, and `gemma3n:e4b`'s answers did not change. That
+  counts answers, not good answers: on the 12 titles with an obvious category, `qwen2.5:0.5b` named it
+  in 20 of 60 answers (it said `leisure` for 6 in 10 of all of them), `gemma3:1b` in 49 of 60 and
+  `gemma3n:e4b` in 60 of 60, so on the smallest model most suggestions will need your correction.
+  Learning is still weekly: the Monday `calibrate_classification` run folds corrections in, and a field
+  needs at least 2 first. See `docs/classification-shape-fix-2026-11.md`.
+- **Describe-it asks your quality model, not the fast one.** Quick add and the Add dialog's Describe-it line
+  filled in a category, priority, minutes and the rest from the fast model (`qwen2.5:0.5b` by default). On
+  the 12 titles with an obvious category it named the right category in 20 of 60 answers and returned 3 of
+  the 9 fields it was asked for, so the dialog came pre-filled with a category that was mostly wrong. It
+  now asks the quality model (`gemma3n:e4b` by default, which a default install already pulls): 60 of 60
+  right and all 9 fields on every answer, in a test with an invented owner and 42 titles. The price is
+  speed. Through the app's own route the preview took a median 1.4 to 1.8 seconds, against 0.09 with
+  the fast model, and the first one after the model had been unloaded about 5 seconds (Ollama unloads an
+  idle model after 5 minutes unless `OLLAMA_KEEP_ALIVE` says otherwise). On an Ollama server that holds
+  only two models at once, quick add, the fast model and the embedding model take turns in the slots: the
+  other two were reloaded on most calls in the test (the fast model's calls took 1.5 seconds instead of
+  0.09), and once quick add's own model was pushed out and the next preview paid 5.4 seconds. Nothing
+  changes for installs that pin `OLLAMA_FAST` and `OLLAMA_QUALITY` to the same model. If the quality
+  model is not installed the app uses the largest installed model for it, and quick add then runs on
+  that one; that was not measured. Only quick add moved: the fast model still does everything else it did.
+  See `docs/quickadd-quality-tier-2026-11.md`.
+- **AI works through your CI Hub when the Hub is not running Ollama.** On a Hub whose AI runs on vLLM or
+  Lemonade, Planning uses the Hub's OpenAI-compatible endpoint for chat, and for embeddings when one is named.
+  An Ollama address always wins when one is set.
+- **The first-run connect step shows your Companion Memory and AI.** It says whether Companion Memory is connected
+  or configured for this server, and whether an AI model is ready. Connecting stays in Settings.
+- **A Companion Portal sign-in by someone without an account here says so.** The sign-in screen explains that the
+  account is not set up on this server, instead of showing a bare error.
+- **The app shows its own mark everywhere.** The navigation, the mobile top bar and the sign-in screens showed a
+  generic chip icon. They now show the calendar mark from the app icon.
+- **The web app opens on the mark, not a blank page.** The app's mark on its dark background shows from the first
+  paint and while it checks your sign-in. Before, the page was blank and then a bare spinner.
+- **The iOS and Android launch screens show the app's mark** on its dark background. Before, the framework's
+  placeholder showed while the app started.
+- **The app installs with a maskable icon**, so Android can crop it to the launcher's shape without clipping the mark.
+- **The Tasks page offers Add a task when it is empty**, as well as connecting a source.
+- **Phone tabs scroll sideways on one line.** The tabs on Tasks, Balance and Settings wrapped into a second row
+  that pushed the content down.
+- **Open-time windows name their directions.** Each window shows work, home or community, where it showed a
+  single letter.
+- **A new account's Today is quieter.** Until there are tasks or blocks, the header drops the open-time windows and
+  the capacity bar, and shows the day with the connect prompt.
+- **Loading shows placeholder bars** on the open-time card, the Tasks archive and the balance metrics, instead of a
+  line of text.
+- **The desktop details drawer has a collapse button.** It folds the drawer away and keeps the selection, so
+  reopening brings the same item back. The close button still clears the selection.
 
 ### Fixed
+- **Saving a repeating task from one of its days no longer wipes the series' tags and categories.** Each day of a
+  repeating task has no tags or categories of its own, so its form opened empty, and "This & future" sent that
+  empty form to the series. Now choosing "This & future" shows the series' own tags and categories, a form you did
+  not change leaves them out of the save, and the server ignores an empty set that arrives from a day. Editing the
+  series itself still clears them when you clear them.
+- **Re-saving who a task is for no longer closes the learning row early.** Saving a task with the same people as
+  before worked out the same me/us/them value and counted it as your answer, which settled an open guess as
+  accepted ahead of its 24 hours and threw away a correction you might make an hour later. Only a change to the
+  value counts now.
+- **The classification card says what its 90 days count from.** The days run from when the app made the guess,
+  not from when you corrected it, so a correction to a guess that is now more than 90 days old stops counting.
+  The card said "corrections in the last 90 days", which read as the date of the correction.
+- **Skipped, cancelled and missed blocks no longer count as accepted placements.** Placement learning treated
+  an unmoved auto block as accepted once its time had passed, even if the block had been skipped (by you, or by
+  the sweep that skips blocks that ended unfinished), cancelled with its task, or marked missed. That made the
+  survival reading look better than it was and diluted the corrections the hour bands are built from. These
+  blocks now count as neither accepted nor corrected, as a block that has been deleted already did. A move you
+  made still counts. The next Monday `calibrate_placement` run uses the corrected rule over the same 90 days.
+- **The dismissal pass keeps the similarity data it already has when the model is unreachable.** Each weekly
+  `calibrate_dismissals` run rebuilt its examples and embedded every one again, so a run that found Ollama down
+  replaced a working index with empty vectors until a later run found it up. It now reuses the vector already
+  stored for each dismissal, as the classification pass does: an outage costs only the examples added since, and
+  a normal run embeds only the new ones. A changed embedding model is not noticed straight away; old vectors stay
+  until their dismissals age out, as in the classification pass.
+- **The name field no longer opens as "System".** A new owner is seeded with that placeholder, and the first-run
+  wizard and the profile showed it as the owner's name. Both now open empty and ask for one, and Save stays off
+  until you type a name.
 - **The Hub's Ollama address is read.** The CI Hub writes `APP_OLLAMA_URL` for the app; Planning now reads it, so an
   Ollama on the Hub is found without also setting `OLLAMA_URL`.
 - **Estimate calibration no longer learns from the schedule's own plan.** The close ritual sent its
@@ -45,8 +159,52 @@ version at `GET /api/health` (`release`).
   recurrence test compares the New York wall clock across a DST change (it compared UTC
   hours, so it failed whenever its window crossed one), and `startTestServer` clears the
   stored VAPID pair so a pair sealed by an earlier test file cannot leave push dormant.
+- **The Hub's Ollama address is read.** The CI Hub writes `APP_OLLAMA_URL` for the app; Planning now reads it, so an
+  Ollama on the Hub is found without also setting `OLLAMA_URL`.
 
 ### Added
+- **Triality now records which weights ranked each suggestion.** Every suggestion it shows is stamped `learned`
+  (the weekly pass had tuned that slot's weights), `defaults` (it had not) or `defaults_invalid` (a stored row
+  was unusable, so the defaults were used). Until now the log could not tell the two apart, so a change in how
+  often you accept suggestions could not be linked to the learning or ruled out. Older rows stay unstamped, and the
+  stamp does not change what is suggested. No screen shows the split yet.
+- **Triality now records who each suggestion was for.** Every suggestion it shows is stamped with the me / us /
+  them label its task carried at that moment (`none` when the task had none). Triality already used the label to
+  rank; the log kept only which task, so the label could only be looked up later, after you may have changed it.
+  Older rows stay unstamped, and the stamp does not change what is suggested. No screen shows it yet.
+- **The weekly recap can show a me / us / them balance per category.** Off by default; turn it on in Settings →
+  Preferences ("Me, us, them in the weekly recap"). The recap then adds how last week's timed hours split between
+  work for you, for us and for them, for the whole week and for each category, with time on unlabeled tasks shown
+  separately (never counted as us). A task counts in each of its categories, so the category rows can add up to
+  more than the week. With the setting off nothing is computed and the recap is unchanged.
+- **Time Blocks now teach the category learning too.** When the Describe-it line picks categories for a Time
+  Block and you change them before pressing Add, or change them on the block later, that is recorded as a
+  correction, the way it already was for tasks and habits. The log now says whether a row is about a task or a Time
+  Block (`classification_log.entity_kind`, new migration 0173; existing rows are tasks), and the two kinds feed
+  the same examples. Settings → Learning shows how many of the corrections it counts are about tasks and how many
+  about Time Blocks. Edits to a Time Block that do not change its categories record nothing.
+- **Learning passes that were missed while the server was off now run once, about a minute after the next
+  start.** The scheduler never re-fires a time that passed while the server was down, so a restart, a
+  redeploy or a self-hosted machine that was off through Monday's block (03:50 to 04:50) skipped that
+  week's passes, and a correction made the day before waited a further week. Seven jobs are now made up:
+  `calibrate_estimates` (nightly) and the six Monday passes (`calibrate_triality`,
+  `calibrate_classification`, `calibrate_dismissals`, `calibrate_plan_loop`, `snapshot_balance` and
+  `calibrate_placement`). Each runs at most once, one after another, however many runs it missed, and
+  `snapshot_balance` freezes only the latest closed week. A job whose next scheduled time is 10 minutes away
+  or less waits for it. A job with no recorded run counts as never run, so a first start runs all seven once,
+  over empty data. A run that ended in an error is not retried; a run cut short by a restart is tried again at
+  the next start, and after two cut-short runs the job waits for its next scheduled time. A disabled job is not
+  made up. The Jobs view starts the log of a made-up run
+  with "Caught up", for example "Caught up (missed 2026-11-02 04:10)". The server keeps one last-run time per
+  job, not one per account, so a run by any account counts for the whole server: if one account presses
+  **Run now** after the missed time, the other accounts wait for the next scheduled time, as before. The other
+  jobs are not made up. `reset_routines`, `review_day`, `auto_schedule`, `nightly_grooming` and
+  `advance_objectives` would change today's tasks and blocks, or move the next cadence, if they ran late; the
+  jobs that run every few minutes or hours do their missed work at the next run anyway; the rest of the
+  nightly set is left out for now, so a server that is off every night still loses it. The Learning tiles
+  still say "early on Monday"; read that as usually the first start after it.
+- **Accessibility checks run in the test suite.** axe-core checks the login screen and the boot screen, so a rule
+  that breaks in jsdom fails CI. Colour contrast needs a real browser and is not checked yet.
 - **`pnpm snapshot` works from the repo root.** The backup script only existed in `server/`, but
   `ops/litestream.yml` and the Settings backup warning already told people to run `pnpm snapshot`.
   The root now has the shortcut, like `seed` and `migrate`.
@@ -70,6 +228,12 @@ version at `GET /api/health` (`release`).
   manual `mobile-build.yml` workflow builds a debug APK and an unsigned Simulator `.app`. Not
   store-ready: see "Mobile app" in the README. Companion Portal sign-in is not available in the
   app yet.
+- **Settings → Learning.** A new Settings tab shows what the weekly learning passes have measured: how often
+  the model's category and motivation guesses match your corrections, how many of the suggestions you decide
+  on you dismiss, how often Auto's placements are kept, and how often AI day ordering passes its own check.
+  Each figure shows how many cases are behind it, never shows a week with nothing measured as 0%, and says
+  what it does not prove. The first three have a button that clears what was learned; your history is kept
+  and Monday's pass can learn it again. The fourth only measures. No server change.
 
 ### Changed
 - **The native shells do not show controls they cannot run.** Export JSON, the calendar `.ics` export,

@@ -1,0 +1,232 @@
+{
+  "$schema": "https://raw.githubusercontent.com/companionintelligence/CI-Common/main/packages/video-kit/schema/storyboard.schema.json",
+  "app": {
+    "id": "della-planner-how-to",
+    "name": "Companion Planning · Della Bradley"
+  },
+  "meta": {
+    "fps": 30,
+    "transitionSeconds": 0,
+    "pacing": "fit",
+    "pacingLead": 0,
+    "pacingTail": 0.15,
+    "subtitles": "none",
+    "engine": "lex-local",
+    "voice": "Lex"
+  },
+  "formats": [
+    "landscape"
+  ],
+  "scenes": [
+    {
+      "id": "della-opening",
+      "kind": "clip",
+      "seconds": 30.5,
+      "src": "assets/video/della-howto-01.mp4",
+      "sound": "narration",
+      "narration": "Della doesn't want to burn out; she wants room for her family, her coaching work, and herself. In Today, one easy scroll gathers Home, Work, and Community into their own clear windows. Then Calendar Week widens the view, making the shape of all seven days easier to hold. She chooses which tasks can fill the open hours, letting the planner sketch a first pass; then she reviews every suggestion before anything changes. One last scroll, and the week comes into focus: commitments in place, breathing room protected, and space for what matters."
+    }
+  ],
+  "deliverables": [
+    {
+      "id": "della-howto-01",
+      "kind": "short",
+      "name": "Della Doesn't Want to Burn-Out",
+      "formats": [
+        "landscape"
+      ],
+      "meta": {
+        "pacing": "fit",
+        "pacingLead": 0,
+        "pacingTail": 0.15,
+        "transitionSeconds": 0,
+        "subtitles": "none"
+      },
+      "scenes": [
+        {
+          "id": "app-flow",
+          "kind": "clip",
+          "seconds": 30.5,
+          "src": "assets/video/della-howto-01.mp4",
+          "sound": "narration",
+          "narration": "Della doesn't want to burn out; she wants room for her family, her coaching work, and herself. In Today, one easy scroll gathers Home, Work, and Community into their own clear windows. Then Calendar Week widens the view, making the shape of all seven days easier to hold. She chooses which tasks can fill the open hours, letting the planner sketch a first pass; then she reviews every suggestion before anything changes. One last scroll, and the week comes into focus: commitments in place, breathing room protected, and space for what matters."
+        }
+      ]
+    },
+    {
+      "id": "della-howto-02",
+      "kind": "short",
+      "name": "Capture It, Then Close the Loop",
+      "formats": [
+        "landscape"
+      ],
+      "meta": {
+        "pacing": "fit",
+        "pacingLead": 0,
+        "pacingTail": 0.15,
+        "transitionSeconds": 0,
+        "subtitles": "none"
+      },
+      "scenes": [
+        {
+          "id": "app-flow",
+          "kind": "clip",
+          "seconds": 29.266,
+          "src": "assets/video/della-howto-02.mp4",
+          "sound": "narration",
+          "narration": "When an idea arrives, Della catches it in one natural line. The planner draws out a title, date, time, area, and estimate, all ready for her to check. She reviews each detail before saving, so the plan only changes with her say-so. Later, Tasks brings the rest of the list back into view, ready for the next small win. She marks a task complete and adds a quick reflection on how it went. A note can hold what she wants to remember; then she returns to a calmer list, with finished work tucked away."
+        }
+      ]
+    },
+    {
+      "id": "della-howto-03",
+      "kind": "short",
+      "name": "Focus on the Next Step",
+      "formats": [
+        "landscape"
+      ],
+      "meta": {
+        "pacing": "fit",
+        "pacingLead": 0,
+        "pacingTail": 0.15,
+        "transitionSeconds": 0,
+        "subtitles": "none"
+      },
+      "scenes": [
+        {
+          "id": "app-flow",
+          "kind": "clip",
+          "seconds": 21.9,
+          "src": "assets/video/della-howto-03.mp4",
+          "sound": "narration",
+          "narration": "She picks the commitment that matters now and starts Focus. The timer stays with the work, and a pause makes room for whatever needs her attention. For a longer goal, Objectives opens the outcome and the steps beneath it. Linked projects and tasks turn that big intention into a clear next action. She chooses the one that fits today's open time. Then Focus brings her back to just that step, with the timer ready."
+        }
+      ]
+    },
+    {
+      "id": "della-howto-04",
+      "kind": "short",
+      "name": "Repeat What Works",
+      "formats": [
+        "landscape"
+      ],
+      "meta": {
+        "pacing": "fit",
+        "pacingLead": 0,
+        "pacingTail": 0.15,
+        "transitionSeconds": 0,
+        "subtitles": "none"
+      },
+      "scenes": [
+        {
+          "id": "app-flow",
+          "kind": "clip",
+          "seconds": 23.3,
+          "src": "assets/video/della-howto-04.mp4",
+          "sound": "narration",
+          "narration": "Some things keep a week steady, even when the tasks change. Habits gives Della a light way to return to family, coaching, and her own care. In Routines, one checklist keeps the small steps together. She checks its cadence and notes before adding the routine to today. Then she works through the steps in order, without holding the whole sequence in her head. When the week turns again, the routine is ready to use or adjust."
+        }
+      ]
+    },
+    {
+      "id": "della-howto-05",
+      "kind": "short",
+      "name": "Reuse Time, Keep It Sorted",
+      "formats": [
+        "landscape"
+      ],
+      "meta": {
+        "pacing": "fit",
+        "pacingLead": 0,
+        "pacingTail": 0.15,
+        "transitionSeconds": 0,
+        "subtitles": "none"
+      },
+      "scenes": [
+        {
+          "id": "app-flow",
+          "kind": "clip",
+          "seconds": 24.2,
+          "src": "assets/video/della-howto-05.mp4",
+          "sound": "narration",
+          "narration": "When a rhythm works, Della can save it as a time block and bring it back when the week repeats. She chooses its area and duration, then places that shape on another day. Home, Work, and Community blocks stay easy to spot as she scrolls. Direction tags gather time by life area. Category tags add another way to find the kind of work inside each block. The useful structure stays close at hand, ready for next week's plan."
+        }
+      ]
+    },
+    {
+      "id": "della-howto-06",
+      "kind": "short",
+      "name": "See How the Week Feels",
+      "formats": [
+        "landscape"
+      ],
+      "meta": {
+        "pacing": "fit",
+        "pacingLead": 0,
+        "pacingTail": 0.15,
+        "transitionSeconds": 0,
+        "subtitles": "none"
+      },
+      "scenes": [
+        {
+          "id": "app-flow",
+          "kind": "clip",
+          "seconds": 22.567,
+          "src": "assets/video/della-howto-06.mp4",
+          "sound": "narration",
+          "narration": "Balance lets Della see how her time is meeting the priorities she chose. She scrolls through each life area and notices where the week has opened up or filled in. Metrics adds the wider pattern: completed tasks, time spent, and changes across the week. One busy day doesn't have to tell the whole story. If a window feels crowded, she can adjust it while the pattern is fresh. Then she shapes next week with a clearer sense of what fits."
+        }
+      ]
+    },
+    {
+      "id": "della-howto-07",
+      "kind": "short",
+      "name": "Fit the Plan to Real Life",
+      "formats": [
+        "landscape"
+      ],
+      "meta": {
+        "pacing": "fit",
+        "pacingLead": 0,
+        "pacingTail": 0.15,
+        "transitionSeconds": 0,
+        "subtitles": "none"
+      },
+      "scenes": [
+        {
+          "id": "app-flow",
+          "kind": "clip",
+          "seconds": 26.4,
+          "src": "assets/video/della-howto-07.mp4",
+          "sound": "narration",
+          "narration": "Preferences lets Della shape the hours that are truly available. She scrolls through Home, Work, and Community, setting a window for each part of her week. Automatic planning uses those boundaries when it offers a place for new tasks. Weekends can open differently from workdays, because family time has its own rhythm. In Profile, she checks her planner name and local time zone. When coaching hours or family routines shift, she updates the details and saves."
+        }
+      ]
+    },
+    {
+      "id": "della-howto-08",
+      "kind": "short",
+      "name": "Keep Connections Optional",
+      "formats": [
+        "landscape"
+      ],
+      "meta": {
+        "pacing": "fit",
+        "pacingLead": 0,
+        "pacingTail": 0.15,
+        "transitionSeconds": 0,
+        "subtitles": "none"
+      },
+      "scenes": [
+        {
+          "id": "app-flow",
+          "kind": "clip",
+          "seconds": 24.466,
+          "src": "assets/video/della-howto-08.mp4",
+          "sound": "narration",
+          "narration": "Della's plan lives in a local SQLite file, ready on her own device. Companion Memory and Google Calendar can connect when she wants a wider view. Gmail can suggest tasks, and each one waits for her review before joining the plan. Scheduled Jobs shows what can run in the background and whether it has finished. She reviews a job before starting it. Her plan stays local by default, with each connection there by choice."
+        }
+      ]
+    }
+  ]
+}

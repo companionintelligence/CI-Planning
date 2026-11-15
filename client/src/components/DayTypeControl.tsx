@@ -1,6 +1,6 @@
 import { createResource, createSignal, For, Show, type JSX } from 'solid-js';
 import { CalendarCog, ChevronDown, ChevronRight } from 'lucide-solid';
-import { patternBlocks, refetchPatternBlocks, showToast } from '../stores/index.js';
+import { patternBlocks, refetchPatternBlocks, refetchDayConflicts, showToast } from '../stores/index.js';
 import { api } from '../lib/api.js';
 import { SchedulePatternEditor } from './SchedulePatternEditor.js';
 
@@ -16,8 +16,8 @@ export function DayTypeControl(props: {
   date: string;
   trailing?: JSX.Element;
   hideLabel?: boolean;
-  /** Hide the "Edit windows" disclosure — the Planner header keeps only the day-type
-   *  select, and the editor is reached from the details drawer's empty state instead. */
+  /** Hide the "Edit windows" disclosure — Calendar's day-type summary keeps only the
+   *  selector, while window editing remains in the selected-day Details drawer. */
   hideEditWindows?: boolean;
   /** Render ONLY the "Edit windows" disclosure and its editor, no day-type select.
    *  The drawer's counterpart to `hideEditWindows`; both halves stay in this one
@@ -34,12 +34,16 @@ export function DayTypeControl(props: {
   const currentKey = () => resolved()?.key;
   const isOverride = () => resolved()?.source === 'assignment';
   const nameOf = (key?: string) => types()?.find((t) => t.key === key)?.name ?? key ?? '';
+  const dateLabel = () => new Date(`${props.date}T12:00:00`).toLocaleDateString(undefined, {
+    weekday: 'long', month: 'long', day: 'numeric',
+  });
 
   async function choose(val: string) {
     try {
       if (val === '') await api.dayTypes.clearAssignment(props.date);
       else await api.dayTypes.assign(props.date, val);
       refetchPatternBlocks(); // re-resolve here + refresh the Planner overlay
+      refetchDayConflicts(); // changing windows can immediately create or clear conflicts
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
@@ -61,10 +65,10 @@ export function DayTypeControl(props: {
         </select>
         </Show>
         <Show when={isOverride() && !props.windowsOnly}>
-          <span class="text-[10px] rounded-full border border-primary/40 text-primary px-1.5 py-0.5">override</span>
+          <span class="text-[10px] rounded-sm border border-primary/40 text-primary px-1.5 py-0.5">override</span>
         </Show>
-        {/* Edit windows: in the drawer by default; the Planner header passes
-            hideEditWindows so the grid header carries only the day-type select. */}
+        {/* Edit windows lives in the selected-day drawer; Calendar's summary passes
+            hideEditWindows so its header carries only the day-type select. */}
         <Show when={!props.hideEditWindows}>
         <button
           type="button"
@@ -83,9 +87,9 @@ export function DayTypeControl(props: {
       <Show when={open() && currentKey()}>
         <div class="rounded-lg border border-border bg-card p-3">
           <p class="text-[11px] text-muted-foreground mb-2">
-            Availability windows for <span class="text-foreground">{nameOf(currentKey())}</span> — shared by every day of this type.
+            Windows for <span class="text-foreground">{dateLabel()}</span> override the <span class="text-foreground">{nameOf(currentKey())}</span> defaults for this day only.
           </p>
-          <SchedulePatternEditor dayType={currentKey()!} />
+          <SchedulePatternEditor dayType={currentKey()!} date={props.date} />
         </div>
       </Show>
     </div>

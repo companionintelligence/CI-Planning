@@ -47,11 +47,11 @@ Node 22 or newer is required (`engines` in `package.json`; `.nvmrc` pins 26.3.0,
 major the Dockerfile builds on).
 
 The workspace depends on private `@companionintelligence/*` packages from GitHub
-Packages. The repo `.npmrc` points that scope at `npm.pkg.github.com` with a
-`${NODE_AUTH_TOKEN}` placeholder — and **pnpm 11 does not expand environment variables
-in a repository-controlled `.npmrc`**, so exporting `NODE_AUTH_TOKEN` is not enough: a
-fresh clone fails the lockfile's supply-chain check on those packages. Put the token in a
-**user-level** npmrc instead, once per machine:
+Packages. The repo `.npmrc` points that scope at `npm.pkg.github.com` and holds no token.
+Pnpm 11 does not expand environment variables in a repository-controlled `.npmrc`, so a
+token cannot come from `NODE_AUTH_TOKEN` there. A fresh clone fails the lockfile's
+supply-chain check on those packages without one. Put the token in a **user-level** npmrc
+instead, once per machine:
 
 ```bash
 printf '//npm.pkg.github.com/:_authToken=%s\n' "$(gh auth token)" > ~/.npmrc

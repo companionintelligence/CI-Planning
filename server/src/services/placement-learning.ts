@@ -296,38 +296,45 @@ export interface PlacementLogRow {
  * classification's "corrected to the same value is an acceptance". An untouched row
  * resolves on the block and the clock: `reflow()` deletes and recreates auto blocks
  * constantly, so a vanished block was never lived with and is pending forever, not
- * accepted; a slot that has not arrived yet is genuinely undecided; one that has
- * already passed means the owner lived with it.
+ * accepted. The same goes for a block that is still there but did not happen (skipped,
+ * cancelled or missed: the owner skipped it, the missed-block sweep marked it, or its
+ * task was cancelled), so the caller passes `blockStands = false` for it too. A slot that
+ * has not arrived yet is genuinely undecided; one that has already passed on a block
+ * that stands means the owner lived with it. A move the owner made is graded before any
+ * of this and stands whatever became of the block afterwards.
  */
 export function placementOutcome(
   row: PlacementLogRow,
   now: Date,
-  blockExists: boolean,
+  blockStands: boolean,
 ): 'corrected' | 'accepted' | null {
   if (row.fit === 0) return null;
   if (row.moved_at) return row.moved_hour !== row.chosen_hour ? 'corrected' : 'accepted';
-  if (!blockExists) return null;
+  if (!blockStands) return null;
   return Date.parse(row.chosen_start_at) < now.getTime() ? 'accepted' : null;
 }
 
 interface WindowRow extends PlacementLogRow {
   slot_key: string;
   local_date: string;
-  block_exists: 0 | 1;
+  block_stands: 0 | 1;
 }
 
 /**
- * One owner's `placement_log` rows inside the learning window, with the block-existence
- * check folded in as a `LEFT JOIN` — one query, not N. Not a foreign-key join (0166):
- * the log deliberately outlives both `time_blocks` and `tasks`, so this is the only
- * honest way to ask "does the block this row named still exist". Total order —
+ * One owner's `placement_log` rows inside the learning window, with "does the block this
+ * row named still stand" folded in as a `LEFT JOIN` — one query, not N. A block stands
+ * when it exists and did not end `skipped`, `cancelled` or `missed` (the same
+ * didn't-happen set `services/balance-budget.ts` leaves out of its scheduled minutes).
+ * Not a foreign-key join (0166): the log deliberately outlives both `time_blocks` and
+ * `tasks`, so this is the only honest way to ask. Total order —
  * `(local_date, id)`, never `local_date` alone — because uuid7 ties are random within a
  * millisecond.
  */
 const SELECT_WINDOW = `
   SELECT pl.slot_key, pl.local_date, pl.fit, pl.chosen_start_at, pl.chosen_hour,
          pl.moved_at, pl.moved_hour,
-         CASE WHEN tb.id IS NOT NULL THEN 1 ELSE 0 END AS block_exists
+         CASE WHEN tb.id IS NOT NULL AND COALESCE(tb.status, 'planned') NOT IN ('skipped', 'cancelled', 'missed')
+              THEN 1 ELSE 0 END AS block_stands
     FROM placement_log pl
     LEFT JOIN time_blocks tb ON tb.id = pl.block_id AND tb.owner_id = pl.owner_id
    WHERE pl.owner_id = ? AND pl.local_date >= ?
@@ -433,7 +440,7 @@ export async function calibratePlacement(
   let survivalCorrected = 0;
 
   for (const r of rows) {
-    const outcome = placementOutcome(r, now, r.block_exists === 1);
+    const outcome = placementOutcome(r, now, r.block_stands === 1);
     if (outcome === null) continue;
     const restingHour = outcome === 'corrected' ? r.moved_hour! : r.chosen_hour;
 

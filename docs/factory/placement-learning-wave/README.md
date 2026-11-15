@@ -49,6 +49,8 @@ below is bound by it.
 Strictly ordered 1 → 2 → 3 → 4 → 5. Ticket 6 forks off 4 and can land in parallel with 5;
 it is what makes the loop falsifiable, so do not drop it as "just reporting".
 
+Client readout: Settings → Learning.
+
 ## Corrections to the brief that opened this wave
 
 **`day-reflow.ts:227` is not the drag path.** That `UPDATE ... is_auto = 0` sits inside

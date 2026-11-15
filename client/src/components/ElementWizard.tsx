@@ -9,12 +9,12 @@ import { TextureTrigger, TextureModal } from './TextureModal.js';
 import { PeopleField } from './PeopleField.js';
 import {
   elementModal, setElementModal, tags, blocks, concepts, tasks, patterns, patternTypes, categoryPrefs, prefs, showToast,
-  refetchBlocks, refetchTasks, refetchFlightPlan, patternBlocks,
+  refetchBlocks, refetchTasks, refetchFlightPlan,
   type ElementKind,
 } from '../stores/index.js';
 import {
   patternTagList, patternDefaultMinutes, rankedSecondaryTags,
-  nextHalfHour, saveElement, splitBlockTag, mergeTagNames, isoAt, type ElementForm,
+  nextHalfHour, saveElement, splitBlockTag, mergeTagNames, isoAt, claimIfFaithful, type ElementForm,
 } from '../lib/element.js';
 import { sortCategories, displayTag } from '../lib/tag-tax.js';
 import { colorVar } from '../lib/pattern-meta.js';
@@ -23,7 +23,7 @@ import { buildRule, rulePreset, describeRule, WEEKDAYS, DAY_INITIAL, type Repeat
 import { proposeSlot, narrowToBand } from '../lib/propose-slot.js';
 import { findSimilarTasks } from '../lib/similar-tasks.js';
 import { inheritedBlockTag } from '../lib/planner.js';
-import { api, type Task, type Person } from '../lib/api.js';
+import { api, type Task, type Person, type DurationSuggestion, type PatternWindows, type ClassificationClaim } from '../lib/api.js';
 
 const TB_REPEAT: RepeatPreset[] = ['none', 'daily', 'weekly', 'custom'];
 const TASK_REPEAT: RepeatPreset[] = ['none', 'daily', 'weekly', 'custom'];
@@ -128,6 +128,10 @@ export function ElementWizard() {
   const [dependsOn, setDependsOn] = createSignal<string[]>([]);
   const [editScope, setEditScope] = createSignal<'instance' | 'series'>('instance');
   const [wasRecurring, setWasRecurring] = createSignal(false);
+  // The template behind a generated instance being edited, if any. Instances carry no tag or
+  // category rows, so an instance opens with empty pickers; "This & future" swaps in the
+  // template's sets (chooseScope), and a series save is addressed to the template itself.
+  const [editTemplateId, setEditTemplateId] = createSignal<string | null>(null);
   // time-block: note + recurrence (AF-9: secondary tags round-trip through the
   // shared `intentions` chips — no separate blind-preserve signal anymore)
   const [note, setNote] = createSignal('');
@@ -137,6 +141,17 @@ export function ElementWizard() {
   const [tbCustomRule, setTbCustomRule] = createSignal('');
   // Phase B (0134): 1–3 categories, tasks AND blocks; array order = stripe order.
   const [categoryIds, setCategoryIds] = createSignal<string[]>([]);
+  // True once the owner used the picker themselves; seeding an edit's own row and a fresh
+  // open put it back to false (a parse seeds too, but only in Add, which sends the picker
+  // either way). It latches: tapping a chip back off does not clear it, deliberately, the
+  // owner used the picker. A task or habit EDIT save sends the picker only when it is true;
+  // a Time Block edit sends it either way.
+  const [categoriesTouched, setCategoriesTouched] = createSignal(false);
+  // What the direction and intention chips held when the form was last seeded. A task or habit
+  // EDIT sends tags only when they differ from this, the same testimony rule as the category
+  // picker: the seed is a snapshot, not an answer, and sending it on every save wiped the
+  // template's tags on a series save from an instance.
+  const [seededTagKey, setSeededTagKey] = createSignal('');
   // Phase B (0135): per-element texture override (on by default; null colour = derive).
   const [textureEnabled, setTextureEnabled] = createSignal(true);
   const [textureColorToken, setTextureColorToken] = createSignal<string | null>(null);
@@ -178,6 +193,11 @@ export function ElementWizard() {
   const [nlBusy, setNlBusy] = createSignal(false);
   const [nlLlm, setNlLlm] = createSignal(false);
   const [nlError, setNlError] = createSignal<string | null>(null);
+  const [durationSuggestion, setDurationSuggestion] = createSignal<DurationSuggestion | null>(null);
+  // The model's category pick for the last parse, as the server reported it. Echoed on Add
+  // so the owner's answer to it is evidence; null whenever there is no pick to answer, and
+  // again as soon as the create lands (onCreated). A create that failed keeps it for the retry.
+  const [nlClaim, setNlClaim] = createSignal<ClassificationClaim | null>(null);
 
   // D5 — suggest-only subtask brainstorm. `ideas` is what the model offered; `picked` is
   // what the USER tapped. Only `picked` is ever created (saveElement → subtaskTitles), so
@@ -230,9 +250,10 @@ export function ElementWizard() {
   const categoryOptions = () => sortCategories((tags() ?? []).filter((t) => t.kind === 'category'));
   function toggleCategory(id: string) {
     const cur = categoryIds();
-    if (cur.includes(id)) { setCategoryIds(cur.filter((x) => x !== id)); return; }
+    if (cur.includes(id)) { setCategoryIds(cur.filter((x) => x !== id)); setCategoriesTouched(true); return; }
     if (cur.length >= 3) return; // cap 3 — mirrors setEntityCategories
     setCategoryIds([...cur, id]);
+    setCategoriesTouched(true);
     // First pick prefills the block length from the category's default (0069 behavior).
     if (cur.length === 0) {
       const p = categoryPrefs()?.prefs?.[id];
@@ -358,6 +379,8 @@ export function ElementWizard() {
       const pf = st.prefill ?? {};
       setTitle(''); setPrimary(''); setIntentions([]); setTagDraft(''); setLlm([]);
       setNlText(''); setNlBusy(false); setNlLlm(false); setNlError(null);
+      setDurationSuggestion(null);
+      setNlClaim(null);
       setSubtaskIdeas([]); setPickedSubtasks([]); setSubtaskBusy(false); setTimeHint(null);
       setDay(pf.day || localISODate());
       setStart(pf.start || nextHalfHour());
@@ -371,7 +394,7 @@ export function ElementWizard() {
       setEstimate(30); setDueAt(pf.day || localISODate()); setDueEdited(false); setPriority(3);
       setTaskRepeat('none'); setTaskWeekdays([]); setTaskCustomRule('');
       setDeferUntil(''); setDependsOn([]); setDepDraft(''); setEditScope('instance'); setWasRecurring(false);
-      setNote(''); setNoteExpanded(false); setTbRepeat('none'); setTbWeekdays([]); setTbCustomRule(''); setCategoryIds([]); setMakeHabit(false);
+      setNote(''); setNoteExpanded(false); setTbRepeat('none'); setTbWeekdays([]); setTbCustomRule(''); setCategoryIds([]); setCategoriesTouched(false); setMakeHabit(false);
       setTextureEnabled(true); setTextureColorToken(null);
       setMotivation(null); setMotivationSource(null); setMotivationTouched(false);
       setLocked(false); setAllDay(false); setRoutineId(''); setInitialRoutineId('');
@@ -452,6 +475,7 @@ export function ElementWizard() {
       setTaskRepeat(ps.preset); setTaskWeekdays(ps.weekdays); setTaskCustomRule(ps.custom);
       setWasRecurring(!!(t.recurrence_rule || t.recurrence_parent_id));
       setEditScope('instance');
+      setEditTemplateId(t.recurrence_parent_id ?? null);
       setCalMonth((t.scheduled_for ?? localISODate()).slice(0, 8) + '01');
       // Routine chip seed: first Routine pattern containing this task.
       const r = routineList().find((p) => p.task_ids.includes(id));
@@ -468,6 +492,7 @@ export function ElementWizard() {
     setCategoryIds(names
       .map((n) => all.find((t) => t.kind === 'category' && t.name.toLowerCase() === n.toLowerCase())?.id)
       .filter((id): id is string => !!id));
+    setCategoriesTouched(false); // seeded, not testimony — the same rule as motivation and people
   }
   function seedTags(names: string[], secondary: string[] = []) {
     const patternNames = new Set(patternTagList().map((p) => p.name.toLowerCase()));
@@ -475,6 +500,26 @@ export function ElementWizard() {
     setPrimary(prim ?? '');
     setIntentions(mergeTagNames(names.filter((n) => n !== prim), secondary)
       .filter((n) => n.toLowerCase() !== (prim ?? '').toLowerCase()));
+    setSeededTagKey(tagKey());
+  }
+  const tagKey = () =>
+    JSON.stringify([primary().trim().toLowerCase(), intentions().map((n) => n.toLowerCase()).sort()]);
+  const tagsChanged = () => tagKey() !== seededTagKey();
+
+  // "Applies to" for a generated instance: the instance has no tag or category rows, the
+  // template has them, and a series save writes the template. So choosing "This & future"
+  // shows the template's sets (and choosing "This task" shows the instance's again), unless
+  // the owner has already used a picker, whose work is never overwritten. The template comes
+  // from the same store the instance does; if it is not there the pickers stay as they are,
+  // untouched, and the save leaves tags and categories out.
+  function chooseScope(s: 'instance' | 'series') {
+    setEditScope(s);
+    const templateId = editTemplateId();
+    if (!templateId || tagsChanged() || categoriesTouched()) return;
+    const source = (tasks() ?? []).find((x) => x.id === (s === 'series' ? templateId : m().editTarget?.id));
+    if (!source) return;
+    seedTags(source.tags ?? [], source.secondary_tags ?? []);
+    seedCategories(source.categories ?? []);
   }
 
   // ── Tag interactions ────────────────────────────────────────────────────────
@@ -500,11 +545,18 @@ export function ElementWizard() {
     const value = (raw ?? nlText()).trim();
     if (!value || nlBusy()) return;
     setNlError(null);
+    setDurationSuggestion(null);
     setNlBusy(true);
     const isBlock = tab() === 'timeblock';
     try {
-      const { parsed, llm } = await api.tasks.quickParse(value);
+      const { parsed, llm, durationSuggestion: duration, classification_claim } = await api.tasks.quickParse(value, isBlock);
+      // The modal may have been reopened in Edit while this was in flight (the title stays
+      // typeable, so "open instead of adding?" is reachable; so is closing it and opening a
+      // task). Edit has no Describe-it line, so the answer belongs to a form that is gone:
+      // drop it before it touches a field, the picker or the claim.
+      if (isEdit()) return;
       setNlLlm(llm);
+      setDurationSuggestion(isBlock ? duration ?? null : null);
       // Hydrate the form fields — every value below is visible in the wizard for
       // review/correction before Add.
       setTitle(parsed.title);
@@ -527,6 +579,11 @@ export function ElementWizard() {
       // Phase B: the classifier's best-guess categories seed the picker (best fit
       // first = position 0 = first stripe) — reviewable chips, like every NL field.
       if (parsed.categories?.length) seedCategories(parsed.categories);
+      // Every successful parse REPLACES the claim, so one where the model abstained clears a
+      // stale one. A Time Block parse keeps its claim as well (the server settles it against
+      // the block, with its own kind), and categoryNames() is read after the seed: the claim
+      // holds only if the picker shows it.
+      setNlClaim(claimIfFaithful(classification_claim, categoryNames()));
       // Motivation (0141): the overlay's pick seeds as SUGGESTED (source 'llm', not
       // touched) — the user's Add is approval of the task, not testimony about who
       // it's for; only tapping the control itself makes it user's.
@@ -558,11 +615,10 @@ export function ElementWizard() {
         // 0156: work+community pattern_blocks union replaces workday_start/workday_end —
         // best-effort day-of-week guess (server re-validates at create time anyway, so an
         // approximate day-type here costs nothing but preview accuracy).
-        const isWeekendDay = [0, 6].includes(new Date(`${targetDay}T00:00:00`).getDay());
         const dirIds = new Set(
           (tags() ?? []).filter((t) => t.kind === 'direction' && (t.name === 'work' || t.name === 'community')).map((t) => t.id),
         );
-        const dayWindows = (isWeekendDay ? patternBlocks()?.weekend : patternBlocks()?.workday) ?? {};
+        const dayWindows: PatternWindows = (await api.patternBlocks.forDate(targetDay).catch(() => ({ windows: {} as PatternWindows }))).windows;
         const fallbackRanges = [...dirIds].flatMap((id) => dayWindows[id] ?? []);
         const workStartMin = fallbackRanges.length ? Math.min(...fallbackRanges.map((r) => hhmmToMin(r.start_time) ?? 0)) : 0;
         const workEndMin = fallbackRanges.length ? Math.max(...fallbackRanges.map((r) => hhmmToMin(r.end_time) ?? 1440)) : 1440;
@@ -879,7 +935,7 @@ export function ElementWizard() {
     if (tab() === 'routine') return 'A named, reusable bundle of tasks';
     const dir = primary() || displayTag(categoryNames()[0] ?? '') || (tab() === 'task' ? 'Task' : 'Block');
     if (taskIsSomeday()) return `${dir} · Someday${intentions().length ? ' · ' + intentions().join(', ') : ''}`;
-    if (tab() === 'timeblock' && someday()) return `${dir} · Someday · ${fmtDayLabel(goalDay())} · ${fmtDur(durMin())}`;
+    if (tab() === 'timeblock' && someday()) return `${dir} · Someday Task · ${fmtDayLabel(goalDay())} · ${fmtDur(durMin())}`;
     if (blockAllDayView()) return `${dir} · ${fmtDayLabel(day())} · All-day`;
     const t = barStartMin();
     const dueBit = dueDiffers() ? ` · due ${fmtDayLabel(dueAt())}` : '';
@@ -899,7 +955,22 @@ export function ElementWizard() {
         // AF-9: time-block secondary tags live in `intentions` (round-tripped on
         // edit), so no separate blind-preserve set is passed.
         // Phase B: 1–3 category names (picker order = stripe order) + texture override.
-        categories: categoryNames(),
+        // A task or habit EDIT sends the picker only if the owner used it. The edit form used
+        // to re-send it on every save, and the seed is not testimony: it is a snapshot taken
+        // when the form opened, short of any category the tags() store could not show and of
+        // anything the server changed since. A series save opened from a generated instance
+        // is the sharp case: instances carry no category rows, so the seed is empty, and
+        // sending it wipes the template's categories. The server's changed-only read-back
+        // (updateTask) is a second guard behind this one: a same-set re-send changes nothing
+        // and closes no learning row. The gate latches once the owner touched the picker, even
+        // if they tapped a chip back off: they used it, so it sends what the picker shows (on
+        // an instance's series save, that can be the empty set).
+        // Tags follow the same rule (tagsTouched below), and a series save opened from an
+        // instance shows the template's sets and is addressed to the template. Add sends the picker. A Time Block edit sends
+        // it always, as before: a block has no learning row, and its save re-stamps the
+        // block's frozen colour from the first category (services/blocks.ts updateBlock).
+        categories: isEdit() && (effectiveKind === 'task' || effectiveKind === 'habit') && !categoriesTouched()
+          ? undefined : categoryNames(),
         textureEnabled: textureEnabled(),
         textureColorToken: textureColorToken(),
         // Motivation (0141): only when the user touched the control this session.
@@ -921,6 +992,11 @@ export function ElementWizard() {
         dueAt: dueAt() || undefined, priority: priority(),
         deferUntil: deferUntil() || undefined, dependsOn: dependsOn(),
         editScope: editScope(), parentId: m().parentId,
+        // A series save is addressed to the template when the task being edited is a generated
+        // instance, so an emptied picker is a real clear there (see updateTask).
+        editTemplateId: editTemplateId() ?? undefined,
+        // Tags go with an edit only when the owner changed them (a new task always sends them).
+        tagsTouched: isEdit() && (effectiveKind === 'task' || effectiveKind === 'habit') ? tagsChanged() : undefined,
         routineAddId: routineId() && routineId() !== initialRoutineId() ? routineId() : undefined,
         routineRemoveId: initialRoutineId() && routineId() !== initialRoutineId() ? initialRoutineId() : undefined,
         recurrenceRule:
@@ -933,6 +1009,13 @@ export function ElementWizard() {
         detachBlockIds: removedMemberIds(),
         // D5 — only the chips the user tapped; an untouched suggestion never gets here.
         subtaskTitles: pickedSubtasks(),
+        // The preview's category pick, so Add records the owner's answer to it. saveElement
+        // sends it on the add-mode task, habit and Time Block create only; the server decides
+        // if it counts.
+        classificationClaim: nlClaim() ?? undefined,
+        // Spent once the task exists: a later failing step (routine chip) leaves the modal
+        // open, and Add again would otherwise send the same claim for a second task.
+        onCreated: () => setNlClaim(null),
       };
       const msg = await saveElement(effectiveKind, m().mode, form, m().editTarget?.id);
       showToast(msg, 'success');
@@ -944,8 +1027,8 @@ export function ElementWizard() {
   // ── Shared style atoms ──────────────────────────────────────────────────────
   const chipOn = 'border-primary text-primary bg-primary/10';
   const chipOff = 'border-border text-muted-foreground hover:text-foreground';
-  const pill = 'text-xs px-2.5 py-1 rounded-full border transition-colors whitespace-nowrap';
-  const utilChip = 'inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full border transition-colors whitespace-nowrap';
+  const pill = 'text-xs px-2.5 py-1 rounded-sm border transition-colors whitespace-nowrap';
+  const utilChip = 'inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-sm border transition-colors whitespace-nowrap';
   const seg = 'flex-1 py-1 rounded-md text-xs border transition-colors';
   const popCard = 'absolute top-full left-0 mt-1 z-50 rounded-lg border border-border bg-popover shadow-xl p-2.5';
   const popLabel = 'text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5';
@@ -984,7 +1067,7 @@ export function ElementWizard() {
       <div class="flex flex-wrap gap-1.5">
         <For each={intentions()}>
           {(name) => (
-            <span class="text-xs px-2 py-0.5 rounded-full border border-primary/40 bg-primary/10 text-primary inline-flex items-center gap-1">
+            <span class="text-xs px-2 py-0.5 rounded-sm border border-primary/40 bg-primary/10 text-primary inline-flex items-center gap-1">
               {name}
               <button type="button" onClick={() => removeIntention(name)} class="opacity-60 hover:opacity-100"><X size={10} /></button>
             </span>
@@ -993,7 +1076,7 @@ export function ElementWizard() {
         <For each={secondarySuggestions().slice(0, 3)}>
           {(t) => (
             <button type="button" onClick={() => addIntention(t.name)}
-              class="text-xs px-2 py-0.5 rounded-full border border-dashed border-border text-muted-foreground hover:text-foreground inline-flex items-center gap-1 transition-colors">
+              class="text-xs px-2 py-0.5 rounded-sm border border-dashed border-border text-muted-foreground hover:text-foreground inline-flex items-center gap-1 transition-colors">
               <Plus size={10} /> {t.name}
             </button>
           )}
@@ -1162,7 +1245,7 @@ export function ElementWizard() {
           {/* ── Header: segmented tabs + close, then the borderless title ── */}
           <div class="px-5 pt-4 pb-3 border-b border-border">
             <div class="flex items-center gap-2 mb-3">
-              <div class="inline-flex items-center rounded-full border border-border bg-background p-0.5 gap-0.5">
+              <div class="inline-flex items-center rounded-sm border border-border bg-background p-0.5 gap-0.5">
                 <For each={([['task', 'Task'], ['timeblock', 'Time Block'], ...(enableRoutines() ? [['routine', 'Routine']] : [])] as [ElementKind, string][])}>
                   {([key, label]) => {
                     const active = () => tab() === key;
@@ -1172,7 +1255,7 @@ export function ElementWizard() {
                         onClick={() => !disabled() && setElementModal({ ...m(), kind: key })}
                         disabled={disabled()}
                         title={disabled() ? "Can't change type while editing" : undefined}
-                        class="px-3 py-1 rounded-full text-[11.5px] font-semibold transition-colors whitespace-nowrap"
+                        class="px-3 py-1 rounded-sm text-[11.5px] font-semibold transition-colors whitespace-nowrap"
                         classList={{
                           'bg-primary text-primary-foreground': active(),
                           'text-muted-foreground hover:text-foreground': !active() && !disabled(),
@@ -1227,7 +1310,10 @@ export function ElementWizard() {
                         : "Describe it… e.g. 'pay invoice fri 3pm #finance ~20m'"}
                     value={taskSearchMode() ? taskQuery() : nlText()}
                     disabled={nlBusy() || !!schedulingId()}
-                    onInput={(e) => (taskSearchMode() ? setTaskQuery(e.currentTarget.value) : setNlText(e.currentTarget.value))}
+                    onInput={(e) => {
+                      if (taskSearchMode()) setTaskQuery(e.currentTarget.value);
+                      else { setNlText(e.currentTarget.value); setDurationSuggestion(null); }
+                    }}
                     onKeyDown={(e) => {
                       if (e.key !== 'Enter') return;
                       e.preventDefault();
@@ -1251,6 +1337,21 @@ export function ElementWizard() {
                 </div>
                 <Show when={!taskSearchMode() && nlError()}>
                   <p class="text-[11px] text-destructive mt-1">{nlError()}</p>
+                </Show>
+                <Show when={!taskSearchMode() && tab() === 'timeblock' && durationSuggestion()}>
+                  {(s) => (
+                    <p class="text-[11px] text-muted-foreground mt-1" role="status">
+                      Suggested {fmtDur(s().minutes)}
+                      {s().source === 'title_history'
+                        ? ` from ${s().samples} completed item${s().samples === 1 ? '' : 's'} with this title`
+                        : s().source === 'tag_history'
+                          ? ` from ${s().samples} completed item${s().samples === 1 ? '' : 's'} with matching tags`
+                          : s().source === 'quick_estimate'
+                            ? ' from a quick assessment of the description'
+                            : ' using your default duration'}
+                      {` · allowed ${s().minMinutes}–${s().maxMinutes} min. Adjust below before adding.`}
+                    </p>
+                  )}
                 </Show>
 
                 {/* D3 — why the proposed time landed where it did. Display-only. */}
@@ -1328,7 +1429,7 @@ export function ElementWizard() {
             <input autofocus
               class="w-full bg-transparent border-none outline-none text-lg font-semibold text-foreground placeholder:text-muted-foreground"
               placeholder={tab() === 'timeblock' ? 'Time block title…' : tab() === 'routine' ? 'Routine name…' : 'Task title…'}
-              value={title()} onInput={(e) => setTitle(e.currentTarget.value)} />
+              value={title()} onInput={(e) => { setTitle(e.currentTarget.value); setDurationSuggestion(null); }} />
           </div>
 
           {/* ── Body — identity left, time right (stacked on mobile) ── */}
@@ -1362,7 +1463,7 @@ export function ElementWizard() {
                           <button type="button" onClick={() => toggleCategory(c.id)}
                             class={`${pill} capitalize inline-flex items-center gap-1.5`}
                             classList={{ [chipOn]: on(), [chipOff]: !on() }}>
-                            <span class="w-2 h-2 rounded-full flex-shrink-0"
+                            <span class="w-2 h-2 rounded-circle flex-shrink-0"
                               style={{ 'background-color': colorVar(categoryPrefs()?.prefs?.[c.id]?.color_token) }} />
                             {displayTag(c.name)}
                           </button>
@@ -1547,7 +1648,7 @@ export function ElementWizard() {
                         <div class="flex flex-wrap gap-1 mb-1.5">
                           <For each={dependsOn()}>
                             {(id) => (
-                              <span class="text-[11px] px-2 py-0.5 rounded-full border border-primary/40 bg-primary/10 text-primary inline-flex items-center gap-1 max-w-full">
+                              <span class="text-[11px] px-2 py-0.5 rounded-sm border border-primary/40 bg-primary/10 text-primary inline-flex items-center gap-1 max-w-full">
                                 <span class="truncate">{taskById(id)?.title ?? id}</span>
                                 <button type="button" onClick={() => removeDep(id)} class="flex-shrink-0"><X size={9} /></button>
                               </span>
@@ -1639,7 +1740,7 @@ export function ElementWizard() {
                     <div class="flex gap-1">
                       <For each={['instance', 'series'] as const}>
                         {(s) => (
-                          <button type="button" onClick={() => setEditScope(s)}
+                          <button type="button" onClick={() => chooseScope(s)}
                             class={seg}
                             classList={{ [chipOn]: editScope() === s, [chipOff]: editScope() !== s }}>
                             {s === 'instance' ? 'This task' : 'This & future'}
@@ -1658,7 +1759,7 @@ export function ElementWizard() {
                       <div class="flex flex-wrap gap-1.5">
                         <For each={existingMembers()}>
                           {(b) => (
-                            <span class="text-xs px-2 py-0.5 rounded-full border border-border text-foreground inline-flex items-center gap-1 max-w-full">
+                            <span class="text-xs px-2 py-0.5 rounded-sm border border-border text-foreground inline-flex items-center gap-1 max-w-full">
                               <ListTodo size={11} class="flex-shrink-0 text-muted-foreground" />
                               <span class="truncate">{b.title}</span>
                               <button type="button" title="Remove from block" onClick={() => removeMember(b.id)} class="hover:text-destructive flex-shrink-0"><X size={11} /></button>
@@ -1669,7 +1770,7 @@ export function ElementWizard() {
                           {(it) => {
                             const Icon = attachIcon(it.kind);
                             return (
-                              <span class="text-xs px-2 py-0.5 rounded-full border border-primary/40 bg-primary/10 text-primary inline-flex items-center gap-1 max-w-full">
+                              <span class="text-xs px-2 py-0.5 rounded-sm border border-primary/40 bg-primary/10 text-primary inline-flex items-center gap-1 max-w-full">
                                 <Icon size={11} class="flex-shrink-0" />
                                 <span class="truncate">{it.label}</span>
                                 <button type="button" onClick={() => removeAttach(it.id)} class="hover:text-destructive flex-shrink-0"><X size={11} /></button>
@@ -1801,17 +1902,17 @@ export function ElementWizard() {
                   </Show>
                 </div>
 
-                {/* Block scheduled/someday toggle */}
+                {/* Scheduled block / Someday Task toggle */}
                 <Show when={tab() === 'timeblock'}>
                   <div class="flex gap-1">
                     <button type="button" onClick={() => setSomeday(false)} class={seg}
                       classList={{ [chipOn]: !someday(), [chipOff]: someday() }}>Scheduled</button>
-                    <button type="button" onClick={() => setSomeday(true)} class={seg}
-                      classList={{ [chipOn]: someday(), [chipOff]: !someday() }}>Someday</button>
+                    <button type="button" onClick={() => { setSomeday(true); setDurMin(prefs()?.concept_default_minutes ?? 60); }} class={seg}
+                      classList={{ [chipOn]: someday(), [chipOff]: !someday() }}>Someday Task</button>
                   </div>
                 </Show>
 
-                {/* Someday block — compact fields */}
+                {/* Someday Task — compact fields */}
                 <Show when={tab() === 'timeblock' && someday()}>
                   <div class="flex flex-col gap-2.5 rounded-xl border border-dashed border-border bg-background/50 p-3.5">
                     <div class="text-[11px] text-muted-foreground">No schedule yet — saved for later.</div>
@@ -1876,7 +1977,7 @@ export function ElementWizard() {
                     classList={{ 'opacity-60': timePaneMuted() }}>
                     <Show when={timePaneMuted()}>
                       <div class="absolute inset-0 z-[15] flex items-center justify-center bg-background/60">
-                        <span class="text-[11px] text-muted-foreground bg-popover border border-border px-2.5 py-1 rounded-full whitespace-nowrap">{timeMuteLabel()}</span>
+                        <span class="text-[11px] text-muted-foreground bg-popover border border-border px-2.5 py-1 rounded-sm whitespace-nowrap">{timeMuteLabel()}</span>
                       </div>
                     </Show>
                     {/* hour gridlines */}
@@ -1897,7 +1998,7 @@ export function ElementWizard() {
                         a stack of grey static. Pin a legible floor instead. */}
                     <For each={ghostBlocks()}>
                       {(g) => (
-                        <div class="absolute left-8 right-2 rounded-md text-[10px] leading-[1.15] px-1.5 py-0.5 overflow-hidden whitespace-nowrap text-ellipsis border pointer-events-none"
+                        <div class="absolute left-8 right-2 rounded-none text-[10px] leading-[1.15] px-1.5 py-0.5 overflow-hidden whitespace-nowrap text-ellipsis border pointer-events-none"
                           classList={{
                             'bg-destructive/15 border-dashed border-destructive/60 text-destructive': dragging() && barConflicts(g),
                             'bg-muted-foreground/10 border-muted-foreground/25 text-muted-foreground': !(dragging() && barConflicts(g)),
@@ -1918,7 +2019,7 @@ export function ElementWizard() {
                       </div>
                     }>
                       <div onPointerDown={onBarPointerDown}
-                        class="absolute left-8 right-2 rounded-lg px-2 py-0.5 text-[11px] font-semibold overflow-hidden z-[5]"
+                        class="absolute left-8 right-2 rounded-none px-2 py-0.5 text-[11px] font-semibold overflow-hidden z-[5]"
                         classList={{ 'cursor-grabbing': dragging(), 'cursor-grab': !dragging() }}
                         style={{
                           top: `${minutesToFrac(barStartMin()!) * 100}%`,

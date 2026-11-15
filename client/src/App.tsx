@@ -1,6 +1,8 @@
 import { Navigate, Route, Router, useLocation, useNavigate, useSearchParams } from '@solidjs/router';
 import { ErrorBoundary, Show, createEffect, createResource, createSignal, onCleanup, onMount } from 'solid-js';
-import { Plus, Cpu, Loader2, RefreshCw, PanelLeft } from 'lucide-solid';
+import { Plus, RefreshCw, PanelLeft } from 'lucide-solid';
+import { BootScreen } from './components/BootScreen.js';
+import { BrandMark } from './components/BrandMark.js';
 import { DetailsDrawer, DetailsToggle } from './components/DetailsDrawer.js';
 import { navCollapsed, toggleNav, detailsOpen } from './stores/ui.js';
 import { Nav }      from './components/Nav.js';
@@ -8,9 +10,10 @@ import { CloseRitual } from './components/CloseRitual.js';
 import { Login }    from './views/Login.js';
 import { ConnectServer } from './views/ConnectServer.js';
 import { needsServerSetup } from './lib/server-config.js';
+import { setSignedIn } from './lib/session.js';
 import { Signup }   from './views/Signup.js';
 import { ResetPassword } from './views/ResetPassword.js';
-import { authGateActive } from './lib/api.js';
+import { authGateActive, UNAUTHENTICATED_EVENT } from './lib/api.js';
 import { BottomNav } from './components/BottomNav.js';
 import { ToastContainer } from './components/Toast.js';
 import { ConflictBanner } from './components/ConflictBanner.js';
@@ -38,6 +41,7 @@ import {
   type ReminderTask,
 } from './lib/notifications.js';
 import { RecurringScopeDialog } from './components/RecurringScopeDialog.js';
+import { GuestPlanner } from './components/GuestPlanner.js';
 
 /**
  * T7 — wire browser reminders into the app root. Ask once for permission, then
@@ -99,8 +103,11 @@ const FAB_ROUTES = ['/', '/tasks', '/calendar', '/tags', '/focus', '/jobs'];
 
 function Shell(props: { children?: any }) {
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   useTaskReminders();
-  const hasFab = () => FAB_ROUTES.includes(location.pathname);
+  const hasFab = () =>
+    FAB_ROUTES.includes(location.pathname)
+    && !(location.pathname === '/tasks' && searchParams.tab === 'shared');
 
   // The trust dial (scheduling_prefs.trust_mode, 0070) — all three positions, via a
   // button that shows the one in force. The old Suggest/Schedule toggle here could only
@@ -166,10 +173,7 @@ function Shell(props: { children?: any }) {
           </button>
           {/* Brand mark — hidden on desktop where the left rail shows it */}
           <div class="flex items-center gap-2 md:hidden min-w-0 flex-1">
-            <div class="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 text-surface-950"
-              style={{ background: 'linear-gradient(135deg, #58ebbf, #409b9b)' }}>
-              <Cpu size={12} />
-            </div>
+            <BrandMark size={24} />
             <span class="font-heading text-sm text-slate-100 tracking-wide truncate">Planning</span>
           </div>
           {/* Desktop-only spacer; on mobile the brand block above already takes the slack. */}
@@ -235,9 +239,7 @@ function Shell(props: { children?: any }) {
           shell so it is one surface for every route rather than per-view panels. */}
       <DetailsDrawer />
 
-      {/* Floating Create button — lifted above the bottom nav on mobile. On Today,
-          Tasks, Calendar, Tags, Focus, and Jobs; other views own their own create
-          affordance (e.g. the Planner grid's click-to-create). */}
+      {/* One shared mobile/desktop Create button across the planner's primary views. */}
       <Show when={hasFab()}>
         <button
           class="fab bottom-20 md:bottom-6"
@@ -245,7 +247,6 @@ function Shell(props: { children?: any }) {
           title="Add to calendar"
         >
           <Plus size={18} />
-          <span class="hidden sm:inline">Add</span>
         </button>
       </Show>
 
@@ -259,6 +260,7 @@ function Shell(props: { children?: any }) {
           <CloseRitual
             task={entry.task}
             preferBlockId={entry.blockId}
+            review={entry.review}
             remaining={Math.max(0, closeRitualQueue().length - 1)}
             onAdvance={advanceCloseRitual}
             onSkipAll={clearCloseRitual}
@@ -309,34 +311,41 @@ function ObjectivesRedirect() {
 function SessionGate(props: { children?: any }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const [me] = createResource(() => api.auth.me().then(() => true).catch(() => false));
+  const [me] = createResource(() => api.auth.me().catch(() => null));
+
+  // The account resources in stores/index.ts load once this is true (lib/session.ts).
+  createEffect(() => {
+    if (me.loading) return;
+    setSignedIn(!!me() && me()?.role !== 'guest');
+  });
+  onCleanup(() => setSignedIn(false));
 
   createEffect(() => {
     if (me.loading) return;
-    if (me() === false && location.pathname !== '/login') {
+    if (me() === null && location.pathname !== '/login') {
       // Keep the page they asked for, so signing in can bring them back to it (see Login.tsx).
       navigate('/login', { replace: true, state: { from: location.pathname + location.search } });
     }
   });
 
+  createEffect(() => {
+    if (me()?.role !== 'guest') return;
+    if (!['/', '/calendar', '/shared'].includes(location.pathname)) navigate('/', { replace: true });
+  });
+
+  // The session can end while the app is open; a 401 from any request takes the same route.
+  const onUnauthenticated = () => {
+    if (location.pathname !== '/login') navigate('/login', { replace: true });
+  };
+  onMount(() => window.addEventListener(UNAUTHENTICATED_EVENT, onUnauthenticated));
+  onCleanup(() => window.removeEventListener(UNAUTHENTICATED_EVENT, onUnauthenticated));
+
   return (
-    <Show
-      when={!me.loading}
-      fallback={
-        <div class="min-h-screen flex items-center justify-center bg-surface-950 text-muted-foreground">
-          <Loader2 class="animate-spin" size={20} />
-        </div>
-      }
-    >
-      <Show
-        when={me()}
-        fallback={
-          <div class="min-h-screen flex items-center justify-center bg-surface-950 text-muted-foreground">
-            <Loader2 class="animate-spin" size={20} />
-          </div>
-        }
-      >
-        <Shell>{props.children}</Shell>
+    <Show when={!me.loading} fallback={<BootScreen />}>
+      <Show when={me()} fallback={<BootScreen />}>
+        <Show when={me()?.role === 'guest'} fallback={<Shell>{props.children}</Shell>}>
+          <GuestPlanner me={me()!} />
+        </Show>
       </Show>
     </Show>
   );
@@ -352,15 +361,14 @@ export function App() {
     api.auth.config().catch(() => ({ mode: 'test' as const, disableOidc: false, portal: false, local: false, signup: 'off' as const })),
   );
 
+  // Ungated deployments (test, standalone) have no login, so the session exists as soon as
+  // the server's mode is known. In sso, SessionGate sets it from /api/auth/me instead.
+  createEffect(() => {
+    if (!cfg.loading && !authGateActive(cfg()!)) setSignedIn(true);
+  });
+
   return (
-    <Show
-      when={!cfg.loading}
-      fallback={
-        <div class="min-h-screen flex items-center justify-center bg-surface-950 text-muted-foreground">
-          <Loader2 class="animate-spin" size={20} />
-        </div>
-      }
-    >
+    <Show when={!cfg.loading} fallback={<BootScreen />}>
       {/* Auth-gated deployments: /login is bare, everything else runs behind SessionGate.
           Ungated (test/standalone): the original Shell root, no login route — unchanged. */}
       <Show when={authGateActive(cfg()!)} fallback={<UngatedRouter />}>
@@ -379,6 +387,7 @@ export function App() {
                 "New Today" section; redirect stale /inbox deep-links there. */}
             <Route path="/inbox"    component={() => <Navigate href="/tasks" />} />
             <Route path="/tasks"       component={AllTasks} />
+            <Route path="/shared" component={() => null} />
             {/* AF-1: Objectives is a Tasks tab now; redirect preserves ?focus=. */}
             <Route path="/objectives"  component={ObjectivesRedirect} />
             <Route path="/patterns" component={() => <Navigate href="/tasks" />} />

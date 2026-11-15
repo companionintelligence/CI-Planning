@@ -1,7 +1,7 @@
 import { For, Show, createMemo, createSignal, onCleanup } from 'solid-js';
 import { ChevronRight, ChevronDown, Lock, NotebookPen, Star } from 'lucide-solid';
 import type { Block, DayStar } from '../lib/api.js';
-import { isPerfectDay, pipCount, STAR_GOLD } from '../lib/stars.js';
+import { isPerfectDay, pipCount } from '../lib/stars.js';
 import {
   PX_PER_MIN,
   minutesIntoDay,
@@ -16,8 +16,13 @@ import {
   minAt as axisMinAt,
   visibleExtent,
 } from '../lib/day-axis.js';
-import { setElementModal, calendarAxisState, toggleCalendarTop, toggleCalendarBottom, connectionPrefs, categoryPrefs, conflictedBlockIds } from '../stores/index.js';
+import { setElementModal, calendarAxisState, toggleCalendarTop, toggleCalendarBottom, connectionPrefs, categoryPrefs, conflictedBlockIds, taskOf } from '../stores/index.js';
 import { setActiveBlock, setActiveEntity } from '../stores/selection.js';
+
+function taskNeedsApproval(block: Block): boolean {
+  const task = block.task_id ? taskOf(block.task_id) : undefined;
+  return !!task?.auto_generated && !task.human_approved_at;
+}
 import { revealDetails } from '../stores/ui.js';
 import { isAllDay, isTimed, isTaskBlock, showsBlockLabel } from '../lib/overlay.js';
 import { blockColorVar, connectionTextureStyle, type TextureStyle } from '../lib/textures.js';
@@ -198,7 +203,7 @@ function NowLine(props: { day: string; state: () => AxisState }) {
         style={{ top: `${axisYOf(mins(), props.state(), PX_PER_MIN)}px` }}
       >
         <div class="h-px bg-accent-hi shadow-[0_0_6px_rgba(88,235,191,.6)]" />
-        <div class="absolute -left-1 -top-[3px] w-[7px] h-[7px] rounded-full bg-accent-hi" />
+        <div class="absolute -left-1 -top-[3px] w-[7px] h-[7px] rounded-circle bg-accent-hi" />
       </div>
     </Show>
   );
@@ -279,13 +284,13 @@ function BlockChip(props: { placed: Placed; day: string; state: () => AxisState;
       classList={{
         'opacity-40': done(),
         'ring-1 ring-amber-400/70': conflict() && !stranded(),
-        'ring-2 ring-destructive': stranded(),
+        'day-type-conflict-outline': stranded(),
         'cursor-pointer': true,
         // A container is an outline box wrapping its members — no card fill to paint
         // over them, a 2px edge to read as an enclosure. Same treatment as the
         // Planner's ContainerOutline, so a Time Block looks the same in both views.
-        'rounded-lg border-2': container(),
-        'rounded-md border bg-card': !container(),
+        'rounded-none border-2': container(),
+        'rounded-none border bg-card': !container(),
       }}
       style={{
         top: `${topPx()}px`,
@@ -296,6 +301,7 @@ function BlockChip(props: { placed: Placed; day: string; state: () => AxisState;
         // the Planner chips use on Today, so one block reads identically in both views.
         // Previously a ~15% alpha tint, which made the same colour look weaker here.
         'border-color': color(),
+        '--conflict-dash': `${taskOf(b().task_id)?.priority === 1 ? 10 : 4}px`,
         // The thick edge STANDS IN for a missing label, so it applies only to chips
         // that render no title. Anything showing its name keeps the slim accent, which
         // also leaves the width for the text to read cleanly.
@@ -744,7 +750,10 @@ export function CalendarGrid(props: Props) {
                   'ring-1 ring-inset ring-accent': props.selectedDate?.() === day,
                 }}
                 // Perfect day (5/5): tint the whole cell gold — the heatmap payoff.
-                style={perfect() ? { 'background-color': `${STAR_GOLD}1a`, 'border-color': `${STAR_GOLD}66` } : undefined}
+                style={perfect() ? {
+                  'background-color': 'color-mix(in srgb, var(--star-gold) 10%, transparent)',
+                  'border-color': 'color-mix(in srgb, var(--star-gold) 40%, transparent)',
+                } : undefined}
                 title={props.onCreateAt ? 'Click to add' : undefined}
                 onClick={() => props.onCreateAt?.(day, '09:00')}
               >
@@ -760,7 +769,7 @@ export function CalendarGrid(props: Props) {
                     classList={{
                       'text-slate-400': inMonth() && !isToday(),
                       'text-slate-600': !inMonth(),
-                      'inline-flex items-center justify-center w-5 h-5 rounded-full bg-accent text-surface-950 font-semibold': isToday(),
+                      'inline-flex items-center justify-center w-5 h-5 rounded-circle bg-accent text-surface-950 font-semibold': isToday(),
                       'hover:bg-surface-700/60': !!props.onSelectDate && !isToday(),
                     }}
                     onClick={(e) => {
@@ -769,6 +778,8 @@ export function CalendarGrid(props: Props) {
                       if (!props.onSelectDate) return;
                       e.stopPropagation();
                       props.onSelectDate(day);
+                      setActiveEntity('day', day);
+                      revealDetails();
                     }}
                   >
                     {dayLabel(day, { day: 'numeric' })}
@@ -783,13 +794,13 @@ export function CalendarGrid(props: Props) {
                         fallback={
                           <span class="flex items-center gap-[1px]" title={`${stars()!.total} of 5 stars`}>
                             <For each={Array.from({ length: pipCount(stars()!.total) })}>
-                              {() => <span class="w-1 h-1 rounded-full" style={{ 'background-color': STAR_GOLD }} />}
+                              {() => <span class="w-1 h-1 rounded-circle" style={{ 'background-color': 'var(--star-gold)' }} />}
                             </For>
                           </span>
                         }
                       >
                         <span title="Perfect day — 5 of 5 stars" class="drop-shadow-[0_0_4px_rgba(244,211,94,0.8)]">
-                          <Star size={12} color={STAR_GOLD} fill={STAR_GOLD} />
+                          <Star size={12} color="var(--star-gold)" fill="var(--star-gold)" />
                         </span>
                       </Show>
                     </Show>
@@ -811,9 +822,11 @@ export function CalendarGrid(props: Props) {
                   <For each={dayBlocks().slice(0, MAX_CHIPS)}>
                     {(b) => (
                       <div
-                        class="text-[10px] leading-tight truncate rounded px-1 py-0.5 bg-card"
+                        class="text-[10px] leading-tight truncate rounded-none px-1 py-0.5 bg-card"
+                        classList={{ 'border border-dotted border-orange-400': taskNeedsApproval(b) }}
                         style={{
-                          'border-left': `2px solid ${blockColorVar(b, categoryPrefs()?.prefs)}`,
+                          'border-left': taskNeedsApproval(b) ? '1px dotted #f97316' : `2px solid ${blockColorVar(b, categoryPrefs()?.prefs)}`,
+                          ...(taskNeedsApproval(b) ? { border: '1px dotted #f97316' } : {}),
                         }}
                         title={`${b.title} · ${fmtTime(b.start_at)}`}
                       >

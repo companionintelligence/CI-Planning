@@ -110,7 +110,7 @@ export function FocusReminders() {
                   </Show>
                   <Show when={r.source === 'auto'}>
                     <span
-                      class="text-[10px] px-1.5 py-0.5 rounded-full border border-border/60 text-muted-foreground"
+                      class="text-[10px] px-1.5 py-0.5 rounded-sm border border-border/60 text-muted-foreground"
                       title="Auto reminder — may be re-created when the task changes"
                     >
                       auto

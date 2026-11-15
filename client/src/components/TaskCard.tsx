@@ -1,14 +1,16 @@
 import { createSignal, Show, For, createResource } from 'solid-js';
 import { setActiveTask } from '../stores/selection.js';
 import { revealDetails } from '../stores/ui.js';
-import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward, CalendarDays, Rocket, X, Shapes, Target, Check, Sparkles } from 'lucide-solid';
+import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward, CalendarDays, Rocket, X, Shapes, Target, Check, Sparkles, Share2 } from 'lucide-solid';
 import { type Task, type RecurringScope, api } from '../lib/api.js';
 import { tasks, refetchTasks, showToast, setElementModal, tags, patternPrefs, patterns, patternTypes, refetchPatterns, patternForTask, isRoutineTask, flightPlanTaskIds, scheduledByTaskId, texturesEnabled, categoryPrefs, openCloseRitual, askRecurringScope, isRecurringOccurrence } from '../stores/index.js';
-import { buildPickerRows, leafObjectives, PICKER_SEARCH_THRESHOLD } from '../lib/objective-picker.js';
+import { buildLinkablePickerRows, linkableObjectives, PICKER_SEARCH_THRESHOLD } from '../lib/objective-picker.js';
 import { isPromotableToObjective } from '../lib/objective-promote.js';
 import { directionColorForTask, directionShapeForTask, colorVar, resolveItemColor } from '../lib/pattern-meta.js';
 import { elementTextureStyle } from '../lib/textures.js';
 import { initialsOf } from '../lib/element.js';
+import { localISODate } from '../lib/dates.js';
+import { isTaskOverdueOnDay } from '../lib/task-buckets.js';
 import { ShapeIcon } from './ShapeIcon.js';
 
 const statusClass: Record<string, string> = {
@@ -75,7 +77,7 @@ export function DateField(props: {
     try { inputRef?.showPicker(); } catch { inputRef?.focus(); }
   };
   const labelClass = () =>
-    props.overdue ? 'text-red-400'
+    props.overdue ? 'text-destructive'
     : props.highlight ? 'text-accent-hi font-medium'
     : 'text-muted-foreground';
   return (
@@ -118,9 +120,8 @@ export function DateField(props: {
 // AF-6 · Assign-to-objective dropdown (mirrors the add-to-routine menu idiom).
 // Mounted only while open, so the objectives tree is fetched lazily on first
 // open (fresh on each open) — deliberately NOT a global store resource.
-// Leaf-only filtering + row building live in lib/objective-picker.ts: the
-// server rejects links to non-leaf objectives (422 non_leaf), so goals and
-// projects never appear here.
+// Every objective node can hold tasks. The picker preserves hierarchy through
+// indentation so goals/projects remain distinguishable from their descendants.
 function ObjectiveMenu(props: { task: Task; close: () => void }) {
   // Fetch errors are caught HERE (toast + empty tree) so the menu stays usable and a
   // failed request is never mistaken for the "No objectives yet" empty state below.
@@ -137,12 +138,12 @@ function ObjectiveMenu(props: { task: Task; close: () => void }) {
     }
   });
   const [query, setQuery] = createSignal('');
-  const leafCount = () => leafObjectives(objectivesTree() ?? []).length;
+  const objectiveCount = () => linkableObjectives(objectivesTree() ?? []).length;
   // AF-10: checked-state comes from the FULL linked set (M:N), not just the first
   // link. objective_id fallback covers payloads from before objective_ids shipped.
   const linkedIds = () =>
     props.task.objective_ids ?? (props.task.objective_id ? [props.task.objective_id] : []);
-  const rows = () => buildPickerRows(objectivesTree() ?? [], query(), linkedIds());
+  const rows = () => buildLinkablePickerRows(objectivesTree() ?? [], query(), linkedIds());
   const canPromote = () => isPromotableToObjective(props.task);
 
   async function link(id: string, title: string) {
@@ -151,7 +152,7 @@ function ObjectiveMenu(props: { task: Task; close: () => void }) {
       showToast(`Linked to "${title}"`, 'success');
       refetchTasks(); // SSE also broadcasts; explicit refetch keeps the star snappy
     } catch (err) {
-      // Defensive: 422 non_leaf (list filtering should prevent it) and any other failure.
+      // Defensive: any server validation failure.
       showToast((err as Error).message, 'error');
     }
     props.close();
@@ -181,7 +182,7 @@ function ObjectiveMenu(props: { task: Task; close: () => void }) {
     // Opens ABOVE the footer button (the sorting actions now live in the card footer).
     <div class="absolute z-20 bottom-full left-0 mb-1 w-56 rounded-md border border-border bg-popover shadow-lg py-1">
       <Show when={!objectivesTree.loading} fallback={<p class="px-3 py-1.5 text-xs text-muted-foreground animate-pulse2">Loading objectives…</p>}>
-        <Show when={leafCount() > PICKER_SEARCH_THRESHOLD}>
+        <Show when={objectiveCount() > PICKER_SEARCH_THRESHOLD}>
           <div class="px-2 pb-1">
             <input
               type="text"
@@ -215,14 +216,14 @@ function ObjectiveMenu(props: { task: Task; close: () => void }) {
           <Show when={loadFailed()}>
             <p class="px-3 py-1.5 text-xs text-red-400">Couldn't load objectives — close and retry.</p>
           </Show>
-          <Show when={leafCount() === 0 && !loadFailed()}>
+          <Show when={objectiveCount() === 0 && !loadFailed()}>
             {/* Only a dead end when the footer row below is hidden — otherwise the
                 way out is right there, so don't send the owner to another tab. */}
             <p class="px-3 py-1.5 text-xs text-muted-foreground">
               No objectives yet{canPromote() ? '.' : ' — create one on the Objectives tab.'}
             </p>
           </Show>
-          <Show when={leafCount() > 0 && rows().length === 0}>
+          <Show when={objectiveCount() > 0 && rows().length === 0}>
             <p class="px-3 py-1.5 text-xs text-muted-foreground">No match</p>
           </Show>
         </div>
@@ -390,6 +391,9 @@ export function TaskCard(props: Props) {
 
   // Add-to-routine: pick an existing Routine-type pattern, or create one with this task.
   const [routineMenu, setRoutineMenu] = createSignal(false);
+  const [routineName, setRoutineName] = createSignal('');
+  const [routineNameForm, setRoutineNameForm] = createSignal(false);
+  const [creatingRoutine, setCreatingRoutine] = createSignal(false);
   const routineTypeId = () => (patternTypes() ?? []).find((t) => t.name === 'Routine')?.id;
   const routines = () => (patterns() ?? []).filter((p) => p.type_id === routineTypeId());
   async function addToRoutine(routineId: string, name: string) {
@@ -401,15 +405,20 @@ export function TaskCard(props: Props) {
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
   async function newRoutineWithTask() {
-    const name = prompt('New routine name')?.trim();
-    if (!name) return;
+    const name = routineName().trim();
+    if (!name || creatingRoutine()) return;
+    setCreatingRoutine(true);
     try {
-      const { pattern } = await api.patterns.create({ name, type_id: routineTypeId() ?? null });
-      await api.patterns.addTask(pattern.id, props.task.id);
+      // Let the server resolve the Routine type and create the membership, so this
+      // flow does not depend on the client having loaded pattern types first.
+      await api.patterns.promoteFromTasks([props.task.id], name);
       refetchPatterns();
       showToast(`Added to new routine "${name}"`, 'success');
       setRoutineMenu(false);
+      setRoutineNameForm(false);
+      setRoutineName('');
     } catch (err) { showToast((err as Error).message, 'error'); }
+    finally { setCreatingRoutine(false); }
   }
 
   // Habit toggle — promote a standard task into a habit (server also ensures its Habit
@@ -428,8 +437,16 @@ export function TaskCard(props: Props) {
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
-  const dueOverdue = () =>
-    !!props.task.due_at && new Date(props.task.due_at) < new Date() && props.task.status !== 'done';
+  const dueOverdue = () => isTaskOverdueOnDay(props.task, localISODate());
+
+  const awaitingHumanApproval = () => !!props.task.auto_generated && !props.task.human_approved_at;
+  async function approveAutoTask() {
+    try {
+      await api.tasks.approve(props.task.id);
+      refetchTasks();
+      showToast('Task approved', 'success');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
 
   // Direction of the task, defaulting to 'work' when it carries no direction tag (so the
   // merged toggle icon + card accent always read as a direction). Resolved through the
@@ -501,7 +518,7 @@ export function TaskCard(props: Props) {
         // Balanced layout (chips redesign): a vertical stack — title row, description,
         // full-width tags, then a single compact footer that collapses the former
         // left sorting-rail and right priority/date rail into one hairline-topped row.
-        class="card group relative isolate flex flex-col"
+        class="card rounded-none group relative isolate flex flex-col"
         // While a dropdown is open, lift this card above its siblings: each card is
         // `isolate`, so a z-20 popover inside it would otherwise paint UNDER later
         // sibling cards (DOM order wins at equal z) and they'd swallow menu clicks.
@@ -513,11 +530,16 @@ export function TaskCard(props: Props) {
         }}
         style={{
           'margin-bottom': '6px',
+          ...(awaitingHumanApproval() ? {
+            'border-style': 'dotted',
+            'border-width': '2px',
+            'border-color': '#f97316',
+          } : {}),
           // Uniform 3px left accent for every card (no relative shift); coloured by
           // direction when the task has a pattern-tag, default border otherwise.
-          'border-left-style': 'solid',
-          'border-left-width': '3px',
-          'border-left-color': dirColor(),
+          'border-left-style': awaitingHumanApproval() ? 'dotted' : 'solid',
+          'border-left-width': awaitingHumanApproval() ? '2px' : '3px',
+          'border-left-color': awaitingHumanApproval() ? '#f97316' : dirColor(),
         }}
       >
         {/* Phase C texture background — category stripes / colour override / routine
@@ -525,7 +547,7 @@ export function TaskCard(props: Props) {
             card's isolated stacking context; rounded to match). */}
         <Show when={cardTexture()}>
           {(tex) => (
-            <div aria-hidden="true" style={{ ...tex(), 'z-index': '-1', 'border-radius': 'inherit' }} />
+            <div aria-hidden="true" style={{ ...tex(), 'z-index': '-1', 'border-radius': 'var(--radius-0)' }} />
           )}
         </Show>
 
@@ -536,7 +558,7 @@ export function TaskCard(props: Props) {
             <Show
               when={!props.task.is_habit}
               fallback={
-                <span class="mt-0.5 w-[18px] h-[18px] rounded-[4px] border border-border flex items-center justify-center cursor-default opacity-60"
+                <span class="mt-0.5 w-[18px] h-[18px] rounded-sm border border-border flex items-center justify-center cursor-default opacity-60"
                   title="Habit — mark occurrences done on the planner, not here">
                   <Repeat size={11} class="text-muted-foreground" />
                 </span>
@@ -544,7 +566,7 @@ export function TaskCard(props: Props) {
             >
               <button
                 onClick={toggleDone}
-                class="mt-0.5 w-[18px] h-[18px] rounded-[4px] border flex items-center justify-center transition-colors hover:border-primary"
+                class="mt-0.5 w-[18px] h-[18px] rounded-sm border flex items-center justify-center transition-colors hover:border-primary"
                 classList={{ 'border-border': props.task.status !== 'done' }}
                 style={props.task.status === 'done'
                   ? { background: dirColor(), 'border-color': dirColor() }
@@ -569,6 +591,22 @@ export function TaskCard(props: Props) {
           <span class={`flex-1 min-w-0 text-sm leading-snug ${statusClass[props.task.status] ?? 'text-slate-200'}`}>
             {props.task.title}
           </span>
+
+          <Show when={props.task.shared}>
+            <span class="inline-flex items-center gap-1 text-[10px] text-muted-foreground shrink-0" title={`Shared task${props.task.shared_by ? ` from ${props.task.shared_by}` : ''}; edits sync to the owner`}>
+              <Share2 size={11} /> Shared
+            </span>
+          </Show>
+
+          <Show when={awaitingHumanApproval()}>
+            <button
+              class="inline-flex items-center gap-1 text-[10px] auto-generated-approval flex-shrink-0"
+              onClick={(ev) => { ev.stopPropagation(); void approveAutoTask(); }}
+              title="Approve this AI-created task"
+            >
+              <Check size={11} /> Approve
+            </button>
+          </Show>
 
           <Show when={props.task.is_habit}>
             <span class="badge-neutral text-[10px] flex-shrink-0 inline-flex items-center gap-0.5 mt-0.5"><Repeat size={9} /> habit</span>
@@ -598,9 +636,11 @@ export function TaskCard(props: Props) {
                   automatic: it costs a memory round-trip plus a model call. Reports its
                   own no-ops honestly ("memory is off", "nothing related") instead of
                   silently doing nothing. */}
-              <button onClick={enrich} disabled={enriching()} class="btn-icon" title="Fill in details from memory">
-                <Sparkles size={13} classList={{ 'animate-pulse': enriching() }} />
-              </button>
+              <Show when={!props.task.shared}>
+                <button onClick={enrich} disabled={enriching()} class="btn-icon" title="Fill in details from memory">
+                  <Sparkles size={13} classList={{ 'animate-pulse': enriching() }} />
+                </button>
+              </Show>
               <button class="btn-icon" title="Edit" onClick={() => setElementModal({ open: true, mode: 'edit', kind: props.task.is_habit ? 'habit' : 'task', editTarget: { kind: props.task.is_habit ? 'habit' : 'task', id: props.task.id } })}><Pencil size={13} /></button>
               <button onClick={remove} class="btn-icon hover:text-red-400" title="Cancel task"><Trash2 size={13} /></button>
             </div>
@@ -638,10 +678,10 @@ export function TaskCard(props: Props) {
             <For each={props.task.categories ?? []}>
               {(c) => (
                 <span
-                  class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full border border-border/60 text-muted-foreground/80 capitalize"
+                  class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-sm border border-border/60 text-muted-foreground/80 capitalize"
                   title="category"
                 >
-                  <span class="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ 'background-color': categoryDotColor(c) }} />
+                  <span class="w-1.5 h-1.5 rounded-circle flex-shrink-0" style={{ 'background-color': categoryDotColor(c) }} />
                   {c}
                 </span>
               )}
@@ -653,7 +693,7 @@ export function TaskCard(props: Props) {
             <For each={(props.task.responsible ?? []).slice(0, 3)}>
               {(person) => (
                 <span
-                  class="inline-flex items-center justify-center w-4 h-4 rounded-full border border-border/60 text-[9px] font-semibold text-muted-foreground/90"
+                  class="inline-flex items-center justify-center w-4 h-4 rounded-circle border border-border/60 text-[9px] font-semibold text-muted-foreground/90"
                   title={`Responsible: ${(props.task.responsible ?? []).map((p) => p.display_name).join(', ')}`}
                 >
                   {initialsOf(person.display_name)}
@@ -676,7 +716,7 @@ export function TaskCard(props: Props) {
                 <For each={s().recent}>
                   {(r) => (
                     <span
-                      class="w-2 h-2 rounded-full"
+                      class="w-2 h-2 rounded-circle"
                       classList={{
                         'bg-primary': r.status === 'done',
                         'border border-border': r.status === 'open',
@@ -701,6 +741,7 @@ export function TaskCard(props: Props) {
             One row of uniform 32px (h-8) controls, hairline-separated. Accent = the
             reference mint (accent-hi / --mint #58ebbf), the same teal the P3 chip uses. */}
         <div class="flex items-center gap-2 flex-wrap mt-2.5 pt-2.5 border-t border-border/60">
+          <Show when={!props.task.shared}>
           {/* subtask count (expand) — only when there are subtasks */}
           <Show when={subtaskCount() > 0}>
             <button
@@ -753,7 +794,12 @@ export function TaskCard(props: Props) {
             </button>
             <div class="relative">
               <button
-                onClick={() => { setObjectiveMenu(false); setRoutineMenu((v) => !v); }}
+                onClick={() => {
+                  setObjectiveMenu(false);
+                  setRoutineNameForm(false);
+                  setRoutineName('');
+                  setRoutineMenu((v) => !v);
+                }}
                 class="flex items-center justify-center h-8 w-8 rounded-lg border transition-colors"
                 classList={{
                   'text-accent-hi border-accent-hi/50 bg-accent-hi/10': isRoutineTask(props.task.id),
@@ -764,20 +810,44 @@ export function TaskCard(props: Props) {
                 <Shapes size={15} />
               </button>
               <Show when={routineMenu()}>
-                <div class="absolute z-20 bottom-full left-0 mb-1 w-44 rounded-md border border-border bg-popover shadow-lg max-h-56 overflow-y-auto py-1">
-                  <For each={routines()}>
-                    {(r) => (
-                      <button onClick={() => addToRoutine(r.id, r.name)} class="w-full text-left px-3 py-1.5 text-sm hover:bg-sidebar-accent truncate">{r.name}</button>
-                    )}
-                  </For>
-                  <Show when={routines().length === 0}>
-                    <p class="px-3 py-1.5 text-xs text-muted-foreground">No routines yet</p>
+                <div class="absolute z-20 bottom-full left-0 mb-1 w-60 rounded-sm border border-border bg-popover shadow-lg max-h-64 overflow-y-auto py-1">
+                  <Show when={!routineNameForm()} fallback={
+                    <form
+                      class="p-2 flex flex-col gap-2"
+                      onSubmit={(e) => { e.preventDefault(); void newRoutineWithTask(); }}
+                    >
+                      <label class="text-xs text-muted-foreground" for={`routine-name-${props.task.id}`}>New routine name</label>
+                      <input
+                        id={`routine-name-${props.task.id}`}
+                        class="input w-full text-sm"
+                        placeholder="e.g. Morning routine"
+                        value={routineName()}
+                        autofocus
+                        onInput={(e) => setRoutineName(e.currentTarget.value)}
+                      />
+                      <div class="flex justify-end gap-1.5">
+                        <button type="button" onClick={() => { setRoutineNameForm(false); setRoutineName(''); }} class="btn-ghost text-xs px-2 py-1">Cancel</button>
+                        <button type="submit" disabled={!routineName().trim() || creatingRoutine()} class="btn-primary text-xs px-2 py-1 disabled:opacity-50">
+                          {creatingRoutine() ? 'Creating…' : 'Create'}
+                        </button>
+                      </div>
+                    </form>
+                  }>
+                    <For each={routines()}>
+                      {(r) => (
+                        <button onClick={() => addToRoutine(r.id, r.name)} class="w-full text-left px-3 py-1.5 text-sm hover:bg-sidebar-accent truncate">{r.name}</button>
+                      )}
+                    </For>
+                    <Show when={routines().length === 0}>
+                      <p class="px-3 py-1.5 text-xs text-muted-foreground">No routines yet</p>
+                    </Show>
+                    <button onClick={() => { setRoutineName(''); setRoutineNameForm(true); }} class="w-full text-left px-3 py-1.5 text-sm text-accent-hi hover:bg-sidebar-accent border-t border-border mt-1 flex items-center gap-1"><Plus size={12} /> New routine</button>
                   </Show>
-                  <button onClick={newRoutineWithTask} class="w-full text-left px-3 py-1.5 text-sm text-accent-hi hover:bg-sidebar-accent border-t border-border mt-1 flex items-center gap-1"><Plus size={12} /> New routine</button>
                 </div>
               </Show>
             </div>
           </div>
+          </Show>
 
           {/* spacer — pushes dates/priority/flight to the right, balancing the two clusters */}
           <div class="flex-1 min-w-[8px]" />
@@ -787,9 +857,10 @@ export function TaskCard(props: Props) {
             <DateField label="Due" value={props.task.due_at} overdue={dueOverdue()} onSet={setDue} />
             <DateField label="Start" value={props.task.scheduled_for} highlight={startHighlight()} onSet={setStart} />
             <PriorityToggle value={p()} onPick={setPriority} />
+            <Show when={!props.task.shared}>
             <button
               onClick={sendToFlightPlan}
-              class="flex items-center justify-center h-8 w-8 rounded-full flex-shrink-0 transition-all"
+              class="flex items-center justify-center h-8 w-8 rounded-sm flex-shrink-0 transition-all"
               classList={{
                 'bg-accent-hi/20 text-accent-hi': inFlightPlan(),
                 'bg-accent-hi text-[#041620] hover:brightness-110': !inFlightPlan(),
@@ -798,6 +869,7 @@ export function TaskCard(props: Props) {
             >
               <Rocket size={15} />
             </button>
+            </Show>
           </div>
         </div>
       </div>

@@ -271,7 +271,7 @@ async function buildDimContext(ownerId: string, now: Date): Promise<DimContext> 
   // collapsed to one earliest-start/latest-end span. No configured window → unknown,
   // not 9-6 — same honest-zero character the old prefs-absent case already had.
   let workHours: DimContext['workHours'] = null;
-  const fallbackRanges = await directionWindowsByName(ownerId, dayTypeKey, FALLBACK_FILL_DIRECTION_NAMES);
+  const fallbackRanges = await directionWindowsByName(ownerId, dayTypeKey, FALLBACK_FILL_DIRECTION_NAMES, localDate);
   if (fallbackRanges.length > 0) {
     workHours = {
       startMs: Math.min(...fallbackRanges.map((r) => Date.parse(zonedWallTimeToUTC(localDate, r.start_time, tz)))),

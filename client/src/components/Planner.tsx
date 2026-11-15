@@ -1,6 +1,6 @@
 import { For, Show, createMemo, createSignal, createEffect, createResource, onCleanup } from 'solid-js';
 import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Repeat, Check, CheckCircle2, ArrowUpRight, Eraser, X, ListChecks, ChevronRight, ChevronDown, CalendarCheck, Undo2 } from 'lucide-solid';
-import { api, type Block, type RecurringScope } from '../lib/api.js';
+import { api, type Block, type RecurringScope, type Task } from '../lib/api.js';
 import { PX_PER_MIN, MINUTES_PER_DAY, SNAP_MIN, minutesIntoDay } from '../lib/grid.js';
 import {
   type AxisState,
@@ -20,11 +20,10 @@ import { snapToSlot, minuteToHHMM, isSlotOccupied } from '../lib/create-click.js
 import { useDropZone } from '../lib/draggable.js';
 import { isSelected, toggleSelection, setActiveTask, setActiveBlock, selection, setRoutineModal } from '../stores/selection.js';
 import { layoutBlocks } from './CalendarGrid.js';
-import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay, tags, categoryPrefs, patternPrefs, patternBlocks, tasks, plannerAxisState, togglePlannerTop, togglePlannerBottom, texturesEnabled, objectiveAccentByBlock, askRecurringScope, isRecurringOccurrence, conflictedBlockIds, openCloseRitual, canUndoAuto } from '../stores/index.js';
+import { blocks, concepts, prefs, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay, tags, categoryPrefs, patternPrefs, patternBlocks, tasks, plannerAxisState, togglePlannerTop, togglePlannerBottom, texturesEnabled, objectiveAccentByBlock, askRecurringScope, isRecurringOccurrence, conflictedBlockIds, openCloseRitual, canUndoAuto } from '../stores/index.js';
 import { accentColor } from '../lib/objective-accent.js';
 import { isAllDay } from '../lib/overlay.js';
 import { elementTextureStyle, blockColorVar, doneHatchStyle } from '../lib/textures.js';
-import { DayTypeControl } from './DayTypeControl.js';
 import { displayTag } from '../lib/tag-tax.js';
 import { pickNextUp, segmentExtentPx, dragDeltaMin, inheritedBlockTag } from '../lib/planner.js';
 import { computeBands, type Band } from '../lib/day-windows.js';
@@ -293,7 +292,7 @@ function NowLine(props: { day: string; now: string; state: () => AxisState }) {
     <Show when={visible()}>
       <div class="absolute left-0 right-0 z-20 pointer-events-none" style={{ top: `${axisYOf(mins(), props.state(), PX_PER_MIN)}px` }}>
         <div class="h-px bg-ring shadow-[0_0_6px_rgba(88,235,191,.5)]" />
-        <div class="absolute -left-1 -top-[3px] w-[7px] h-[7px] rounded-full bg-ring" />
+        <div class="absolute -left-1 -top-[3px] w-[7px] h-[7px] rounded-circle bg-ring" />
       </div>
     </Show>
   );
@@ -365,7 +364,7 @@ function ContainerOutline(props: { block: Block; day: string; state: () => AxisS
     <Show when={ext()}>
       {(e) => (
     <div
-      class="absolute left-0.5 right-0.5 rounded-lg border-2 select-none touch-none pointer-events-none"
+      class="absolute left-0.5 right-0.5 rounded-none border-2 select-none touch-none pointer-events-none"
       classList={{ 'z-0': !drag(), 'z-[25] shadow-lg': !!drag() }}
       style={{ top: `${e().topPx}px`, height: `${Math.max(e().heightPx, 24)}px`, 'border-color': fill() }}
       title={`${b().title} · Time Block — drag the label to move the whole group`}
@@ -374,7 +373,7 @@ function ContainerOutline(props: { block: Block; day: string; state: () => AxisS
           the drag handle: dragging it moves the Time Block + its tasks as a group.
           The × button provides one-tap delete without needing to open the entity card. */}
       <div
-        class="group/label absolute top-0 bottom-0 left-0 rounded-l-md overflow-hidden px-2 py-1 flex flex-col gap-0.5 pointer-events-auto"
+        class="group/label absolute top-0 bottom-0 left-0 rounded-l-none overflow-hidden px-2 py-1 flex flex-col gap-0.5 pointer-events-auto"
         classList={{ 'cursor-grab': !locked(), 'cursor-default': locked() }}
         style={{ width: `${CAT_WIDTH_PX}px`, 'background-color': fill(), color: `color-mix(in oklch, ${fill()} 30%, black)` }}
         onPointerDown={(ev) => startGesture('move', ev)}
@@ -412,12 +411,17 @@ function ContainerOutline(props: { block: Block; day: string; state: () => AxisS
 
 // ── Header-lane chip (all-day Plans ★ + goal-day Concepts ⬟) — off the minute axis.
 function HeaderChip(props: { block: Block; concept?: boolean }) {
+  const awaitingReview = () => {
+    const task = props.block.task_id ? taskOf(props.block.task_id) : undefined;
+    return !!task?.auto_generated && !task.human_approved_at;
+  };
   return (
     <span
       class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] bg-card max-w-[180px]"
       classList={{
         'border-l-2 border-l-primary border border-border': !props.concept,
         'border-2 border-dotted border-muted-foreground': props.concept,
+        'border-2 border-dotted border-orange-400': awaitingReview(),
       }}
       title={props.block.title}
     >
@@ -431,9 +435,22 @@ function HeaderChip(props: { block: Block; concept?: boolean }) {
 }
 
 // ── A draggable planner chip (name · tag · start–end, texture, next-up marker) ──
-function PlannerChip(props: { placed: Placed; day: string; state: () => AxisState; gridY: (y: number) => number; isNextUp: boolean; nested: boolean; updateMode: boolean; group: GroupCtx }) {
+const REVIEWABLE_TASK_STATUSES = new Set(['open', 'scheduled', 'in_progress', 'missed']);
+
+function PlannerChip(props: { placed: Placed; day: string; nowISO: () => string; isToday: boolean; taskLookup?: (id: string) => Task | undefined; state: () => AxisState; gridY: (y: number) => number; isNextUp: boolean; nested: boolean; updateMode: boolean; group: GroupCtx }) {
   const b = () => props.placed.block;
-  const task = () => taskOf(b().task_id);
+  const task = () => b().task_id ? props.taskLookup?.(b().task_id!) ?? taskOf(b().task_id) : undefined;
+  const awaitingReview = () => !!task()?.auto_generated && !task()?.human_approved_at;
+  // A past block is a reminder, not a declaration that the user missed the work.
+  // Keep it actionable until the task itself is closed or deliberately deferred.
+  const needsCloseReminder = () => {
+    if (!props.isToday || !b().task_id || ['completed', 'cancelled'].includes(b().status)) return false;
+    const linkedTask = task();
+    if (linkedTask && !REVIEWABLE_TASK_STATUSES.has(linkedTask.status)) return false;
+    const ended = Date.parse(b().end_at);
+    return linkedTask?.status === 'missed' || b().status === 'missed' ||
+      (Number.isFinite(ended) && ended <= Date.parse(props.nowISO()));
+  };
   // Linked subtasks of this chip's task (excludes thrown-away). Drives the count badge.
   const subCount = () => { const t = task(); return t ? (tasks() ?? []).filter((x) => x.parent_id === t.id && x.status !== 'cancelled').length : 0; };
   const pat = () => patternForTask(b().task_id);
@@ -514,10 +531,11 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
     <Show when={ext()}>
       {(e) => (
     <div
-      class="absolute z-10 rounded-md overflow-hidden border bg-card text-[11px] leading-tight select-none touch-none transition-shadow"
+      class="absolute z-10 rounded-none overflow-hidden border bg-card text-[11px] leading-tight select-none touch-none transition-shadow"
       classList={{
-        'opacity-40': settled() && b().status !== 'completed',
-        'opacity-70': completed(),
+        'opacity-40': settled() && b().status !== 'completed' && !needsCloseReminder(),
+        'opacity-70': completed() || (settled() && needsCloseReminder()),
+        'border-2 border-dotted border-orange-400': awaitingReview(),
         'anim-done-glow': glow(),
         'border-l-[3px] border-l-primary border-border': !props.isNextUp && !stranded(),
         'border-l-[3px] border-l-primary border-primary ring-2 ring-primary/70': props.isNextUp && !stranded(),
@@ -539,6 +557,10 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
         // beats the border-l-primary class in both isNextUp and normal cases) — no
         // box-shadow, which would clobber the tailwind ring's shadow-based rings.
         ...(objAccent() ? { 'border-left-color': accentColor(objAccent()!) } : {}),
+        ...(awaitingReview() ? {
+          border: '2px dotted var(--auto-generated-outline)',
+          'border-left': '2px dotted var(--auto-generated-outline)',
+        } : {}),
       }}
       title={`${b().title}${tag() ? ` · #${tag()}` : ''} · ${fmtTime(b().start_at)}–${fmtTime(b().end_at)}${b().status === 'cancelled' ? ' · cancelled' : b().status === 'missed' ? ' · missed' : ''}${props.nested ? ' · in a Plan (drag moves the group; Alt-drag to pull out)' : ''}`}
       onAnimationEnd={() => setGlow(false)}
@@ -566,11 +588,24 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
         {(t) => <div style={t()} />}
       </Show>
 
+      {/* A past, unfinished task is uncertain, not automatically missed. Let the
+          owner confirm before opening the normal close-task reflection flow. */}
+      <Show when={needsCloseReminder()}>
+        <button
+          type="button"
+          class="absolute top-0.5 right-0.5 z-20 grid h-4 w-4 place-items-center rounded-full bg-background/90 text-warning shadow-sm hover:text-warning pointer-events-auto"
+          title="Scheduled time passed — review whether this task is complete"
+          aria-label={`Review whether ${task()?.title ?? b().title} is complete`}
+          onPointerDown={(ev) => ev.stopPropagation()}
+          onClick={(ev) => { ev.stopPropagation(); openCloseRitual(task(), b().id, true); }}
+        ><AlertTriangle size={11} /></button>
+      </Show>
+
       {/* Update-mode checkbox (top-left) — the explicit affordance; tapping the
           chip body anywhere toggles too. */}
       <Show when={props.updateMode}>
         <button
-          class="absolute top-1 left-1 z-20 w-4 h-4 rounded-[4px] border flex items-center justify-center"
+          class="absolute top-1 left-1 z-20 w-4 h-4 rounded-sm border flex items-center justify-center"
           classList={{ 'bg-card border-muted-foreground': !completed(), 'border-transparent': completed() }}
           style={completed() ? { background: color() } : {}}
           title={completed() ? 'Mark not done' : 'Mark done'}
@@ -587,7 +622,7 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
       </Show>
 
       <div class="relative px-1.5 py-0.5" classList={{ 'pl-6': props.updateMode }}>
-        <div class="flex items-center gap-1 font-medium text-foreground truncate">
+        <div class="flex w-fit max-w-full items-center gap-1 bg-background px-0.5 font-medium text-foreground truncate" classList={{ 'pr-5': needsCloseReminder() }}>
           <Show when={props.isNextUp}><Play size={9} class="text-primary flex-shrink-0 fill-primary" /></Show>
           <Show when={b().is_locked}><Lock size={9} class="text-muted-foreground flex-shrink-0" /></Show>
           <Show when={props.nested}><Star size={8} class="text-primary/60 flex-shrink-0" /></Show>
@@ -602,7 +637,7 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
           </Show>
         </div>
         <Show when={e().heightPx >= 30}>
-          <div class="flex items-center gap-1.5 text-muted-foreground truncate">
+          <div class="flex w-fit max-w-full items-center gap-1.5 bg-background px-0.5 text-muted-foreground truncate">
             <For each={tagNames()}>{(t) => <span class="text-primary truncate">#{t}</span>}</For>
             <span class="tabular-nums">{fmtTime(b().start_at)}–{fmtTime(b().end_at)}</span>
           </div>
@@ -689,7 +724,7 @@ function clampLiveDMinFor(b: Block, day: string, all: Block[], mode: GestureMode
   return clampLiveDelta(b, day, mode, dMin, neighboursFor(b, day, all));
 }
 
-export function Planner() {
+export function Planner(props: { taskLookup?: (id: string) => Task | undefined } = {}) {
   const day = () => selectedDay();
   // Now-line and next-up are today-relative — gated off other days.
   const isToday = () => day() === localISODate();
@@ -708,6 +743,13 @@ export function Planner() {
   const [nowISO, setNowISO] = createSignal(new Date().toISOString());
   const tick = setInterval(() => setNowISO(new Date().toISOString()), 60_000);
   onCleanup(() => clearInterval(tick));
+  const currentMinute = createMemo(() => {
+    const today = localISODate();
+    if (day() < today) return MINUTES_PER_DAY;
+    if (day() > today) return -1;
+    const now = new Date(nowISO());
+    return now.getHours() * 60 + now.getMinutes();
+  });
 
   // Concepts live off the minute grid (the header lane + horizon), never on it.
   const dayBlocks = () => (blocks() ?? []).filter((b) => b.block_type !== 'someday');
@@ -724,16 +766,18 @@ export function Planner() {
   // day-type mutation (the patternBlocks store tick).
   const [dayWindows] = createResource(
     () => [day(), patternBlocks()] as const,
-    async ([d]) => { const { key } = await api.dayTypes.resolve(d); return (await api.patternBlocks.forDay(key)).windows; },
+    async ([d]) => (await api.patternBlocks.forDate(d)).windows,
   );
   // computeBands bakes in the LINEAR px scale (grid.ts yOf); the Planner reprojects
   // each band onto the segmented axis (below), so we only need its minute extents +
   // presentation fields here — top/height are recomputed per band.
   const bands = createMemo(() => computeBands(dayWindows() ?? {}, tags() ?? [], patternPrefs()?.prefs ?? {}));
 
-  // Header lane (off the minute axis): all-day Plans/events ★ + today's Concepts ⬟.
+  // Header lane (off the minute axis): all-day Plans/events ★ + Someday Tasks due today.
   const allDayPlans = () => dayBlocks().filter(isAllDay);
-  const todayConcepts = () => (concepts() ?? []).filter((c) => c.goal_start_date === day());
+  const todayConcepts = () => prefs()?.concept_autosurface === false
+    ? []
+    : (concepts() ?? []).filter((c) => c.goal_start_date === day());
   const hasHeaderLane = () => allDayPlans().length > 0 || todayConcepts().length > 0;
 
   // A chip is nested when its Plan is a container currently drawn on the grid.
@@ -936,21 +980,15 @@ export function Planner() {
   }
 
   // Bands reprojected onto the segmented axis (top/height in px, trimmed to visible;
-  // dropped when wholly inside a collapsed region). Presentation fields pass through.
+  // dropped when wholly inside a collapsed region). Minute bounds pass through for
+  // window-transition markers in the Direction column.
   const axisBands = createMemo((): Band[] => {
     const st = axisState();
     const out: Band[] = [];
     for (const b of bands()) {
-      // b.top / b.height are LINEAR px (grid.ts scale) → back to minutes.
-      const startMin = b.top / PX_PER_MIN;
-      const endMin = (b.top + b.height) / PX_PER_MIN;
-      const ext = segmentExtentPx(startMin, endMin, st, PX_PER_MIN);
+      const ext = segmentExtentPx(b.startMin, b.endMin, st, PX_PER_MIN);
       if (!ext) continue;
-      // labelTop: reproject its linear px through the axis too, clamped into the band.
-      const labelMin = b.labelTop / PX_PER_MIN;
-      const labelExt = visibleExtent(labelMin, labelMin + 1, st);
-      const labelTop = labelExt ? axisYOf(labelExt.startMin, st, PX_PER_MIN) : ext.topPx;
-      out.push({ ...b, top: ext.topPx, height: ext.heightPx, labelTop });
+      out.push({ ...b, top: ext.topPx, height: ext.heightPx });
     }
     return out;
   });
@@ -1059,13 +1097,11 @@ export function Planner() {
 
   return (
     <div class="rounded-xl border border-border bg-card overflow-hidden flex flex-col">
-      {/* Header — region label + day-type control + actions (no zoom control: the
-          whole day is shown). Day-type select relocated here from the Today
-          header card (UI backlog request) — it drives this same grid's shading. */}
+      {/* Header — region label + actions (no zoom control: the whole day is shown).
+          Day type is managed from the selected day's Details drawer. */}
       <div class="flex items-center justify-between px-3 py-2 border-b border-border flex-shrink-0 flex-wrap gap-y-1.5">
         <div class="flex items-center gap-2">
           <span class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary">Planner</span>
-          <DayTypeControl date={day()} hideLabel hideEditWindows />
         </div>
         <div class="flex items-center gap-3">
           {/* Multi-select → Routine: a one-click entry point for the Shift++ chord,
@@ -1083,29 +1119,27 @@ export function Planner() {
           <button
             onClick={runSchedule}
             disabled={scheduling()}
-            class="btn-primary !rounded-full !py-0.5 !px-2.5 text-[11px] flex items-center gap-1 flex-shrink-0 disabled:opacity-40"
+            class="btn-primary !rounded-sm !py-0.5 !px-2.5 text-[11px] flex items-center gap-1 flex-shrink-0 disabled:opacity-40"
             title="Place the included flight-plan tasks into this day"
           >
             <CalendarCheck size={12} classList={{ 'animate-pulse': scheduling() }} /> Schedule
           </button>
-          {/* Undo — topaz outline; appears after a Schedule run; tap to confirm or dismiss */}
+          {/* Undo — bright accent outline; appears after a Schedule run; tap to confirm or dismiss */}
           <Show when={canUndo()}>
             <Show when={undoConfirm()} fallback={
               <button
                 onClick={() => setUndoConfirm(true)}
-                class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border transition-colors hover:opacity-80 flex-shrink-0"
-                style={{ 'border-color': '#d7a37a', color: '#d7a37a' }}
+                class="planner-undo inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-sm border transition-colors flex-shrink-0"
                 title="Undo the last Schedule run"
               >
                 <Undo2 size={11} /> Undo
               </button>
             }>
               <div class="inline-flex items-center gap-1 flex-shrink-0">
-                <span class="text-[11px]" style={{ color: '#d7a37a' }}>Undo?</span>
+                <span class="text-[11px] text-foreground">Undo?</span>
                 <button
                   onClick={undo}
-                  class="text-[11px] px-1.5 py-0.5 rounded border transition-colors hover:opacity-90"
-                  style={{ 'border-color': '#d7a37a', color: '#d7a37a', background: 'rgba(215,163,122,0.12)' }}
+                  class="planner-undo text-[11px] px-1.5 py-0.5 rounded border transition-colors"
                   title="Confirm undo"
                 >Yes</button>
                 <button
@@ -1136,7 +1170,7 @@ export function Planner() {
         </div>
       </div>
 
-      {/* Header lane — all-day Plans + Concepts whose goal day is today (off the grid). */}
+      {/* Header lane — all-day Plans + Someday Tasks whose goal day is today (off the grid). */}
       <Show when={hasHeaderLane()}>
         <div class="flex flex-wrap items-center gap-1.5 px-3 py-1.5 border-b border-border bg-card/60 flex-shrink-0">
           <span class="text-[9px] uppercase tracking-wide text-muted-foreground mr-0.5">all-day</span>
@@ -1150,8 +1184,8 @@ export function Planner() {
       <div class="relative">
         <div class="grid" style={{ 'grid-template-columns': '3.5rem 1.75rem 1fr' }}>
           <TimeGutter state={axisState} />
-          {/* Direction column — rotated, per-direction-colored window names (segmented). */}
-          <div class="border-l border-border/60"><DirectionColumn bands={axisBands} state={axisState} /></div>
+          {/* Direction column — colored letter bugs at each window transition. */}
+          <div class="border-l border-border/60"><DirectionColumn bands={axisBands} state={axisState} currentMinute={currentMinute} /></div>
           <div
             ref={gridEl}
             class="relative border-l border-border/60 transition-colors"
@@ -1170,14 +1204,14 @@ export function Planner() {
                 <>
                   <ContainerOutline block={c} day={day()} state={axisState} gridY={gridY} group={groupCtx} onDelete={requestDeletePlan} />
                   <For each={placedChildren(c.id)}>
-                    {(p) => <PlannerChip placed={p} day={day()} state={axisState} gridY={gridY} isNextUp={p.block.id === nextUp()?.id} nested={true} updateMode={updateMode()} group={groupCtx} />}
+                    {(p) => <PlannerChip placed={p} day={day()} nowISO={nowISO} isToday={isToday()} taskLookup={props.taskLookup} state={axisState} gridY={gridY} isNextUp={p.block.id === nextUp()?.id} nested={true} updateMode={updateMode()} group={groupCtx} />}
                   </For>
                 </>
               )}
             </For>
             {/* Loose chips tile across the full width (in the gaps between Time-Blocks). */}
             <For each={placedLoose()}>
-              {(p) => <PlannerChip placed={p} day={day()} state={axisState} gridY={gridY} isNextUp={p.block.id === nextUp()?.id} nested={false} updateMode={updateMode()} group={groupCtx} />}
+              {(p) => <PlannerChip placed={p} day={day()} nowISO={nowISO} isToday={isToday()} taskLookup={props.taskLookup} state={axisState} gridY={gridY} isNextUp={p.block.id === nextUp()?.id} nested={false} updateMode={updateMode()} group={groupCtx} />}
             </For>
             <Show when={isToday()}><NowLine day={day()} now={nowISO()} state={axisState} /></Show>
             {/* Expander bars over the two night regions (grid column only). Labels track

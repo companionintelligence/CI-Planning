@@ -120,7 +120,7 @@ export function FocusLab(props: {
                 <For each={PATTERN_COLORS}>
                   {(c) => (
                     <button
-                      class="w-6 h-6 rounded-full border-2 transition-transform hover:scale-110 flex items-center justify-center"
+                      class="w-6 h-6 rounded-circle border-2 transition-transform hover:scale-110 flex items-center justify-center"
                       style={{ background: colorVar(c.token) }}
                       classList={{
                         'border-foreground': appearance().colorToken === c.token,
@@ -154,7 +154,7 @@ function Choice(props: { label: string; on: boolean; title?: string; onClick: ()
   return (
     <button
       type="button"
-      class="text-[11px] px-2.5 py-1 rounded-full border transition-colors"
+      class="text-[11px] px-2.5 py-1 rounded-sm border transition-colors"
       classList={{
         'border-primary text-primary bg-primary/10': props.on,
         'border-border text-muted-foreground hover:text-foreground': !props.on,

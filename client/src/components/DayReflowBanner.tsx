@@ -19,16 +19,17 @@ import { selectedDay, dayConflicts, refetchDayConflicts, refetchBlocks, refetchT
 const clock = (iso: string) =>
   new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 
-export function DayReflowBanner() {
+export function DayReflowBanner(props: { date?: string } = {}) {
   const [open, setOpen] = createSignal(false);
   const [applying, setApplying] = createSignal(false);
+  const date = () => props.date ?? selectedDay();
 
   const conflicts = () => dayConflicts() ?? [];
   const count = () => conflicts().length;
 
   // Only fetched while the dialog is open — the banner itself costs one conflicts read.
   const [proposal, { refetch: refetchProposal }] = createResource(
-    () => (open() ? selectedDay() : null),
+    () => (open() ? date() : null),
     (date: string) => api.dayReflow.preview(date),
   );
 
@@ -36,7 +37,7 @@ export function DayReflowBanner() {
     if (applying()) return;
     setApplying(true);
     try {
-      const res = await api.dayReflow.apply(selectedDay());
+      const res = await api.dayReflow.apply(date());
       refetchBlocks();
       refetchTasks();
       refetchDayConflicts();
@@ -44,7 +45,7 @@ export function DayReflowBanner() {
       const bits: string[] = [];
       if (res.moved) bits.push(`moved ${res.moved}`);
       if (res.unscheduled) bits.push(`unscheduled ${res.unscheduled}`);
-      showToast(bits.length ? `Reflowed — ${bits.join(', ')}` : 'Nothing to reflow', 'success');
+      showToast(bits.length ? `Rescheduled — ${bits.join(', ')}` : 'Nothing to reschedule', 'success');
     } catch (err) {
       showToast((err as Error).message, 'error');
     } finally {
@@ -66,7 +67,7 @@ export function DayReflowBanner() {
           class="btn-ghost text-xs px-2.5 py-1 flex-shrink-0"
           onClick={() => { setOpen(true); refetchProposal(); }}
         >
-          Reflow…
+          Reschedule all
         </button>
       </div>
 
@@ -79,10 +80,10 @@ export function DayReflowBanner() {
             class="w-full max-w-lg max-h-[80vh] overflow-auto rounded-xl border border-border bg-card p-4 shadow-xl"
             role="dialog"
             aria-modal="true"
-            aria-label="Confirm reflow"
+            aria-label="Reschedule conflicting tasks"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 class="text-base font-semibold text-foreground mb-1">Reflow this day?</h2>
+            <h2 class="text-base font-semibold text-foreground mb-1">Reschedule conflicting tasks?</h2>
             <p class="text-xs text-muted-foreground mb-3">
               Nothing changes until you confirm.
             </p>
@@ -159,7 +160,7 @@ export function DayReflowBanner() {
                       disabled={applying() || nothingToDo(p())}
                       onClick={() => void confirm()}
                     >
-                      {applying() ? 'Reflowing…' : 'Confirm'}
+                      {applying() ? 'Rescheduling…' : 'Reschedule all'}
                     </button>
                   </div>
                 </>

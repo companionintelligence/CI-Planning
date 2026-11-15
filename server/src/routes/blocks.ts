@@ -13,6 +13,8 @@ import { stampRow } from '../sync/apply.js';
 import { enqueueOutbound, pushOutboundDeletes } from '../agents/sync.js';
 import { forkSeriesAt } from '../engine/series-scope.js';
 import { newId } from '../lib/ids.js';
+import { settlePreviewClaim } from '../services/classification-claim.js';
+import { entityCategoryNames } from '../services/tags.js';
 import { syncTaskFromBlock, revertTaskPlacementStatus } from '../services/block-task-sync.js';
 import {
   fetchBlocksForRange,
@@ -79,6 +81,12 @@ export function blocksRouter() {
       color_token?: string;
     };
 
+    // The wizard's Describe-it claim rides the create but is not block data: read it here and
+    // remove it, so it can never be stored, audited, broadcast or returned. It is acted on
+    // only after the create succeeds (settlePreviewClaim, the same helper a task create uses).
+    const rawClaim = (body as Record<string, unknown>).classification_claim;
+    delete (body as Record<string, unknown>).classification_claim;
+
     if (!body.title || !body.start_at || !body.end_at) {
       ctx.status = 400;
       ctx.body = { error: 'title, start_at, and end_at are required' };
@@ -94,6 +102,13 @@ export function blocksRouter() {
 
     broadcast(currentOwnerId(), 'block:created', result.api);
     if (result.syncedTaskId) broadcast(currentOwnerId(), 'task:updated', { id: result.syncedTaskId });
+
+    // What the owner saved is the block's OWN category rows, read back, not the derived set
+    // a task-backed block would show (blockCategoryNames falls back to its task's).
+    await settlePreviewClaim(
+      currentOwnerId(), result.block, rawClaim, (body as Record<string, unknown>).categories,
+      await entityCategoryNames('time_block', result.block.id), 'time_block',
+    );
 
     await enqueueOutbound(result.block.id);
     ctx.status = 201;

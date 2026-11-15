@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { api } from './api.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { api, UNAUTHENTICATED_EVENT } from './api.js';
 
 /**
  * FTUE · T7 (#343) — client contract test for the hybrid follow-up endpoint. No
@@ -44,5 +44,40 @@ describe('api.planWeek.nextStep', () => {
     await expect(
       api.planWeek.nextStep({ branch: 'x', fallbackQuestion: 'q', fallbackOptions: ['a'] }),
     ).rejects.toThrow('fallbackOptions must be exactly 3 non-empty strings');
+  });
+});
+
+describe('a 401 from a request', () => {
+  let target: EventTarget;
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      json: async () => ({ error: 'unauthenticated' }),
+    }));
+    target = new EventTarget();
+    vi.stubGlobal('window', target);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('on an app route tells the app the session ended', async () => {
+    const onEnded = vi.fn();
+    target.addEventListener(UNAUTHENTICATED_EVENT, onEnded);
+
+    await expect(api.tasks.list()).rejects.toMatchObject({ status: 401, message: 'unauthenticated' });
+    expect(onEnded).toHaveBeenCalledTimes(1);
+  });
+
+  it('on the auth endpoints (a wrong password) does not', async () => {
+    const onEnded = vi.fn();
+    target.addEventListener(UNAUTHENTICATED_EVENT, onEnded);
+
+    await expect(api.auth.login('owner', 'wrong')).rejects.toMatchObject({ status: 401 });
+    expect(onEnded).not.toHaveBeenCalled();
   });
 });

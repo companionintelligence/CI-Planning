@@ -5,7 +5,7 @@ import type { DayStars } from './api.js';
  *
  * The five-star day score is DERIVED and served by GET /api/stars (O2). The
  * client never recomputes it — these helpers only shape the served booleans for
- * rendering: the header's small `n/5` tally, the per-star what's-needed hint, and
+ * rendering: the header's five-star row, the per-star what's-needed hint, and
  * the calendar heatmap (pips vs the perfect-day single star).
  */
 

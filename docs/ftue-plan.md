@@ -9,12 +9,10 @@
 
 > ## ⚠️ §1 and §2 are STALE (re-verified 2026-11-01 at head 0172; earlier passes were 2026-07-16 at head 0130 and 2026-07-19 at head 0132)
 >
-> **Wave status (2026-11-01): the FTUE track is built.** T1–T14 (#337–#350) were all closed as
-> of the 2026-08-13 issue audit in [ROADMAP.md](ROADMAP.md) (GitHub itself was not
-> re-checked on 2026-11-01), and the code is on `main`: the 5-step `OnboardingWizard`
-> (identity · time and place · connect a source · trust dial · first sync, gated on the owner's
-> own `onboarded_at`, mig 0132) and the "Plan my week" assistant (`PlanWeekAssistant.tsx`, with
-> Fill, Schedule and Review branches). M1–M5 (#351–#355) remain deferred, with nothing built.
+> **Wave status:** the original FTUE track is built. T1–T14 (#337–#350) were all closed as
+> of the 2026-08-13 issue audit in [ROADMAP.md](ROADMAP.md). The wizard now includes setup for
+> Pattern Tags, Workday and Weekend availability, weekday defaults, and an optional Life Balance
+> handoff. The "Plan my week" assistant (`PlanWeekAssistant.tsx`) remains separate.
 > The two loose ends the 2026-07-19 audit found were closed by #387: free-text planning runs
 > through `InstructBox` inside the Fill and Schedule branches (`PromptStep` is now only the
 > shell's fallback), and `planning_sessions.llm_used` is folded in from server-reported
@@ -23,21 +21,21 @@
 > The framing of this doc still holds. But its "honest current state" was written at head ~0100
 > and several of its load-bearing claims are now false — verified against the code, not assumed:
 >
-> | §1 / §2 / §3 claim | Reality at head 0172 |
+> | §1 / §2 / §3 claim | Current reality |
 > |---|---|
 > | "`createLiveGoogleClient()` … is a placeholder. Even with `GOOGLE_MODE=live` it logs a warning and falls back to fixture" | **False.** It builds a real `McpGoogleSession` (`server/src/mcp/google.ts:148`); `createGoogleClient` dispatches live/fixture/off (`:197`). Gap 1 is **closed**. |
 > | "There is no way inside the app to connect an account … no OAuth flow, no token store" | **False.** In-app Google setup ships (`routes/google-config.ts`, `app_config` mig 0124); tokens are sealed AES-256-GCM in `connection_tokens` (0050). Gap 2 is **closed**. |
 > | "A default owner … is seeded … hardcoded to a real developer identity" | **False.** Scrubbed by `0122_scrub_seed_owner.ts`. |
-> | "Timezone defaults to UTC in Docker" (gap 7) | **Stale.** The wizard writes the browser's timezone (`OnboardingWizard.tsx:180`) and the client adopts it once (`stores/index.ts:474`); the Settings profile card shipped (#327). |
+> | "Timezone defaults to UTC in Docker" (gap 7) | **Stale.** The wizard writes the browser's timezone and the client adopts it once; the Settings profile card shipped (#327). |
 > | "Work hours. `workday_start` / `workday_end` (default 09:00 to 18:00)" (§3 item 3, §5 Step 2) | **Gone.** Nothing reads those columns since mig 0156 (#583). Step 2 asks for wake and bed times, stored as the planner's collapse bounds in `view_prefs` (`OnboardingWizard.tsx:164-182`). |
 > | "There is no FTUE" (§1) | **False.** See the wave status above. Gap 3 is **closed**. |
 > | "the Inbox" review queue (§4, §5 Step 5, §6) | **Retired** (AF-3/AF-7). Suggestions are promoted on ingest and show up in the Tasks view's "New Today" section; only Gmail suggestions wait, in a "Suggested from email" section at the top of Tasks. |
-> | "the 06:30 cron" (§5 Step 5, §6) | **Stale.** `ingest_gmail` runs every 15 minutes (mig `0146` moved it from 30) and `ingest_gcal` every 30 (both seeded in `0003`); the wizard's last step (`RunFirstSyncStep.tsx`) runs a sync on demand. |
+> | "the 06:30 cron" (§5 Step 9, §6) | **Stale.** `ingest_gmail` runs every 15 minutes and `ingest_gcal` every 30; the wizard runs a sync on demand. |
 >
 > Gaps **4–6** (auto-schedule click count, auto-promote/trust dial, auto-block policy) were
 > since addressed: Phase AF (AF-3) promotes every possible task on ingest and retired the
 > Inbox — except Gmail suggestions, which wait for approval (`services/review-gate.ts`) — and
-> the trust dial (`scheduling_prefs.trust_mode`: Cautious · Balanced · Hands-off, set in step 4
+> the trust dial (`scheduling_prefs.trust_mode`: Cautious · Balanced · Hands-off, set in step 8
 > of the wizard and from the top bar via `TrustModal.tsx`) now governs placement and ordering,
 > not promotion. Gap 8 (multi-account) still stands: the live client binds one Google account
 > (`CP_GOOGLE_ACCOUNT`).
@@ -145,20 +143,23 @@ review safety net.
 
 ## 5. The FTUE flow
 
-Design target: a new user reaches a planned, populated day in under two minutes,
-with one real decision (connect a source) and one preference (the trust dial).
-Everything else is auto-detected and prefilled, with a Skip on every step.
+Current flow: confirm identity and time settings, define pattern tags and day-type
+availability, connect a source, choose automation trust, run an initial sync, then
+optionally open the Life Balance wizard. Day type, pattern tag, and weekday choices
+are saved to the same APIs used by Settings. Weekend setup is encouraged but skippable.
 
 ```mermaid
 flowchart TD
     A[First launch, empty DB] --> B[Step 1, Welcome and identity]
-    B --> C[Step 2, Time and place, autodetect TZ, confirm work hours]
-    C --> D[Step 3, Connect a source, Google OAuth]
-    D --> E{Connected?}
-    E -- yes --> F[Step 4, Trust dial, cautious balanced hands-off]
-    E -- skip --> G[Fixture demo mode, explore with sample data]
-    F --> H[Step 5, Run first sync now]
-    H --> I[Land on Today, briefing, inbox filled, day blocked]
+    B --> C[Step 2, Time and place]
+    C --> D[Step 3, Pattern Tags]
+    D --> E[Step 4, Workday availability]
+    E --> F[Step 5, Weekend availability or skip]
+    F --> G[Step 6, Default weekdays]
+    G --> H[Step 7, Connect a source]
+    H --> I[Step 8, Trust dial]
+    I --> J[Step 9, Run first sync]
+    J --> K[Step 10, Finish or set up Life Balance]
     G --> I
 ```
 
@@ -172,24 +173,39 @@ Step 2, Time and place. Auto-detect timezone from the browser and show it for
 confirmation. Show work hours prefilled at 09:00 to 18:00 with a quick edit.
 Zero clicks if the user accepts. This closes gap 7 before it can bite.
 
-Step 3, Connect a source. The heart of the FTUE and the one click that matters.
+Step 3, Pattern Tags. Rename the direction tags and choose their color and Lucide
+icon. Save through the tag and pattern preference APIs.
+
+Step 4, Workday availability. Set one or more availability windows per direction.
+These are the day-type defaults consumed by open-time and auto-scheduling.
+
+Step 5, Weekend availability. Encourage users to define separate time windows for
+days off, while allowing a skip that keeps their existing Weekend settings.
+
+Step 6, Default weekdays. Assign each weekday to an existing day type and save the
+weekly map used by the day-type resolver.
+
+Step 7, Connect a source. The heart of the FTUE and the one click that matters.
 A single "Connect Google" button starts the OAuth flow, scoped read-only (Gmail
 read, Calendar read, Drive readonly). On return, store the token securely and flip
 that account to live. If the user is not ready, a "Try with sample data" path
 drops them into fixture mode so the app is never empty.
 
-Step 4, Trust dial. Three options as described in section 4, Balanced
+Step 8, Trust dial. Three options as described in section 4, Balanced
 preselected. This sets the auto-promote threshold and the auto-block policy in one
 choice, so the steady-state click count is decided here, not rediscovered daily.
 
-Step 5, Run first sync now. A button that triggers the ingest jobs immediately
+Step 9, Run first sync now. A button that triggers the ingest jobs immediately
 rather than waiting for the 06:30 cron, so the user sees the payoff in the same
 session: the Inbox fills, calendar events mirror as meeting blocks, Auto places
 the day, and the Today briefing renders. This is the moment that proves the value.
 
+Step 10, Finish or set up Life Balance. Completing onboarding records the owner’s
+completion timestamp; the optional action opens the existing priorities wizard.
+
 Empty-state fallback. If the user skips connection, every view shows a one-line
 prompt ("Connect a source to fill this automatically") with a button back to Step
-3, plus the sample-data option, so the app is useful and explorable from minute
+7, plus the sample-data option, so the app is useful and explorable from minute
 one.
 
 ---

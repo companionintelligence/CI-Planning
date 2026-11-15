@@ -14,9 +14,53 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
+    <!-- The first screen, shown until the app mounts. BootScreen.tsx renders the same markup, so
+         the handover is invisible. Inline, so it paints before any script or bundle has loaded. -->
+    <style>
+      .boot-screen {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+        background: #041620;
+        color: #e6edf3;
+        font-family: Manrope, system-ui, -apple-system, 'Segoe UI', sans-serif;
+      }
+      html.light .boot-screen { background: #f3f3f3; color: #041620; }
+      .boot-mark { width: 88px; height: 88px; }
+      .boot-name { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: 0.01em; opacity: 0.85; }
+      .boot-progress { width: 120px; height: 3px; border-radius: 2px; overflow: hidden; background: rgba(88, 235, 191, 0.18); }
+      .boot-progress > span { display: block; width: 40%; height: 100%; border-radius: inherit; background: #58ebbf; animation: boot-slide 1.4s ease-in-out infinite; }
+      @keyframes boot-slide { from { transform: translateX(-100%); } to { transform: translateX(260%); } }
+      @media (prefers-reduced-motion: reduce) {
+        .boot-progress > span { animation: none; width: 100%; opacity: 0.4; }
+      }
+    </style>
   </head>
   <body class="antialiased">
-    <div id="root"></div>
+    <div id="root">
+      <div class="boot-screen" role="status" aria-label="Loading Companion Planning">
+        <svg class="boot-mark" viewBox="0 0 1024 1024" aria-hidden="true">
+          <defs>
+            <linearGradient id="boot-bg" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="#58ebbf" />
+              <stop offset="1" stop-color="#409b9b" />
+            </linearGradient>
+          </defs>
+          <rect width="1024" height="1024" rx="230" fill="url(#boot-bg)" />
+          <rect x="232" y="276" width="560" height="530" rx="64" fill="#041620" />
+          <path d="M232 340 A64 64 0 0 1 296 276 H728 A64 64 0 0 1 792 340 V396 H232 Z" fill="#0a6358" />
+          <rect x="330" y="216" width="36" height="120" rx="18" fill="#041620" />
+          <rect x="658" y="216" width="36" height="120" rx="18" fill="#041620" />
+          <path d="M372 610 L468 706 L652 512" fill="none" stroke="#58ebbf" stroke-width="58" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <p class="boot-name">Companion Planning</p>
+        <div class="boot-progress" aria-hidden="true"><span></span></div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

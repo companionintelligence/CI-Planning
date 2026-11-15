@@ -71,23 +71,12 @@ export function ObjectiveModal(props: Props) {
   const [colorToken, setColorToken] = createSignal<string | null>(props.objective?.color_token ?? null); // #391
   const [saving, setSaving] = createSignal(false);
 
-  // §N: grouping — pick a parent to nest this objective under a project / goal.
-  // Options are every OTHER objective (self + its subtree excluded to avoid cycles);
-  // the server (height-based leveling + containment) is the backstop for illegal moves.
+  // §N: grouping — pick a parent objective; self + its subtree are excluded to avoid cycles.
   const [tree] = createResource(() => api.objectives.list().then((r) => r.objectives));
   const excluded = () => (props.objective ? subtreeIds(props.objective) : new Set<string>());
   const parentOptions = () => flattenForParentPicker(tree() ?? []).filter((o) => !excluded().has(o.id));
 
-  // Translate the backend's containment 422 into a human message that names the
-  // chosen parent, so the user understands why the nest was rejected.
-  function humanizeSaveError(msg: string): string {
-    if (/task-bearing objective/i.test(msg)) {
-      const parent = parentOptions().find((o) => o.id === parentId());
-      const name = parent ? `"${parent.title}"` : 'that objective';
-      return `Can't nest under ${name} because it already has tasks linked to it.`;
-    }
-    return msg;
-  }
+  function humanizeSaveError(msg: string): string { return msg; }
 
   async function save() {
     if (!title().trim()) { showToast('Title is required', 'error'); return; }

@@ -1,14 +1,31 @@
-# Color Styling Rules
+# Application Style System
 
-All color in the app resolves to a single source of truth: the CSS custom properties in `client/src/index.css`, surfaced to utility classes through `client/tailwind.config.js` (Tailwind v4 loads it with `@config`, `index.css:2`). The system is "deep teal-navy", shared with CI-Hub. Light theme lives on `:root`, dark on `.dark`.
+This is the app's single canonical style document. Components should use the color, typography, and shape rules here rather than add one-off visual tokens. The CSS custom properties in `client/src/index.css` implement the tokens, and `client/tailwind.config.js` exposes them to utility classes. The color system is "deep teal-navy", shared with CI-Hub. Light theme lives on `:root`, dark on `.dark`.
 
 `index.css` first imports the CI-Common canon token layer (`@import "@companionintelligence/tokens/tokens.css"`, `index.css:7`) and then overrides surfaces and text on top of it. `--primary` is never one of the overrides: `pnpm lint:canon` (`ci-lint-canon`) and `client/src/theme-tokens.test.ts` fail if it drifts from the canon values below (phthalo `#0a6358` light, `#c5e8dc` dark).
 
-## Where colors are defined
+## Shape and radius system
 
-- `client/src/index.css` defines the raw color values as CSS variables (semantic tokens, enriched tokens, tag palette) on top of the canon token layer, plus the component styles that consume them.
-- `client/tailwind.config.js` maps those variables to Tailwind utilities (`bg-card`, `text-primary`, `bg-tag-1`, etc.) and defines the constant brand scales (`ci-*`, `accent-*`).
+Only these five corner radii are permitted anywhere in the app:
+
+| Token | Value | Use |
+|---|---:|---|
+| `--radius-0` | `0px` | Scheduled tasks and time blocks; square timeline and calendar items |
+| `--radius-3` | `3px` | Compact cards, controls, pills, and subtle corners |
+| `--radius-8` | `8px` | Outer surfaces and dialogs |
+| `--radius-30` | `30px` | Large sheet corners and deliberately soft display surfaces |
+| `--radius-999` | `999px` | True circles such as dots, avatars, and swatches |
+
+Use the `rounded-*` utility classes; they all resolve through `client/tailwind.config.js` to this scale. Utility names collapse onto the same canonical values: default/`xs`/`sm`/`md`/`lg`/`full` map to 3px, `xl`/`2xl` map to 8px, and `3xl`/`4xl`/`5xl` map to 30px. `none` maps to 0px and the app-specific `circle` utility maps to 999px. Use 3px for pills and compact cards. Do not add arbitrary radius classes or raw radius values. For direct or inline CSS, use the `--radius-*` variables; avoid `inherit` and `calc()` so every radius can be audited against the scale.
+
+Task and time-block representations must be square, including list cards and scheduled calendar/planner shapes. Their detail dialogs and unrelated controls may use the standard surface radius.
+
+## Where styles and color tokens are defined
+
+- `client/src/index.css` defines semantic color variables, the canonical radius scale, and shared component styles.
+- `client/tailwind.config.js` maps those tokens to Tailwind utilities (`bg-card`, `text-primary`, `bg-tag-1`, and `rounded-*`) and defines the constant brand scales (`ci-*`, `accent-*`).
 - `client/src/lib/pattern-meta.ts` and `client/src/lib/textures.ts` pick tokens at runtime (patterns, tags), always referencing tokens, never hex.
+- `server/src/routes/auth.ts` and `server/src/scripts/fixture-portal.ts` contain self-contained HTML pages. Their radius declarations use the same tokens and values because they render without the SPA stylesheet; the fixture keeps its separate palette to mimic an external provider. Inline component styles must use a canonical CSS variable, such as `var(--radius-0)` for square task and block overlays.
 
 ## Semantic tokens (flip with theme)
 
@@ -19,6 +36,7 @@ These are the primary tokens. Use them via Tailwind (`bg-background`, `text-fore
 | `--background` | `#f3f3f3` | `#041620` |
 | `--foreground` | `#010f16` | `#88a29e` |
 | `--card` | `#f7f7f9` | `#0a222e` |
+| `--details-panel-background` | `color-mix(in srgb, var(--background) 93.6%, #000 6.4%)` | `var(--card)` |
 | `--card-foreground` | `#041620` | `#88a29e` |
 | `--popover` | `oklch(100% 0 0)` | `#0a222e` |
 | `--popover-foreground` | `#041620` | `#88a29e` |
@@ -35,7 +53,10 @@ These are the primary tokens. Use them via Tailwind (`bg-background`, `text-fore
 | `--border` | `oklch(92.9% 0.013 255.508)` | `#2c676d` |
 | `--input` | `oklch(92.9% 0.013 255.508)` | `#6992a2` |
 | `--ring` | `oklch(70.4% 0.04 256.788)` | `#58ebbf` |
-| `--radius` | `0.625rem` | (same) |
+
+## Typography
+
+Manrope is the application font for sans-serif and headings. Source Code Pro is the monospace fallback for times and other tabular/technical values. Use the existing semantic text-size and weight utilities instead of per-component font imports.
 
 ### Chart colors
 
@@ -49,9 +70,11 @@ These are the primary tokens. Use them via Tailwind (`bg-background`, `text-fore
 
 ### Sidebar colors
 
+In light mode, the left sidebar is 20% closer to the center surface than its previous 15% shade. The details drawer is 20% closer than its previous 8% shade. Dark-mode panel colors are unchanged.
+
 | Token | Light | Dark |
 |---|---|---|
-| `--sidebar` | `oklch(98.4% 0.003 247.858)` | `#041620` |
+| `--sidebar` | `color-mix(in srgb, var(--background) 88%, #000 12%)` | `#041620` |
 | `--sidebar-foreground` | `oklch(12.9% 0.042 264.695)` | `#f5f8fa` |
 | `--sidebar-accent` | `oklch(96.8% 0.007 247.896)` | `#1d293d` |
 | `--sidebar-accent-foreground` | `#0a222e` | `#f5f8fa` |
@@ -92,24 +115,24 @@ The `accent-*` utility keeps the bright legacy teal: `accent` `#409b9b`, `accent
 
 ## Tag palette (categorical labels only)
 
-12 complementary hues defined once in `index.css`, shared by light and dark. Rule: use only for categorical labels (tags, chips, status pills), never for primary CTAs. Keep one tag color per semantic category. Bases are exposed as `bg-tag-1` through `bg-tag-12`; variants are reached via `var(--tag-N-...)`.
+12 complementary hues defined in `index.css` with theme-aware bases. Light mode uses brighter, more colorful shades while dark mode keeps the established vivid palette. Use these only for categorical labels (tags, chips, status pills), never for primary CTAs. Keep one tag color per semantic category. Bases are exposed as `bg-tag-1` through `bg-tag-12`; variants are reached via `var(--tag-N-...)`.
 
 Each hue gives 6 saturation steps at L62% (`s6` vivid down to `s1` near-neutral) and 3 dark steps at S54% (`d3` down to `d1` deepest). `--tag-N` is the balanced base.
 
-| Token | Name | Base | Hue |
-|---|---|---|---|
-| `--tag-1` | Carnelian | `#e07a5f` | 14 |
-| `--tag-2` | Sunstone | `#f2a65a` | 32 |
-| `--tag-3` | Pyrite | `#f4d35e` | 48 |
-| `--tag-4` | Citrine | `#c3d86d` | 74 |
-| `--tag-5` | Jade | `#8ecf9e` | 142 |
-| `--tag-6` | Amazonite | `#6ec9c2` | 174 |
-| `--tag-7` | Aquamarine | `#78a6f5` | 218 |
-| `--tag-8` | Amethyst | `#8b8fe5` | 244 |
-| `--tag-9` | Kunzite | `#b18bd9` | 268 |
-| `--tag-10` | Rhodochrosite | `#d28fc1` | 318 |
-| `--tag-11` | Rhodonite | `#e89ab0` | 340 |
-| `--tag-12` | Topaz | `#d7a37a` | 24 |
+| Token | Name | Light | Dark | Hue |
+|---|---|---|---|---|
+| `--tag-1` | Carnelian | `#e86d47` | `#e07a5f` | 14 |
+| `--tag-2` | Sunstone | `#d17c1a` | `#f2a65a` | 32 |
+| `--tag-3` | Pyrite | `#aa8c15` | `#f4d35e` | 48 |
+| `--tag-4` | Citrine | `#7a9a13` | `#c3d86d` | 74 |
+| `--tag-5` | Jade | `#14a549` | `#8ecf9e` | 142 |
+| `--tag-6` | Amazonite | `#14a092` | `#6ec9c2` | 174 |
+| `--tag-7` | Aquamarine | `#5b90eb` | `#78a6f5` | 218 |
+| `--tag-8` | Amethyst | `#8982f0` | `#8b8fe5` | 244 |
+| `--tag-9` | Kunzite | `#ad75ee` | `#b18bd9` | 268 |
+| `--tag-10` | Rhodochrosite | `#eb59bf` | `#d28fc1` | 318 |
+| `--tag-11` | Rhodonite | `#ec618f` | `#e89ab0` | 340 |
+| `--tag-12` | Topaz | `#e47226` | `#d7a37a` | 24 |
 
 Variant pattern per hue (example for tag-1, hue 14):
 
@@ -147,7 +170,3 @@ To keep older utilities themeable, `tailwind.config.js` remaps:
 
 - `surface-950/900/800/700/600/500` onto `--background` / `--sidebar` / `--card` / `--border` / `--input`.
 - `slate-*` text shades onto themed text tokens (50 to 200 prominent headings, 300 to 400 body, 500 to 700 muted, 800 to 950 backgrounds).
-
-## Typography note
-
-Font family is Manrope across the org (`sans` and `heading`), with `Source Code Pro` as the mono fallback.

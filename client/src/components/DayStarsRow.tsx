@@ -1,15 +1,15 @@
 import { For, Show, createResource, onCleanup } from 'solid-js';
 import { Star } from 'lucide-solid';
 import { api } from '../lib/api.js';
-import { starSlots, STAR_GOLD } from '../lib/stars.js';
+import { starSlots } from '../lib/stars.js';
 import { tasks, scheduledByTaskId } from '../stores/index.js';
 import { on as onSse } from '../lib/sse.js';
 
 /**
  * Phase O · O3 — the header's small day-stars tally.
  *
- * ~14px 5-pointed stars, gold (#f4d35e) when earned / muted teal-navy when empty,
- * plus an `n/5` count. Reads today's LIVE stars from GET /api/stars (a frozen
+ * ~14px 5-pointed stars, gold (#f4d35e) when earned / muted teal-navy when empty.
+ * Reads today's LIVE stars from GET /api/stars (a frozen
  * past day returns the same value; today recomputes). Deliberately understated —
  * the calendar is where stars are celebrated; the header is just today's running
  * tally. Tapping a star shows a what's-needed hint (title tooltip). Visually
@@ -48,7 +48,7 @@ export function DayStarsRow(props: { date: string }) {
 
   return (
     <Show when={stars()}>
-      <div class="flex items-center gap-1" title={`${total()} of 5 stars today`}>
+      <div class="flex items-center gap-1" role="group" aria-label={`${total()} of 5 stars earned today`}>
         <div class="flex items-center gap-0.5">
           <For each={slots()}>
             {(slot) => (
@@ -58,12 +58,15 @@ export function DayStarsRow(props: { date: string }) {
                 title={`${slot.earned ? '★ ' : ''}${slot.hint}`}
                 aria-label={slot.hint}
               >
-                <Star size={14} color={slot.color} fill={slot.earned ? STAR_GOLD : 'none'} />
+                <Star
+                  size={14}
+                  color={slot.earned ? 'var(--star-gold)' : slot.color}
+                  fill={slot.earned ? 'var(--star-gold)' : 'none'}
+                />
               </button>
             )}
           </For>
         </div>
-        <span class="text-[11px] tabular-nums text-muted-foreground ml-0.5">{total()}/5</span>
       </div>
     </Show>
   );

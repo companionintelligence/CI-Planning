@@ -128,7 +128,7 @@ export function PatternBlockSettings() {
                             type="button"
                             onClick={() => setEditForm({ ...editForm(), color_token: c.token })}
                             title={c.label}
-                            class="w-5 h-5 rounded-full border-2 transition-all"
+                            class="w-5 h-5 rounded-circle border-2 transition-all"
                             classList={{
                               'border-foreground scale-110': editForm().color_token === c.token,
                               'border-transparent hover:scale-105': editForm().color_token !== c.token,

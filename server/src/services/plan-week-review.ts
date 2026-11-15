@@ -8,6 +8,8 @@ import {
 import { listDayStars, type DayStarsRow } from './stars.js';
 import { noteDates } from './reflections.js';
 import { listSessions, type PlanningSession } from './planning-sessions.js';
+import { motivationBalanceForWeek, type MotivationBalance } from './motivation-balance.js';
+import { motivationRecapEnabled } from '../lib/flags.js';
 
 /**
  * services/plan-week-review.ts (FTUE · T5, #341) — the deterministic weekly recap behind
@@ -16,7 +18,9 @@ import { listSessions, type PlanningSession } from './planning-sessions.js';
  * This composes ONLY existing, already-tested surfaces — `weeklyReview`,
  * `globalCalibrationReadout`, `listDayStars`, `noteDates`, and T1's `listSessions` — into
  * one payload. It deliberately contains NO new stats SQL: if a number here is wrong, it is
- * wrong in its owning service, which is where the fix belongs.
+ * wrong in its owning service, which is where the fix belongs. The one opt-in block,
+ * `motivation_balance` (services/motivation-balance.ts), follows the same rule: its SQL lives
+ * in its own service and is composed here only when the owner turned it on.
  *
  * Strictly read-only, and no LLM: the branch must render with Ollama offline. Turning this
  * into prose is T10's job, not this one's.
@@ -38,6 +42,12 @@ export interface PlanWeekReview {
   note_dates: string[];
   /** T1 planning sessions started within the week, newest first. */
   sessions: PlanningSession[];
+  /**
+   * Me / us / them timed minutes per category (0176). PRESENT only when the owner turned
+   * `motivation_recap_enabled` on; with it off the key is absent altogether, so the payload is
+   * byte-identical to before and the query never runs.
+   */
+  motivation_balance?: MotivationBalance;
 }
 
 /**
@@ -92,7 +102,7 @@ export async function planWeekReview(anchor: string): Promise<PlanWeekReview> {
     return day >= from && day <= to;
   });
 
-  return {
+  const review: PlanWeekReview = {
     anchor,
     week,
     calibration: await globalCalibrationReadout(owner),
@@ -100,4 +110,9 @@ export async function planWeekReview(anchor: string): Promise<PlanWeekReview> {
     note_dates: await noteDates(owner, from, to),
     sessions,
   };
+  // Opt-in. Computed for the week the rest of this payload describes (`anchor`'s ISO week).
+  if (await motivationRecapEnabled(owner)) {
+    review.motivation_balance = await motivationBalanceForWeek(owner, anchor);
+  }
+  return review;
 }

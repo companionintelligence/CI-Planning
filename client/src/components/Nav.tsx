@@ -1,27 +1,34 @@
-import { A, useNavigate } from '@solidjs/router';
+import { A, useLocation, useNavigate } from '@solidjs/router';
 import { Show, createResource } from 'solid-js';
 import {
   CheckSquare, Tag, Settings, Activity,
-  Sun, Cpu, CalendarDays, LogOut, Crosshair, Scale,
+  Sun, CalendarDays, LogOut, Crosshair, Scale, Target,
 } from 'lucide-solid';
 import { showToast } from '../stores/index.js';
 import { api, authGateActive } from '../lib/api.js';
 import { ThemeToggle } from './ThemeToggle.js';
 import { navCollapsed } from '../stores/ui.js';
+import { BrandMark } from './BrandMark.js';
 
-const links = [
+const primaryLinks = [
   { href: '/focus',      label: 'Focus',      Icon: Crosshair },
   { href: '/',            label: 'Today',      Icon: Sun },
   { href: '/calendar',   label: 'Calendar',   Icon: CalendarDays },
   { href: '/tasks',      label: 'Tasks',      Icon: CheckSquare },
   { href: '/balance',    label: 'Balance',    Icon: Scale },
-  { href: '/tags',       label: 'Tags',       Icon: Tag },
+];
+const utilityLinks = [
   { href: '/jobs',       label: 'Jobs',       Icon: Activity },
   { href: '/settings',   label: 'Settings',   Icon: Settings },
 ];
 
 export function Nav() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const isObjectiveBoard = () => {
+    const params = new URLSearchParams(location.search);
+    return location.pathname === '/tasks' && params.get('tab') === 'objectives' && params.get('view') === 'board';
+  };
   // Sign-out is only meaningful when the deployment gates on auth (sso mode);
   // test/standalone have no session to end, so the affordance stays hidden.
   const [cfg] = createResource(() => api.auth.config().catch(() => null));
@@ -51,12 +58,7 @@ export function Nav() {
     >
       {/* CI logo mark */}
       <div class="flex items-center gap-2.5 px-3 mb-5" classList={{ 'justify-center px-0': navCollapsed() }}>
-        <div
-          class="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 text-surface-950 font-bold text-xs"
-          style={{ background: 'linear-gradient(135deg, #58ebbf, #409b9b)' }}
-        >
-          <Cpu size={15} />
-        </div>
+        <BrandMark size={32} class="flex-shrink-0" />
         <Show when={!navCollapsed()}>
           <div>
             <div class="text-[10px] font-medium tracking-[0.2em] uppercase leading-none" style={{ color: '#409b9b' }}>
@@ -73,8 +75,11 @@ export function Nav() {
         <div class="section-label">Navigation</div>
       </Show>
 
-      {links.map((l) => (
+      {primaryLinks.map((l) => (
         <>
+          <Show when={l.href === '/tasks'}>
+            <div class="my-1.5 border-t border-border/60" />
+          </Show>
           <Show when={showLink(l.href)}>
             <A
               href={l.href}
@@ -88,16 +93,55 @@ export function Nav() {
               <Show when={!navCollapsed()}><span class="flex-1">{l.label}</span></Show>
             </A>
           </Show>
-          {/* Stroke line under Calendar — separates capture (Today/Calendar) from
-              planning (Tasks/Tags/…). */}
-          <Show when={l.href === '/calendar'}>
-            <div class="my-1.5 border-t border-border/60" />
+          <Show when={l.href === '/tasks'}>
+            <A
+              href="/tasks?tab=objectives&view=board"
+              class="nav-item text-xs"
+              classList={{
+                'nav-item-active': isObjectiveBoard(),
+                'ml-4 pl-4 border-l border-border/60': !navCollapsed(),
+              }}
+              title="Objectives board"
+              aria-label="Objectives board"
+            >
+              <Target size={14} class="flex-shrink-0" />
+              <Show when={!navCollapsed()}><span class="flex-1">Objectives board</span></Show>
+            </A>
           </Show>
         </>
       ))}
 
+      <div class="my-1.5 border-t border-border/60" />
+      <A
+        href="/tags"
+        class="nav-item"
+        activeClass="nav-item-active"
+        title="Tags"
+        aria-label="Tags"
+      >
+        <Tag size={15} class="flex-shrink-0" />
+        <Show when={!navCollapsed()}><span class="flex-1">Tags</span></Show>
+      </A>
+
       <div class="flex-1" />
+      {utilityLinks.map((l) => (
+        <Show when={showLink(l.href)}>
+          <A
+            href={l.href}
+            end={l.href === '/'}
+            class="nav-item"
+            activeClass="nav-item-active"
+            title={l.label}
+            aria-label={l.label}
+          >
+            <l.Icon size={15} class="flex-shrink-0" />
+            <Show when={!navCollapsed()}><span class="flex-1">{l.label}</span></Show>
+          </A>
+        </Show>
+      ))}
+      <ThemeToggle />
       <Show when={showSignOut()}>
+        <div class="my-1.5 border-t border-border/60" />
         <button
           onClick={signOut}
           class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-surface-800/60 transition-colors"
@@ -107,7 +151,6 @@ export function Nav() {
           <Show when={!navCollapsed()}>Sign out</Show>
         </button>
       </Show>
-      <ThemeToggle />
     </nav>
   );
 }

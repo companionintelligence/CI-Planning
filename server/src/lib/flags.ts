@@ -24,3 +24,15 @@ export async function trialityEnabled(ownerId: string): Promise<boolean> {
     .get<{ v: number | null }>(ownerId);
   return !!row?.v;
 }
+
+/**
+ * Weekly-recap me / us / them balance block (0176). Default OFF — with it off the recap
+ * payload carries no `motivation_balance` key at all and the block's query never runs.
+ * Per-owner, same contract as above.
+ */
+export async function motivationRecapEnabled(ownerId: string): Promise<boolean> {
+  const row = await store()
+    .prepare(`SELECT motivation_recap_enabled AS v FROM scheduling_prefs WHERE owner_id = ?`)
+    .get<{ v: number | null }>(ownerId);
+  return !!row?.v;
+}

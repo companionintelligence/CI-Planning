@@ -5,7 +5,7 @@
  * secondary tag helpers, the title+pattern "most likely" ranking, and the single
  * `saveElement` adapter the wizard calls. See plan: luminous-waddling-nest.
  */
-import { api, type TaskInput, type Tag } from './api.js';
+import { api, type TaskInput, type Tag, type ClassificationClaim } from './api.js';
 import {
   tags, patterns, patternTypes, patternPrefs,
   refetchTasks, refetchBlocks, refetchConcepts, refetchPatterns, refetchTags,
@@ -200,10 +200,25 @@ export interface ElementForm {
   deferUntil?: string;        // YYYY-MM-DD
   dependsOn?: string[];
   editScope?: 'instance' | 'series';  // recurring-task edits
+  /** The template of a generated instance being edited: a series save goes to this id. */
+  editTemplateId?: string;
+  /** Edit only. false = the owner left the direction and intention chips as seeded, so tags
+   *  are left out of the PATCH. undefined/true = send them (a new task always does). */
+  tagsTouched?: boolean;
   parentId?: string;          // subtask parent
   /** D5 — titles the user picked from the suggest-only brainstorm; created as children
    *  of this task on add. Empty/absent unless the user actually tapped a chip. */
   subtaskTitles?: string[];
+  /** The Describe-it preview's category pick (see `claimIfFaithful`), echoed on the
+   *  add-mode task/habit create so the server can record the owner's answer to it.
+   *  Edit, routine and time-block saves never read it. */
+  classificationClaim?: ClassificationClaim;
+  /** Called once, the moment the add-mode task/habit create has landed and before any step
+   *  that can still fail (routine chip, subtasks). The wizard spends its stored claim here:
+   *  a retry after such a failure makes a second task, and the one decision the owner made
+   *  must not be recorded twice. A create that threw never calls it, so that retry keeps the
+   *  claim. Edit and routine saves never call it. */
+  onCreated?: () => void;
   // Routine membership (modal redesign): single-select "Routine" chip. Applied
   // after the task exists (works for add + edit); undefined = leave membership alone.
   routineAddId?: string;
@@ -258,8 +273,7 @@ export async function saveElement(
     const { tags: taskTags, secondary_tags } = taskTagPayload(form, categoryNames);
     const body: TaskInput = {
       title: form.title.trim() || 'Untitled',
-      tags: taskTags,
-      secondary_tags,
+      ...(form.tagsTouched === false ? {} : { tags: taskTags, secondary_tags }),
       notes: form.note || undefined,
       parent_id: form.parentId,
       // Someday = capture title/tags only (no schedule) → lands in TBD.
@@ -286,10 +300,13 @@ export async function saveElement(
     if (rule) body.recurrence_rule = rule;
     let taskId = editId;
     if (mode === 'add') {
-      taskId = (await api.tasks.create(body)).task.id;
+      // The claim rides the create only (never an update, a subtask or a block): the server
+      // settles it against the row it just made and silently drops one it cannot trust.
+      taskId = (await api.tasks.create(form.classificationClaim ? { ...body, classification_claim: form.classificationClaim } : body)).task.id;
+      form.onCreated?.();
     } else if (form.editScope === 'series') {
       // Series edit → applies to the template; a rule change regenerates the window.
-      await api.tasks.update(editId!, { ...body, recurrence_rule: rule ?? null, is_habit: kind === 'habit' }, 'series');
+      await api.tasks.update(form.editTemplateId ?? editId!, { ...body, recurrence_rule: rule ?? null, is_habit: kind === 'habit' }, 'series');
     } else {
       await api.tasks.update(editId!, body);
     }
@@ -407,8 +424,13 @@ export async function saveElement(
     };
   }
   let blockId: string;
-  if (mode === 'add') blockId = (await api.blocks.create(body as any)).block.id;
-  else { await api.blocks.update(editId!, body as any); blockId = editId!; }
+  if (mode === 'add') {
+    // The Describe-it claim rides the create only, like a task's: the server settles it against
+    // the block it just made, as a Time Block (its own entity kind), and drops one it cannot trust.
+    const payload = form.classificationClaim ? { ...body, classification_claim: form.classificationClaim } : body;
+    blockId = (await api.blocks.create(payload as any)).block.id;
+    form.onCreated?.();
+  } else { await api.blocks.update(editId!, body as any); blockId = editId!; }
 
   // Membership changes (scheduled blocks only) — applied after we hold the block id, so
   // this works identically for New (just-created) and Edit. Detach first, then add.
@@ -421,6 +443,22 @@ export async function saveElement(
   refetchBlocks(); refetchConcepts(); refetchTags();
   if (form.attachTaskIds?.length || form.attachRoutineIds?.length) { refetchTasks(); refetchPatterns(); }
   return 'Time Block saved';
+}
+
+/**
+ * Keep the preview's classification claim only while the category picker still shows
+ * exactly the model's pick (same names, same order, case-insensitive). `seedCategories`
+ * silently drops a name missing from a stale `tags()` store, and then the owner never saw
+ * the model's whole pick: Add would record a correction they did not make. Only the
+ * client can tell, so it decides here; the server still checks the rest.
+ */
+export function claimIfFaithful(
+  claim: ClassificationClaim | undefined,
+  shown: readonly string[],
+): ClassificationClaim | null {
+  if (!claim || claim.categories.length === 0) return null;
+  if (shown.length !== claim.categories.length) return null;
+  return claim.categories.every((n, i) => n.toLowerCase() === shown[i].toLowerCase()) ? claim : null;
 }
 
 /**

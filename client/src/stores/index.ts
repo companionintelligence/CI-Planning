@@ -1,4 +1,5 @@
 import { createSignal, createMemo, createResource, createEffect } from 'solid-js';
+import { signedIn, whenSignedIn } from '../lib/session.js';
 import { api, type RecurringScope } from '../lib/api.js';
 import type { Block, Task, Pattern, PatternType, ReplanSuggestion, RunNowOutcome } from '../lib/api.js';
 import { on } from '../lib/sse.js';
@@ -25,7 +26,7 @@ import { hasConnectedSource as pureHasConnectedSource } from '../lib/onboarding.
 // ── Tasks ────────────────────────────────────────────────────────────────────
 export const [taskFilter, setTaskFilter] = createSignal<Record<string, string>>({});
 
-export const [tasks, { refetch: refetchTasks, mutate: mutateTasks }] = createResource(taskFilter, (f) =>
+export const [tasks, { refetch: refetchTasks, mutate: mutateTasks }] = createResource(whenSignedIn(taskFilter), (f) =>
   api.tasks.list(f).then((r) => r.tasks)
 );
 
@@ -42,7 +43,7 @@ export const [selectedDay, setSelectedDay] = createSignal(localISODate());
 // the Planner is unaffected. The Calendar resets this to null on unmount.
 export const [calendarRange, setCalendarRange] = createSignal<{ from: string; to: string } | null>(null);
 export const blockRange = createMemo(() => calendarRange() ?? dayRangeUTC(selectedDay()));
-export const [blocks, { refetch: refetchBlocks, mutate: mutateBlocks }] = createResource(blockRange, (r) =>
+export const [blocks, { refetch: refetchBlocks, mutate: mutateBlocks }] = createResource(whenSignedIn(blockRange), (r) =>
   api.blocks.list(r.from, r.to).then((res) => res.blocks)
 );
 
@@ -50,7 +51,7 @@ export const [blocks, { refetch: refetchBlocks, mutate: mutateBlocks }] = create
 // red treatment always describe the day being looked at. Refetched alongside blocks:
 // a day-type change, a move, or a reflow all change the answer.
 export const [dayConflicts, { refetch: refetchDayConflicts }] = createResource(
-  selectedDay,
+  whenSignedIn(selectedDay),
   (date: string) => api.dayReflow.conflicts(date).then((r) => r.conflicts),
 );
 
@@ -96,7 +97,7 @@ on('replan:dismissed', () => setReplanSuggestion(null));
 // Unscheduled goal Time-Blocks — owner-scoped, off the minute grid (a goal day +
 // duration, no fixed time). Fetched separately from the dated range since they have
 // no real time; the horizon lane + the PLANNER's goal-day header chip read them here.
-export const [concepts, { refetch: refetchConcepts }] = createResource(() =>
+export const [concepts, { refetch: refetchConcepts }] = createResource(signedIn, () =>
   api.blocks.listConcepts().then((r) => r.blocks)
 );
 on('block:created', () => refetchConcepts());
@@ -109,7 +110,7 @@ on('block:deleted', () => refetchConcepts());
 // keeps its own local resource for now (migrating it here is a separate cleanup).
 // objective_task:updated is included alongside the recipe's three: link/unlink
 // changes membership, which is exactly what the accent join reads.
-export const [objectives, { refetch: refetchObjectives }] = createResource(() =>
+export const [objectives, { refetch: refetchObjectives }] = createResource(signedIn, () =>
   api.objectives.list().then((r) => r.objectives)
 );
 on('objective:created', () => refetchObjectives());
@@ -192,7 +193,7 @@ export function overlayAxesCount(deselected: AxisDeselected): number {
 // Defined here — above the memos that read it (tagKindLookup / visibleBlocks) —
 // because createMemo evaluates eagerly at module init: a memo that calls tags()
 // before this const initializes would throw a TDZ error and abort the module.
-export const [tags, { refetch: refetchTags }] = createResource(() =>
+export const [tags, { refetch: refetchTags }] = createResource(signedIn, () =>
   api.tags.list().then((r) => r.tags)
 );
 
@@ -238,7 +239,7 @@ export function taskOf(taskId?: string): Task | undefined {
 // Email is review-gated server-side (services/review-gate.ts) and waits for the owner,
 // so it DOES have a surface again — the suggestions section at the top of the Tasks tab.
 // `possible:suggested` fires on each ingest tick that produced something.
-export const [suggestions, { refetch: refetchSuggestions, mutate: mutateSuggestions }] = createResource(() =>
+export const [suggestions, { refetch: refetchSuggestions, mutate: mutateSuggestions }] = createResource(signedIn, () =>
   api.possibles.list().then((r) => r.possibles),
 );
 
@@ -274,7 +275,7 @@ export function setSuggestionBusy(id: string, on: boolean): void {
 const [canUndoAuto, setCanUndoAuto] = createSignal(false);
 export { canUndoAuto };
 
-export const [flightPlan, { refetch: refetchFlightPlan }] = createResource(() =>
+export const [flightPlan, { refetch: refetchFlightPlan }] = createResource(signedIn, () =>
   api.flightPlan.list().then((r) => {
     setCanUndoAuto(r.can_undo ?? false);
     return r.flight_plan;
@@ -318,14 +319,14 @@ export const scheduledByTaskId = createMemo<Map<string, { date: string; time: st
   return out;
 });
 
-export const [patterns, { refetch: refetchPatterns }] = createResource(() =>
+export const [patterns, { refetch: refetchPatterns }] = createResource(signedIn, () =>
   api.patterns.list().then((r) => r.patterns)
 );
 on('pattern:created', () => refetchPatterns());
 on('pattern:updated', () => refetchPatterns());
 on('pattern:deleted', () => refetchPatterns());
 
-export const [patternTypes, { refetch: refetchPatternTypes }] = createResource(() =>
+export const [patternTypes, { refetch: refetchPatternTypes }] = createResource(signedIn, () =>
   api.patternTypes.list().then((r) => r.pattern_types)
 );
 on('pattern_type:created', () => refetchPatternTypes());
@@ -373,7 +374,7 @@ export function isRoutineTask(taskId?: string): boolean {
 // loads or if it errors, `aiAvailable()` is false, so AI controls stay hidden rather
 // than dangling as no-ops. Ollama can come up AFTER boot, so `refetchIntegrations` is
 // exposed for a "recheck" affordance (Settings → Integrations) without a full reload.
-export const [integrations, { refetch: refetchIntegrations }] = createResource(() =>
+export const [integrations, { refetch: refetchIntegrations }] = createResource(signedIn, () =>
   api.llm.integrations()
 );
 
@@ -408,7 +409,7 @@ export const aiAvailable = () => integrations()?.ollama.ready ?? integrations()?
 // every provider (so a user whose Google is `off` still sees — and can drop — a stored
 // token), while the integrations copy is google-only and pays for a decrypt to resolve
 // the token expiry.
-export const [connections, { refetch: refetchConnections }] = createResource(() =>
+export const [connections, { refetch: refetchConnections }] = createResource(signedIn, () =>
   // .catch(() => null) mirrors the failure-closed convention of the other Settings
   // resources (me/gcfg/accounts): a 500/transient drop degrades to the card's "No
   // accounts connected." fallback instead of re-throwing on read (no ErrorBoundary).
@@ -416,12 +417,12 @@ export const [connections, { refetch: refetchConnections }] = createResource(() 
 );
 
 // ── Life priorities (0127) — the Priorities Wizard writes; the Balance view reads. ──
-export const [priorities, { refetch: refetchPriorities }] = createResource(() =>
+export const [priorities, { refetch: refetchPriorities }] = createResource(signedIn, () =>
   api.priorities.list().then((r) => r.priorities)
 );
 
 // ── Prefs ────────────────────────────────────────────────────────────────────
-export const [prefs, { refetch: refetchPrefs }] = createResource(() =>
+export const [prefs, { refetch: refetchPrefs }] = createResource(signedIn, () =>
   api.prefs.get().then((r) => r.prefs)
 );
 
@@ -546,12 +547,12 @@ createEffect(() => {
 });
 
 // ── Pattern-blocks ────────────────────────────────────────────────────────────
-export const [patternBlocks, { refetch: refetchPatternBlocks }] = createResource(() =>
+export const [patternBlocks, { refetch: refetchPatternBlocks }] = createResource(signedIn, () =>
   api.patternBlocks.list()
 );
 
 // ── Block templates — reusable Plan contents, applied/swapped from the block edit menu.
-export const [blockTemplates, { refetch: refetchBlockTemplates }] = createResource(() =>
+export const [blockTemplates, { refetch: refetchBlockTemplates }] = createResource(signedIn, () =>
   api.blockTemplates.list().then((r) => r.block_templates)
 );
 on('block_template:created', () => refetchBlockTemplates());
@@ -559,22 +560,22 @@ on('block_template:updated', () => refetchBlockTemplates());
 on('block_template:deleted', () => refetchBlockTemplates());
 
 // ── Pattern-prefs (T5) ───────────────────────────────────────────────────────
-export const [patternPrefs, { refetch: refetchPatternPrefs }] = createResource(() =>
+export const [patternPrefs, { refetch: refetchPatternPrefs }] = createResource(signedIn, () =>
   api.patternPrefs.list()
 );
 
 // ── Category-prefs (0069): per-(Time Block Category) color + default block length ──
-export const [categoryPrefs, { refetch: refetchCategoryPrefs }] = createResource(() =>
+export const [categoryPrefs, { refetch: refetchCategoryPrefs }] = createResource(signedIn, () =>
   api.categoryPrefs.list()
 );
 
 // ── Connection-prefs (0145): per-source colour + stripe texture on synced events ──
-export const [connectionPrefs, { refetch: refetchConnectionPrefs }] = createResource(() =>
+export const [connectionPrefs, { refetch: refetchConnectionPrefs }] = createResource(signedIn, () =>
   api.connectionPrefs.list()
 );
 
 // ── Jobs ─────────────────────────────────────────────────────────────────────
-export const [jobs, { refetch: refetchJobs }] = createResource(() =>
+export const [jobs, { refetch: refetchJobs }] = createResource(signedIn, () =>
   api.jobs.list().then((r) => r.jobs)
 );
 
@@ -621,7 +622,7 @@ on('reminder:snoozed', () => showToast('Reminder snoozed for 10 min', 'success')
 // ordered by fire_at; the four events below are every server-side reminder mutation
 // (routes + GraphQL broadcast created/cancelled/snoozed; the engine broadcasts fire),
 // so the card stays live without polling.
-export const [reminders, { refetch: refetchReminders }] = createResource(() =>
+export const [reminders, { refetch: refetchReminders }] = createResource(signedIn, () =>
   api.reminders.list().then((r) => r.reminders)
 );
 on('reminder:created', () => refetchReminders());
@@ -658,6 +659,8 @@ export interface CloseRitualEntry {
    *  the Focus ritual both do. Pins the duration default to the span actually worked
    *  instead of the task's earliest placement, which differs for multi-session tasks. */
   blockId?: string | null;
+  /** Opens with a completion check when the task's scheduled time passed without being closed. */
+  review?: boolean;
 }
 
 export const [closeRitualQueue, setCloseRitualQueue] = createSignal<CloseRitualEntry[]>([]);
@@ -666,13 +669,13 @@ export const [closeRitualQueue, setCloseRitualQueue] = createSignal<CloseRitualE
 export const closeRitualTask = (): CloseRitualEntry | null => closeRitualQueue()[0] ?? null;
 
 /**
- * Enqueue a completed task for rating. Idempotent per task id: double-firing paths (a
+ * Enqueue a task for close review. Idempotent per task id: double-firing paths (a
  * block PATCH that mirrors onto its task AND the task refetch that follows) must not ask
  * about the same task twice.
  */
-export function openCloseRitual(task: Task | null | undefined, blockId?: string | null): void {
+export function openCloseRitual(task: Task | null | undefined, blockId?: string | null, review = false): void {
   if (!task) return;
-  setCloseRitualQueue((q) => (q.some((e) => e.task.id === task.id) ? q : [...q, { task, blockId }]));
+  setCloseRitualQueue((q) => (q.some((e) => e.task.id === task.id) ? q : [...q, { task, blockId, review }]));
 }
 
 /** Drop the head — the user rated it or skipped it. The next task surfaces immediately. */
@@ -705,9 +708,9 @@ export const [planWeekModal, setPlanWeekModal] = createSignal<{ open: boolean }>
 // it needed to move it). T12 adds the empty-state "Connect a source" CTA, which lives
 // in Focus/Today/AllTasks — siblings of the wizard, not descendants — so the step
 // needs to be store-level for `openOnboardingAt` to reach the already-mounted wizard
-// and jump it to the Connect step. 5 steps: 1 identity, 2 time+place, 3 connect a
-// source (T12), 4 trust dial, 5 run first sync (T12).
-export const [onboardingStep, setOnboardingStep] = createSignal<1 | 2 | 3 | 4 | 5>(1);
+// and jump it to the Connect step. 10 steps: identity, time/place, pattern tags,
+// Workday, Weekend, weekday defaults, connect, trust, sync, and optional Balance.
+export const [onboardingStep, setOnboardingStep] = createSignal<1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10>(1);
 // The wizard's own gate is `prefs().onboarded_at == null` — true only pre-completion.
 // By the time a user can SEE an empty Focus/Today/Tasks view, onboarding has almost
 // always already finished (any Skip, from any step, sets `onboarded_at`), so the
@@ -725,16 +728,16 @@ export const [onboardingSampleDataAllowed, setOnboardingSampleDataAllowed] = cre
  *  if onboarding already completed — used by Settings' "Restart the First-Time
  *  Experience" (step 1). Sample data stays available; use `openQuickConnect` for the
  *  empty-state shortcut instead. */
-export function openOnboardingAt(step: 1 | 2 | 3 | 4 | 5): void {
+export function openOnboardingAt(step: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10): void {
   setOnboardingStep(step);
   setOnboardingForceOpen(true);
 }
 
-/** Reopen the wizard straight at Connect (3), for the empty-state CTA in Today/Focus/
+/** Reopen the wizard straight at Connect (7), for the empty-state CTA in Today/Focus/
  *  AllTasks. Unlike `openOnboardingAt`, this is not a real FTUE run — it's a returning
  *  owner reconnecting a source mid-usage — so it hides "Try with sample data". */
 export function openQuickConnect(): void {
-  setOnboardingStep(3);
+  setOnboardingStep(7);
   setOnboardingForceOpen(true);
   setOnboardingSampleDataAllowed(false);
 }

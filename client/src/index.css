@@ -1,10 +1,9 @@
 @import "tailwindcss";
+/* The canon token layer is imported before app-specific overrides below so every token
+   the app does not set falls back to CI-Common. */
+@import "@companionintelligence/tokens/tokens.css";
 @config "../tailwind.config.js";
 @reference "tailwindcss";
-/* The canon token layer (@companionintelligence/tokens, CI-Common styles/tokens/src/tokens.json
-   is the one source). It is imported FIRST so the app-specific overrides below win where
-   they are set and every token the app does not set falls back to canon. */
-@import "@companionintelligence/tokens/tokens.css";
 
 /* ──────────────────────────────────────────────────────────────────────────
    Companion Planning surface overrides on the canon token layer above.
@@ -16,11 +15,23 @@
    whole UI themes from this one place — global styles first.
    ────────────────────────────────────────────────────────────────────────── */
 :root {
-  --radius: 0.625rem;
+  /* Canonical corner scale. Every surface radius resolves to one of these values. */
+  --radius-0: 0px;
+  --radius-3: 3px;
+  --radius-8: 8px;
+  --radius-30: 30px;
+  --radius-999: 999px;
+  --radius: var(--radius-8);
+  --panel-toggle-background: #c5e8dc;
+  --panel-toggle-foreground: #041620;
+  --panel-toggle-border: #4c9aa3;
+  --panel-toggle-hover: #abd4d8;
 
   --background: #f3f3f3;
   --foreground: #010f16;
   --card: #f7f7f9;
+  /* Lightened 20% toward the centre surface from the previous 8% shade. */
+  --details-panel-background: color-mix(in srgb, var(--background) 93.6%, #000 6.4%);
   --card-foreground: #041620;
   --popover: oklch(100% 0 0);
   --popover-foreground: #041620;
@@ -29,24 +40,30 @@
   --secondary: oklch(96.8% 0.007 247.896);
   --secondary-foreground: #0a222e;
   --muted: oklch(96.8% 0.007 247.896);
-  --muted-foreground: oklch(55.4% 0.046 257.417);
+  /* Small helper labels need AA contrast on the light surface (about 4.97:1). */
+  --muted-foreground: oklch(52% 0.046 257.417);
   /* Chevron for <select>, mirroring --muted-foreground above. Inlined per theme because a
      background-image cannot read a colour from a CSS variable, and kept directly beside
      the token it matches so the two are changed together. */
   --select-chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
   --accent: oklch(96.8% 0.007 247.896);
   --accent-foreground: #0a222e;
-  --destructive: oklch(62% 0.22 27);
+  /* Status colors double as small text and icon colors; keep them AA-readable on light surfaces. */
+  --destructive: #b42318;
   --destructive-foreground: oklch(98.4% 0.003 247.858);
   --border: oklch(92.9% 0.013 255.508);
-  --input: oklch(92.9% 0.013 255.508);
+  /* Form controls need a visible edge against the light card and page surfaces. */
+  --input: #818c96;
   --ring: oklch(70.4% 0.04 256.788);
-  --chart-1: oklch(64.6% 0.222 41.116);
+  /* Chart hues also serve as legacy direction-icon defaults. Keep them dark enough
+     to read on light surfaces (the dark theme has its own brighter values below). */
+  --chart-1: #a34112;
   --chart-2: oklch(60% 0.118 184.704);
   --chart-3: oklch(39.8% 0.07 227.392);
-  --chart-4: oklch(82.8% 0.189 84.429);
-  --chart-5: oklch(76.9% 0.188 70.08);
-  --sidebar: oklch(98.4% 0.003 247.858);
+  --chart-4: #866300;
+  --chart-5: #8a5500;
+  /* Lightened 20% toward the centre surface from the previous 15% shade. */
+  --sidebar: color-mix(in srgb, var(--background) 88%, #000 12%);
   --sidebar-foreground: oklch(12.9% 0.042 264.695);
   --sidebar-accent: oklch(96.8% 0.007 247.896);
   --sidebar-accent-foreground: #0a222e;
@@ -70,19 +87,25 @@
   --mint: #58ebbf;
   --teal-accent: #2c676d;
   --teal-mid: #409b9b;
-  --radius-sm: calc(var(--radius, 0.625rem) - 4px);
-  --radius-md: calc(var(--radius, 0.625rem) - 2px);
-  --radius-lg: var(--radius, 0.625rem);
-  --radius-xl: calc(var(--radius, 0.625rem) + 4px);
-  --radius-2xl: calc(var(--radius, 0.625rem) + 10px);
+  /* Compatibility aliases; these never introduce additional sizes. */
+  --radius-sm: var(--radius-3);
+  --radius-md: var(--radius-3);
+  --radius-lg: var(--radius-3);
+  --radius-xl: var(--radius-8);
+  --radius-2xl: var(--radius-8);
+  --radius-3xl: var(--radius-30);
 
   /* enriched — semantic status + gradients + elevation (light) */
-  --success: #16a34a;
+  --success: #147d3f;
   --success-foreground: #ffffff;
-  --warning: #d97706;
+  --warning: #a64b00;
   --warning-foreground: #ffffff;
-  --info: #0284c7;
+  /* Recap warnings use a stable orange that clears AA text contrast on light cards. */
+  --review-warning: #a64b00;
+  --info: #0369a1;
   --info-foreground: #ffffff;
+  --star-gold: #b57800;
+  --auto-generated-outline: #a64b00;
   --gradient-brand: linear-gradient(135deg, #0f717a, #00a9a7);
   --gradient-hero: linear-gradient(135deg, #e8f9f8, #abd4d8);
   --gradient-aurora: radial-gradient(120% 90% at 50% -10%, rgba(80, 150, 150, 0.1), transparent 60%);
@@ -97,6 +120,7 @@
   --background: #041620;
   --foreground: #88a29e;
   --card: #0a222e;
+  --details-panel-background: var(--card);
   --card-foreground: #88a29e;
   --popover: #0a222e;
   --popover-foreground: #88a29e;
@@ -111,7 +135,8 @@
   --accent: #2c676d;
   --accent-foreground: #f5f8fa;
   --destructive: #ef7070;
-  --destructive-foreground: #f5f8fa;
+  /* Dark foreground is intentional: white on this light red falls below 3:1. */
+  --destructive-foreground: #041620;
   --border: #2c676d;
   --input: #6992a2;
   --ring: #58ebbf;
@@ -132,8 +157,11 @@
   --success-foreground: #052e16;
   --warning: #fbbf24;
   --warning-foreground: #422006;
+  --review-warning: #fb923c;
   --info: #38bdf8;
   --info-foreground: #082f49;
+  --star-gold: #f4d35e;
+  --auto-generated-outline: #fb923c;
   --gradient-aurora: radial-gradient(120% 90% at 50% -10%, rgba(64, 155, 155, 0.28), transparent 60%);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
@@ -143,77 +171,93 @@
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
-   TAG PALETTE — 12 complementary hues that support (never compete with) the
-   CI teal-first system. USE ONLY for categorical labels: tags, chips, status
-   pills — NOT primary CTAs (keep the teal family as the main interaction
-   colour). Prefer one tag colour per semantic category and keep it consistent.
+   TAG PALETTE — 12 hues for tag icons, chips, and labels. The active `--tag-N`
+   values are theme-aware: brighter, more colorful shades on light surfaces and
+   the original vivid palette on dark surfaces. Every light hue clears 3:1
+   non-text contrast against white. These colors are not primary actions.
 
-   Each hue exposes 6 saturation steps at L62% (s6 vivid → s1 near-neutral) and
-   3 dark steps at S54% (d3 dark → d1 deepest). `--tag-N` is the balanced base.
-   Theme-independent: defined once, shared by light + dark. Tailwind exposes the
-   bases as `bg-tag-1`…`bg-tag-12`; reach for variants via `var(--tag-1-d2)`.
+   Saturation/dark variants remain available for existing texture treatments.
+   Tailwind exposes the active bases as `bg-tag-1`…`bg-tag-12`.
    ────────────────────────────────────────────────────────────────────────── */
 :root {
   /* tag-1 Carnelian */
-  --tag-1: #e07a5f;
+  --tag-1: #e86d47;
   --tag-1-s6: hsl(14 78% 62%); --tag-1-s5: hsl(14 66% 62%); --tag-1-s4: hsl(14 54% 62%);
   --tag-1-s3: hsl(14 42% 62%); --tag-1-s2: hsl(14 30% 62%); --tag-1-s1: hsl(14 18% 62%);
   --tag-1-d3: hsl(14 54% 48%); --tag-1-d2: hsl(14 54% 38%); --tag-1-d1: hsl(14 54% 28%);
   /* tag-2 Sunstone */
-  --tag-2: #f2a65a;
+  --tag-2: #d17c1a;
   --tag-2-s6: hsl(32 78% 62%); --tag-2-s5: hsl(32 66% 62%); --tag-2-s4: hsl(32 54% 62%);
   --tag-2-s3: hsl(32 42% 62%); --tag-2-s2: hsl(32 30% 62%); --tag-2-s1: hsl(32 18% 62%);
   --tag-2-d3: hsl(32 54% 48%); --tag-2-d2: hsl(32 54% 38%); --tag-2-d1: hsl(32 54% 28%);
   /* tag-3 Pyrite */
-  --tag-3: #f4d35e;
+  --tag-3: #aa8c15;
   --tag-3-s6: hsl(48 78% 62%); --tag-3-s5: hsl(48 66% 62%); --tag-3-s4: hsl(48 54% 62%);
   --tag-3-s3: hsl(48 42% 62%); --tag-3-s2: hsl(48 30% 62%); --tag-3-s1: hsl(48 18% 62%);
   --tag-3-d3: hsl(48 54% 48%); --tag-3-d2: hsl(48 54% 38%); --tag-3-d1: hsl(48 54% 28%);
   /* tag-4 Citrine */
-  --tag-4: #c3d86d;
+  --tag-4: #7a9a13;
   --tag-4-s6: hsl(74 78% 62%); --tag-4-s5: hsl(74 66% 62%); --tag-4-s4: hsl(74 54% 62%);
   --tag-4-s3: hsl(74 42% 62%); --tag-4-s2: hsl(74 30% 62%); --tag-4-s1: hsl(74 18% 62%);
   --tag-4-d3: hsl(74 54% 48%); --tag-4-d2: hsl(74 54% 38%); --tag-4-d1: hsl(74 54% 28%);
   /* tag-5 Jade */
-  --tag-5: #8ecf9e;
+  --tag-5: #14a549;
   --tag-5-s6: hsl(142 78% 62%); --tag-5-s5: hsl(142 66% 62%); --tag-5-s4: hsl(142 54% 62%);
   --tag-5-s3: hsl(142 42% 62%); --tag-5-s2: hsl(142 30% 62%); --tag-5-s1: hsl(142 18% 62%);
   --tag-5-d3: hsl(142 54% 48%); --tag-5-d2: hsl(142 54% 38%); --tag-5-d1: hsl(142 54% 28%);
   /* tag-6 Amazonite */
-  --tag-6: #6ec9c2;
+  --tag-6: #14a092;
   --tag-6-s6: hsl(174 78% 62%); --tag-6-s5: hsl(174 66% 62%); --tag-6-s4: hsl(174 54% 62%);
   --tag-6-s3: hsl(174 42% 62%); --tag-6-s2: hsl(174 30% 62%); --tag-6-s1: hsl(174 18% 62%);
   --tag-6-d3: hsl(174 54% 48%); --tag-6-d2: hsl(174 54% 38%); --tag-6-d1: hsl(174 54% 28%);
   /* tag-7 Aquamarine */
-  --tag-7: #78a6f5;
+  --tag-7: #5b90eb;
   --tag-7-s6: hsl(218 78% 62%); --tag-7-s5: hsl(218 66% 62%); --tag-7-s4: hsl(218 54% 62%);
   --tag-7-s3: hsl(218 42% 62%); --tag-7-s2: hsl(218 30% 62%); --tag-7-s1: hsl(218 18% 62%);
   --tag-7-d3: hsl(218 54% 48%); --tag-7-d2: hsl(218 54% 38%); --tag-7-d1: hsl(218 54% 28%);
   /* tag-8 Amethyst */
-  --tag-8: #8b8fe5;
+  --tag-8: #8982f0;
   --tag-8-s6: hsl(244 78% 62%); --tag-8-s5: hsl(244 66% 62%); --tag-8-s4: hsl(244 54% 62%);
   --tag-8-s3: hsl(244 42% 62%); --tag-8-s2: hsl(244 30% 62%); --tag-8-s1: hsl(244 18% 62%);
   --tag-8-d3: hsl(244 54% 48%); --tag-8-d2: hsl(244 54% 38%); --tag-8-d1: hsl(244 54% 28%);
   /* tag-9 Kunzite */
-  --tag-9: #b18bd9;
+  --tag-9: #ad75ee;
   --tag-9-s6: hsl(268 78% 62%); --tag-9-s5: hsl(268 66% 62%); --tag-9-s4: hsl(268 54% 62%);
   --tag-9-s3: hsl(268 42% 62%); --tag-9-s2: hsl(268 30% 62%); --tag-9-s1: hsl(268 18% 62%);
   --tag-9-d3: hsl(268 54% 48%); --tag-9-d2: hsl(268 54% 38%); --tag-9-d1: hsl(268 54% 28%);
   /* tag-10 Rhodochrosite */
-  --tag-10: #d28fc1;
+  --tag-10: #eb59bf;
   --tag-10-s6: hsl(318 78% 62%); --tag-10-s5: hsl(318 66% 62%); --tag-10-s4: hsl(318 54% 62%);
   --tag-10-s3: hsl(318 42% 62%); --tag-10-s2: hsl(318 30% 62%); --tag-10-s1: hsl(318 18% 62%);
   --tag-10-d3: hsl(318 54% 48%); --tag-10-d2: hsl(318 54% 38%); --tag-10-d1: hsl(318 54% 28%);
   /* tag-11 Rhodonite */
-  --tag-11: #e89ab0;
+  --tag-11: #ec618f;
   --tag-11-s6: hsl(340 78% 62%); --tag-11-s5: hsl(340 66% 62%); --tag-11-s4: hsl(340 54% 62%);
   --tag-11-s3: hsl(340 42% 62%); --tag-11-s2: hsl(340 30% 62%); --tag-11-s1: hsl(340 18% 62%);
   --tag-11-d3: hsl(340 54% 48%); --tag-11-d2: hsl(340 54% 38%); --tag-11-d1: hsl(340 54% 28%);
   /* tag-12 Topaz */
-  --tag-12: #d7a37a;
+  --tag-12: #e47226;
   --tag-12-s6: hsl(24 78% 62%); --tag-12-s5: hsl(24 66% 62%); --tag-12-s4: hsl(24 54% 62%);
   --tag-12-s3: hsl(24 42% 62%); --tag-12-s2: hsl(24 30% 62%); --tag-12-s1: hsl(24 18% 62%);
   --tag-12-d3: hsl(24 54% 48%); --tag-12-d2: hsl(24 54% 38%); --tag-12-d1: hsl(24 54% 28%);
+}
+
+/* Preserve the current vivid tag palette in dark mode. Keep this after the light
+   palette block so its mode-specific base values win at the root element. */
+.dark {
+  --chart-5: #448b92;
+  --tag-1: #e07a5f;
+  --tag-2: #f2a65a;
+  --tag-3: #f4d35e;
+  --tag-4: #c3d86d;
+  --tag-5: #8ecf9e;
+  --tag-6: #6ec9c2;
+  --tag-7: #78a6f5;
+  --tag-8: #8b8fe5;
+  --tag-9: #b18bd9;
+  --tag-10: #d28fc1;
+  --tag-11: #e89ab0;
+  --tag-12: #d7a37a;
 }
 
 @layer base {
@@ -226,7 +270,7 @@
   }
   ::-webkit-scrollbar { width: 4px; height: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: var(--radius-3); }
   ::-webkit-scrollbar-thumb:hover { background: var(--muted-foreground); }
   /* fill-mode `backwards`, NOT `both`: `both` RETAINS the final keyframe
      (`transform: translateY(0)`) forever, and a transform — even the identity —
@@ -252,7 +296,7 @@
   .btn-ghost,
   .btn-danger,
   .btn-icon {
-    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-sm text-sm font-medium
            tracking-wide transition-all duration-150
            focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent
            active:scale-95 select-none cursor-pointer;
@@ -283,22 +327,25 @@
      border makes them look like the controls they are, without promoting every other
      .btn-icon (sweep, close) to the same weight. */
   .btn-icon-strong {
-    color: var(--foreground);
-    border: 1px solid var(--border);
-    background: var(--card);
+    color: var(--panel-toggle-foreground);
+    border: 1px solid var(--panel-toggle-border);
+    border-radius: var(--radius-3);
+    background: var(--panel-toggle-background);
   }
   .btn-icon-strong:hover {
-    color: var(--primary);
-    border-color: var(--primary);
+    color: var(--panel-toggle-foreground);
+    border-color: var(--panel-toggle-border);
+    background: var(--panel-toggle-hover);
   }
   .btn-icon-strong[aria-expanded='true'] {
-    color: var(--primary);
-    border-color: var(--primary);
+    color: var(--panel-toggle-foreground);
+    border-color: var(--panel-toggle-border);
+    background: var(--panel-toggle-background);
   }
 
   /* ── Cards ───────────────────────────────────────────────────── */
   .card {
-    @apply rounded-2xl p-4 border;
+    @apply rounded-sm p-4 border;
     background: var(--card);
     border-color: var(--border);
   }
@@ -307,7 +354,7 @@
   .input,
   .input-lg,
   .textarea {
-    @apply rounded-xl px-3 py-1.5 text-sm border
+    @apply rounded-sm px-3 py-1.5 text-sm border
            focus:outline-none transition-colors duration-150 w-full;
     background: transparent;
     border-color: var(--input);
@@ -344,7 +391,7 @@
   .badge-yellow,
   .badge-red,
   .badge-blue {
-    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium tracking-wide;
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-sm text-xs font-medium tracking-wide;
   }
   .badge-neutral { background: var(--muted); color: var(--muted-foreground); }
   .badge-accent  { @apply bg-accent/20 text-accent-light; }
@@ -366,7 +413,7 @@
   :root:not(.dark) .badge-red    { background: #fee2e2; color: #b91c1c; }
 
   /* ── Priority dots (constant across modes) ────────────────────── */
-  .priority-dot { @apply w-2 h-2 rounded-full flex-shrink-0; }
+  .priority-dot { @apply w-2 h-2 rounded-circle flex-shrink-0; }
   .p1 { background: #ef4444; }
   .p2 { background: #f97316; }
   .p3 { background: #58ebbf; }
@@ -378,7 +425,7 @@
   .toast-success,
   .toast-error {
     @apply fixed bottom-4 right-4 z-50 flex items-center gap-2.5
-           px-4 py-3 rounded-2xl text-sm font-medium shadow-xl border;
+           px-4 py-3 rounded-sm text-sm font-medium shadow-xl border;
     background: var(--popover);
     border-color: var(--border);
     color: var(--popover-foreground);
@@ -410,7 +457,7 @@
     animation: fadeIn 150ms ease both;
   }
   .modal {
-    @apply rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border;
+    @apply rounded-xl shadow-2xl w-full max-w-lg overflow-hidden border;
     background: var(--card);
     border-color: var(--border);
     animation: modalIn 200ms cubic-bezier(0.34,1.56,0.64,1) both;
@@ -441,7 +488,7 @@
   /* ── FAB (primary CTA) ────────────────────────────────────────── */
   .fab {
     @apply fixed bottom-6 right-6 z-30 flex items-center gap-2
-           px-5 py-3 font-semibold rounded-full
+           px-5 py-3 font-semibold rounded-lg
            transition-all duration-150 active:scale-95 select-none cursor-pointer;
     color: var(--primary-foreground);
     background: var(--primary);
@@ -451,7 +498,7 @@
 
   /* ── Nav ─────────────────────────────────────────────────────── */
   .nav-item {
-    @apply flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium
+    @apply flex items-center gap-2.5 px-3 py-2 rounded-sm text-sm font-medium
            transition-all duration-100 cursor-pointer select-none;
     color: var(--muted-foreground);
     letter-spacing: .02em;
@@ -463,6 +510,7 @@
        on the light-mode sidebar-accent (1.46:1). */
     color: var(--primary);
     background: var(--sidebar-accent);
+    border-radius: var(--radius-3);
   }
 
   /* ── Labels ──────────────────────────────────────────────────── */
@@ -473,7 +521,7 @@
 
   /* ── Checkbox ────────────────────────────────────────────────── */
   .checkbox {
-    @apply w-4 h-4 rounded-md border-2 flex items-center justify-center
+    @apply w-4 h-4 rounded-sm border-2 flex items-center justify-center
            flex-shrink-0 transition-all duration-200 cursor-pointer;
     border-color: var(--border);
   }
@@ -489,6 +537,17 @@
 .btn-secondary:hover { background: color-mix(in srgb, var(--primary) 10%, transparent); border-color: var(--primary); color: var(--primary); }
 .btn-ghost:hover    { color: var(--foreground); background-color: var(--sidebar-accent); }
 .btn-icon:hover     { color: var(--foreground); background-color: var(--sidebar-accent); }
+.btn-icon-strong:hover,
+.btn-icon-strong:focus-visible {
+  color: var(--panel-toggle-foreground);
+  border-color: var(--panel-toggle-border);
+  background: var(--panel-toggle-hover);
+}
+.btn-icon-strong[aria-expanded='true'] {
+  color: var(--panel-toggle-foreground);
+  border-color: var(--panel-toggle-border);
+  background: var(--panel-toggle-background);
+}
 .btn-danger:hover   { background-color: rgba(127,29,29,.3); color: #fca5a5; }
 .card-hover:hover   { border-color: var(--ring); box-shadow: 0 4px 20px rgba(88,235,191,.08); transform: translateY(-1px); }
 .fab:hover          { background: color-mix(in srgb, var(--primary) 90%, transparent); box-shadow: 0 12px 32px color-mix(in oklab, var(--primary) 40%, transparent); transform: scale(1.03) translateY(-1px); }
@@ -511,7 +570,7 @@
     max-width: 100%;
     max-height: 92vh;
     overflow-y: auto;
-    border-radius: 1.25rem 1.25rem 0 0;
+    border-radius: var(--radius-30) var(--radius-30) var(--radius-0) var(--radius-0);
     padding-bottom: env(safe-area-inset-bottom);
     animation: sheetIn 240ms cubic-bezier(0.34, 1.2, 0.64, 1) both;
   }
@@ -668,7 +727,7 @@
   height: 1px;
   background: color-mix(in oklab, var(--foreground) 16%, transparent);
   overflow: hidden;
-  border-radius: 999px;
+  border-radius: var(--radius-3);
 }
 .focus-rule > i {
   display: block;
@@ -729,7 +788,7 @@
   position: absolute;
   left: 50%;
   top: 50%;
-  border-radius: 50%;
+  border-radius: var(--radius-999);
   transform: translate(-50%, -50%) scale(0.96);
   opacity: 0.45;
   background: radial-gradient(circle,
@@ -783,7 +842,7 @@
   top: 50%; left: 1px;
   width: 4px; height: 34px;
   transform: translateY(-50%);
-  border-radius: 999px;
+  border-radius: var(--radius-3);
   background: var(--border);
 }
 .details-rail:hover,
@@ -793,15 +852,18 @@
 .details-drawer {
   flex: 0 0 var(--details-w, 400px);
   width: var(--details-w, 400px);
-  background: var(--card);
+  min-width: 0;
+  background: var(--details-panel-background);
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  container: details-panel / inline-size;
 }
 
 .drawer-head {
   flex: 0 0 auto;
+  min-width: 0;
   display: flex;
   align-items: flex-start;
   gap: .625rem;
@@ -822,11 +884,14 @@
   color: var(--foreground);
   line-height: 1.3;
   text-wrap: balance;
+  overflow-wrap: anywhere;
 }
 
 .drawer-tabs {
   flex: 0 0 auto;
+  min-width: 0;
   display: flex;
+  flex-wrap: wrap;
   gap: 2px;
   padding: 0 .875rem;
   border-bottom: 1px solid var(--border);
@@ -848,11 +913,24 @@
 
 .drawer-body {
   flex: 1;
+  min-width: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: .875rem;
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+.drawer-body > * {
+  min-width: 0;
+  max-width: 100%;
+}
+.drawer-body :where(button, span, p, input, textarea, select) {
+  min-width: 0;
+  max-width: 100%;
+}
+.drawer-body :where(button, p) {
+  overflow-wrap: anywhere;
 }
 
 .drawer-group {
@@ -868,17 +946,19 @@
 
 .drawer-grid {
   display: grid;
-  grid-template-columns: minmax(5rem, auto) 1fr;
+  grid-template-columns: minmax(0, 5rem) minmax(0, 1fr);
   gap: .5rem .875rem;
   align-items: baseline;
   margin: 0;
 }
 .drawer-dt {
+  min-width: 0;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: .1em;
   text-transform: uppercase;
   color: var(--muted-foreground);
+  overflow-wrap: anywhere;
 }
 .drawer-dd {
   margin: 0;
@@ -891,16 +971,20 @@
 
 .drawer-pill {
   display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: 5px;
   padding: 3px 9px;
-  border-radius: 999px;
+  border-radius: var(--radius-3);
   font-size: 10.5px;
   font-weight: 600;
   letter-spacing: .04em;
   text-transform: uppercase;
   border: 1px solid var(--border);
   color: var(--muted-foreground);
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .drawer-pill[data-status="open"] {
   color: var(--primary);
@@ -919,16 +1003,44 @@
 }
 
 .drawer-tag {
+  min-width: 0;
+  max-width: 100%;
   font-size: 11px;
   padding: 3px 9px;
-  border-radius: 999px;
+  border-radius: var(--radius-3);
   border: 1px solid var(--border);
   background: var(--background);
   color: var(--foreground);
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .drawer-tag-secondary { color: var(--muted-foreground); border-style: dashed; }
 
-.drawer-note { font-size: 12.5px; line-height: 1.6; color: var(--foreground); margin: 0; }
+.drawer-note { font-size: 12.5px; line-height: 1.6; color: var(--foreground); margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+@container details-panel (max-width: 360px) {
+  .drawer-grid {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: .25rem;
+  }
+  .drawer-grid .drawer-dd {
+    margin-bottom: .375rem;
+  }
+  .drawer-tab {
+    white-space: normal;
+  }
+  .drawer-body .flex.items-center.justify-between {
+    flex-wrap: wrap;
+  }
+  .drawer-body > .rounded-xl > .flex.items-center.gap-2 {
+    flex-wrap: wrap;
+  }
+  .drawer-body > .rounded-xl > .flex.items-center.gap-2 > button:first-child,
+  .drawer-body > .rounded-xl > .flex.items-center.gap-2 [role="group"] {
+    flex: 1 1 100%;
+    max-width: 100%;
+  }
+}
 
 .drawer-empty {
   flex: 1;
@@ -941,6 +1053,14 @@
   color: var(--muted-foreground);
 }
 .drawer-empty p { margin: 0; font-size: 12.5px; max-width: 24ch; line-height: 1.55; }
+.drawer-day-empty {
+  flex: 0 0 auto;
+  padding: .75rem 1rem;
+  border-bottom: 1px solid var(--border);
+  text-align: center;
+  color: var(--muted-foreground);
+}
+.drawer-day-empty > p { margin: 0; font-size: 12px; }
 
 /* Collapsed navigation rail — every destination stays reachable as an icon.
    Hiding them outright would make the toggle a trap on a narrow window. */
@@ -958,74 +1078,83 @@
     max-height: 62vh;
     border-left: none;
     border-top: 1px solid var(--border);
-    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    border-radius: var(--radius-30) var(--radius-30) var(--radius-0) var(--radius-0);
     z-index: 40;
     box-shadow: var(--shadow-lg);
   }
-  /* Nothing selected and no Planner grid to show — don't cover the bottom of the
-     screen (FAB, wizard buttons) with an empty sheet that invites no action. */
-  .details-drawer.details-drawer-empty {
-    display: none;
+  .details-toggle-button svg { transform: rotate(90deg); }
+  /* Give the Flight Plan title its own row on a phone so the control buttons
+     cannot squeeze it into broken, per-letter fragments. Keep the controls on
+     the following row and right-align the primary action. */
+  .flight-plan-header { flex-wrap: wrap; row-gap: .5rem; }
+  .flight-plan-title {
+    flex: 1 1 100%;
+    width: 100%;
+    margin-right: 0;
+    white-space: nowrap;
+    overflow-wrap: normal;
   }
+  .flight-plan-actions { flex: 0 1 auto; max-width: 100%; }
+  .flight-plan-action { margin-left: auto; }
 }
 
-/* Open-time summary (Today header) — the day's unscheduled windows, per owner-visible direction. */
-.open-window {
-  display: grid;
-  grid-template-columns: 7.5rem 1fr auto auto;
-  gap: .625rem;
-  align-items: center;
-  padding: .375rem .625rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--background);
+/* Open-time summary — fit the strip to the day's active availability and scheduled
+   work; placed items are direction-coloured blocks and open intervals are click targets. */
+.open-time-summary { position: relative; min-width: 0; overflow: visible; }
+.open-time-summary-head { display: flex; align-items: center; gap: .5rem; min-width: 0; flex-wrap: wrap; }
+.open-time-loading { margin-top: .35rem; }
+.open-time-axis { position: relative; height: 14px; margin-top: .25rem; color: var(--muted-foreground); font-size: 9px; line-height: 12px; font-variant-numeric: tabular-nums; }
+.open-time-axis-tick { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.open-time-axis-tick.is-first { transform: none; }
+.open-time-axis-tick.is-last { transform: translateX(-100%); }
+.open-time-window-edges { position: relative; height: 12px; margin-top: 2px; }
+.open-time-window-edge { position: absolute; top: 0; display: flex; flex-direction: row; align-items: center; gap: 1px; transform: translateX(-50%); }
+.open-time-window-edge.is-first { transform: none; justify-content: flex-start; }
+.open-time-window-edge.is-last { transform: translateX(-100%); justify-content: flex-end; }
+.open-time-bug { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 11px; width: 11px; height: 11px; color: var(--background); background: var(--bug-color, var(--primary)); border: 1px solid color-mix(in srgb, var(--bug-color, var(--primary)) 75%, var(--foreground)); border-radius: var(--radius-3); font-size: 7px; font-weight: 800; line-height: 1; }
+.open-time-bug.is-dimmed { opacity: .38; }
+.open-time-bug.is-ending { border-style: dashed; }
+.open-time-track { position: relative; height: 14px; border: 1px solid var(--border); background: var(--background); overflow: visible; isolation: isolate; }
+.open-time-track::before { content: ''; position: absolute; z-index: -1; inset: 50% 0 auto; height: 1px; background: var(--border); }
+.open-time-slot { position: absolute; z-index: 1; inset-block: 0; min-width: 1px; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; cursor: pointer; transition: background-color 120ms ease, outline-color 120ms ease; }
+.open-time-slot:hover, .open-time-slot:focus-visible { z-index: 3; outline: 1px dashed var(--primary); outline-offset: -2px; background: color-mix(in srgb, var(--primary) 10%, transparent); }
+.open-time-slot.is-dimmed { opacity: .22; }
+.open-time-scheduled { position: absolute; z-index: 2; top: 0; bottom: 0; display: flex; align-items: center; justify-content: center; min-width: 2px; padding: 0 3px; overflow: visible; border: 1px solid var(--item-color, var(--primary)); border-left: 3px solid var(--item-color, var(--primary)); border-radius: 0; color: var(--foreground); background: color-mix(in srgb, var(--item-color, var(--primary)) 72%, var(--background)); cursor: pointer; transition: opacity 120ms ease, filter 120ms ease; }
+.open-time-scheduled:hover, .open-time-scheduled:focus-visible { z-index: 5; filter: brightness(1.12); outline: 1px solid var(--foreground); outline-offset: 1px; }
+.open-time-scheduled.is-dimmed { opacity: .22; }
+.open-time-scheduled-title { display: none; max-width: 100%; overflow: hidden; font-size: 9px; line-height: 1; text-overflow: ellipsis; white-space: nowrap; }
+.open-time-scheduled-title { color: var(--foreground); }
+.open-time-scheduled.has-label .open-time-scheduled-title { display: block; }
+.open-time-empty { margin-top: .35rem; color: var(--muted-foreground); font-size: 10px; }
+.open-time-filter-row { display: flex; justify-content: flex-end; margin-top: .3rem; }
+.open-time-filter-wrap { position: relative; }
+.open-time-filter-trigger { display: inline-flex; align-items: center; gap: .3rem; padding: 2px 6px; border: 1px solid var(--border); border-radius: var(--radius-3); color: var(--muted-foreground); background: transparent; font-size: 9px; line-height: 1.3; }
+.open-time-filter-trigger:hover, .open-time-filter-trigger:focus-visible, .open-time-filter-trigger[aria-expanded="true"] { border-color: var(--primary); color: var(--foreground); }
+.open-time-filter-menu { position: absolute; top: calc(100% + 3px); right: 0; z-index: 20; display: flex; min-width: 9.5rem; flex-direction: column; gap: .1rem; padding: .3rem; border: 1px solid var(--border); border-radius: var(--radius-3); color: var(--foreground); background: var(--popover); box-shadow: 0 4px 16px color-mix(in srgb, black 18%, transparent); }
+.open-time-filter-option { display: flex; align-items: center; gap: .45rem; padding: .25rem .35rem; border-radius: var(--radius-3); font-size: 10px; cursor: pointer; }
+.open-time-filter-option:hover { background: color-mix(in srgb, var(--primary) 10%, transparent); }
+.open-time-filter-option input { width: 12px; height: 12px; margin: 0; accent-color: var(--primary); }
+.open-time-popup { display: flex; align-items: center; justify-content: space-between; gap: .75rem; width: min(24rem, 100%); margin-top: .4rem; padding: .4rem .55rem; border: 1px solid var(--border); border-radius: var(--radius-3); background: var(--popover); box-shadow: 0 4px 16px color-mix(in srgb, black 18%, transparent); }
+.open-time-popup-copy { display: flex; min-width: 0; flex-direction: column; gap: 1px; font-size: 10px; line-height: 1.3; }
+.open-time-popup-copy strong { overflow: hidden; color: var(--foreground); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.open-time-popup-copy span { color: var(--foreground); font-variant-numeric: tabular-nums; }
+.open-time-popup-copy small { color: var(--muted-foreground); text-transform: capitalize; }
+.planner-undo { border-color: var(--tag-7); color: var(--foreground); background: color-mix(in srgb, var(--tag-7) 10%, var(--card)); }
+.planner-undo:hover { border-color: var(--tag-7); color: var(--foreground); background: color-mix(in srgb, var(--tag-7) 20%, var(--card)); }
+
+/* Monthly/weekly recap attention cues — theme-aware orange with readable text contrast. */
+.calendar-review-warning { color: var(--review-warning); }
+.calendar-review-warning-card {
+  border-color: color-mix(in srgb, var(--review-warning) 42%, var(--border));
+  background: color-mix(in srgb, var(--review-warning) 5%, var(--card));
 }
-.open-window-range {
-  font-size: 11.5px;
-  color: var(--foreground);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.open-window-bar {
-  height: 4px;
-  border-radius: 999px;
-  background: var(--border);
-  overflow: hidden;
-  min-width: 0;
-}
-.open-window-bar i { display: block; height: 100%; border-radius: 999px; background: var(--primary); }
-.open-window-tags {
-  display: flex;
-  gap: .25rem;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-.open-window-tag {
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: .06em;
-  text-transform: uppercase;
-  padding: 2px 7px;
-  border-radius: 999px;
-  white-space: nowrap;
-  color: var(--primary);
-  background: color-mix(in srgb, var(--primary) 14%, transparent);
-}
-.open-window-tag[data-direction="community"] {
-  color: var(--ring);
-  background: color-mix(in srgb, var(--ring) 14%, transparent);
-}
-.open-window-tag[data-direction="home"] {
-  color: var(--warning);
-  background: color-mix(in srgb, var(--warning) 14%, transparent);
-}
-.open-window-dur {
-  font-size: 11px;
-  color: var(--muted-foreground);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  min-width: 2.875rem;
-  text-align: right;
+.auto-generated-approval { color: var(--auto-generated-outline); }
+.auto-generated-approval:hover { filter: brightness(.9); }
+.open-time-popup-actions { display: flex; flex: 0 0 auto; gap: .3rem; }
+@media (max-width: 520px) {
+  .open-time-axis-tick:nth-child(even) { display: none; }
+  .open-time-summary-head { column-gap: .35rem; }
+  .open-time-popup { align-items: flex-start; flex-direction: column; }
 }
 
 /* ── Canonical view chrome ────────────────────────────────────────────────
@@ -1064,6 +1193,78 @@
 .view-tab[aria-selected="true"] { color: var(--primary); border-bottom-color: var(--primary); }
 .view-tab:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
 .view-tab .count { font-size: .6875rem; margin-left: .375rem; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.task-view-controls { display: contents; }
+
+/* Phone: the tabs scroll sideways on one line. Wrapping put the second row over the content. */
+@media (max-width: 639px) {
+  .view-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .view-tabs::-webkit-scrollbar { display: none; }
+  .view-tab { flex: 0 0 auto; white-space: nowrap; margin-bottom: 0; }
+
+  /* Keep the task tabs on one strip, and give filters and search their own
+     full-width rows instead of allowing segmented controls to stretch tall. */
+  .tasks-view-tabs {
+    flex-direction: column;
+    flex-wrap: wrap;
+    align-items: stretch;
+    justify-content: flex-start;
+    overflow: visible;
+  }
+  .task-tab-strip {
+    display: flex;
+    flex-wrap: nowrap;
+    width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .task-tab-strip::-webkit-scrollbar { display: none; }
+  .task-view-controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: .5rem;
+    width: 100%;
+    min-width: 0;
+  }
+  .task-sort-control {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    align-items: stretch;
+    width: 100%;
+    min-width: 0;
+    gap: .5rem;
+  }
+  .task-sort-order { min-height: 2.25rem; }
+  .task-direction-select {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    min-height: 2.25rem;
+  }
+  .task-search { width: 100%; min-width: 0; max-width: none; }
+}
+
+/* Placeholders for content that is still loading. The caller sizes each bar, so the layout keeps
+   its shape; reduced motion holds them still. */
+.skeleton {
+  border-radius: 6px;
+  background: var(--muted);
+  animation: skeleton-pulse 1.6s ease-in-out infinite;
+}
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: .55; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+}
+
+/* Desktop only: the drawer is a docked side panel here, so its collapse button folds it away and keeps
+   the selection. On a phone the drawer is a sheet, and it keeps its close button. */
+.details-collapse { display: none; }
+@media (min-width: 768px) {
+  .details-collapse { display: inline-flex; }
+}
 
 /* Touch devices: no text-entry control under 16px.
    iOS zooms the page in whenever a field smaller than that takes focus, and does not zoom
@@ -1095,4 +1296,32 @@
     -webkit-appearance: none;
     appearance: none;
   }
+}
+
+/* Day-type conflicts use a dashed red outline. Priority 1 gets longer dashes through
+   --conflict-dash; all other priorities use the shorter default. This is shared by
+   Calendar blocks and the selected-day task list. */
+.day-type-conflict-outline {
+  --conflict-dash: 4px;
+}
+.day-type-conflict-outline::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(90deg, var(--destructive) 0 var(--conflict-dash), transparent var(--conflict-dash) calc(var(--conflict-dash) + 3px)) top / 100% 2px no-repeat,
+    repeating-linear-gradient(90deg, var(--destructive) 0 var(--conflict-dash), transparent var(--conflict-dash) calc(var(--conflict-dash) + 3px)) bottom / 100% 2px no-repeat,
+    repeating-linear-gradient(180deg, var(--destructive) 0 var(--conflict-dash), transparent var(--conflict-dash) calc(var(--conflict-dash) + 3px)) left / 2px 100% no-repeat,
+    repeating-linear-gradient(180deg, var(--destructive) 0 var(--conflict-dash), transparent var(--conflict-dash) calc(var(--conflict-dash) + 3px)) right / 2px 100% no-repeat;
+}
+
+/* Objectives board: desktop shows the status columns side by side. On phones the
+   status tabs select one full-width column, keeping task cards readable and usable. */
+.objective-kanban-grid { min-width: 0; }
+@media (max-width: 767px) {
+  .objective-kanban-grid { display: block; }
+  .objective-kanban-column:not(.objective-kanban-column-active) { display: none; }
+  .objective-kanban-column { width: 100%; min-height: 16rem; }
 }

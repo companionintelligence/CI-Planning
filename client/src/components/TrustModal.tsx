@@ -61,12 +61,12 @@ export function TrustTrigger(props: { mode: string | null | undefined; onOpen: (
     <button
       type="button"
       onClick={props.onOpen}
-      class="inline-flex flex-shrink-0 items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full border border-surface-700/60 text-muted-foreground hover:text-foreground transition-colors"
+      class="inline-flex flex-shrink-0 items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-sm border border-surface-700/60 text-muted-foreground hover:text-foreground transition-colors"
       aria-haspopup="dialog"
       title={`Automation: ${trustLabel(props.mode)} — click to change how much the planner does on its own`}
     >
       <span
-        class="w-1.5 h-1.5 rounded-full flex-shrink-0"
+        class="w-1.5 h-1.5 rounded-circle flex-shrink-0"
         classList={{
           'bg-primary': props.mode === 'hands_off',
           'bg-muted-foreground': props.mode !== 'hands_off',

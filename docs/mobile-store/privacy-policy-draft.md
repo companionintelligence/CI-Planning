@@ -31,7 +31,7 @@ Your server may connect to other services if its operator turns them on, for exa
 
 ## Crash and error reports
 
-The app does not send crash or error reports. The mobile build includes no error-reporting service. [Confirm this for each release.]
+The app does not send crash or error reports. The mobile build is made without a Sentry DSN, so the app starts no error reporting. [Re-check this for each release build.]
 
 ## Children
 

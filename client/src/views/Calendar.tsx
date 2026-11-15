@@ -1,4 +1,4 @@
-import { createSignal, createMemo, createEffect, createResource, onCleanup, For, Show } from 'solid-js';
+import { createSignal, createMemo, createEffect, createResource, onCleanup, onMount, For, Show } from 'solid-js';
 import { ChevronLeft, ChevronRight, Zap, Filter, X, Download, ClipboardList, CalendarRange, Palette, CalendarCheck, CalendarClock } from 'lucide-solid';
 import { useNavigate } from '@solidjs/router';
 import {
@@ -31,7 +31,8 @@ import { minutesIntoDay } from '../lib/grid.js';
 import { DayReflowBanner } from '../components/DayReflowBanner.js';
 import { CalendarGrid } from '../components/CalendarGrid.js';
 import { DayTypeControl } from '../components/DayTypeControl.js';
-import { WeeklyReview } from '../components/WeeklyReview.js';
+import { ViewHeader } from '../components/ViewHeader.js';
+import { CalendarReview } from '../components/CalendarReview.js';
 import type { Block, DayStar } from '../lib/api.js';
 
 type ViewMode = 'day' | 'week' | 'month';
@@ -48,6 +49,9 @@ function defaultView(): ViewMode {
 export function Calendar() {
   const navigate = useNavigate();
   const [view, setView] = createSignal<ViewMode>(defaultView());
+  const [isMobile, setIsMobile] = createSignal(
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches,
+  );
   const [anchor, setAnchor] = createSignal(localISODate());
   const [runningSchedule, setRunningSchedule] = createSignal(false);
 
@@ -56,6 +60,16 @@ export function Calendar() {
   // keeps its always-on control, so this signal only drives week/month. Per-session,
   // default none.
   const [selectedDate, setSelectedDate] = createSignal<string | null>(null);
+
+  // Week view keeps the full calendar range for navigation, fetches, and recaps,
+  // while phones only render the remaining days when viewing the current week.
+  onMount(() => {
+    const query = window.matchMedia('(max-width: 767px)');
+    const update = () => setIsMobile(query.matches);
+    update();
+    query.addEventListener('change', update);
+    onCleanup(() => query.removeEventListener('change', update));
+  });
   // The date the day-type picker targets: the anchor in day view, else the selection.
   const dayTypeDate = createMemo(() => (view() === 'day' ? anchor() : selectedDate()));
 
@@ -68,6 +82,13 @@ export function Calendar() {
     }
   });
 
+  const gridDays = createMemo(() => {
+    const days = visibleDays();
+    const today = localISODate();
+    if (view() !== 'week' || !isMobile() || !days.includes(today)) return days;
+    return days.filter((day) => day >= today);
+  });
+
   // Widen the shared blocks fetch to cover exactly the visible window (tz-correct,
   // owner-scoped server-side) via the `calendarRange` override. The `blocks` resource +
   // SSE refetch in stores/index.ts are reused unchanged; clearing the override on unmount
@@ -75,6 +96,12 @@ export function Calendar() {
   createEffect(() => {
     const days = visibleDays();
     setCalendarRange(rangeUTC(days[0], days[days.length - 1]));
+  });
+  // The shared day resource backs both the Calendar details drawer and the Focus
+  // day. Keep it pointed at the date the user is actually inspecting.
+  createEffect(() => {
+    const date = dayTypeDate();
+    if (date) setSelectedDay(date);
   });
   onCleanup(() => setCalendarRange(null));
 
@@ -153,7 +180,7 @@ export function Calendar() {
 
   function goToday() { setAnchor(localISODate()); }
 
-  // "Schedule Day" is the day's INTAKE action: stage the day's open work (its
+  // The Today action stages the selected day's open work (its
   // scheduled-for tasks + the undated backlog) then place what fits into blocks — the
   // fill → run idiom Plan-my-week uses (POST /api/auto/fill then /api/auto/run). The old
   // /api/schedule/run only ran reflow(), which re-compacts blocks ALREADY on the day and
@@ -211,12 +238,18 @@ export function Calendar() {
 
   const views: ViewMode[] = ['day', 'week', 'month'];
 
-  // ── Weekly review toggle (week view only) ───────────────────────────────────
+  // ── Calendar review: weekly recap or rolling 30-day recap ────────────────────
   const [showReview, setShowReview] = createSignal(false);
-  const reviewEnabled = () => view() === 'week' && showReview();
+  const weeklyReviewEnabled = () => view() === 'week' && showReview();
+  const monthlyReviewEnabled = () => view() === 'month' && showReview();
+  const reviewEnabled = () => weeklyReviewEnabled() || monthlyReviewEnabled();
   const [weekReview] = createResource(
-    () => (reviewEnabled() ? anchor() : null),
+    () => (weeklyReviewEnabled() ? anchor() : null),
     (a) => api.review.week(a),
+  );
+  const [monthReview] = createResource(
+    () => (monthlyReviewEnabled() ? localISODate() : null),
+    (end) => api.review.month(end),
   );
   // Calibration is owner-wide; fetch once when the review panel opens, then cache.
   const [calibration] = createResource(
@@ -284,10 +317,26 @@ export function Calendar() {
 
   return (
     <div class="flex-1 overflow-hidden flex flex-col p-3 md:p-6 page-enter w-full">
+      <ViewHeader title="Calendar">
+        <button
+          onClick={() => setPlanWeekModal({ open: true })}
+          class="btn-secondary gap-2 whitespace-nowrap"
+          title="Plan your week with the assistant"
+        >
+          <CalendarRange size={14} /> Plan my week
+        </button>
+        <button
+          onClick={runSchedule}
+          disabled={runningSchedule()}
+          class="btn-primary gap-2 whitespace-nowrap"
+          aria-label="Today: schedule the selected day"
+          title="Schedule the selected day"
+        >
+          <Zap size={14} /> {runningSchedule() ? 'Scheduling…' : 'Today'}
+        </button>
+      </ViewHeader>
+
       <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
-        <h1 class="view-title">Calendar</h1>
-        {/* flex-wrap: five controls totalling ~430px in a 336px content box ran Review,
-            Plan my week and Schedule Day clean off the right edge at 360px. */}
         <div class="flex items-center gap-2 flex-wrap">
           {/* View switcher */}
           <div class="flex bg-surface-800 rounded-lg p-0.5 border border-surface-700/60">
@@ -321,38 +370,17 @@ export function Calendar() {
               <Download size={13} /> <span class="hidden sm:inline">Export</span>
             </a>
           </Show>
-          <Show when={view() === 'week'}>
+          <Show when={view() === 'week' || view() === 'month'}>
             <button
               onClick={() => setShowReview((s) => !s)}
               class="btn-ghost text-xs gap-1"
               classList={{ 'text-primary': showReview() }}
-              aria-label="Toggle weekly review panel"
-              title="Toggle weekly review panel"
+              aria-label={`Toggle ${view() === 'week' ? 'weekly' : 'monthly'} review panel`}
+              title={`Toggle ${view() === 'week' ? 'weekly' : 'monthly'} review panel`}
             >
               <ClipboardList size={13} /> <span class="hidden sm:inline">Review</span>
             </button>
           </Show>
-          {/* Weekly-planning entry point — moved here from the Focus view header so
-              planning lives alongside the calendar it acts on. The PlanWeekAssistant
-              modal is mounted app-globally (App.tsx), so only the trigger relocates. */}
-          <button
-            onClick={() => setPlanWeekModal({ open: true })}
-            class="btn-ghost text-xs gap-1"
-            aria-label="Plan your week with the assistant"
-            title="Plan your week with the assistant"
-          >
-            <CalendarRange size={13} /> <span class="hidden sm:inline">Plan my week</span>
-          </button>
-          <button
-            onClick={runSchedule}
-            disabled={runningSchedule()}
-            class="btn-primary"
-            aria-label="Schedule the day"
-            title="Schedule the day"
-          >
-            <Zap size={14} />
-            <span class="hidden sm:inline">{runningSchedule() ? 'Scheduling…' : 'Schedule Day'}</span>
-          </button>
         </div>
       </div>
 
@@ -362,7 +390,7 @@ export function Calendar() {
       <div class="flex items-center gap-x-3 gap-y-2 mb-4 flex-wrap">
         <button onClick={() => shift(-1)} class="btn-icon"><ChevronLeft size={15} /></button>
         <button onClick={() => shift(1)} class="btn-icon"><ChevronRight size={15} /></button>
-        <button onClick={goToday} class="btn-ghost text-xs">Today</button>
+        <button onClick={goToday} class="btn-ghost text-xs" title="Jump to today's date">Go to today</button>
         <span class="text-sm font-medium text-slate-300 whitespace-nowrap">{rangeLabel()}</span>
         {/* Events-only ("free time") mode. Hides movable task blocks so what's left is
             only what genuinely constrains the day — the gaps between them are the
@@ -417,7 +445,7 @@ export function Calendar() {
                         type="button"
                         aria-pressed={chipOn(axis, t.name)}
                         onClick={() => toggleAxisTag(axis, t.name)}
-                        class="px-2 py-0.5 rounded-full text-xs border transition-colors capitalize"
+                        class="px-2 py-0.5 rounded-sm text-xs border transition-colors capitalize"
                         classList={{
                           'bg-accent text-white border-accent': chipOn(axis, t.name) && !overlayColorful(),
                           'text-white': chipOn(axis, t.name) && overlayColorful(),
@@ -479,7 +507,7 @@ export function Calendar() {
           day-header or a month cell's date number). */}
       <Show when={view() === 'day'}>
         <div class="mb-3 p-3 rounded-lg border border-surface-700/60 bg-surface-800">
-          <DayTypeControl date={anchor()} />
+          <DayTypeControl date={anchor()} hideEditWindows />
         </div>
       </Show>
       {/* The unselected state is a HINT, not a control, and on a 640px-tall phone it cost
@@ -506,7 +534,7 @@ export function Calendar() {
                     weekday: 'long', month: 'long', day: 'numeric',
                   })}
                 </div>
-                <DayTypeControl date={d()} />
+                <DayTypeControl date={d()} hideEditWindows />
               </>
             )}
           </Show>
@@ -515,17 +543,23 @@ export function Calendar() {
 
       {/* Phase 7 — stranded tasks + the confirmed reflow. Sits right under the
           day-type control, because changing that is what strands them. */}
-      <DayReflowBanner />
+      <Show when={dayTypeDate()}>
+        {(date) => <DayReflowBanner date={date()} />}
+      </Show>
 
-      {/* Phase N3/N4: weekly review panel — visible only in week view when toggled. */}
-      <Show when={view() === 'week' && showReview()}>
-        <WeeklyReview data={weekReview()} calibration={calibration()} />
+      {/* Weekly and rolling 30-day recaps are available from their matching views. */}
+      <Show when={(view() === 'week' || view() === 'month') && showReview()}>
+        <CalendarReview
+          period={view() === 'week' ? 'week' : 'month'}
+          data={view() === 'week' ? weekReview() : monthReview()}
+          calibration={calibration()}
+        />
       </Show>
 
       <div class="flex-1 overflow-hidden min-h-0">
         <CalendarGrid
           view={view()}
-          days={visibleDays()}
+          days={gridDays()}
           blocksByDay={blocksByDay}
           notedDays={notedDays}
           starsByDay={starsByDay}
@@ -533,7 +567,7 @@ export function Calendar() {
           // Wave-3 item 5: select any date (week header / month cell number) to set its
           // day type. The picker renders above, keyed off the selection.
           selectedDate={selectedDate}
-          onSelectDate={setSelectedDate}
+          onSelectDate={(day) => { setSelectedDate(day); setSelectedDay(day); }}
           // Wave-3 item 10: clicking an empty slot adds a TASK auto-scheduled at that
           // time. Defaulting to `kind: 'task'` (not the type chooser) + threading the
           // clicked day/time into the task's own schedule fields (see ElementWizard's

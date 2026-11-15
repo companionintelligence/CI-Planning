@@ -4,7 +4,7 @@ import { runWithOwner, SYSTEM_OWNER } from '../context.js';
 import { verifyApiKey } from './apiKey.js';
 import { verifySession } from './session.js';
 import { hasScope } from './scopes.js';
-import { SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN, type VerifiedClaims } from './types.js';
+import { SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN, SCOPE_GUEST, type VerifiedClaims } from './types.js';
 
 /** The full trusted scope set the test owner carries by default (test mode is the
  *  trusted local/dev/test operator). A test can narrow it via the x-test-scopes header. */
@@ -143,6 +143,20 @@ export function requireAuth(): Koa.Middleware {
       ctx.status = 403;
       ctx.body = { error: 'forbidden' };
       return;
+    }
+
+    // Guest accounts are list-only collaborators. Their dedicated endpoints read
+    // explicitly shared items; every owner-scoped route (including task details,
+    // settings, integrations, and the realtime stream) stays inaccessible.
+    if (claims.scopes.includes(SCOPE_GUEST)) {
+      const allowed = ctx.method === 'GET' || ctx.method === 'HEAD'
+        ? (ctx.path === '/api/auth/me' || ctx.path === '/api/guest/shared')
+        : false;
+      if (!allowed) {
+        ctx.status = 403;
+        ctx.body = { error: 'forbidden' };
+        return;
+      }
     }
 
     await runWithOwner(claims.ownerId, claims.scopes, () => next());

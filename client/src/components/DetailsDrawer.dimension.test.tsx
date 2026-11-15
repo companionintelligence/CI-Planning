@@ -81,6 +81,7 @@ const showToastMock = vi.fn();
 const refetchTasksMock = vi.fn();
 vi.mock('../stores/index.js', () => ({
   blocks: () => [],                       // deliberately EMPTY: the panel must not rely on it
+  selectedDay: () => TODAY,
   tasks: () => [
     // already on the calendar this window → must NOT also appear under Open
     { id: 't-gym', title: 'Gym session', status: 'scheduled', categories: ['health'], estimated_minutes: 60 },

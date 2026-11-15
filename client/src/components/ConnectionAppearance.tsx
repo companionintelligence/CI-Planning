@@ -46,7 +46,7 @@ export function ConnectionAppearance(props: { provider: string; account: string 
               aria-label={`Colour ${col.label}`}
               aria-pressed={colorToken() === col.token}
               onClick={() => save({ color_token: col.token })}
-              class="w-4 h-4 rounded-full border-2 transition-transform"
+              class="w-4 h-4 rounded-circle border-2 transition-transform"
               classList={{
                 'border-foreground scale-110': colorToken() === col.token,
                 'border-transparent hover:scale-105': colorToken() !== col.token,
@@ -65,7 +65,7 @@ export function ConnectionAppearance(props: { provider: string; account: string 
               type="button"
               aria-pressed={texture() === t}
               onClick={() => save({ texture: t })}
-              class="px-2 py-0.5 rounded-full text-[11px] border capitalize transition-colors"
+              class="px-2 py-0.5 rounded-sm text-[11px] border capitalize transition-colors"
               classList={{
                 'bg-accent text-white border-accent': texture() === t,
                 'border-surface-700 text-slate-400 hover:text-slate-200': texture() !== t,

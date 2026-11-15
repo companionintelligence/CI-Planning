@@ -1,12 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent, waitFor, screen } from '@solidjs/testing-library';
 import { createSignal } from 'solid-js';
+import { MemoryRouter, Route } from '@solidjs/router';
 import type { Integrations } from '../lib/api.js';
 
 /**
  * OnboardingWizard (FTUE · T11, #347 / T12, #348) — gating on the owner's
- * `onboarded_at` flag, the 5-step wiring (identity / time+place / connect a source /
- * trust dial / run first sync), and completion. T12 moved `step` from a component-
+ * `onboarded_at` flag, the ten-step wiring (identity / time+place / pattern tags /
+ * workday / weekend / weekday map / connect / trust / sync / balance), and completion. T12 moved `step` from a component-
  * local signal to the store (`onboardingStep`) and added the Connect/Run-sync step
  * slots — this file was rewritten for that shape, not just extended.
  *
@@ -41,6 +42,25 @@ const runNowMock = vi.fn(async () => ({
   ok: true,
   ran: [{ kind: 'sync_calendar', status: 'done', itemsCreated: 3, itemsUpdated: 1, log: '' }],
 }));
+const directionTags = [
+  { id: 'home', name: 'Home', kind: 'direction' },
+  { id: 'work', name: 'Work', kind: 'direction' },
+  { id: 'community', name: 'Community', kind: 'direction' },
+];
+const patternBlocksForDayMock = vi.fn(async (..._args: unknown[]) => ({
+  windows: {
+    home: [{ start_time: '08:00', end_time: '18:00' }],
+    work: [{ start_time: '09:00', end_time: '17:00' }],
+    community: [{ start_time: '10:00', end_time: '20:00' }],
+  },
+}));
+const tagsUpdateMock = vi.fn(async (..._args: unknown[]) => ({ ok: true }));
+const patternPrefsSetMock = vi.fn(async (..._args: unknown[]) => ({ ok: true }));
+const patternBlocksSetMock = vi.fn(async (..._args: unknown[]) => ({ ok: true }));
+const dayTypesSetWeekMapMock = vi.fn(async (..._args: unknown[]) => ({ ok: true }));
+const refetchPatternBlocksMock = vi.fn();
+const refetchPatternPrefsMock = vi.fn();
+const refetchTagsMock = vi.fn();
 
 vi.mock('../lib/api.js', () => ({
   api: {
@@ -57,6 +77,24 @@ vi.mock('../lib/api.js', () => ({
     googleConfig: { get: () => googleConfigGetMock(), save: (b: unknown) => googleConfigSaveMock(b) },
     demo: { sampleData: () => demoSampleDataMock() },
     jobs: { runNow: () => runNowMock() },
+    tags: {
+      list: async () => ({ tags: directionTags }),
+      update: (...a: unknown[]) => tagsUpdateMock(...a),
+    },
+    patternPrefs: {
+      list: async () => ({ prefs: Object.fromEntries(directionTags.map((tag, i) => [tag.id, { icon_shape: 'House', color_token: `tag-${i + 1}` }])) }),
+      set: (...a: unknown[]) => patternPrefsSetMock(...a),
+    },
+    patternBlocks: {
+      forDay: (...a: unknown[]) => patternBlocksForDayMock(...a),
+      set: (...a: unknown[]) => patternBlocksSetMock(...a),
+    },
+    dayTypes: {
+      list: async () => ({ day_types: [{ key: 'workday', name: 'Workday' }, { key: 'weekend', name: 'Weekend' }] }),
+      weekMap: async () => ({ map: { 0: 'weekend', 1: 'workday', 2: 'workday', 3: 'workday', 4: 'workday', 5: 'workday', 6: 'weekend' } }),
+      setWeekMap: (...a: unknown[]) => dayTypesSetWeekMapMock(...a),
+      create: async () => ({ ok: true }),
+    },
   },
 }));
 
@@ -68,7 +106,7 @@ const setPrefs = (p: PrefsLike) => setPrefsValue(p);
 const refetchPrefsMock = vi.fn(async () => {
   setPrefsValue((p) => ({ ...(p ?? {}), onboarded_at: '2026-07-19T00:00:00.000Z' }) as PrefsLike);
 });
-const [onboardingStepValue, setOnboardingStepValue] = createSignal<1 | 2 | 3 | 4 | 5>(1);
+const [onboardingStepValue, setOnboardingStepValue] = createSignal<1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10>(1);
 const [onboardingForceOpenValue, setOnboardingForceOpenValue] = createSignal(false);
 // Gates ConnectSourceStep's "Try with sample data" (store default: true). A real signal
 // so the wizard's Finish/Skip reset is observable, not just recorded as a call.
@@ -94,7 +132,7 @@ vi.mock('../stores/index.js', () => ({
   refetchPrefs: () => refetchPrefsMock(),
   showToast: (...a: unknown[]) => toastMock(...a),
   onboardingStep: () => onboardingStepValue(),
-  setOnboardingStep: (s: 1 | 2 | 3 | 4 | 5) => setOnboardingStepValue(s),
+  setOnboardingStep: (s: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10) => setOnboardingStepValue(s),
   onboardingForceOpen: () => onboardingForceOpenValue(),
   setOnboardingForceOpen: (v: boolean) => setOnboardingForceOpenValue(v),
   onboardingSampleDataAllowed: () => onboardingSampleDataAllowedValue(),
@@ -104,6 +142,9 @@ vi.mock('../stores/index.js', () => ({
   refetchTasks: () => refetchTasksMock(),
   refetchBlocks: () => refetchBlocksMock(),
   refetchFlightPlan: () => refetchFlightPlanMock(),
+  refetchPatternBlocks: () => refetchPatternBlocksMock(),
+  refetchPatternPrefs: () => refetchPatternPrefsMock(),
+  refetchTags: () => refetchTagsMock(),
   runIngestNowAndRefetch: async () => {
     const { ran } = await runNowMock();
     refetchTasksMock(); refetchBlocksMock(); refetchFlightPlanMock(); refetchIntegrationsMock();
@@ -123,7 +164,17 @@ const OFF_INTEGRATIONS: Integrations = {
 };
 
 const { OnboardingWizard } = await import('./OnboardingWizard.js');
-const mount = () => render(() => <OnboardingWizard />);
+const mount = () => render(() => (
+  <MemoryRouter>
+    <Route path="/" component={OnboardingWizard} />
+  </MemoryRouter>
+));
+
+async function saveAndContinue() {
+  const button = await screen.findByText('Save and continue') as HTMLButtonElement;
+  await waitFor(() => expect(button.disabled).toBe(false));
+  fireEvent.click(button);
+}
 
 async function advanceToStep2() {
   await screen.findByText('Welcome');
@@ -135,6 +186,14 @@ async function advanceToStep2() {
 async function advanceToConnectStep() {
   await advanceToStep2();
   fireEvent.click(screen.getByText('Next'));
+  await screen.findByText('Pattern Tags');
+  await saveAndContinue();
+  await screen.findByText('Set up your first Workday');
+  await saveAndContinue();
+  await screen.findByText('Set up Weekend');
+  fireEvent.click(screen.getByText('Skip Weekend'));
+  await screen.findByText('Choose your default days');
+  await saveAndContinue();
   await screen.findByText('Connect a source');
 }
 
@@ -174,6 +233,14 @@ describe('OnboardingWizard', () => {
     runNowMock.mockReset().mockResolvedValue({
       ok: true, ran: [{ kind: 'sync_calendar', status: 'done', itemsCreated: 3, itemsUpdated: 1, log: '' }],
     });
+    patternBlocksForDayMock.mockClear();
+    tagsUpdateMock.mockClear();
+    patternPrefsSetMock.mockClear();
+    patternBlocksSetMock.mockClear();
+    dayTypesSetWeekMapMock.mockClear();
+    refetchPatternBlocksMock.mockClear();
+    refetchPatternPrefsMock.mockClear();
+    refetchTagsMock.mockClear();
     refetchPrefsMock.mockClear();
     refetchIntegrationsMock.mockReset();
     refetchTasksMock.mockReset();
@@ -208,7 +275,7 @@ describe('OnboardingWizard', () => {
 
     it('onboardingForceOpen reopens the wizard even when already onboarded', async () => {
       setPrefs({ onboarded_at: '2020-01-01T00:00:00.000Z' });
-      setOnboardingStepValue(3);
+      setOnboardingStepValue(7);
       setOnboardingForceOpenValue(true);
       mount();
       await screen.findByText('Connect a source');
@@ -345,7 +412,7 @@ describe('OnboardingWizard', () => {
       expect((screen.getByLabelText(/Usually go to bed/) as HTMLInputElement).value).toBe('22:00');
     });
 
-    it('Step 2 Next calls prefs.update with timezone (0156: no workday_start/workday_end), then lands on Connect', async () => {
+    it('Step 2 Next saves timezone (without workday_start/workday_end), then lands on Pattern Tags', async () => {
       setPrefs({ onboarded_at: null });
       mount();
       await advanceToStep2();
@@ -358,10 +425,36 @@ describe('OnboardingWizard', () => {
       expect(prefsUpdateMock).not.toHaveBeenCalledWith(
         expect.objectContaining({ workday_start: expect.anything() }),
       );
-      await screen.findByText('Connect a source');
+      await screen.findByText('Pattern Tags');
     });
 
-    it('Step 3 (Connect): Connect Google is disabled until liveEnabled, and navigates on click', async () => {
+    it('saves Pattern Tags, Workday windows, and the default weekday map before continuing', async () => {
+      setPrefs({ onboarded_at: null });
+      mount();
+      await advanceToStep2();
+      fireEvent.click(screen.getByText('Next'));
+      await screen.findByText('Pattern Tags');
+      fireEvent.input(screen.getByLabelText('Home tag name'), { target: { value: 'Home life' } });
+      await saveAndContinue();
+
+      await waitFor(() => expect(tagsUpdateMock).toHaveBeenCalledWith('home', { name: 'Home life' }));
+      expect(patternPrefsSetMock).toHaveBeenCalledTimes(3);
+      await screen.findByText('Set up your first Workday');
+      await saveAndContinue();
+
+      await waitFor(() => expect(patternBlocksSetMock).toHaveBeenCalledTimes(3));
+      expect(patternBlocksSetMock).toHaveBeenCalledWith('home', 'workday', [{ start_time: '08:00', end_time: '18:00' }]);
+      await screen.findByText('Set up Weekend');
+      fireEvent.click(screen.getByText('Skip Weekend'));
+      await screen.findByText('Choose your default days');
+      await saveAndContinue();
+
+      expect(dayTypesSetWeekMapMock).toHaveBeenCalledWith({
+        0: 'weekend', 1: 'workday', 2: 'workday', 3: 'workday', 4: 'workday', 5: 'workday', 6: 'weekend',
+      });
+    });
+
+    it('Step 7 (Connect): Connect Google is disabled until liveEnabled, and navigates on click', async () => {
       const originalHref = window.location.href;
       setPrefs({ onboarded_at: null });
       mount();
@@ -380,7 +473,7 @@ describe('OnboardingWizard', () => {
       window.history.replaceState({}, '', originalHref); // navigation is stubbed in jsdom; restore
     });
 
-    it('Step 3 (Connect), in the app shell: no Connect Google, says where to connect it, and the rest of the step works', async () => {
+    it('Step 7 (Connect), in the app shell: no Connect Google, says where to connect it, and the rest of the step works', async () => {
       // The consent screen is a redirect the shell cannot return from (supportsRedirectFlows).
       vi.stubGlobal('Capacitor', { isNativePlatform: () => true });
       try {
@@ -401,7 +494,7 @@ describe('OnboardingWizard', () => {
       }
     });
 
-    it('Step 3 (Connect), in the app shell, reopened from the empty-state CTA: no sample-data sentence, as there is no sample-data button', async () => {
+    it('Step 7 (Connect), in the app shell, reopened from the empty-state CTA: no sample-data sentence, as there is no sample-data button', async () => {
       vi.stubGlobal('Capacitor', { isNativePlatform: () => true });
       try {
         setPrefs({ onboarded_at: null });
@@ -417,7 +510,7 @@ describe('OnboardingWizard', () => {
       }
     });
 
-    it('Step 3: Try with sample data installs the curated set and advances', async () => {
+    it('Step 7: Try with sample data installs the curated set and advances', async () => {
       setPrefs({ onboarded_at: null });
       mount();
       await advanceToConnectStep();
@@ -435,7 +528,7 @@ describe('OnboardingWizard', () => {
       expect(runNowMock).not.toHaveBeenCalled();
     });
 
-    it('Step 3: Skip/Back/Next are disabled while "Connect Google" is in flight (adversarial-review fix)', async () => {
+    it('Step 7: Skip/Back/Next are disabled while "Connect Google" is in flight (adversarial-review fix)', async () => {
       let resolveStart!: (v: { url: string }) => void;
       googleStartMock.mockImplementation(() => new Promise((resolve) => { resolveStart = resolve; }));
       setPrefs({ onboarded_at: null });
@@ -451,7 +544,7 @@ describe('OnboardingWizard', () => {
       resolveStart({ url: 'https://accounts.google.com/o/oauth2/consent' });
     });
 
-    it('Step 3: "Try with sample data" stays on the step when the seed fails', async () => {
+    it('Step 7: "Try with sample data" stays on the step when the seed fails', async () => {
       // The posture carried over from the old ingest-based version: a failure must not
       // advance the wizard over a board that is still empty.
       demoSampleDataMock.mockRejectedValue(new Error('seed exploded'));
@@ -467,7 +560,7 @@ describe('OnboardingWizard', () => {
       expect(screen.queryByText('Trust dial')).toBeNull();
     });
 
-    it('Step 3: a second press reports the skip rather than duplicating the set', async () => {
+    it('Step 7: a second press reports the skip rather than duplicating the set', async () => {
       demoSampleDataMock.mockResolvedValue({ tasks: 0, habits: 0, objectives: 0, blocks: 0, skipped: 'Sample data is already loaded' });
       setPrefs({ onboarded_at: null });
       mount();
@@ -480,7 +573,7 @@ describe('OnboardingWizard', () => {
       await screen.findByText('Trust dial'); // still advances — the data is there either way
     });
 
-    it('Step 3: a non-admin (googleConfig.get 403 -> null) never sees "Try with sample data"', async () => {
+    it('Step 7: a non-admin (googleConfig.get 403 -> null) never sees "Try with sample data"', async () => {
       googleConfigGetMock.mockRejectedValue(new Error('forbidden'));
       setPrefs({ onboarded_at: null });
       mount();
@@ -490,7 +583,7 @@ describe('OnboardingWizard', () => {
       expect(screen.queryByText('Try with sample data')).toBeNull();
     });
 
-    it('Step 4 (Trust dial) Next calls prefs.update with the chosen trust_mode (default balanced), then lands on Run sync', async () => {
+    it('Step 8 (Trust dial) Next saves trust_mode (default balanced), then lands on Run sync', async () => {
       setPrefs({ onboarded_at: null });
       mount();
       await advanceToTrustStep();
@@ -512,7 +605,7 @@ describe('OnboardingWizard', () => {
       await waitFor(() => expect(prefsUpdateMock).toHaveBeenCalledWith({ trust_mode: 'hands_off' }));
     });
 
-    it('Step 5 (Run sync): hints at no connected source, runs, and shows a summary', async () => {
+    it('Step 9 (Run sync): hints at no connected source, runs, and shows a summary', async () => {
       setPrefs({ onboarded_at: null });
       mount();
       await advanceToRunSyncStep();
@@ -528,7 +621,7 @@ describe('OnboardingWizard', () => {
       expect(refetchFlightPlanMock).toHaveBeenCalled();
     });
 
-    it('Step 5: "Back to Connect" jumps back to step 3', async () => {
+    it('Step 9: "Back to Connect" jumps back to step 7', async () => {
       setPrefs({ onboarded_at: null });
       mount();
       await advanceToRunSyncStep();
@@ -537,7 +630,7 @@ describe('OnboardingWizard', () => {
       await screen.findByText('Connect a source');
     });
 
-    it('Step 5: an all-failed sync shows an error-styled summary, does not block Finish (adversarial-review fix)', async () => {
+    it('Step 9: an all-failed sync shows an error-styled summary, does not block Finish (adversarial-review fix)', async () => {
       runNowMock.mockResolvedValue({
         ok: true, ran: [{ kind: 'sync_calendar', status: 'error', itemsCreated: 0, itemsUpdated: 0, log: 'boom' }],
       });
@@ -549,14 +642,16 @@ describe('OnboardingWizard', () => {
 
       const msg = await screen.findByText('Sync failed — try again in a moment.');
       expect(msg.className).toContain('text-destructive');
-      // Finish still works after a failed run — the wizard never gets the user stuck.
+      // The user can still finish after a failed run — the wizard never gets them stuck.
+      fireEvent.click(screen.getByText('Finish'));
+      await screen.findByText('You’re ready to plan');
       fireEvent.click(screen.getByText('Finish'));
       await waitFor(() => expect(prefsUpdateMock).toHaveBeenCalledWith(
         expect.objectContaining({ onboarded_at: expect.any(String) }),
       ));
     });
 
-    it('Step 5: Skip/Back/Finish are disabled while a sync is in flight (adversarial-review fix)', async () => {
+    it('Step 9: Skip/Back/Finish are disabled while a sync is in flight (adversarial-review fix)', async () => {
       let resolveRun!: (v: { ok: true; ran: { kind: string; status: string; itemsCreated: number; itemsUpdated: number; log: string }[] }) => void;
       runNowMock.mockImplementation(() => new Promise((resolve) => { resolveRun = resolve; }));
       setPrefs({ onboarded_at: null });
@@ -573,11 +668,13 @@ describe('OnboardingWizard', () => {
   });
 
   describe('completion', () => {
-    it('Finish (from Run sync) records onboarded_at, records exactly one onboarding session, and the overlay unmounts', async () => {
+    it('Finish after Run sync records onboarded_at, logs one onboarding session, and closes the overlay', async () => {
       setPrefs({ onboarded_at: null });
       mount();
       await advanceToRunSyncStep();
 
+      fireEvent.click(screen.getByText('Finish'));
+      await screen.findByText('You’re ready to plan');
       fireEvent.click(screen.getByText('Finish'));
 
       await waitFor(() => expect(prefsUpdateMock).toHaveBeenCalledWith(
@@ -619,7 +716,7 @@ describe('OnboardingWizard', () => {
 
     it('completing a force-reopened (already-onboarded) wizard clears the force-open flag', async () => {
       setPrefs({ onboarded_at: '2020-01-01T00:00:00.000Z' });
-      setOnboardingStepValue(3);
+      setOnboardingStepValue(7);
       setOnboardingForceOpenValue(true);
       mount();
       await screen.findByText('Connect a source');
@@ -637,21 +734,10 @@ describe('OnboardingWizard', () => {
   describe('reopen after completion (adversarial-review fixes)', () => {
     it('Trust dial hydrates from the owner\'s real saved prefs on reopen, not the pre-completion default', async () => {
       setPrefs({ onboarded_at: '2020-01-01T00:00:00.000Z', trust_mode: 'hands_off' });
-      setOnboardingStepValue(2);
+      setOnboardingStepValue(8);
       setOnboardingForceOpenValue(true);
       mount();
 
-      await screen.findByText('Time and place');
-      fireEvent.click(screen.getByText('Next'));
-      await waitFor(() => expect(prefsUpdateMock).toHaveBeenCalledWith(
-        expect.objectContaining({ timezone: expect.any(String) }),
-      ));
-
-      // Wait for the Connect step to actually render before clicking on: Next is
-      // disabled while the step-2 write is in flight, so clicking the moment the mock
-      // records the call can land on a disabled button and be swallowed.
-      await screen.findByText('Connect a source');
-      fireEvent.click(screen.getByText('Next')); // Connect -> Trust
       await screen.findByText('Trust dial');
       fireEvent.click(screen.getByText('Next'));
       await waitFor(() => expect(prefsUpdateMock).toHaveBeenCalledWith({ trust_mode: 'hands_off' }));
@@ -671,7 +757,7 @@ describe('OnboardingWizard', () => {
       mount();
 
       await waitFor(() => expect(toastMock).toHaveBeenCalledWith('Google account connected', 'success'));
-      await screen.findByText('Trust dial'); // step 4, not the step-1 default
+      await screen.findByText('Trust dial'); // the successful OAuth return resumes at step 8
       expect(localStorage.getItem('cp-ftue-resume')).toBeNull();
       expect(window.location.search).toBe('');
 

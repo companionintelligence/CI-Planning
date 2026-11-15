@@ -677,13 +677,23 @@ describe('POST /api/objectives/:id/tasks', () => {
     expect(res.status).toBe(404);
   });
 
-  it('422 when linking a task to a non-leaf objective (tasks live only at leaves)', async () => {
-    // A parent with a child is a 'project' (height 1) — not a valid task home.
+  it('keeps tasks on a parent objective after a child is added and allows the list to expand', async () => {
     const parent = insertObjective({ title: 'Project' });
+    const existingTask = insertTask('Existing parent task');
+    const firstLink = await api(srv.url, `/api/objectives/${parent}/tasks`, {
+      method: 'POST', json: { task_id: existingTask },
+    });
+    expect(firstLink.status).toBe(201);
+
     insertObjective({ title: 'Leaf', parent_id: parent });
-    const t = insertTask('Misplaced');
-    const res = await api(srv.url, `/api/objectives/${parent}/tasks`, { method: 'POST', json: { task_id: t } });
-    expect(res.status).toBe(422);
+    const newlyLinkedTask = insertTask('Another parent task');
+    const secondLink = await api(srv.url, `/api/objectives/${parent}/tasks`, {
+      method: 'POST', json: { task_id: newlyLinkedTask },
+    });
+    expect(secondLink.status).toBe(201);
+
+    const tree = (await api(srv.url, '/api/objectives')).body.objectives as any[];
+    expect(tree[0].tasks.map((task: { id: string }) => task.id)).toEqual(expect.arrayContaining([existingTask, newlyLinkedTask]));
   });
 });
 

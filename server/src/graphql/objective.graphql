@@ -4,7 +4,7 @@
 #
 # The Goal › Project › Objective tree is built bottom-up: `level` ('goal'|'project'|
 # 'objective') is DERIVED from a node's height, re-stamped by the service on every
-# structure change — clients read it, never set it. Tasks live only at leaf objectives.
+# structure change — clients read it, never set it. Tasks may be linked to any node.
 #
 # `level`/`horizon`/`status`/`cadence` are plain String (free-form TEXT columns, no enum —
 # a DB value outside a GraphQL enum would crash serialization). `targetDate` is a local
@@ -27,7 +27,7 @@ type ObjectiveType implements Node {
   completedAt: DateTime
   parent: ObjectiveType             # parent_id (null at a root)
   children: [ObjectiveType!]!       # direct children (created_at order)
-  tasks: [TaskType!]!               # linked tasks (objective_tasks, linked=1); only leaf objectives carry them
+  tasks: [TaskType!]!               # active linked tasks; any objective node may carry them
   category: TagType                 # category_id (a tags.kind='category' row), nullable
 }
 
@@ -75,7 +75,7 @@ extend type Mutation {
   updateObjective(input: UpdateObjectiveInput!): ObjectivePayload!
   # Reuses the shared DeleteByIdInput/DeleteByIdPayload (declared in tag.graphql).
   deleteObjective(input: DeleteByIdInput!): DeleteByIdPayload!
-  # Link/unlink a task to a leaf objective (returns the refreshed objective).
+  # Link/unlink a task to an objective (returns the refreshed objective).
   linkObjectiveTask(input: LinkObjectiveTaskInput!): ObjectivePayload!
   unlinkObjectiveTask(input: LinkObjectiveTaskInput!): ObjectivePayload!
 }

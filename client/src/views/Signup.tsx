@@ -1,6 +1,7 @@
 import { createSignal, createMemo, createResource, createEffect, onMount, Show } from 'solid-js';
 import { useNavigate } from '@solidjs/router';
-import { Cpu, Loader2, LogIn, UserPlus } from 'lucide-solid';
+import { Loader2, LogIn, UserPlus } from 'lucide-solid';
+import { BrandMark } from '../components/BrandMark.js';
 import { api, CIPORTAL_START } from '../lib/api.js';
 import { isNativeShell } from '../lib/server-config.js';
 
@@ -96,12 +97,7 @@ export function Signup() {
       <div class="w-full max-w-sm">
         {/* Brand */}
         <div class="flex flex-col items-center gap-3 mb-8">
-          <div
-            class="w-12 h-12 rounded-2xl flex items-center justify-center text-surface-950"
-            style={{ background: 'linear-gradient(135deg, #58ebbf, #409b9b)' }}
-          >
-            <Cpu size={22} />
-          </div>
+          <BrandMark size={48} />
           <div class="text-center">
             <div class="text-[10px] font-medium tracking-[0.2em] uppercase" style={{ color: '#409b9b' }}>
               Companion

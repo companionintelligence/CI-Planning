@@ -1167,7 +1167,7 @@ export async function parseInstruction(owner: string, date: string, text: string
   // same full-day degrade when nothing is configured — or a hint the LLM parses as
   // valid here could come back unplaceable at enforcement time.
   const dayType = await resolveDayType(owner, date);
-  const fallbackRanges = await directionWindowsByName(owner, dayType, FALLBACK_FILL_DIRECTION_NAMES);
+  const fallbackRanges = await directionWindowsByName(owner, dayType, FALLBACK_FILL_DIRECTION_NAMES, date);
   const ws = fallbackRanges.length ? fallbackRanges[0].start_time : '00:00';
   const we = fallbackRanges.length ? fallbackRanges.reduce((m, r) => (r.end_time > m ? r.end_time : m), fallbackRanges[0].end_time) : '24:00';
   // This surface owes the user a REASON, so it keeps its own branch — but on `llmOrNull`,

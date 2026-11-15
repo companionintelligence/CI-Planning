@@ -2,12 +2,11 @@
 
 <p align="center"><strong>A private, local-first personal todo and planning app.</strong></p>
 
-Tasks, time blocks,
-tags, and an automation pipeline live in a single SQLite file on your machine; an
-optional local LLM (Ollama) adds AI briefings, task extraction, grooming, and
-auto-scheduling. No cloud dependency — your planning data lives on your hardware
-and stays there. Sign in with your Companion Portal account on a CI Hub, or with a
-local username and password on a self-hosted install; neither sends your data anywhere.
+Tasks, time blocks, tags, objectives, and planning history live in a SQLite database
+you host. The app works without AI or cloud services; optional Google sync, configured
+AI providers, Companion Portal sign-in, and scrubbed crash reports connect only when
+enabled by your deployment. CI Hub installs use a local username and password; other
+deployments can enable Companion Portal sign-in.
 
 [![tag](https://img.shields.io/github/v/tag/companionintelligence/CI-Planning?style=flat-square&color=0a6358&label=tag)](https://github.com/companionintelligence/CI-Planning/tags)
 [![platform](https://img.shields.io/badge/platform-Web%20%C2%B7%20Node.js-0a6358?style=flat-square)](https://github.com/companionintelligence/CI-Planning)
@@ -29,8 +28,9 @@ calendar and reflections are never sent. Turn it off without a rebuild with
 any build made without a DSN initialises no Sentry at all** and opens no outbound
 connection. Full posture: [docs/operations/error-reporting.md](docs/operations/error-reporting.md).
 
-Companion Planning is currently at **v4.2** (latest release tag `v4.2.2`; see [CHANGELOG.md](CHANGELOG.md)). The core app is
-fully local and usable today. A **standalone Google OAuth 2.1 flow** (Authorization
+The latest release is **v4.2.2**; the current `main` branch contains later, unreleased
+changes (see [CHANGELOG.md](CHANGELOG.md)). The core app works locally without optional
+integrations. A **standalone Google OAuth 2.1 flow** (Authorization
 Code + PKCE/S256, implemented in the app — not the macOS Keychain) and **two-way
 Google Calendar sync** are built in. Enable them either **in-app** (an admin pastes a
 Google OAuth client in Settings → Connections; needs only a 32-byte `CP_KEK_B64` key
@@ -52,14 +52,17 @@ client.
 **Source of truth for docs:** this README describes the running app;
 SQLite is the single source of truth for data.
 
+Production ship findings are tracked in the [2026-11-11 readiness review](docs/PRODUCTION-READINESS-2026-11-11.md).
+
 ## Features
 
 | Feature | What it provides |
 |---|---|
-| **Tasks and objectives** | Track owner-scoped tasks, recurrences, objectives and audit history. |
-| **Calendar and time blocks** | Plan work locally and optionally sync to Google Calendar. |
-| **Local AI assistance** | Use a local model (Ollama, or your CI Hub's AI) for briefings, task extraction, grooming and auto-scheduling. |
-| **Integration boundaries** | Add Companion OIDC, calendar sync, MCP and push without moving the local SQLite records. |
+| **Tasks and objectives** | Track tasks, recurring work, routines, habits, objectives, and someday tasks. |
+| **Calendar and availability** | Plan with time blocks, day types, availability windows, open time, and an auto-scheduler. |
+| **Balance and learning** | Set weekly life priorities and review schedule, completion, and preference patterns. |
+| **People** | Keep a directory of people linked to tasks and time blocks. |
+| **Optional integrations** | Connect Google Calendar, Companion Portal, local or Hub AI, and Web Push without moving the planning database. |
 
 ## How it fits together
 
@@ -128,7 +131,8 @@ opens the wizard that hosts the one-line natural-language quick entry.
 ### Calendar
 
 Day / week / month grid with the current week in view, plus Export, Review, Plan my
-week and Schedule Day controls, an All blocks / Events only toggle, and the overlays filter.
+week and Today (schedule selected day) controls, an All blocks / Events only toggle, and
+the overlays filter.
 
 | Light | Dark |
 |-------|------|
@@ -176,8 +180,10 @@ roll-up reads 33 %); **New Objective** opens the editor.
 > (`PATCH /api/tags/:id`), and complete one objective step. Then screenshot each route
 > (`/`, `/calendar`, `/tasks`, `/tasks?tab=objectives`) at 1440×900, device scale 2, in
 > both themes (`localStorage['vite-ui-theme']`) into `docs/ui/planning-<screen>-<theme>.png`,
-> and the [Screenshots](#screenshots) tour below at 1280×800 dark. The **Tags**, **Jobs**,
-> and **Settings** screens live in that tour; **Routines** has no screenshot yet.
+> and the [Screenshots](#screenshots) tour below at 1280×800 dark. The tour includes
+> **Tags**, **Jobs**, **Routines**, and **Settings**; capture **People** from the People
+> tab in Settings. The theme-toggle GIF uses the paired Today captures. The first-run
+> GIF shows the current ten-step setup.
 
 ## Architecture
 
@@ -207,7 +213,7 @@ graph TB
     subgraph AI["AI — optional"]
         Ollama[Ollama<br/>local LLM]
         Small["Fast tier — default qwen2.5:0.5b<br/>extraction / triage"]
-        Medium["Quality tier — default gemma3n:e4b<br/>briefings"]
+        Medium["Quality tier — default gemma3n:e4b<br/>briefings, quick-add classification"]
         Embed["Embedding tier — default nomic-embed-text<br/>dedupe embeddings"]
     end
 
@@ -1043,7 +1049,7 @@ deployment option yet — see [Environment variables](#environment-variables).
 Migrations produce the tables below. The authoritative, ordered migration list — and
 therefore the current head — is
 [`server/src/db/migrations/index.ts`](server/src/db/migrations/index.ts); at the time
-of writing (2026-11-01) `main` is at `0172_signup_codes`, the 168th migration (the
+of writing (2026-11-01) `main` is at `0176_motivation_recap_pref`, the 172nd migration (the
 numbering skips 0009, 0119, 0159 and 0160).
 
 | Table | Purpose |
@@ -1074,7 +1080,7 @@ numbering skips 0009, 0119, 0159 and 0160).
 | `day_types` · `day_of_week_map` · `day_assignments` | Which day-type a date is (0068): a per-date assignment beats the weekly map, which beats the weekend heuristic. The resolved key selects the `pattern_blocks` windows Auto places into |
 | `tag_prefs` | Per-owner × per-tag config, partitioned by `kind` (`direction` \| `category`): shared `color_token`/`default_minutes`, plus direction-only `auto_fill`/`reminder_offsets`/`icon_shape`/`show_open_time` (whether a direction's windows count in Today's OPEN TIME summary, default on; 0170); merged from `pattern_prefs` + `category_prefs` (0097). `category` rows are the six Balance-dimension hues (0134) |
 | `flight_plan` | Staged task list for the two-step Auto (select → schedule); composite PK `(owner_id, task_id)` with `owner_id` `TEXT NOT NULL` (0093) |
-| `scheduling_prefs` | Focus/break bounds, `capacity_hours_per_week` (default 56; replaces the retired `workday_start`/`workday_end` window — per-direction windows live in `pattern_blocks`; 0156), model overrides, feature flags (including `llm_thinking_enabled`, 0155, and `balance_bias_enabled`, default on, 0164), `recurrence_horizon_days` (materialization ceiling, default 7; 0091), `sleep_hours_per_week` (default 63 — reserved as unschedulable; 0128), and the **ingestion windows** `memory_window_days` / `email_lookback_days` (0147) |
+| `scheduling_prefs` | Focus/break bounds, `capacity_hours_per_week` (default 56; replaces the retired `workday_start`/`workday_end` window — per-direction windows live in `pattern_blocks`; 0156), model overrides, feature flags (including `llm_thinking_enabled`, 0155, `balance_bias_enabled`, default on, 0164, and `motivation_recap_enabled`, default off, 0176), `recurrence_horizon_days` (materialization ceiling, default 7; 0091), `sleep_hours_per_week` (default 63 — reserved as unschedulable; 0128), and the **ingestion windows** `memory_window_days` / `email_lookback_days` (0147) |
 | `app_config` | Server-owned singleton config set in-app rather than via env — Google connection setup + the auto-provisioned Web Push VAPID keypair (0124) |
 | `life_priorities` | Life-priorities self-audit per (owner, category) — satisfaction · importance · target hours/week; backs `/priorities` + `/balance` (0127). `/balance` also joins tasks by their `entity_categories` to show each dimension's related open tasks (0134) |
 | `scheduled_jobs` | Croner job registry (name, cron expression, enabled) |
@@ -1104,17 +1110,17 @@ numbering skips 0009, 0119, 0159 and 0160).
 | `estimate_calibration` | Per-owner bias stats (median actual/estimated ratio + quartiles) recomputed nightly (01:30) by the `calibrate_estimates` job (Phase N, 0083; scope columns + the move off a weekly cron, 0107) |
 | `calibration_combo_pins` | Time-Sense (Phase Z) tag-combo confirmations — the system only ever *suggests* a divergent tag combo, computed on demand; a pinned row is the owner's explicit accept, and only pinned refs get a `tag_combo` row in `estimate_calibration` (0107) |
 | `calibration_history` | Append-only calibration trend — one row per (owner, scope, day) written by the same job; the rollup above is regenerable, this table is never recomputed or pruned (0138) |
-| `triality_log` | Append-only Triality outcome log — one row per suggestion **shown**, stamped at most once more when it is opened / staged / dismissed. Each row keeps that pick's full per-component score breakdown as JSON, which is what makes the weekly weight calibration evidence-based rather than guesswork; never recomputed, never pruned (0140). A `confidence` reading is stamped at *show* time (0144) — reported, never fed back into ranking; `NULL` means "shown before that column existed" permanently, and readers must exclude those rows rather than coerce them |
+| `triality_log` | Append-only Triality outcome log — one row per suggestion **shown**, stamped at most once more when it is opened / staged / dismissed. Each row keeps that pick's full per-component score breakdown as JSON, which is what makes the weekly weight calibration evidence-based rather than guesswork; never recomputed, never pruned (0140). A `confidence` reading is stamped at *show* time (0144) — reported, never fed back into ranking; `NULL` means "shown before that column existed" permanently, and readers must exclude those rows rather than coerce them. A `weights_source` (0174) is stamped beside it: `learned` when a `triality_weights` row ranked the pick, `defaults` when there was none, `defaults_invalid` when a row existed but could not be used; `NULL` is again "before the stamp". `motivation` (0175) is stamped too: the me / us / them label the suggested task carried, or `none` when it had none; `NULL` for rows shown before it. Descriptive only: ranking never reads it |
 | `triality_weights` | Learned per-(owner, slot) Triality weights — regenerable, replaced wholesale by the weekly `calibrate_triality` job. A missing row means "score on the defaults", so deleting an owner's rows is the reset switch; the log above survives it (0142) |
-| `classification_log` | Append-only evidence for the parse/classify LLM's `category`/`motivation` picks — what the model said, what the owner ultimately settled on (`NULL` until corrected), and the text judged; never recomputed, never pruned (Phase 8, 0149) |
-| `classification_exemplars` | Regenerable few-shot retrieval index the classify prompt reads, rebuilt wholesale per owner by the weekly `calibrate_classification` job; deleting an owner's rows resets the adaptation without losing the log above (0149) |
+| `classification_log` | Append-only evidence for the parse/classify LLM's `category`/`motivation` picks — what the model said, what the owner ultimately settled on (`NULL` until corrected), and the text judged; never recomputed, never pruned; `entity_kind` says whether the id is a task or a Time Block (Phase 8, 0149, 0173) |
+| `classification_exemplars` | Regenerable few-shot retrieval index the classify prompts read (quick add and the Describe-it preview by frequency, memory enrichment by similarity), rebuilt wholesale per owner by the weekly `calibrate_classification` job; deleting an owner's rows resets the adaptation without losing the log above (0149) |
 | `classification_accuracy` | One held-out accuracy score per field per calibration run — `NULL` (not `0`) when a run measured nothing, so a trend chart draws a gap rather than a false dip (0149) |
 | `possible_outcome_log` | Append-only evidence for dismissal learning — one row per decided suggestion (`dismissed` / `promoted`) with the text the extractor proposed and when it was decided; deliberately no FK to `possible_tasks`, so pruning a suggestion never deletes what it taught (0157) |
 | `possible_dismissal_exemplars` | Regenerable retrieval index the extraction prompt reads, rebuilt wholesale per owner by the weekly `calibrate_dismissals` job (0157) |
 | `possible_dismissal_rate` | One noise-rate reading per owner per calibration run, so "is the loop working" is a number (0157) |
 | `plan_loop_runs` | One row per AI plan-ordering loop run (generate → judge → revise): `stage`, `passed` / `escaped` (+ `escape_reason`), best `score`, `iterations` (0162) |
-| `plan_revision_log` | Append-only evidence — one row per candidate the loop scored (`iter`, `score`, `reason`, JSON `defects`, `critique`); `run_id` is deliberately not an FK, so the evidence survives a crash mid-run (0162) |
-| `plan_loop_stats` | Measurement — one row per (owner, stage, `computed_date`) written by the weekly `calibrate_plan_loop` job; `avg_iterations` / `pass_rate` are `NULL` for a week with no runs (0162) |
+| `plan_revision_log` | Append-only evidence — one row per candidate the loop scored (`iter`, `score`, `reason`, JSON `defects`, `critique`); `run_id` is deliberately not an FK, so the evidence survives a crash mid-run; the weekly `calibrate_plan_loop` log names its most-flagged rules (0162) |
+| `plan_loop_stats` | Measurement — one row per (owner, stage, `computed_date`) written by the weekly `calibrate_plan_loop` job; a stage with no runs in the week gets no row; `avg_iterations` / `pass_rate` allow `NULL`, but the weekly job never writes one (0162) |
 | `placement_log` | Append-only evidence — one row per engine placement with the free gaps `pickGap` weighed (`candidates`) and, once the owner drags it, where it was moved; no FKs to blocks or tasks (0166) |
 | `placement_preferences` | Regenerable rollup — the learned hour band (`p25_hour`–`p75_hour`) per owner × direction slot that biases gap choice, rebuilt by the weekly `calibrate_placement` job (0166, 0167) |
 | `placement_survival` | One reading per owner per calibration run — placements accepted vs. corrected; `survival_rate` is `NULL` when nothing was decided (0166) |
@@ -1124,19 +1130,21 @@ numbering skips 0009, 0119, 0159 and 0160).
 
 ## See it in action
 
-From an empty day to a planned one: capture a task, pick a priority, and let the
-planner place it on your calendar — no cloud round-trip, all on-device. The recording
-predates the current layout (it still shows the retired Inbox view); the screenshots
-below are current.
+The current first-run setup walks through profile, schedule, pattern tags, day types,
+integrations, and planning preferences. The app-view screenshots below show the current
+Today, Calendar, Tasks, and Settings screens.
 
-![Companion Planning — first-run walkthrough: create a task and auto-schedule it](docs/ftue.gif)
+![Companion Planning — current ten-step first-run setup](docs/ftue.gif)
 
-The first-run walkthrough has five steps: your name, your time and place, connecting a
-source (Google, or sample data), your trust setting, and a first sync. The *Connect a
-source* step also shows **Your memory and AI**: whether Companion Memory is connected, or
-configured for this server through `CI_SERVER_URL`, and whether an AI model is ready. It
-reads that state and changes nothing. Connect or change either under **Settings →
-Connections**. Replay the walkthrough from **Settings → Profile**.
+First-time setup has ten steps: **Welcome** (name and email), **Time and place** (wake
+and bed times), **Pattern Tags** (edit names, colors, and shapes), **Workday** (set
+availability and optionally add a day type), **Weekend** (set availability or skip),
+**Weekday map** (choose which day type applies to each weekday), **Connect a source**,
+**Trust dial**, **First sync**, and a finish screen with the option to set up Life Balance.
+The *Connect a source* step also shows **Your memory and AI**: whether Companion Memory
+is connected or configured for this server through `CI_SERVER_URL`, and whether an AI
+model is ready. It reads that state and changes nothing. Connect or change either under
+**Settings → Connections**. Replay the walkthrough from **Settings → Profile**.
 
 ## Walkthrough video
 
@@ -1155,7 +1163,7 @@ Connections**. Replay the walkthrough from **Settings → Profile**.
 | Today (with day stars + the Flight Plan drawer) | Calendar (week view) |
 |---|---|
 | [![Today view](docs/screenshots/today.png)](docs/screenshots/today.png) | [![Calendar view](docs/screenshots/calendar.png)](docs/screenshots/calendar.png) |
-| Day header with the five-star tally · OPEN TIME windows per direction · PLANNER grid with the day's placed blocks · the Flight Plan staging list in the details drawer | Day / week / month grid (the five-star heatmap shows on the month view) · Review toggle on the week view (done · still open · blocks · weekly intentions · objectives needing a next action · estimate calibration) · Plan my week · Schedule Day |
+| Day header with the five-star tally · OPEN TIME windows per direction · PLANNER grid with the day's placed blocks · the Flight Plan staging list in the details drawer | Day / week / month grid (the five-star heatmap shows on the month view) · Review toggle on the week view (done · still open · blocks · weekly intentions · objectives needing a next action · estimate calibration) · Plan my week · Today (schedule selected day) |
 
 | Tasks |
 |---|
@@ -1164,20 +1172,18 @@ Connections**. Replay the walkthrough from **Settings → Profile**.
 
 | Routines (Tasks tab) | Objectives (Tasks tab) |
 |---|---|
-| *(screenshot pending)* | [![Objectives tab](docs/ui/planning-objectives-dark.png)](docs/ui/planning-objectives-dark.png) |
-| Routines — bundles of habits that go together (e.g. Prep for work), made from a task or by dropping a Habit or Time Block on the section; Rituals appear when enabled | Hierarchical life goals — Goal → Project → Objective — with task linkage and progress roll-up; lives at `/tasks?tab=objectives` since Phase AF |
-
-> 📸 Routines screenshot coming soon.
+| [![Routines tab](docs/screenshots/routines.png)](docs/screenshots/routines.png) | [![Objectives tab](docs/ui/planning-objectives-dark.png)](docs/ui/planning-objectives-dark.png) |
+| Routines bundle habits and tasks; this example shows an illustrative routine with two member tasks | Hierarchical life goals — Goal → Project → Objective — with task linkage and progress roll-up; lives at `/tasks?tab=objectives` since Phase AF |
 
 | Tags | Jobs |
 |---|---|
 | [![Tags view](docs/screenshots/tags.png)](docs/screenshots/tags.png) | [![Jobs view](docs/screenshots/jobs.png)](docs/screenshots/jobs.png) |
 | Direction + Intention taxonomy — group, mute, or delete; a second tab covers Time Block Categories | Background automations with their cron schedules — run any one on demand |
 
-| Settings |
-|---|
-| [![Settings view](docs/screenshots/settings.png)](docs/screenshots/settings.png) |
-| Four tabs (Profile shown). **Profile**: your profile, team and invite codes (operators), backup & export, replay of the first-time experience · **Preferences**: schedule patterns and day types, planner display, pattern tags, time block categories, people, time-block and routine settings, reminders, recurrence duration, Clear Date Range · **Connections**: models, Companion Memory, email suggestions, Google · **Logs**: planning-session logs |
+| Settings · Profile | Settings · People |
+|---|---|
+| [![Settings Profile tab](docs/screenshots/settings.png)](docs/screenshots/settings.png) | [![Settings People tab](docs/screenshots/people.png)](docs/screenshots/people.png) |
+| The current Settings view has six tabs. **Profile**: personal details, team and invite codes (operators), backup & export, replay of the first-time experience · **Preferences**: schedule patterns and day types, planner display, pattern tags, time block categories, time-block and routine settings, reminders, recurrence duration, Clear Date Range · **Connections**: models, Companion Memory, email suggestions, Google · **Learning**: the four weekly learning passes and their evidence · **Logs**: planning-session logs | **People**: the directory used for Responsible and Beneficiaries on tasks and time blocks |
 
 ## What you get
 
@@ -1284,23 +1290,58 @@ Connections**. Replay the walkthrough from **Settings → Profile**.
   rebuilds a per-owner few-shot exemplar index from that history — the same batch-only,
   never-mid-request contract Triality's learning uses, and read/written through raw SQL
   only (`classification_log` / `classification_exemplars` / `classification_accuracy`).
-  `GET /api/classification/accuracy` exposes the held-out accuracy trend so "the model got
-  better" is a measured number rather than a claim, and `DELETE /api/classification/exemplars`
-  resets the adaptation without touching the correction log underneath it. No feature flag —
-  an owner who has never corrected anything simply sees an empty trend
+  `GET /api/classification/accuracy` exposes the held-out accuracy trend, a score over
+  held-back corrections that shows what the model got right and cannot show that the examples
+  caused it, and `DELETE /api/classification/exemplars` resets the adaptation without
+  touching the correction log underneath it. Settings → Learning shows the trend with the
+  number of cases behind each figure and has the clear button. No feature flag — an owner who
+  has never corrected anything simply sees an empty trend. That trend comes from the
+  Monday scorer, which asks a narrow one-field question; it is not a score of quick add's own
+  prompt. Judgments are logged by `POST /api/tasks/quick`, by memory enrichment (off unless
+  `MEMORY_MODE` is set) and by the Add wizard's Describe-it preview, which logs the category pick
+  only: the preview returns the model's category pick as an opaque `classification_claim`, the wizard
+  echoes it on Add, and changing the pick before you save, in value or in order, is recorded as a
+  correction (a preview you never save records nothing). The same holds on the Time Block tab: a
+  Time Block created from a Describe-it pick is logged as a Time Block (`entity_kind`), and changing
+  its categories later settles that row. Settings → Learning splits the corrections it counts by
+  what the guess was about. Tasks and Time Blocks teach the same examples. No screen in the app calls
+  `POST /api/tasks/quick` today, so a who-it's-for pick is logged only by that route or by memory
+  enrichment. The examples reach a prompt in three places. The quick-add routes
+  (`/api/tasks/quick/parse`, which the Describe-it line calls, and `/api/tasks/quick`) show the
+  model up to 3 of your most common corrections for each of category and who-it's-for, last in the
+  prompt, read straight from the last weekly run with no embedder on that path, but only when the
+  model that answers is one measured to use them (`gemma3n:e4b`, `qwen2.5:3b`, `gemma3:4b`, and any
+  names in `QUICK_ADD_HINT_MODELS`): on the three other models measured they made the answers worse,
+  so on any other model the prompt is the stock one. Memory enrichment
+  shows the ones most like the task when an embedder is available, and so do the Monday run's
+  held-out scoring prompts. The loop is batch: a correction you make changes no prompt until the next
+  Monday `calibrate_classification` run (or the first start after it, if the server was down; an admin
+  can run the job early from the Jobs page, for their own account), a field needs at least 2
+  corrections first, and corrections on guesses made more than 90 days ago stop counting. The category
+  part needs the AI model to name one of your categories, as a list or as one word
+  (`docs/classification-shape-fix-2026-11.md`). Quick add asks the quality model, `gemma3n:e4b` by
+  default (`docs/quickadd-quality-tier-2026-11.md`). The who-it's-for lessons were not measured, and
+  the Add wizard does not record those picks, so on a default install that half stays empty. The
+  measurements are in `docs/classification-hint-measurement-2026-11.md`,
+  `docs/quick-add-hint-learning-curve-2026-11.md` and `docs/quickadd-hint-guard-2026-11.md`
 - **Dismissal learning** — what you dismiss or approve from the suggestion stream is logged
   (`possible_outcome_log`); once you have 5 settled dismissals a weekly `calibrate_dismissals`
   job keeps a per-owner rollup of them, and up to 3 relevant ones are shown to the extraction
   prompt as history. It influences what is proposed and never suppresses a suggestion. One
-  noise-rate reading per run makes "fewer junk suggestions" a number
-  (`GET /api/dismissal-learning/trend`); `DELETE /api/dismissal-learning/exemplars` resets the
-  rollup and leaves the log alone
+  noise-rate reading per run puts a number on how many of the suggestions you decide on you
+  dismiss (`GET /api/dismissal-learning/trend`, and the weekly job's line in the Jobs view);
+  `DELETE /api/dismissal-learning/exemplars`
+  resets the rollup and leaves the log alone. Settings → Learning shows the readings, the
+  decisions behind each, and the clear button
 - **Placement learning** — Auto records which gap it chose and the gaps it passed over, and
   logs it as a correction when you move an auto-placed block. A weekly `calibrate_placement`
   job turns 5 or more corrections for a direction into a preferred hour band (never one wider
   than 6 hours), and gap choice leans toward that band by at most an hour of extra
-  fragmentation. `GET /api/placement/survival` shows whether placements are surviving the day
-  untouched; `DELETE /api/placement/preferences` resets the bands
+  fragmentation. A block you did not move counts as accepted once its time has passed and it
+  still stands; one that was skipped, cancelled or marked missed does not count either way.
+  `GET /api/placement/survival` shows whether placements are surviving the day
+  untouched; `DELETE /api/placement/preferences` resets the bands. Settings → Learning shows the
+  readings with the settled blocks behind each, and the clear button
 - **Balance targets in planning** — with `balance_bias_enabled` (default on), a life dimension
   that is at least 2 hours behind its weekly target leads the Fill candidates and the day's
   order (the two furthest behind at most); a weekly `snapshot_balance` job freezes each
@@ -1654,6 +1695,14 @@ behind. Tap 1 then reads a pool of up to 60 open tasks instead of 20 and takes t
 dimensions' tasks first. The same dimensions lead the day's authored order ahead of the plain
 deadline/priority sort, in Balanced and Hands-off but not Cautious.
 
+**Me, us, them in the weekly recap.** Off by default; Settings → Preferences → "Me, us, them in the weekly recap"
+(`motivation_recap_enabled`). On, the recap ("Review past data" in Plan my week) adds, for last week and for each
+category, the timed hours split into me, us, them and unlabeled. It counts finished time entries, labeled by the
+task's current me / us / them label, with the same category join the Balance numbers use. Unlabeled time is shown on
+its own and is never counted as us. A task counts in each of its categories, so category rows can add up to more than
+the week; the "Whole week" row counts every timed minute once. Read-only, no model, and the setting does not change
+what Triality suggests or how Auto plans.
+
 ### How a day gets packed
 
 Each pass places into a window; every pass flows around the same live obstacle set, so
@@ -1780,6 +1829,48 @@ touching the underlying rule.
 running is never started again by the next tick. Every run writes a `job_runs` row, and
 all of them are listed and manually runnable from the **Jobs** view.
 
+**Missed runs.** The schedule only fires while the server is running. A run that fell while
+it was off (a restart, a redeploy, a self-hosted machine that was switched off) is not made
+up later on its own: a server that was down through Monday's learning passes (03:50 to
+04:50) skipped them for that week, and a correction made the day before waited a further
+week. Seven jobs are made up: `calibrate_estimates`, `calibrate_triality`,
+`calibrate_classification`, `calibrate_dismissals`, `calibrate_plan_loop`,
+`snapshot_balance` and `calibrate_placement`. About a minute after the next start, the
+server checks them one at a time, in schedule order, and runs once each job whose scheduled
+time passed since it last ran. Several missed weeks (or nights) still cost one run, and
+`snapshot_balance` freezes only the latest closed week. A job whose next scheduled time is
+10 minutes away or less is left to that run. A job with no recorded run, or one dated more
+than five minutes ahead of the server's clock, counts as never run, so a first start runs
+all seven once, over empty data. A run that ended in an error counts as having run and is
+not retried. A run cut short by a restart is tried again at the next start; after two
+cut-short tries it waits for its next scheduled time. A disabled job (`enabled = 0` on its
+`scheduled_jobs` row) is not scheduled and not made up. The Jobs view marks a made-up run
+with "Caught up" at the start of its log, for example `Caught up (missed 2026-11-02 04:10)`,
+in the server's clock.
+
+The server keeps one last-run time per job, not one per account. A run by any account
+counts for the whole server: if one account presses **Run now** (or **Run all**) after the
+missed time, or the server stops part-way through the accounts of a scheduled run, the
+accounts not reached are read as caught up too. They wait for the next scheduled time, as
+they did before. Five of the other jobs are not made up, because a late run is not the
+same as a run on time:
+
+- `reset_routines` reopens every finished Routine task with no cut-off on when it was
+  finished, so a run at 09:00 would reopen what you ticked off that morning.
+- `review_day` defers every planned task block that has already ended, so a run at 09:00
+  would also defer this morning's blocks.
+- `auto_schedule` marks every auto-placed block that ended today without being started as
+  skipped and stages it again, which rewrites the day before you have seen it.
+- `nightly_grooming` moves every overdue task up one priority step each time it runs, so
+  a second run is not the same as one.
+- `advance_objectives` stamps each objective with the time it ran, so a run on a Thursday
+  would make the next Monday see less than a week and skip a weekly objective.
+
+The jobs that run every minute to every six hours do the work they missed at their next
+run anyway. `freeze_stars`, `generate_recurrences`, `snapshot_db`, `push_memory`,
+`prune_sync_events` and `enrich_tasks` are left out for now; they are not learning passes.
+A server that is off every night still loses the whole nightly set.
+
 | Job | Cron | What it does |
 |---|---|---|
 | `fire_reminders` | `* * * * *` | Claim-by-UPDATE dispatcher — fires each due reminder **exactly once**, in-app via SSE and via Web Push |
@@ -1803,7 +1894,7 @@ all of them are listed and manually runnable from the **Jobs** view.
 | `calibrate_triality` | `50 3 * * 1` | Weekly re-tune of the per-slot Triality weights from the outcome log |
 | `calibrate_classification` | `10 4 * * 1` | Weekly re-tune of the classify/parse LLM's few-shot exemplars from the owner's own corrections; runs after `calibrate_triality` so the two weekly learning passes don't compete for one GPU |
 | `calibrate_dismissals` | `20 4 * * 1` | Weekly rebuild of the dismissal-evidence exemplar rollup + one noise-rate reading, from settled `possible_outcome_log` evidence; runs after `calibrate_classification` for the same single-GPU reason |
-| `calibrate_plan_loop` | `30 4 * * 1` | Weekly batch over `plan_loop_runs` — the §A0 authoring loop's pass rate, first-try pass rate, escapes and average iterations per stage; pure SQL, no model calls, but stays inside the weekly learning block so the schedule reads as one unit |
+| `calibrate_plan_loop` | `30 4 * * 1` | Weekly batch over `plan_loop_runs` — the §A0 authoring loop's pass rate, first-try pass rate, escapes and average iterations per stage, and in its log line the rules the checker flagged most often (read from `plan_revision_log`); pure SQL, no model calls, but stays inside the weekly learning block so the schedule reads as one unit |
 | `snapshot_balance` | `40 4 * * 1` | Weekly freeze of each life dimension's target/scheduled/timed hours for the week just closed into `balance_week_log` — read back by `GET /api/priorities/history`; `INSERT OR IGNORE`, first-freeze-wins |
 | `calibrate_placement` | `50 4 * * 1` | Weekly rebuild of each owner's learned hour band per direction (`placement_preferences`) from the moves they made to auto-placed blocks in `placement_log`, plus one survival reading (`placement_survival`); needs 5 or more corrections for a direction, makes no model calls, and runs last in the Monday learning block |
 | `advance_objectives` | `0 5 * * 1` | Stage the next action for each active objective into the flight plan |
@@ -1875,7 +1966,7 @@ consistent snapshot.
 ## Change set — August 2026 (migrations 0148–0150)
 
 Everything above describes the app **as it runs on `main`**, which is at migration head
-`0172_signup_codes` (v4.2, checked 2026-11-01). This section is the narrative description of
+`0176_motivation_recap_pref` (v4.2, checked 2026-11-08). This section is the narrative description of
 the change set that took the head from 0147 to 0150 on 2026-08-14: closing a locking gap on
 synced calendar blocks, plus a new learning loop that lets the parse/classify LLM improve
 from the owner's own corrections. Everything in it is still true of `main`. What shipped
@@ -1910,7 +2001,10 @@ than a false dip) and `DELETE /api/classification/exemplars` ("reset learning" �
 `DELETE /api/triality/weights`; the correction log survives, and the next weekly run
 re-earns the adaptation from it rather than losing it). Unlike `routes/triality.ts`, there is
 no feature flag here — an owner who has never corrected anything just has an empty trend and
-an empty exemplar index, which is exactly what a fresh install reports anyway.
+an empty exemplar index, which is exactly what a fresh install reports anyway. The client for both
+endpoints is Settings → Learning, which prints the number of scored cases beside every reading. Quick add's prompt
+(reached through the Describe-it line) and the wizard's Add joined the loop on 2 Nov 2026; the
+Classification learning bullet above says how.
 
 The original three-part narrative below (ingestion windows, the Tasks-view section-ordering
 swap, and the `CURRENT_TIMESTAMP` local-time bug) shipped in migration 0147 and is kept as
@@ -1989,9 +2083,9 @@ disagree about the set: `sqliteUtcToISO()` folded into `localDateInTZ` server-si
 the same normalization in `isCreatedOnDay` client-side. A no-op for the proper ISO strings
 every other caller passes.
 
-### Since then — migrations 0151–0172 and what else shipped
+### Since then — migrations 0151–0176 and what else shipped
 
-Migrations 0151–0171 landed between 2026-08-16 and 2026-08-30, and 0172 on 2026-10-21.
+Migrations 0151–0171 landed between 2026-08-16 and 2026-08-30, 0172 on 2026-10-21, 0173 on 2026-11-02, 0174 on 2026-11-07 and 0175 and 0176 on 2026-11-08.
 Numbers 0159 and 0160 were never used.
 
 - **0151–0154 · People on work.** A per-owner `people` directory (`person_emails` for
@@ -2022,6 +2116,17 @@ Numbers 0159 and 0160 were never used.
   direction (Home windows used to be left out)
 - **0171 · The trust dial is an ordering policy.** `planning_mode` no longer follows
   `trust_mode`; owners who relied on Hands-off implying Smart were pinned to `smart`
+- **0176 · Me, us, them in the weekly recap.** `scheduling_prefs.motivation_recap_enabled`, off by default
+  (Settings → Preferences). On, the weekly recap adds how last week's timed hours split between work for
+  you, for us and for them, per category.
+- **0175 · Triality motivation stamp.** `triality_log.motivation` (`me`, `us`, `them` or `none`; `NULL` for older
+  rows), the label the suggested task carried when it was shown. Triality already read the label; now the log
+  keeps it.
+- **0174 · Triality weights source.** `triality_log.weights_source` (`learned`, `defaults` or
+  `defaults_invalid`; `NULL` for older rows), stamped when a suggestion is shown, so acceptance can be
+  split by whether learned weights ranked it.
+- **0173 · Classification log entity kind.** `classification_log.entity_kind` (`task` or `time_block`,
+  default `task`), so a Time Block's category picks and corrections are logged next to a task's.
 - **0172 · Invite-code sign-up.** `signup_codes`; with `AUTH_SIGNUP=invite` (the default) an
   operator mints single-use codes in Settings → Accounts for `/signup`
 - **No migration.** Auto fills a matching Time Block before any bare window (Pass 1.9). A
@@ -2034,20 +2139,18 @@ Numbers 0159 and 0160 were never used.
 Release notes from 4.2.0 on are in [CHANGELOG.md](CHANGELOG.md); earlier changes are in
 `git log`.
 
-## Project status (v4.2, 2026-11-01)
+## Project status (source snapshot, 2026-11-11)
 
-The latest git tag is `v4.2.2` (2026-10-29). The root `package.json` still reads `4.2.0`,
-and the container image reports the version it was built with (`CI_PLANNING_VERSION`, set
-from the tag) in `GET /api/health`. The migration head is `0172_signup_codes`: 168
-migrations, 0001–0172, with no files for 0009, 0119, 0159 or 0160; the ordered list in
-`server/src/db/migrations/index.ts` is authoritative. `main` is four commits past `v4.2.2`
-(the iOS and Android shells, the polling endpoint they use, and a test fix). Release notes
+The latest release tag is `v4.2.2` (2026-10-30); `main` has unreleased changes after that
+tag. The root `package.json` still reads `4.2.0`, so align the package version when cutting
+the next release. The migration head is `0178_day_window_overrides` (174 migration files;
+the ordered list in `server/src/db/migrations/index.ts` is authoritative). Release notes
 are in [CHANGELOG.md](CHANGELOG.md).
 
 **Working today:**
 
 - Koa + TypeScript backend serving both the API and the built client on port 3848
-- SQLite schema (migrations 0001 → 0172 — the ordered list in
+- SQLite schema (migrations 0001 → 0178 — the ordered list in
   `server/src/db/migrations/index.ts` is authoritative): tasks, subtasks, time
   blocks, tags, entity_tags, tag_directions, patterns, pattern_blocks, tag_prefs,
   flight_plan, daily_plan, daily_recap, possible_tasks, scheduling_prefs,
@@ -2058,7 +2161,7 @@ are in [CHANGELOG.md](CHANGELOG.md).
   entity_people, signup_codes, plus the learning tables (triality_log,
   triality_weights, classification_*, possible_outcome_log, plan_loop_*,
   placement_*, balance_week_log)
-- All nine routed SolidJS views, with full task CRUD (tags, notes, priorities, due
+- SolidJS views for Today, Calendar, Tasks, Objectives, Balance, Tags, Jobs, and Settings, with full task CRUD (tags, notes, priorities, due
   date/time, subtasks)
 - Deterministic auto-scheduler honoring pattern-block windows, locked meetings, Time
   Blocks and break preferences; per-pattern auto-fill gating
@@ -2103,10 +2206,11 @@ are in [CHANGELOG.md](CHANGELOG.md).
 - **Reflow correctness** (Phase AE) — the reactive reflow is snapshot-based (clear set == re-place set), so editing one placed task can never wipe the other auto-placed blocks; placement status parity (`open`↔`scheduled`), a not-before-now clamp, and locked-block guards across reschedule/review/sweep
 - **Today + Tasks UI** (Phase AC) — Today's single header row (Brief · Focus · Note popovers + FAB, collapsible DUE); Tasks task-chip redesign, Routine grouping with end-of-day archive and a midnight `reset_routines` job
 - **Memory integration** (Phase AA, opt-in) — a pull-first, read-only link to the CI-Server `companion-memory` graph behind `memory_pull_enabled`: the `memory_suggest` job stages upcoming events as task suggestions (auto-promoted since Phase AF), the Daily Brief folds in a memory excerpt, the Hands-off trust tier's day ordering favors memory-related tasks, and memory-drafted tasks get a history-based default estimate; a one-way `push_memory` job (behind `memory_sync_enabled`) mirrors completions/habits/reflections back
-- **People on work** (0151–0154) — Responsible and Beneficiaries sets on tasks and time blocks, a per-owner people directory, and people detected on suggestions; see [docs/people-on-work.md](docs/people-on-work.md)
-- **Learning from what you do** — weekly, batch-only passes over per-owner evidence logs, never run mid-request: `calibrate_classification` (category and motivation picks), `calibrate_dismissals` (suggestion noise), `calibrate_placement` (preferred hours for auto-placed blocks), `calibrate_plan_loop` (authoring-loop stats) and the flagged `calibrate_triality`. All but the plan-loop stats have a reset endpoint
+- **People on work** (0151–0154) — a dedicated Settings → People directory, plus Responsible and Beneficiaries on tasks and time blocks, and people detected on suggestions; see [docs/people-on-work.md](docs/people-on-work.md)
+- **First-time setup** — a persistent ten-step setup for profile, planner hours, pattern tags, day-type availability, weekday mapping, integrations, automation trust, and optional Life Balance setup.
+- **Learning from what you do** — weekly, batch-only passes over per-owner evidence logs, never run mid-request: `calibrate_classification` (category and motivation picks), `calibrate_dismissals` (suggestion noise), `calibrate_placement` (preferred hours for auto-placed blocks), `calibrate_plan_loop` (authoring-loop stats) and the flagged `calibrate_triality`. All but the plan-loop stats have a reset endpoint. Settings → Learning shows what the first four measured, with the number of cases behind every figure, and offers a clear button for all but the plan-loop stats (Triality's readout is on Balance, Metrics)
 - **Balance targets in planning** (0164–0165, 0168) — `balance_bias_enabled` (default on) puts life dimensions that are behind their weekly target first in Fill and in the day's order; `snapshot_balance` freezes each closed week into `balance_week_log`
-- **Accounts** — Companion Portal sign-in and local username/password; invite-code self-serve sign-up (0172, `AUTH_SIGNUP`); operator / member / viewer roles
+- **Accounts** — local username/password and optional Companion Portal sign-in; configurable self-serve sign-up (`AUTH_SIGNUP=open` by default, `invite`, or `off`); operator / member / viewer roles
 - **Mobile** — Capacitor iOS and Android shells in `mobile/` that connect to a server you run (see [Mobile app](#mobile-app-ios-and-android)); on `main`, not yet in a tagged release
 
 **Intentionally partial:**
@@ -2288,7 +2392,8 @@ starts it, and it is not a supported deployment option yet.
 | `CSP_EXTRA_CONNECT_SRC` | (unset) | Extra origins the browser may call, added to the Content-Security-Policy `connect-src` (space/comma-separated). The app's own origin and the Sentry DSN origin are always allowed. Every response carries security headers (CSP, `nosniff`, `Referrer-Policy`, `X-Frame-Options`, `Permissions-Policy`; HSTS over HTTPS). |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama endpoint. Unreachable ⇒ AI features degrade gracefully (template briefings, dedupe off). Read as `APP_OLLAMA_URL` when unset. When neither is set and `APP_OPENAI_BASE_URL` is, the AI endpoint answers instead. |
 | `OLLAMA_FAST` | `qwen2.5:0.5b` | Fast model for extraction/triage. A last-resort default: used when it is installed, otherwise the app auto-selects an installed model (see *5. Ollama* under Local development). Setting it **pins** the tier verbatim, and an unpulled pin fails with an `ollama pull …` error. Legacy alias: `OLLAMA_SMALL` (still accepted; `OLLAMA_FAST` wins when both are set). |
-| `OLLAMA_QUALITY` | `gemma3n:e4b` | Quality model for briefings. Same rule as `OLLAMA_FAST`: used when installed, otherwise auto-selected; setting it pins the tier. Legacy alias: `OLLAMA_MEDIUM` (still accepted; `OLLAMA_QUALITY` wins when both are set). |
+| `OLLAMA_QUALITY` | `gemma3n:e4b` | Quality model for briefings, planning, and the classification behind quick add and the Add dialog's Describe-it line. Same rule as `OLLAMA_FAST`: used when installed, otherwise auto-selected; setting it pins the tier. Legacy alias: `OLLAMA_MEDIUM` (still accepted; `OLLAMA_QUALITY` wins when both are set). |
+| `QUICK_ADD_HINT_MODELS` | *(empty)* | Comma-separated model names to add to the ones quick add shows your own corrections to. The built-in list is `gemma3n:e4b`, `qwen2.5:3b` and `gemma3:4b`, the models it was measured to help; on any other model the Describe-it prompt is the usual one, because three other models answered worse with the examples. No wildcard. Measure a model yourself before adding it (`docs/quickadd-hint-guard-2026-11.md`). |
 | `OLLAMA_EMBED` | `nomic-embed-text` | Embedding model for dedupe. Same rule: used when installed, otherwise an installed embedding model is auto-selected; setting it pins the tier. |
 | `APP_OPENAI_BASE_URL` | (unset) | An OpenAI-compatible endpoint (`…/v1`, added when missing) for AI, used when no Ollama URL is set. The CI Hub writes it when its AI runs on vLLM or Lemonade. Chat, embeddings and the model list all go through it. |
 | `APP_OPENAI_API_KEY` | (unset) | Bearer token for `APP_OPENAI_BASE_URL`, for an endpoint that takes one. Never written to logs or errors. |
@@ -2304,7 +2409,7 @@ starts it, and it is not a supported deployment option yet.
 | `AUTH_DEFAULT_USERNAME` | `admin` | Username of the first local owner (the operator) seeded on boot when no local owners exist yet — in both `sso` sub-modes. On a CI Hub this is the admin login you set at install time. |
 | `AUTH_DEFAULT_PASSWORD` | (unset) | Password for that seeded owner. **Required** under `DISABLE_OIDC=true` with zero local owners — fail-closed if unset. Optional under Companion Portal login, where it seeds the **break-glass** local operator that can still sign in when the portal is unreachable; leave it unset and the first portal sign-in claims the operator role instead. Never commit it. |
 | `AUTH_RESET_TOKEN_TTL_MS` | `3600000` | Password-reset link lifetime for local login (default 60 min, single-use). |
-| `AUTH_SIGNUP` | `invite` | Local self-serve sign-up at `/signup` (meaningful only with `AUTH_MODE=sso`): `invite` requires a single-use code an operator mints in Settings → Accounts (7-day TTL; the person picks their own username and password — the operator never sees it), `open` needs no code, `off` removes the page (404). An unknown value refuses to boot. Independent of Companion Portal — with the portal on, the login screen's sign-up link is the portal itself and `/signup` is reached by direct link. The first account on an instance with no operator becomes the operator. |
+| `AUTH_SIGNUP` | `open` | Local self-serve sign-up at `/signup` (meaningful only with `AUTH_MODE=sso`): `open` needs no code, `invite` requires a single-use code an operator mints in Settings → Accounts (7-day TTL; the person picks their own username and password — the operator never sees it), `off` removes the page (404). An unknown value refuses to boot. Independent of Companion Portal — with the portal on, the login screen's sign-up link is the portal itself and `/signup` is reached by direct link. The first account on an instance with no operator becomes the operator. |
 | `CIPORTAL_ISSUER` | `https://hub.ci.computer/api/auth` | Companion Portal (CI-Portal) SSO discovery base (OAuth 2.1 + PKCE) — the **production** portal. Staging is `https://hub.companionintel.com/api/auth`, dev `https://hub.companionintelligence.com/api/auth`. Endpoints and the token `iss` are read from `<issuer>/.well-known/openid-configuration`. Meaningful when `AUTH_MODE=sso` and `DISABLE_OIDC` is not `true`; on a CI-Hub appliance the Hub injects the paired portal's value. |
 | `CIPORTAL_CLIENT_ID` | `ci-planning` | Our client registered with Companion Portal as a first-party public (PKCE) client. A fixed first-party identity, so it defaults rather than needing to be looked up; override only for a fixture portal or a differently-registered fork. |
 | `CIPORTAL_CLIENT_SECRET` | (unset) | Only if registered as a confidential client; leave unset for public/PKCE. Never commit it. |
@@ -2489,23 +2594,26 @@ and the Simulator `.app` is unsigned. Nothing here is store-ready.
   and `-PappVersionName=<name>`. The iOS `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` are set per
   build with `xcodebuild MARKETING_VERSION=<name> CURRENT_PROJECT_VERSION=<n>`. Release lanes in CI need
   the signing secrets and must pass those values.
-- **Artwork and listings.** The app icon and launch screen are Capacitor's placeholders; both stores
-  need the real icon set (iOS 1024 px without alpha; Android adaptive icon), screenshots, descriptions,
-  a support URL, a **privacy policy URL**, content ratings, and the privacy disclosures (Apple's App
-  Privacy answers and Google's Data safety form). `Info.plist` declares `ITSAppUsesNonExemptEncryption`
+- **Artwork and listings.** The app icon and launch screen were replaced in companionintelligence/CI-Planning#644 and
+  companionintelligence/CI-Planning#651. Both stores still need screenshots, descriptions, a support
+  URL, a **privacy policy URL**, content ratings, and the privacy disclosures (Apple's App Privacy
+  answers and Google's Data safety form). The drafts are in `docs/mobile-store/`. `Info.plist` declares `ITSAppUsesNonExemptEncryption`
   as `false` (the app's only cryptography is the operating system's TLS) and the app target carries a
   `PrivacyInfo.xcprivacy` that declares nothing collected and no required-reason APIs, checked by
   scanning the built binaries; both are the owner's to confirm before the first upload, and the
   manifest needs a new entry whenever a plugin brings one of those APIs.
-- **Legal pages.** The repo has no privacy policy, terms of use, support page or data-deletion statement
-  yet, and both stores need public URLs. The policy must cover the crash reports from released images
-  (Sentry, on by default in released builds) and any demo server run for review.
+- **Legal pages.** The privacy policy is a draft in `docs/mobile-store/` and is not published. The repo has no
+  terms of use, support page or data-deletion statement yet, and both stores need public URLs. The
+  policy must cover crash reports from the released server images (Sentry, when the CI secret is set);
+  the mobile builds send none. It must also cover any demo server run for review.
 - **App Review.** Apple will not accept a client that cannot be exercised, so submission needs a
   reachable **demo server with review credentials**, and a position on guideline 4.2 (a web-technology
   app must feel like an app). The shell offers no way to create an account: New account, invite codes
   and the sign-up links are hidden, and `/signup` sends you to sign-in. Apple's in-app account-deletion
-  rule (5.1.1(v)) still needs a position: an operator can delete other accounts from the app, but no one
-  can delete their own. Play will ask why `usesCleartextTraffic` is on (people's own LAN servers).
+  rule (5.1.1(v)) has a proposed position in `docs/mobile-store/app-review-notes.md` for the owner to confirm: an
+  operator can delete other accounts from the app, but no one can delete their own. Play will ask why
+  `usesCleartextTraffic` is on. On Android it applies to the whole app; on iOS, App Transport Security
+  limits plain http to local-network names.
 - **Product gaps listed above.** Companion Portal sign-in (system browser with a custom-scheme or
   universal-link return, PKCE), native push or local notifications for reminders, and downloads through
   the share sheet.
@@ -2709,17 +2817,17 @@ This table lists the notable endpoints, not every route; the routers are in
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/tasks?status=&tag=&q=&priority=&due_before=&owner_id=` | List/filter tasks (with tags) |
-| POST | `/api/tasks` | Create a task (`title` required) |
+| POST | `/api/tasks` | Create a task (`title` required). Also accepts the optional `classification_claim` that `/api/tasks/quick/parse` returned, so a changed category pick is recorded as a correction; it is validated, dropped silently if it does not check out, and never stored on the task or returned (if it checks out, its pick and text become one `classification_log` row) |
 | PATCH | `/api/tasks/:id` | Update fields; `{"completed": true}` marks done |
 | DELETE | `/api/tasks/:id` | Soft delete (status → `cancelled`) |
 | POST | `/api/tasks/:id/close` | The close ritual: completes the task if it is still open (an already-completed task is accepted too, for reflecting later). Records `score` 1–5, or 0 = declined · note · actual minutes; stamps `reaction_at` server-side for a real rating or a note. **400** on a present-but-invalid score |
 | POST | `/api/tasks/:id/enrich` | Fill blank description / direction / categories from Companion Memory; always resolves — `enriched:false` carries the reason |
 | GET | `/api/tasks/:id/subtasks` | List subtasks |
-| POST | `/api/tasks/quick/parse` \| `/api/tasks/quick` | Natural-language quick add: `/quick/parse` previews the parse and writes nothing (deterministic, with an Ollama overlay when it is up); `/quick` creates the task |
+| POST | `/api/tasks/quick/parse` \| `/api/tasks/quick` | Natural-language quick add: `/quick/parse` previews the parse and writes nothing (deterministic, with an Ollama overlay when it is up; when the model chose a category it also returns an opaque `classification_claim`, which the wizard echoes on `POST /api/tasks`); `/quick` creates the task (no screen in the app calls it today). Both show the model your most common category and who-it's-for corrections, as of the last Monday `calibrate_classification` run |
 | POST · GET | `/api/tasks/:id/timer/start` \| `/api/tasks/:id/timer/stop` · `/api/timer` | The single running timer: start (stops any other first), stop (**409** when none is running), and `GET /api/timer` for the current entry or `null` |
 | POST · GET | `/api/tasks/:id/skip` \| `/reschedule` \| `/promote-habit` \| `/promote-objective` · `/api/tasks/:id/streak` | Per-task actions: skip a recurring instance, bump a missed task out by `days`, make a task a habit, surface it in the Objectives tree, and read a habit's streak |
 | POST | `/api/tasks/suggest-tags` \| `/api/tasks/suggest-subtasks` \| `/api/tasks/auto-tag` | Best-effort Ollama helpers: tags for a title, a subtask brainstorm, and auto-tagging for the Tasks view |
-| GET/POST/PATCH/DELETE | `/api/blocks` | Time blocks for a date range |
+| GET/POST/PATCH/DELETE | `/api/blocks` | Time blocks for a date range. A create also accepts the optional `classification_claim` that `/api/tasks/quick/parse` returned, settled like a task's but logged as a Time Block |
 | GET | `/api/blocks/export.ics?from=&to=` | Download the range's dated blocks as an iCalendar file (defaults to today) |
 | POST | `/api/blocks/:id/move-group` \| `/promote` \| `/add-tasks` · `/api/days/:date/clear` | Shift a Plan and its members by `delta_minutes`; turn a Concept into a scheduled Plan; attach existing tasks to a Time-Block; clear the day's auto-placed task blocks only (manual, locked and calendar blocks stay) |
 | POST/DELETE/GET | `/api/blocks/:id/extend` \| `/reschedule` \| `/focus-reminders` \| `/whats-next` | Time-Sense (Focus Ritual): extend a block (two-phase, `confirm`), re-stage its task, arm / clear its background cues, and the "what's next" line. 404 while `time_sense_enabled` is off |
@@ -2743,7 +2851,7 @@ This table lists the notable endpoints, not every route; the routers are in
 | GET | `/api/days/:date/conflicts` | Tasks now outside their direction's windows (Phase 7) |
 | GET | `/api/days/:date/reflow/preview` | Exactly what a confirmed reflow would do — read-only |
 | POST | `/api/days/:date/reflow/apply` | The confirmation; the only mutating path of the three |
-| GET | `/api/plan-week/review?anchor=` | **Plan my week** — deterministic weekly recap (defaults to the week that just ended); LLM-free |
+| GET | `/api/plan-week/review?anchor=` | **Plan my week** — deterministic weekly recap (defaults to the week that just ended); LLM-free. With `motivation_recap_enabled` on it also carries `motivation_balance`: timed me / us / them minutes per category (the key is absent when off) |
 | GET | `/api/plan-week/candidates` | Candidate tasks/gaps the assistant's branches can offer |
 | POST | `/api/plan-week/next-step` | Phrase the next question + its fixed 3 options through the local LLM, with a deterministic fallback |
 | POST | `/api/plan-week/parse` | Parse a free-text answer within a Plan-my-week session |
@@ -2804,12 +2912,12 @@ This table lists the notable endpoints, not every route; the routers are in
 | POST | `/api/triality/feedback` | `{log_id, outcome}` — stamp `opened` / `staged` / `dismissed` on a shown suggestion, at most once (this is the learning evidence). 404 while the flag is off |
 | DELETE | `/api/triality/weights` | Reset learning — drops this owner's learned slot weights, so scoring returns to the shipped defaults. The outcome log is untouched, and the next weekly pass re-derives weights from it: this is a recompute, not a permanent opt-out. 404 while the flag is off |
 | GET | `/api/metrics/triality?days=` | Balance → Metrics: acceptance per slot (a suggestion undecided for **less than 24h** is pending and excluded from the denominator; once it is 24h old and still untouched it counts as *ignored* — a decision, and a weak negative), the Novel uptake trend against the prior window, how under-served categories responded, and the learned weights with their sample counts (`null` until learning has run). 404 while the flag is off |
-| GET | `/api/classification/accuracy?limit=` | The classify/parse LLM's held-out accuracy trend, newest run first, per field (`category`/`motivation`). `accuracy: null` on a run that measured nothing — never a `0`. No feature flag |
-| DELETE | `/api/classification/exemplars` | Reset classification learning — drops this owner's learned few-shot index; the correction log survives and the next weekly `calibrate_classification` pass re-earns it |
-| GET · DELETE | `/api/placement/survival?limit=` · `/api/placement/preferences` | Placement learning: the weekly trend of whether auto-placed blocks survive the day untouched, newest run first (`survival_rate: null` = nothing was decided that period; `limit` defaults to 12, max 100); and reset this owner's learned hour bands (the placement log survives). No feature flag |
-| GET | `/api/plan-loop/trend?limit=` | The §A0 authoring loop's measured trend per stage — pass rate, first-try pass rate, escapes and average iterations — newest run first. `limit` defaults to 26, clamped to 1–365. `avg_iterations` / `pass_rate` are `null` when a period had no runs — never a `0`. No feature flag, and no reset endpoint: nothing in this wave influences the loop's behavior |
-| GET | `/api/dismissal-learning/trend?limit=` | The `possible_dismissal_rate` noise-rate trend, oldest → newest, defaulting to 90 rows — answers "is the review queue actually getting quieter?" `rate: null` on a period with `decided = 0` — never a `0` |
-| DELETE | `/api/dismissal-learning/exemplars` | Reset dismissal learning — drops this owner's learned exemplar rollup only (`{ok: true, cleared: <n>}`); `possible_outcome_log` survives and the next weekly `calibrate_dismissals` pass re-earns it from that evidence |
+| GET | `/api/classification/accuracy?limit=` | The classify/parse LLM's held-out accuracy trend, newest run first, per field (`category`/`motivation`). `accuracy: null` on a run that measured nothing — never a `0`. A field with fewer than 2 corrections in 90 days writes no row at all (not a null row), and `limit` counts rows across both fields, so the default of 12 is about six weeks. The response also carries `evidence`: the corrections the weekly pass can learn from, per field and per `entity_kind` (`task` or `time_block`), counted over the same 90 days from when each guess was made. No feature flag. Settings → Learning is the client |
+| DELETE | `/api/classification/exemplars` | Reset classification learning — drops this owner's learned few-shot index; the correction log survives and the next weekly `calibrate_classification` pass re-earns it. Settings → Learning has the button |
+| GET · DELETE | `/api/placement/survival?limit=` · `/api/placement/preferences` | Placement learning: the weekly trend of whether auto-placed blocks survive the day untouched, newest run first (`survival_rate: null` = nothing was decided that period; `limit` defaults to 12, max 100); and reset this owner's learned hour bands (the placement log survives). No feature flag. Settings → Learning is the client |
+| GET | `/api/plan-loop/trend?limit=` | The §A0 authoring loop's measured trend per stage — pass rate, first-try pass rate, escapes and average iterations — newest run first. `limit` defaults to 26, clamped to 1–365. A week with no runs has no row, so a chart draws a gap; the rate columns are real numbers on any row that exists. `limit` counts rows across stages. No feature flag, and no reset endpoint: nothing in this wave influences the loop's behavior. Settings → Learning is the client |
+| GET | `/api/dismissal-learning/trend?limit=` | The `possible_dismissal_rate` noise-rate trend, oldest → newest, defaulting to 90 rows — answers "is the review queue actually getting quieter?" `rate: null` on a period with `decided = 0` — never a `0`. Settings → Learning is the client |
+| DELETE | `/api/dismissal-learning/exemplars` | Reset dismissal learning — drops this owner's learned exemplar rollup only (`{ok: true, cleared: <n>}`); `possible_outcome_log` survives and the next weekly `calibrate_dismissals` pass re-earns it from that evidence. Settings → Learning has the button |
 | POST | `/api/sync` | Apply offline op-log entries from a device (Phase L) |
 | GET | `/api/export` | Download all owner data as a JSON file (import-compatible) |
 | POST | `/api/import` | Restore owner data from an export JSON body |

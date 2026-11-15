@@ -1,7 +1,7 @@
 /**
- * AF-5 — pure helpers for the Objectives-tab leaf-task list + "+" quick-add.
+ * AF-5 — pure helpers for objective task rows + "+" quick-add.
  *
- * Deliberately Solid-free (no signals, no DOM) so leaf detection, row-visibility
+ * Deliberately Solid-free (no signals, no DOM) so objective classification, row-visibility
  * filtering and the create-vs-create-then-link sequencing are unit-testable
  * without jsdom. The component (ObjectivesPanel) supplies the API calls as
  * injected deps.
@@ -9,7 +9,7 @@
 
 // ── Leaf detection ────────────────────────────────────────────────────────────
 
-/** Only leaf objectives (level 'objective') hold tasks; the server 422s otherwise. */
+/** True when a node is the bottom-level `objective` type. */
 export function isLeafObjective(o: { level: string }): boolean {
   return o.level === 'objective';
 }
@@ -22,7 +22,7 @@ export interface QuickAddTaskRow {
 }
 
 /**
- * Which linked tasks to render under a leaf: open/scheduled/etc. always;
+ * Which linked tasks to render under an objective: open/scheduled/etc. always;
  * 'done' only when completed today (shown checked, so a just-completed row
  * doesn't vanish under the cursor); 'cancelled' never (the server already
  * filters these — kept here defensively). `completedLocalDate` converts a
@@ -51,7 +51,9 @@ export interface QuickAddObjective {
 }
 
 /**
- * How a title-only quick-add on a leaf objective must be executed:
+ * Legacy sequencing helper for title-only quick-adds. The live Objectives panel
+ * now uses the server create endpoint so estimates, inherited settings, and
+ * approval state are applied together.
  * - `subtask`      — the objective was auto-promoted from a task (`source_task_id`
  *                    set): create the task with `parent_id = source_task_id`; the
  *                    server's task-promotion auto-links it to this objective AND

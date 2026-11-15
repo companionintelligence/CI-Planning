@@ -48,12 +48,14 @@ describe('the page', () => {
     expect(max === undefined || Number(max) >= 5).toBe(true);
   });
 
+  // Reads every source file, so its time depends on machine load; vitest's 5 s default
+  // timed it out under load.
   it('is never rewritten to forbid it by anything in the client', () => {
     const offenders = sourceFiles(join(repo, 'client', 'src'))
       .filter((file) => /maximum-scale|user-scalable|minimum-scale/i.test(readFileSync(file, 'utf8')))
       .map((file) => file.slice(repo.length + 1));
     expect(offenders).toEqual([]);
-  });
+  }, 30_000);
 });
 
 describe('the app shells', () => {

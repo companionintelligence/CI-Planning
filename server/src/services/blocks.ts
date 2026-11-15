@@ -17,6 +17,7 @@ import { setEntityPeople, getEntityPeople, getEntityPeopleBulk, type EntityPeopl
 import { getCategoryPrefs } from './category-prefs.js';
 import { syncTaskFromBlock, mirrorBlockStatusToTask, applyTaskPlacementStatus, revertTaskPlacementStatus, TERMINAL_BLOCK_STATUS_SQL } from './block-task-sync.js';
 import { recordPlacementMove } from './placement-learning.js';
+import { canonicalValue, recordCorrection } from './classification-learning.js';
 import { resolveAutoNestParent } from './auto-nest.js';
 
 /**
@@ -706,7 +707,19 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
   }
 
   // Phase B: category axis — `undefined` preserves, `[]` clears (mirrors tags).
-  if (categoryIds !== undefined) await setEntityCategories('time_block', id, categoryIds);
+  if (categoryIds !== undefined) {
+    // The owner's answer to a category the model picked for this Time Block (its Describe-it
+    // claim settled at create, see routes/blocks.ts) is a change to the block's OWN saved
+    // set, recorded as read back. Same rule as updateTask: re-sending the set a block
+    // already has is not an answer, and a no-op unless the model made a claim about this block.
+    // Never throws, so a block update cannot fail because the learning log did.
+    const before = await entityCategoryNames('time_block', id);
+    await setEntityCategories('time_block', id, categoryIds);
+    const after = await entityCategoryNames('time_block', id);
+    if (canonicalValue(before) !== canonicalValue(after)) {
+      await recordCorrection(ownerId, id, 'category', after, undefined, 'time_block');
+    }
+  }
 
   // People on work (0151/0154). Three states, per role: absent preserves, `[]` pins to
   // NOBODY, `null` resumes inheriting from the backing task. An empty array does NOT

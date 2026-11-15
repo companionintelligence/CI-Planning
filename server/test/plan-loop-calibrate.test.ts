@@ -50,6 +50,23 @@ function seedRun(opts: {
     );
 }
 
+/** Seed one `plan_revision_log` row directly. `defects` is the JSON text as stored. */
+function seedRevision(opts: { owner?: string; stage?: string; defects: string[] | string; at: string; runId?: string }): void {
+  sqlite
+    .prepare(
+      `INSERT INTO plan_revision_log (id, owner_id, run_id, stage, iter, score, reason, defects, critique, candidate, at)
+       VALUES (?, ?, ?, ?, 1, 0.5, 'judged', ?, '', NULL, ?)`,
+    )
+    .run(
+      newId(),
+      opts.owner ?? OWNER,
+      opts.runId ?? 'run-1',
+      opts.stage ?? 'order',
+      typeof opts.defects === 'string' ? opts.defects : JSON.stringify(opts.defects),
+      opts.at,
+    );
+}
+
 function statsFor(owner: string): {
   stage: string;
   computed_date: string;
@@ -192,6 +209,58 @@ describe('calibratePlanLoop', () => {
   });
 });
 
+describe('calibratePlanLoop — the rules the checker flagged most often', () => {
+  beforeEach(() => resetDb());
+
+  it('counts each rule once per revision, most first, ties by rule name, at most three', async () => {
+    seedRun({ passed: 1, iterations: 1, at: hoursAgo(1) });
+    seedRevision({ defects: ['priority_inversion', 'overlap'], at: hoursAgo(1) });
+    seedRevision({ defects: ['priority_inversion', 'priority_inversion'], at: hoursAgo(2) }); // twice in one revision: once
+    seedRevision({ defects: ['overlap'], at: hoursAgo(3) });
+    seedRevision({ defects: ['zeta'], at: hoursAgo(4) });
+    seedRevision({ defects: ['alpha'], at: hoursAgo(5) });
+    seedRevision({ defects: [], at: hoursAgo(6) });
+
+    const [s] = (await calibratePlanLoop(OWNER, NOW)).stages;
+    expect(s.revisions).toBe(6);
+    expect(s.topDefects).toEqual([
+      { rule: 'overlap', revisions: 2 },
+      { rule: 'priority_inversion', revisions: 2 },
+      { rule: 'alpha', revisions: 1 }, // 'alpha' beats 'zeta' on the tie, and zeta is cut at three
+    ]);
+  });
+
+  it('reads only this owner, this stage and the window', async () => {
+    createOwner(SECOND_OWNER_ID);
+    seedRun({ passed: 1, iterations: 1, at: hoursAgo(1) });
+    seedRevision({ defects: ['mine'], at: hoursAgo(1) });
+    seedRevision({ defects: ['too_old'], at: daysAgo(STATS_WINDOW_DAYS + 1) });
+    seedRevision({ stage: 'other', defects: ['other_stage'], at: hoursAgo(1) });
+    seedRevision({ owner: SECOND_OWNER_ID, defects: ['theirs'], at: hoursAgo(1) });
+
+    const [s] = (await calibratePlanLoop(OWNER, NOW)).stages;
+    expect(s.revisions).toBe(1);
+    expect(s.topDefects).toEqual([{ rule: 'mine', revisions: 1 }]);
+  });
+
+  it('survives a defects value that is not a JSON array of strings', async () => {
+    seedRun({ passed: 1, iterations: 1, at: hoursAgo(1) });
+    seedRevision({ defects: 'not json', at: hoursAgo(1) });
+    seedRevision({ defects: '{"a":1}', at: hoursAgo(2) });
+    seedRevision({ defects: '[1,null,"","real"]', at: hoursAgo(3) });
+
+    const [s] = (await calibratePlanLoop(OWNER, NOW)).stages;
+    expect(s.revisions).toBe(3);
+    expect(s.topDefects).toEqual([{ rule: 'real', revisions: 1 }]);
+  });
+
+  it('reports an empty list and zero revisions when none were logged', async () => {
+    seedRun({ passed: 1, iterations: 1, at: hoursAgo(1) });
+    const [s] = (await calibratePlanLoop(OWNER, NOW)).stages;
+    expect(s).toMatchObject({ revisions: 0, topDefects: [] });
+  });
+});
+
 describe('calibrate_plan_loop job', () => {
   beforeEach(() => resetDb());
 
@@ -212,6 +281,21 @@ describe('calibrate_plan_loop job', () => {
 
     const rows = statsFor(OWNER);
     expect(rows).toHaveLength(2);
+  });
+
+  it('names the most flagged rules in the log, and says so when none were flagged', async () => {
+    seedRun({ passed: 1, iterations: 1, at: realHoursAgo(1) });
+    seedRevision({ defects: ['priority_inversion'], at: realHoursAgo(1) });
+    seedRevision({ defects: ['priority_inversion', 'overlap'], at: realHoursAgo(2) });
+    seedRevision({ defects: [], at: realHoursAgo(3) });
+
+    const flagged = await runJob('calibrate_plan_loop');
+    expect(flagged.log).toContain('most flagged: priority_inversion (2 of 3 revision(s)), overlap (1 of 3 revision(s))');
+
+    resetDb();
+    seedRun({ passed: 1, iterations: 1, at: realHoursAgo(1) });
+    const none = await runJob('calibrate_plan_loop');
+    expect(none.log).toContain('; no rule flagged');
   });
 
   it('reports "nothing to measure" and itemsUpdated = 0 when there are no runs', async () => {

@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Companion Planning</title>
+<meta name="description" content="Companion Planning is a private, local-first planner for tasks, time blocks and your day. It runs on a server you control.">
+<link rel="canonical" href="https://planning.ci.computer/">
+<style>
+  :root {
+    --bg: #f4f7f6;
+    --surface: #ffffff;
+    --text: #0a222e;
+    --text-muted: #4a5f67;
+    --border: #d5e0e1;
+    --primary: #0a6358;
+    --primary-text: #ffffff;
+    --code-bg: #eaf2f0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b1417;
+      --surface: #111d21;
+      --text: #e6f0ee;
+      --text-muted: #9fb6b1;
+      --border: #22363b;
+      --primary: #c5e8dc;
+      --primary-text: #0b1417;
+      --code-bg: #172529;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b1417;
+    --surface: #111d21;
+    --text: #e6f0ee;
+    --text-muted: #9fb6b1;
+    --border: #22363b;
+    --primary: #c5e8dc;
+    --primary-text: #0b1417;
+    --code-bg: #172529;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: Montserrat, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+  }
+  a { color: var(--primary); }
+  .wrap {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 48px 16px 72px;
+  }
+  .hero {
+    text-align: center;
+    margin-bottom: 40px;
+  }
+  .badge {
+    display: inline-block;
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--primary);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 4px 12px;
+    margin-bottom: 16px;
+  }
+  h1 {
+    font-size: clamp(28px, 6vw, 40px);
+    line-height: 1.2;
+    margin: 0 0 14px;
+  }
+  .lede {
+    color: var(--text-muted);
+    font-size: 17px;
+    max-width: 580px;
+    margin: 0 auto;
+  }
+  .cta-row {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-top: 24px;
+  }
+  .btn {
+    display: inline-block;
+    padding: 12px 20px;
+    border-radius: 8px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 15px;
+  }
+  .btn.primary { background: var(--primary); color: var(--primary-text); }
+  .btn.secondary { color: var(--text); border: 1px solid var(--border); }
+
+  section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px;
+    margin-bottom: 20px;
+  }
+  h2 {
+    font-size: 20px;
+    margin: 0 0 12px;
+  }
+  ul.features { list-style: none; padding: 0; margin: 0; }
+  ul.features li {
+    padding: 12px 0;
+    border-top: 1px solid var(--border);
+  }
+  ul.features li:first-child { border-top: 0; padding-top: 0; }
+  ul.features strong { color: var(--primary); }
+
+  ol.steps { padding-left: 22px; margin: 0; }
+  ol.steps li { margin-bottom: 14px; }
+  ol.steps li:last-child { margin-bottom: 0; }
+  ol.steps strong { color: var(--primary); }
+
+  ul.checks { list-style: none; padding: 0; margin: 0; }
+  ul.checks li {
+    position: relative;
+    padding-left: 26px;
+    margin-bottom: 10px;
+    color: var(--text-muted);
+  }
+  ul.checks li:last-child { margin-bottom: 0; }
+  ul.checks li::before {
+    content: "\2713";
+    position: absolute;
+    left: 0;
+    color: var(--primary);
+    font-weight: 700;
+  }
+
+  footer {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+    margin-top: 40px;
+  }
+  footer a { color: inherit; }
+</style>
+</head>
+<body>
+  <main class="wrap">
+    <header class="hero">
+      <span class="badge">Companion Planning</span>
+      <h1>Your planner, on a server you run</h1>
+      <p class="lede">
+        Companion Planning is a private, local-first planner for tasks, time blocks and your day.
+        Your plans are stored on the server you set up, and you open the planner in a browser.
+      </p>
+      <div class="cta-row">
+        <a class="btn primary" href="#how">How it works</a>
+        <a class="btn secondary" href="mailto:support@ci.computer">Ask a question</a>
+      </div>
+    </header>
+
+    <section>
+      <h2>What's inside</h2>
+      <ul class="features">
+        <li><strong>Today.</strong> The day at a glance: overdue, due today, scheduled and open counts, a focus card, and a grid for placing time blocks.</li>
+        <li><strong>Calendar.</strong> Day, week and month views, with export and a schedule-day control.</li>
+        <li><strong>Tasks.</strong> A backlog with priorities and tags, plus habits, routines, time blocks and objectives. Goals, projects and objectives form one tree.</li>
+        <li><strong>Optional AI.</strong> With a local Ollama model, the planner adds briefings, task extraction and auto-scheduling. These stay hidden until Ollama is reachable.</li>
+        <li><strong>Optional Google Calendar.</strong> Once you connect it, your events are read into the planner. Writing changes back to Google is a separate setting, and it is off by default.</li>
+      </ul>
+    </section>
+
+    <section id="how">
+      <h2>How it works</h2>
+      <ol class="steps">
+        <li><strong>Run the server.</strong> Start Companion Planning on a computer you control, such as a desktop, a mini PC or a home server. Run it from source with Node.js 22 or newer, or with Docker.</li>
+        <li><strong>Open the planner.</strong> Go to the server's address in a browser. On a phone, you can add the planner to your home screen.</li>
+        <li><strong>Sign in.</strong> Sign in with an account on that server.</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>Your data</h2>
+      <ul class="checks">
+        <li>Tasks, time blocks and tags live in one SQLite file on the server you run.</li>
+        <li>The optional AI features run on a local Ollama model.</li>
+        <li>Google Calendar sync stays off until you set it up.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>What you need</h2>
+      <ul class="checks">
+        <li>A computer or home server that runs Node.js 22 or newer, or Docker.</li>
+        <li>A current browser for the planner.</li>
+        <li>The iPhone and Android apps are being prepared. Until they are available, open the planner in your phone's browser.</li>
+      </ul>
+    </section>
+
+    <footer>
+      <p>
+        Companion Planning is part of the <a href="https://ci.computer">Companion Intelligence</a> platform.
+        Questions: <a href="mailto:support@ci.computer">support@ci.computer</a>.
+      </p>
+    </footer>
+  </main>
+</body>
+</html>

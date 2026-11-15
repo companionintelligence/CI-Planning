@@ -23,6 +23,9 @@ export class ApiError extends Error {
   }
 }
 
+/** Dispatched on `window` when an app request comes back 401 (see `request`). */
+export const UNAUTHENTICATED_EVENT = 'auth:unauthenticated';
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   // Mobile shell, first run, before the user has chosen a server: BASE is a bare '/api',
   // which would hit the app's own bundle and come back as HTML. Fail as "never reached
@@ -41,6 +44,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
+    // The auth endpoints answer 401 to a wrong password; anywhere else it means the session ended.
+    if (res.status === 401 && !path.startsWith('/auth/')) window.dispatchEvent(new Event(UNAUTHENTICATED_EVENT));
     throw new ApiError((err as any).error ?? res.statusText, res.status);
   }
   // The server accepted a change from this client: let lib/sse.ts poll for its effects
@@ -88,6 +93,47 @@ export interface AccountRosterEntry {
   person_id: string | null;
 }
 
+/** Read-only summary for a task explicitly shared to this signed-in account. */
+export interface SharedTask {
+  id: string;
+  title: string;
+  status: string;
+  priority: number;
+  due_at: string | null;
+  estimated_minutes: number | null;
+  shared_as: Array<'shared' | 'responsible' | 'beneficiary'>;
+}
+
+export interface SharedPlannerItem {
+  entity_kind: 'task' | 'objective';
+  entity_id: string;
+  title?: string;
+}
+export interface SharedPlannerInvite {
+  id: string;
+  email: string;
+  status: 'pending' | 'active' | 'revoked';
+  recipient_owner_id: string | null;
+  recipient_name: string | null;
+  recipient_role: string | null;
+  items: SharedPlannerItem[];
+  created_at: string;
+  updated_at: string;
+}
+export interface GuestSharedContent {
+  tasks: Array<{
+    id: string; title: string; description: string | null; status: string;
+    priority: number; due_at: string | null; scheduled_for: string | null; task_time: string | null;
+    estimated_minutes: number | null; objective_id: string | null; objective_title: string | null;
+    shared_as: Array<'shared' | 'beneficiary' | 'responsible'>;
+  }>;
+  objectives: Array<{
+    id: string; title: string; description: string | null;
+    target_date: string | null; status: string; priority: number;
+  }>;
+  blocks: Array<{ id: string; task_id: string; title: string; start_at: string; end_at: string }>;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -106,7 +152,12 @@ export interface Task {
   status: string;
   parent_id?: string;
   owner_id: string;
+  /** Canonical task shared by another planner; edits sync to the source owner. */
+  shared?: boolean;
+  shared_by?: string;
   source_kind: string;
+  auto_generated?: boolean;
+  human_approved_at?: string | null;
   created_at: string;
   completed_at?: string;
   tags: string[];                 // primary tags (entity_tags level 1) — incl. the home/work/community direction
@@ -173,6 +224,9 @@ export interface TaskInput {
    *  task lands on the Planner immediately. Server-side placeStartAnchoredTask; needs
    *  scheduled_for. Default off. */
   auto_place?: boolean;
+  /** Opaque echo of the `quickParse` claim: add-mode task or habit create only. The
+   *  server validates it and may silently ignore it; it is never sent on update. */
+  classification_claim?: ClassificationClaim;
 }
 
 export interface Streak {
@@ -320,6 +374,26 @@ export interface ParsedQuick {
   isComplex?: boolean;
 }
 
+export interface DurationSuggestion {
+  minutes: number;
+  minMinutes: number;
+  maxMinutes: number;
+  source: 'title_history' | 'tag_history' | 'quick_estimate' | 'default';
+  samples: number;
+  basis?: 'same title' | 'matching tags';
+}
+
+/**
+ * "The model, not the owner, picked these categories for this text" — returned by
+ * `quickParse` only when the classifier chose some. The client never builds or edits
+ * one: it holds it while the preview is on screen and echoes it unchanged on Add, so the
+ * owner's answer to the pick can be recorded as evidence (see `claimIfFaithful`).
+ */
+export interface ClassificationClaim {
+  text: string;
+  categories: string[];
+}
+
 /**
  * The close-ritual rating, 1-5 (server: services/task-close.ts).
  *
@@ -376,6 +450,113 @@ export interface CalibrationReading {
   p75: number | null;
 }
 
+// ── Learning readouts (Settings → Learning) ──────────────────────────────────
+// Four weekly learning passes write one row per period; these are the reads over them.
+// Numbers arrive as SQLite returns them, so the 0/1 flags are numbers. A null rate means
+// "nothing was measured in that period" and must never be shown as 0 (see
+// lib/learning-stats.ts, which derives every rate from the counts instead).
+// Row ORDER differs per endpoint and `limit` counts ROWS, not weeks; both are noted on the
+// response types below because they are the two traps in this group.
+
+export type ClassifiedField = 'category' | 'motivation';
+
+export interface ClassificationAccuracyRun {
+  field: ClassifiedField;
+  computed_date: string;
+  /** Answers actually scored (a failed or empty model answer is skipped, not counted wrong). */
+  held_out: number;
+  correct: number;
+  /** correct / held_out, null when held_out is 0. */
+  accuracy: number | null;
+}
+/**
+ * NEWEST first (ORDER BY computed_date DESC, field). `limit` counts ROWS across both
+ * fields (default 12, clamped 1-100), so 12 is about six weeks. A field below the
+ * 2-correction floor writes NO row at all, which is different from a row with a null.
+ */
+export interface ClassificationAccuracyResponse {
+  fields: ClassifiedField[];
+  runs: ClassificationAccuracyRun[];
+  /** What the weekly pass has to work with now, by field and by what the guess was about. Optional
+   *  on the wire only because a cached or older response predates it; absent shows nothing. */
+  evidence?: ClassificationEvidence[];
+}
+
+/** One field's decided rows and learnable corrections for one kind of thing (a task or a Time Block),
+ *  over the days the pass reads, counted from when each guess was made. */
+export interface ClassificationEvidence {
+  field: ClassifiedField;
+  entity_kind: string;
+  decided: number;
+  corrections: number;
+}
+
+export interface DismissalTrendRow {
+  computed_date: string;
+  period_days: number;
+  /** Every suggestion created in the period, from every source. NOT the denominator of `rate`. */
+  created: number;
+  /** Approve or dismiss decisions the owner made by hand in the period. */
+  decided: number;
+  dismissed: number;
+  rate: number | null;
+  /** Past dismissals stored as of this run. */
+  exemplars: number;
+  /** 1 when a stored set existed before this run's rebuild. */
+  hinted: 0 | 1;
+}
+/**
+ * OLDEST first, the only one of the four that is. Default limit 90 (clamped 1-365). A row
+ * is written every Monday, even with nothing decided.
+ */
+export interface DismissalTrendResponse {
+  trend: DismissalTrendRow[];
+}
+
+export interface PlacementSurvivalRun {
+  computed_date: string;
+  period_days: number;
+  /** accepted + corrected. */
+  decided: number;
+  accepted: number;
+  corrected: number;
+  survival_rate: number | null;
+  /** Hour-preference keys stored as of this run. */
+  keys_learned: number;
+  /** 1 when preferences existed before this run's rebuild. */
+  biased: 0 | 1;
+}
+/** NEWEST first. Default limit 12 (clamped 1-100); period_days is 28. A row is written every Monday. */
+export interface PlacementSurvivalResponse {
+  runs: PlacementSurvivalRun[];
+}
+
+export interface PlanLoopTrendRun {
+  stage: string;
+  computed_date: string;
+  period_days: number;
+  runs: number;
+  passed: number;
+  /** Gave up and used the plain order. passed + escaped = runs. */
+  escaped: number;
+  first_try_pass: number;
+  avg_iterations: number | null;
+  pass_rate: number | null;
+}
+/**
+ * NEWEST first, then stage. Default limit 26 (clamped 1-365); `limit` counts ROWS across
+ * stages. A week with no runs has NO row.
+ */
+export interface PlanLoopTrendResponse {
+  runs: PlanLoopTrendRun[];
+}
+
+/** cleared 0 = nothing to clear (the server writes no audit row for that). */
+export interface LearningResetResult {
+  ok: boolean;
+  cleared: number;
+}
+
 export const api = {
   // Triality (0139, design §8) — the suggestion read + outcome write. Both 404
   // while the flag is off: gate every call on prefs().triality_enabled, never probe.
@@ -390,6 +571,8 @@ export const api = {
   metrics: {
     // Two-axis task rollup for the Balance → Metrics tab.
     tasks: (days = 30) => request<TaskMetrics>('GET', `/metrics/tasks?days=${days}`),
+    schedulingPreferences: (date?: string) =>
+      request<SchedulingPreferenceSnapshot>('GET', `/metrics/scheduling-preferences${date ? `?date=${encodeURIComponent(date)}` : ''}`),
     // Triality outcome metrics (design §9.2) — 404s while the flag is off; the
     // tiles gate on prefs().triality_enabled and never probe.
     triality: (days = 30) => request<TrialityMetrics>('GET', `/metrics/triality?days=${days}`),
@@ -400,6 +583,25 @@ export const api = {
         'GET', `/metrics/calibration?limit=${limit}`,
       ),
   },
+  // Settings → Learning. Four weekly readouts and the three clears. The defaults equal
+  // LEARNING_LIMITS (lib/learning-stats.ts) and are ROWS, not weeks. Row order differs:
+  // dismissalTrend is OLDEST first, the other three NEWEST first, so never trust it (the
+  // normalisers in lib/learning-series.ts sort). A viewer credential can read all four
+  // but gets 403 on every clear. There is deliberately NO resetPlanLoop: nothing in that
+  // loop changes behaviour, so the server has no route for it.
+  learning: {
+    classificationAccuracy: (limit = 24) =>
+      request<ClassificationAccuracyResponse>('GET', `/classification/accuracy?limit=${limit}`),
+    resetClassification: () => request<LearningResetResult>('DELETE', '/classification/exemplars'),
+    dismissalTrend: (limit = 12) =>
+      request<DismissalTrendResponse>('GET', `/dismissal-learning/trend?limit=${limit}`),
+    resetDismissal: () => request<LearningResetResult>('DELETE', '/dismissal-learning/exemplars'),
+    placementSurvival: (limit = 12) =>
+      request<PlacementSurvivalResponse>('GET', `/placement/survival?limit=${limit}`),
+    resetPlacement: () => request<LearningResetResult>('DELETE', '/placement/preferences'),
+    planLoopTrend: (limit = 24) =>
+      request<PlanLoopTrendResponse>('GET', `/plan-loop/trend?limit=${limit}`),
+  },
   // Review-gated suggestions (email). `?review=1` narrows to the sources that wait for
   // approval; promote/dismiss are the pre-existing explicit endpoints.
   possibles: {
@@ -407,6 +609,12 @@ export const api = {
     promote: (id: string, body: { title?: string; due_at?: string; priority?: number } = {}) =>
       request<{ task: Task }>('POST', `/possible-tasks/${id}/promote`, body),
     dismiss: (id: string) => request<{ ok: boolean }>('POST', `/possible-tasks/${id}/dismiss`),
+  },
+  sharedTasks: {
+    list: () => request<{ tasks: SharedTask[] }>('GET', '/shared-tasks'),
+  },
+  guest: {
+    shared: () => request<GuestSharedContent>('GET', '/guest/shared'),
   },
   tasks: {
     list: (params?: Record<string, string>) => {
@@ -416,10 +624,16 @@ export const api = {
       return request<{ tasks: Task[] }>('GET', `/tasks${q}`);
     },
     create: (body: TaskInput) => request<{ task: Task }>('POST', '/tasks', body),
+    approve: (id: string) => request<{ task: Task }>('POST', `/tasks/${id}/approve`, {}),
     quick: (text: string) => request<{ task: Task; parsed: ParsedQuick; llm: boolean }>('POST', '/tasks/quick', { text }),
     // T14 (#350) — parse-only twin of `quick`: zero writes; the wizard previews the
     // parse in its own fields and the user approves via the normal Add path.
-    quickParse: (text: string) => request<{ parsed: ParsedQuick; llm: boolean }>('POST', '/tasks/quick/parse', { text }),
+    quickParse: (text: string, timeBlock = false) => request<{
+      parsed: ParsedQuick;
+      llm: boolean;
+      durationSuggestion?: DurationSuggestion;
+      classification_claim?: ClassificationClaim;
+    }>('POST', '/tasks/quick/parse', { text, timeBlock }),
     // The close ritual: complete (if still open) + record mood/note/corrected duration.
     // Accepted on an already-done task too — reflecting later is the normal case.
     close: (id: string, body: { score?: Score | typeof DECLINED_SCORE; note?: string; actual_minutes?: number }) =>
@@ -485,8 +699,7 @@ export const api = {
         placement?: { placed: boolean; blockId?: string; startAt?: string; endAt?: string; reason?: string };
       }>('POST', `/tasks/${id}/reschedule`, { days }),
     // DEAD SURFACE (zero callers — see #392): no Recall action exists anywhere in the
-    // UI, so Settings' 'Recall keeps Routine membership' toggle currently governs
-    // nothing. Clone a (shelved/Past) task to a brand-new task — cockpit-v2 Phase 6.
+    // UI. Clone a (shelved/Past) task to a brand-new task — cockpit-v2 Phase 6.
     recall: (id: string) => request<{ task: Task }>('POST', `/tasks/${id}/recall`, {}),
   },
 
@@ -760,6 +973,10 @@ export const api = {
       const q = anchor ? `?anchor=${anchor}` : '';
       return request<WeekReview>('GET', `/review/week${q}`);
     },
+    month: (end?: string) => {
+      const q = end ? `?end=${end}` : '';
+      return request<MonthReview>('GET', `/review/month${q}`);
+    },
     calibration: () => request<Calibration>('GET', '/calibration'),
     // The top-bar refresh: run the review sweep now (owner-scoped review_day engine).
     // Auto-defers past-due tasks, revives stuck 'missed' one-offs, and (Schedule mode)
@@ -789,8 +1006,12 @@ export const api = {
   patternBlocks: {
     list: () => request<{ workday: PatternWindows; weekend: PatternWindows }>('GET', '/pattern-blocks'),
     forDay: (dayType: string) => request<{ windows: PatternWindows }>('GET', `/pattern-blocks/${dayType}`),
+    forDate: (date: string) => request<{ date: string; dayType: string; windows: PatternWindows; overriddenDirections: string[] }>('GET', `/pattern-blocks/date/${date}`),
     set:  (dirTagId: string, dayType: string, ranges: Omit<PatternRange, 'id'>[]) =>
             request<{ ranges: PatternRange[] }>('PUT', `/pattern-blocks/${dirTagId}/${dayType}`, { ranges }),
+    setForDate: (dirTagId: string, date: string, ranges: Omit<PatternRange, 'id'>[]) =>
+            request<{ ranges: PatternRange[] }>('PUT', `/pattern-blocks/date/${date}/${dirTagId}`, { ranges }),
+    clearDate: (date: string) => request<{ ok: boolean }>('DELETE', `/pattern-blocks/date/${date}`),
   },
 
   // Day types (T-SCHED-3): the catalog, the weekly default map (dow→key), and
@@ -916,7 +1137,19 @@ export const api = {
     /** The reversal — cancel a pending permanent deletion. */
     cancelPurge: (id: string) => request<{ ok: boolean }>('DELETE', `/objectives/${id}/purge`),
     linkTask: (id: string, task_id: string) => request<{ ok: boolean }>('POST', `/objectives/${id}/tasks`, { task_id }),
+    createTask: (id: string, title: string) => request<{ task: Task }>('POST', `/objectives/${id}/tasks/create`, { title }),
     unlinkTask: (id: string, task_id: string) => request<{ ok: boolean }>('DELETE', `/objectives/${id}/tasks/${task_id}`),
+    moveTask: (sourceObjectiveId: string, taskId: string, targetObjectiveId: string) =>
+      request<{ ok: boolean }>('POST', `/objectives/${sourceObjectiveId}/tasks/${taskId}/move`, { target_objective_id: targetObjectiveId }),
+    board: {
+      list: () => request<ObjectiveBoard>('GET', '/objectives/board'),
+      addColumn: (name: string) => request<{ column: ObjectiveBoardColumn }>('POST', '/objectives/board/columns', { name }),
+      removeColumn: (id: string) => request<{ ok: boolean }>('DELETE', `/objectives/board/columns/${encodeURIComponent(id)}`),
+      moveTask: (taskId: string, columnId: string, beforeTaskId?: string) =>
+        request<{ ok: boolean }>('POST', `/objectives/board/tasks/${encodeURIComponent(taskId)}/move`, {
+          column_id: columnId, before_task_id: beforeTaskId,
+        }),
+    },
     // Dead surface (zero callers — see #392); progress recomputes server-side on link
     // and task changes — no UI needs the manual kick.
     recompute: (id: string) => request<{ ok: boolean }>('POST', `/objectives/${id}/recompute`),
@@ -1084,8 +1317,56 @@ export const api = {
      *  whenever the user picks somebody off the roster. */
     fromAccount: (accountId: string) =>
       request<{ person: Person }>('POST', `/people/accounts/${accountId}`),
+    shares: {
+      list: () => request<{ invites: SharedPlannerInvite[] }>('GET', '/people/shares'),
+      create: (email: string, items: SharedPlannerItem[]) =>
+        request<{ invite: SharedPlannerInvite; delivery: 'email' | 'link'; invite_link?: string }>('POST', '/people/shares', { email, items }),
+      update: (id: string, items: SharedPlannerItem[]) =>
+        request<{ invite: SharedPlannerInvite }>('PATCH', `/people/shares/${id}`, { items }),
+      resend: (id: string) => request<{ ok: boolean; delivery: 'email' | 'link'; invite_link?: string }>('POST', `/people/shares/${id}/resend`, {}),
+      revoke: (id: string) => request<{ ok: boolean }>('DELETE', `/people/shares/${id}`),
+    },
   },
 };
+
+export interface SchedulingActionPreference {
+  action: string;
+  good_probability: number;
+  samples: number;
+  confidence: number;
+  preferred_time_band: string | null;
+  time_samples: number;
+  preferred_window_type: string | null;
+}
+
+export interface SchedulingTimePreference {
+  band: string;
+  good_probability: number;
+  samples: number;
+  confidence: number;
+}
+
+export interface SchedulingSuggestion {
+  task_id: string;
+  title: string;
+  priority: number;
+  estimated_minutes: number | null;
+  due_at: string | null;
+  action: string | null;
+  probability_good: number;
+  confidence: number;
+  samples: number;
+  preferred_time_band: string | null;
+  reason: string;
+}
+
+export interface SchedulingPreferenceSnapshot {
+  history_days: number;
+  history_samples: number;
+  action_preferences: SchedulingActionPreference[];
+  time_preferences: SchedulingTimePreference[];
+  suggestions: SchedulingSuggestion[];
+}
 
 /** How an account invite went out: emailed, or handed back as a link (no SMTP). */
 export type InviteResult = { delivery: 'email'; to: string } | { delivery: 'link'; link: string };
@@ -1152,7 +1433,7 @@ export interface AuthMe {
   isOperator: boolean; // derived server-side: role === 'operator'
 }
 // Phase AG — the operator/tenant role split (docs/AG-multitenant-rbac.md).
-export type OwnerRole = 'operator' | 'member' | 'viewer';
+export type OwnerRole = 'operator' | 'member' | 'viewer' | 'guest';
 export interface OwnerAccount {
   id: string;
   name: string;
@@ -1425,7 +1706,6 @@ export interface Prefs {
   concept_tags?: { name: string; minutes: number }[]; // canonical Block-Wizard concept tags (0021)
   enable_rituals?: boolean; // feature flag (0024); default false — Rituals hidden
   enable_routines?: boolean; // feature flag; default false — Routines hidden from Add dialog
-  recall_keeps_pattern?: boolean; // cockpit-v2 Phase 6: recall=clone copies Routine membership (default OFF)
   time_sense_enabled?: boolean; // Phase Z master flag (0106); default false — Time-Sense surfaces hidden
   // Phase Z · Z5 per-cue prefs matrix (0108). Read only while time_sense_enabled is on.
   focus_ritual_enabled?: boolean; // master gate for the Focus screen
@@ -1433,6 +1713,7 @@ export interface Prefs {
   ambient_color_enabled?: boolean; // depletion + breathing animation (arm-derived)
   calibration_loop_enabled?: boolean; // estimate prompt + scoped nudge (§2)
   balance_bias_enabled?: boolean; // balance-targets wave: bias gate (default true)
+  motivation_recap_enabled?: boolean; // 0176: me / us / them block in the weekly recap (default false)
   z_experiment_arm?: 'A' | 'B' | 'C' | 'D' | null; // fixed A/B bucket, server-assigned; read-only
   day_theme?: Record<string, string>; planning_mode: string;
   timezone?: string; planning_horizon_days?: number;
@@ -1612,9 +1893,22 @@ export interface WeekReview {
   days: string[];
   tasks_completed: number;
   tasks_overdue: number;
+  open_due_tasks: Array<{ id: string; title: string; due_at: string }>;
   blocks_count: number;
   weekly_goals: Array<{ position: number; body: string; done_at: string | null }>;
   objectives_rotting: number;
+  objectives_need_attention: Array<{ id: string; title: string }>;
+}
+
+export interface MonthReview {
+  range_start: string;
+  range_end: string;
+  tasks_completed: number;
+  tasks_overdue: number;
+  open_due_tasks: Array<{ id: string; title: string; due_at: string }>;
+  blocks_count: number;
+  objectives_rotting: number;
+  objectives_need_attention: Array<{ id: string; title: string }>;
 }
 
 export type Calibration =
@@ -1870,7 +2164,7 @@ export interface ObjectiveNextAction {
   scheduled_date: string | null;
 }
 
-/** AF-2: compact linked-task rows GET /objectives attaches to every node (leaves populated, non-leaves `[]`). */
+/** AF-2: compact linked-task rows GET /objectives attaches to every node. */
 export interface ObjectiveTaskSummary {
   id: string;
   title: string;
@@ -1880,6 +2174,37 @@ export interface ObjectiveTaskSummary {
   scheduled_for: string | null;
   parent_id: string | null;
   completed_at: string | null;
+  estimated_minutes?: number | null;
+  auto_generated?: boolean;
+  human_approved_at?: string | null;
+}
+
+export interface ObjectiveBoardColumn {
+  id: string;
+  name: string;
+  system_key: 'open' | 'in_work' | 'done' | null;
+  position: number;
+}
+
+export interface ObjectiveBoardCard {
+  id: string;
+  title: string;
+  /** Task-only search corpus (description, notes, tags, and categories). */
+  search_text?: string;
+  status: string;
+  priority: number | null;
+  due_at: string | null;
+  estimated_minutes: number | null;
+  auto_generated?: boolean;
+  human_approved_at?: string | null;
+  objective_ids: string[];
+  column_id: string;
+  position: number;
+}
+
+export interface ObjectiveBoard {
+  columns: ObjectiveBoardColumn[];
+  cards: ObjectiveBoardCard[];
 }
 
 export interface Objective {
@@ -1915,7 +2240,7 @@ export interface Objective {
   effective_target: string | null;
   pace_expected: number | null;
   has_tasks: boolean;
-  /** AF-2: linked open/done-recent tasks — leaves populated, non-leaves always `[]`. */
+  /** AF-2: linked open/done-recent tasks — any objective node may carry these. */
   tasks: ObjectiveTaskSummary[];
   children: Objective[];
 }
@@ -1980,6 +2305,25 @@ export interface PlanWeekReview {
   stars: DayStar[];
   note_dates: string[];
   sessions: PlanningSession[];
+  /** Present only when the owner turned on `motivation_recap_enabled` (0176). */
+  motivation_balance?: MotivationBalance;
+}
+
+/** Timed minutes by who the work was for. `unlabeled` is time on tasks with no label, never `us`. */
+export interface MotivationMinutes {
+  me: number; us: number; them: number; unlabeled: number;
+  /** me + us + them + unlabeled. */
+  total: number;
+}
+export interface MotivationBalanceCategory extends MotivationMinutes { category: string }
+/** The recap's me / us / them block (server: services/motivation-balance.ts). */
+export interface MotivationBalance {
+  week_start: string;
+  basis: 'timed';
+  /** Most minutes first. A task's minutes count in each of its categories, so rows can add up to
+   *  more than the week; `overall` counts each entry once. */
+  categories: MotivationBalanceCategory[];
+  overall: MotivationMinutes;
 }
 
 /**

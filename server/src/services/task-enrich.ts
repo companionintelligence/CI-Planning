@@ -20,7 +20,8 @@ import { classificationHint, classificationInput, logAssignment } from './classi
  *
  * Deliberately NOT on the interactive quick-add path. Memory means a CI-Server round-trip,
  * and quick-add has to stay instant, so this runs from two entry points that share this
- * one implementation:
+ * one implementation (quick-add reads the same learned corrections, without memory, through
+ * enrichEntry in routes/tasks.ts):
  *   - on demand, per task (POST /api/tasks/:id/enrich)
  *   - the nightly `enrich_tasks` cron sweep
  *
@@ -151,8 +152,9 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
   const directions = vocab.directions;
   // Phase 8 — what this owner has corrected before, for the two fields they correct.
   // A pure read of the last `calibrate_classification` run; empty (and therefore a
-  // byte-identical prompt to before) for an owner with no correction history, no
-  // embedder, or no Ollama. Never throws.
+  // byte-identical prompt to before) for an owner whose index is empty (no correction
+  // history, or fewer than the floor). With no embedder it is the owner's most frequent
+  // corrections instead of the nearest ones. Never throws.
   const classifyText = classificationInput(task.title, task.notes);
   const categoryHint = needsCategories ? await classificationHint(owner, 'category', classifyText) : '';
   const motivationHint = needsMotivation ? await classificationHint(owner, 'motivation', classifyText) : '';

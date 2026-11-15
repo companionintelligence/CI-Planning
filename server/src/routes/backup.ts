@@ -43,9 +43,10 @@ import { httpError } from '../lib/http-error.js';
 // '12': the 0153/0154 per-role people pins on time_blocks. `time_blocks` is exported
 // with SELECT *, so those columns joined the payload the moment the migration landed —
 // giving two different shapes under one version string, which is exactly what the
-// version exists to prevent. Purely additive: an '11' dump restores with the columns
-// defaulted (insertRows intersects with the live table).
-const EXPORT_VERSION = '12';
+// version exists to prevent. '13': per-date window overrides. Purely additive; older
+// exports restore with no overrides, inheriting the day-type defaults. '14': objective
+// Kanban columns and task placements are owner data and must round-trip with objectives.
+const EXPORT_VERSION = '14';
 
 /**
  * Older payloads this build can still read. Every change since '6' has been ADDITIVE —
@@ -54,7 +55,7 @@ const EXPORT_VERSION = '12';
  * ageing out. Append each version as it ships; only remove one when its payload
  * genuinely cannot be read any more.
  */
-export const RESTORABLE_VERSIONS = ['6', '7', '8', '9', '10', '11', '12'] as const;
+export const RESTORABLE_VERSIONS = ['6', '7', '8', '9', '10', '11', '12', '13', '14'] as const;
 export { EXPORT_VERSION };
 
 // Owner-scoped tables exported/restored via a direct `WHERE owner_id = ?` query.
@@ -84,11 +85,14 @@ const OWNER_TABLES = [
   // day-type calendar, plan order, calibration, and pattern opt-outs. Each carries an
   // owner_id, so a direct query is enough (objective_tasks is a junction, handled below).
   'objectives',
+  'objective_board_columns',
+  'objective_board_cards',
   'reflections',
   'daily_plan',
   'day_types',
   'day_of_week_map',
   'day_assignments',
+  'day_window_overrides',
   'pattern_day_optouts',
   'plan_hints',
   'replan_suggestions',
@@ -218,6 +222,7 @@ const JUNCTION_FKS: Record<string, [string, string][]> = {
   possible_task_tags: [['possible_task_id', 'possible_tasks'], ['tag_id', 'tags']],
   possible_task_people: [['possible_task_id', 'possible_tasks'], ['person_id', 'people']],
   objective_tasks: [['objective_id', 'objectives'], ['task_id', 'tasks']],
+  objective_board_cards: [['task_id', 'tasks'], ['column_id', 'objective_board_columns']],
 };
 const ENTITY_KIND_PARENT: Record<string, string> = { task: 'tasks', routine: 'patterns', time_block: 'time_blocks' };
 
@@ -397,6 +402,8 @@ export function backupRouter() {
       // v4 owner-scoped tables (G-EXPORT-MISSING).
       objectives: ownerData['objectives'],
       objective_tasks: objectiveTasks,
+      objective_board_columns: ownerData['objective_board_columns'],
+      objective_board_cards: ownerData['objective_board_cards'],
       reflections: ownerData['reflections'],
       daily_plan: ownerData['daily_plan'],
       day_types: ownerData['day_types'],
@@ -531,6 +538,7 @@ export function backupRouter() {
       counts['task_dependencies']= await insertJunctionRows('task_dependencies', g('task_dependencies'), ownerId);
       counts['block_templates']  = await insertRows('block_templates', g('block_templates'), ownerId);
       counts['pattern_blocks']   = await insertRows('pattern_blocks', g('pattern_blocks'), ownerId);
+      counts['day_window_overrides'] = await insertRows('day_window_overrides', g('day_window_overrides'), ownerId);
       counts['tag_prefs']        = await insertRows('tag_prefs', g('tag_prefs'), ownerId);
       counts['flight_plan']      = await insertRows('flight_plan', g('flight_plan'), ownerId);
       counts['time_entries']     = await insertRows('time_entries', g('time_entries'), ownerId);
@@ -550,6 +558,8 @@ export function backupRouter() {
       // intra-transaction insert order FK-safe; listed parents-before-children for clarity.
       counts['objectives']          = await insertRows('objectives', g('objectives'), ownerId);
       counts['objective_tasks']     = await insertJunctionRows('objective_tasks', g('objective_tasks'), ownerId);
+      counts['objective_board_columns'] = await insertRows('objective_board_columns', g('objective_board_columns'), ownerId);
+      counts['objective_board_cards'] = await insertJunctionRows('objective_board_cards', g('objective_board_cards'), ownerId);
       counts['reflections']         = await insertRows('reflections', g('reflections'), ownerId);
       counts['daily_plan']          = await insertRows('daily_plan', g('daily_plan'), ownerId);
       counts['day_types']           = await insertRows('day_types', g('day_types'), ownerId);

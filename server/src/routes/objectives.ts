@@ -1,10 +1,22 @@
 import Router from '@koa/router';
 import { broadcast } from './sse.js';
 import { currentOwnerId } from '../lib/context.js';
+import { store } from '../db/store.js';
+import { taskToApi } from '../lib/serialize.js';
+import { getDependencies, blockedTaskIds } from '../engine/deps.js';
+import { estimateObjectiveTaskMinutes } from '../agents/quickadd.js';
+import { requestReplan } from '../engine/auto-defense.js';
+import { taskTagNames, entityCategoryNames } from '../services/tags.js';
+import { taskSecondaryTags, createTask, deleteTask } from '../services/tasks.js';
+import { getEntityPeople } from '../services/people.js';
+import {
+  addObjectiveBoardColumn, listObjectiveBoard, moveObjectiveBoardCard,
+  removeObjectiveBoardColumn,
+} from '../services/objective-board.js';
 import {
   buildTree, createObjective, updateObjective,
   archiveObjective, restoreObjective, requestPurge, cancelPurge, listArchivedObjectiveRows,
-  linkTaskToObjective, unlinkTaskFromObjective, recomputeObjective,
+  linkTaskToObjective, unlinkTaskFromObjective, moveTaskBetweenObjectives, recomputeObjective,
 } from '../services/objectives.js';
 
 /**
@@ -15,6 +27,50 @@ import {
  */
 export function objectivesRouter() {
   const router = new Router();
+
+  // Persistent Kanban settings and task placement for the Objectives view. Task
+  // completion itself still uses the normal task route; board columns do not replace
+  // task scheduling fields.
+  router.get('/api/objectives/board', async (ctx) => {
+    ctx.body = await listObjectiveBoard(currentOwnerId());
+  });
+
+  router.post('/api/objectives/board/columns', async (ctx) => {
+    const name = ((ctx.request.body ?? {}) as { name?: string }).name ?? '';
+    const res = await addObjectiveBoardColumn(currentOwnerId(), name);
+    if (!res.ok) {
+      ctx.status = 422;
+      ctx.body = { error: res.error === 'invalid_name' ? 'column name must be 1–32 characters' : res.error === 'duplicate_name' ? 'a column with that name already exists' : 'you can have up to 12 columns' };
+      return;
+    }
+    broadcast(currentOwnerId(), 'objective_board:updated', { column_id: res.column.id });
+    ctx.status = 201;
+    ctx.body = { column: res.column };
+  });
+
+  router.delete('/api/objectives/board/columns/:columnId', async (ctx) => {
+    const res = await removeObjectiveBoardColumn(currentOwnerId(), ctx.params.columnId);
+    if (!res.ok) {
+      ctx.status = res.error === 'not_found' ? 404 : 422;
+      ctx.body = { error: res.error === 'not_found' ? 'column not found' : 'default columns cannot be deleted' };
+      return;
+    }
+    broadcast(currentOwnerId(), 'objective_board:updated', { column_id: ctx.params.columnId });
+    ctx.body = { ok: true };
+  });
+
+  router.post('/api/objectives/board/tasks/:taskId/move', async (ctx) => {
+    const body = (ctx.request.body ?? {}) as { column_id?: string; before_task_id?: string };
+    if (!body.column_id) { ctx.status = 422; ctx.body = { error: 'column_id is required' }; return; }
+    const res = await moveObjectiveBoardCard(currentOwnerId(), ctx.params.taskId, body.column_id, body.before_task_id);
+    if (!res.ok) {
+      ctx.status = res.error === 'task_not_found' ? 404 : 422;
+      ctx.body = { error: res.error === 'task_not_found' ? 'objective task not found' : 'column not found' };
+      return;
+    }
+    broadcast(currentOwnerId(), 'objective_board:updated', { task_id: ctx.params.taskId, column_id: body.column_id });
+    ctx.body = { ok: true };
+  });
 
   // ?archived=1 returns the ARCHIVE: a flat list (an archived subtree is not a tree
   // the panel can render meaningfully). The default tree excludes archived rows.
@@ -43,7 +99,7 @@ export function objectivesRouter() {
       if (res.error === 'not_found') { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
       if (res.error === 'parent_not_found') { ctx.status = 422; ctx.body = { error: 'parent_id not found' }; return; }
       if (res.error === 'cycle') { ctx.status = 422; ctx.body = { error: 'parent_id would create a cycle' }; return; }
-      ctx.status = 422; ctx.body = { error: 'cannot nest under a task-bearing objective — move its tasks first' }; return;
+      ctx.status = 422; ctx.body = { error: 'invalid objective update' }; return;
     }
     broadcast(owner, 'objective:updated', { id: ctx.params.id });
     ctx.body = { objective: res.row };
@@ -110,6 +166,89 @@ export function objectivesRouter() {
     ctx.body = { ok: true };
   });
 
+  // Create a task directly in the objective and surface it in the main task list.
+  // AI copies the source task's non-time settings and estimates this task's own duration.
+  router.post('/api/objectives/:id/tasks/create', async (ctx) => {
+    const owner = currentOwnerId();
+    const objectiveId = ctx.params.id;
+    const title = ((ctx.request.body ?? {}) as { title?: string }).title?.trim();
+    if (!title) { ctx.status = 422; ctx.body = { error: 'title is required' }; return; }
+
+    const objective = await store()
+      .prepare(`SELECT id, source_task_id FROM objectives WHERE id = ? AND owner_id = ? AND archived_at IS NULL`)
+      .get<{ id: string; source_task_id: string | null }>(objectiveId, owner);
+    if (!objective) { ctx.status = 404; ctx.body = { error: 'objective not found' }; return; }
+
+    const parent = objective.source_task_id
+      ? await store().prepare(
+          `SELECT id, title, due_at, priority, motivation, motivation_source,
+                  texture_enabled, texture_color_token
+             FROM tasks WHERE id = ? AND owner_id = ?`,
+        ).get<{
+          id: string; title: string; due_at: string | null; priority: number | null;
+          motivation: 'me' | 'us' | 'them' | null; motivation_source: 'user' | 'llm' | null;
+          texture_enabled: number | null; texture_color_token: string | null;
+        }>(objective.source_task_id, owner)
+      : undefined;
+
+    const estimatedMinutes = await estimateObjectiveTaskMinutes(title, parent?.title).catch(() => 30);
+    const [tags, secondaryTags, categories] = parent
+      ? await Promise.all([taskTagNames(parent.id), taskSecondaryTags(parent.id), entityCategoryNames('task', parent.id)])
+      : [[], [], []] as [string[], string[], string[]];
+    const people: Awaited<ReturnType<typeof getEntityPeople>> = parent
+      ? await getEntityPeople('task', parent.id)
+      : { responsible: [], beneficiaries: [] };
+
+    const created = await createTask(owner, {
+      title,
+      estimated_minutes: estimatedMinutes,
+      priority: parent?.priority ?? 3,
+      ...(parent?.due_at ? { due_at: parent.due_at } : {}),
+      tags,
+      secondary_tags: secondaryTags,
+      categories,
+      ...(parent ? {
+        texture_enabled: parent.texture_enabled !== 0,
+        texture_color_token: parent.texture_color_token,
+        motivation: parent.motivation,
+        ...(parent.motivation_source ? { motivation_source: parent.motivation_source } : {}),
+        responsible_ids: people.responsible.map((p) => p.id),
+        beneficiary_ids: people.beneficiaries.map((p) => p.id),
+      } : {}),
+      source_kind: 'agent',
+      auto_generated: true,
+      human_approved_at: null,
+    });
+    if (!created.ok) { ctx.status = 400; ctx.body = { error: 'title is required' }; return; }
+
+    const linked = await linkTaskToObjective(owner, objectiveId, created.task.id);
+    if (!linked.ok) {
+      await deleteTask(owner, created.task.id);
+      ctx.status = linked.error === 'objective_not_found' ? 404 : 422;
+      ctx.body = { error: linked.error === 'objective_not_found' ? 'objective not found' : 'could not link task to objective' };
+      return;
+    }
+
+    const personSets = await getEntityPeople('task', created.task.id);
+    const out = {
+      ...taskToApi(created.task),
+      tags,
+      secondary_tags: secondaryTags,
+      categories,
+      depends_on: await getDependencies(created.task.id),
+      blocked: (await blockedTaskIds()).has(created.task.id),
+      ...personSets,
+      objective_id: objectiveId,
+      objective_ids: [objectiveId],
+    };
+    broadcast(owner, 'task:created', out);
+    broadcast(owner, 'objective:updated', { id: objectiveId });
+    broadcast(owner, 'objective_task:updated', { id: linked.linkId });
+    requestReplan('task:created');
+    ctx.status = 201;
+    ctx.body = { task: out };
+  });
+
   router.post('/api/objectives/:id/tasks', async (ctx) => {
     const owner = currentOwnerId();
     const objId = ctx.params.id;
@@ -118,7 +257,6 @@ export function objectivesRouter() {
     if (!res.ok) {
       if (res.error === 'objective_not_found') { ctx.status = 404; ctx.body = { error: 'objective not found' }; return; }
       if (res.error === 'task_id_required') { ctx.status = 422; ctx.body = { error: 'task_id is required' }; return; }
-      if (res.error === 'non_leaf') { ctx.status = 422; ctx.body = { error: 'tasks can only be linked to a leaf objective, not a project or goal' }; return; }
       ctx.status = 404; ctx.body = { error: 'task not found' }; return;
     }
     broadcast(owner, 'objective:updated', { id: objId });
@@ -133,6 +271,31 @@ export function objectivesRouter() {
     const { linkId } = await unlinkTaskFromObjective(owner, objId, taskId);
     broadcast(owner, 'objective:updated', { id: objId });
     if (linkId) broadcast(owner, 'objective_task:updated', { id: linkId });
+    ctx.body = { ok: true };
+  });
+
+  router.post('/api/objectives/:id/tasks/:taskId/move', async (ctx) => {
+    const owner = currentOwnerId();
+    const sourceObjectiveId = ctx.params.id;
+    const taskId = ctx.params.taskId;
+    const targetObjectiveId = ((ctx.request.body ?? {}) as { target_objective_id?: string }).target_objective_id;
+    if (!targetObjectiveId) { ctx.status = 422; ctx.body = { error: 'target_objective_id is required' }; return; }
+    const res = await moveTaskBetweenObjectives(owner, sourceObjectiveId, targetObjectiveId, taskId);
+    if (!res.ok) {
+      if (res.error === 'objective_not_found' || res.error === 'task_not_found' || res.error === 'not_linked') {
+        ctx.status = 404;
+        ctx.body = { error: res.error === 'objective_not_found' ? 'objective not found' : res.error === 'task_not_found' ? 'task not found' : 'task is no longer linked to this objective' };
+      } else {
+        ctx.status = 422;
+        ctx.body = { error: res.error === 'different_group' ? 'tasks can only move within the same objective group' : 'task is already in this objective' };
+      }
+      return;
+    }
+    broadcast(owner, 'objective:updated', { id: sourceObjectiveId });
+    broadcast(owner, 'objective:updated', { id: targetObjectiveId });
+    broadcast(owner, 'objective_task:updated', { id: res.sourceLinkId });
+    broadcast(owner, 'objective_task:updated', { id: res.targetLinkId });
+    broadcast(owner, 'task:updated', { id: taskId });
     ctx.body = { ok: true };
   });
 

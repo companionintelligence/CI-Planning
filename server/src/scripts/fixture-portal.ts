@@ -78,19 +78,20 @@ function signIdToken(clientId: string, nonce: string): string {
 const CONSENT_PAGE = (approveUrl: string, clientId: string) => `<!doctype html>
 <html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Companion Portal (fixture)</title>
 <style>
+  :root { --radius-8:8px; --radius-999:999px; }
   body { margin:0; font-family: ui-sans-serif, system-ui, sans-serif; background:#0b1220; color:#e6edf6;
          display:grid; place-items:center; min-height:100vh; }
-  .card { background:#121a2b; border:1px solid #24304a; border-radius:16px; padding:32px; width:min(380px,90vw);
+  .card { background:#121a2b; border:1px solid #24304a; border-radius:var(--radius-8); padding:32px; width:min(380px,90vw);
           box-shadow:0 18px 60px rgba(0,0,0,.45); }
   .badge { font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:#7dd3b9; }
   h1 { font-size:20px; margin:10px 0 4px; } p { color:#93a4bd; font-size:13px; line-height:1.5; }
   .user { display:flex; gap:10px; align-items:center; background:#0e1626; border:1px solid #223050;
-          border-radius:12px; padding:10px 12px; margin:18px 0; }
-  .avatar { width:34px; height:34px; border-radius:50%; background:linear-gradient(135deg,#37d0a2,#2b8ea3);
+          border-radius:var(--radius-8); padding:10px 12px; margin:18px 0; }
+  .avatar { width:34px; height:34px; border-radius:var(--radius-999); background:linear-gradient(135deg,#37d0a2,#2b8ea3);
             display:grid; place-items:center; font-weight:700; color:#04161f; }
   .u-name { font-size:14px; font-weight:600; } .u-mail { font-size:12px; color:#7c8db0; }
   a.btn { display:block; text-align:center; background:linear-gradient(135deg,#37d0a2,#31b8a0); color:#04161f;
-          font-weight:700; text-decoration:none; padding:11px 0; border-radius:12px; font-size:14px; }
+          font-weight:700; text-decoration:none; padding:11px 0; border-radius:var(--radius-8); font-size:14px; }
   .client { color:#c9d6ea; font-weight:600; }
 </style></head><body>
   <div class="card">

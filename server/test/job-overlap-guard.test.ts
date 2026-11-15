@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
-import { runScheduledJob, runJob, runIngestNow, failInterruptedJobRuns } from '../src/jobs/index.js';
+import {
+  runScheduledJob,
+  runJob,
+  runIngestNow,
+  failInterruptedJobRuns,
+  INTERRUPTED_RUN_LOG,
+} from '../src/jobs/index.js';
 import { logger } from '../src/lib/logger.js';
 import { runWithOwner, SYSTEM_OWNER } from '../src/lib/context.js';
 import { SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN } from '../src/lib/auth/types.js';
@@ -21,9 +27,9 @@ afterEach(() => vi.restoreAllMocks());
 const runRows = (kind: string) =>
   sqlite
     .prepare(
-      `SELECT r.status FROM job_runs r JOIN scheduled_jobs j ON j.id = r.job_id WHERE j.kind = ?`,
+      `SELECT r.status, r.log FROM job_runs r JOIN scheduled_jobs j ON j.id = r.job_id WHERE j.kind = ?`,
     )
-    .all(kind) as { status: string }[];
+    .all(kind) as { status: string; log: string | null }[];
 
 describe('overlapping scheduled runs', () => {
   it('skips a tick while the previous run of that kind is still going', async () => {
@@ -152,6 +158,9 @@ describe('failInterruptedJobRuns', () => {
     // A run row is only ever finished by the process that opened it, so a `running` row
     // at startup is by definition an orphan — none may survive the sweep.
     expect(rows.filter((r) => r.status === 'running')).toHaveLength(0);
+    // The boot catch-up counts these rows by this exact log to stop a job that keeps
+    // killing the process from being tried at every boot; writer and reader share the constant.
+    expect(rows.every((r) => r.log === INTERRUPTED_RUN_LOG)).toBe(true);
   });
 
   it('leaves finished rows alone', async () => {
