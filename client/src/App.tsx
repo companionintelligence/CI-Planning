@@ -1,5 +1,5 @@
 import { Navigate, Route, Router, useLocation, useNavigate, useSearchParams } from '@solidjs/router';
-import { ErrorBoundary, Show, createEffect, createResource, createSignal, onCleanup, onMount } from 'solid-js';
+import { ErrorBoundary, Show, createEffect, createResource, createSignal, lazy, onCleanup, onMount } from 'solid-js';
 import { Plus, RefreshCw, PanelLeft } from 'lucide-solid';
 import { BootScreen } from './components/BootScreen.js';
 import { BrandMark } from './components/BrandMark.js';
@@ -7,12 +7,9 @@ import { DetailsDrawer, DetailsToggle } from './components/DetailsDrawer.js';
 import { navCollapsed, toggleNav, detailsOpen } from './stores/ui.js';
 import { Nav }      from './components/Nav.js';
 import { CloseRitual } from './components/CloseRitual.js';
-import { Login }    from './views/Login.js';
 import { ConnectServer } from './views/ConnectServer.js';
 import { needsServerSetup } from './lib/server-config.js';
 import { setSignedIn } from './lib/session.js';
-import { Signup }   from './views/Signup.js';
-import { ResetPassword } from './views/ResetPassword.js';
 import { authGateActive, UNAUTHENTICATED_EVENT } from './lib/api.js';
 import { BottomNav } from './components/BottomNav.js';
 import { ToastContainer } from './components/Toast.js';
@@ -24,15 +21,6 @@ import { OnboardingWizard } from './components/OnboardingWizard.js';
 import { TrustTrigger, TrustModal, type TrustMode } from './components/TrustModal.js';
 import { ErrorBoundaryFallback } from './components/ErrorBoundaryFallback.js';
 import { captureException } from './lib/telemetry.js';
-import { Today }    from './views/Today.js';
-import { Focus }    from './views/Focus.js';
-import { Calendar } from './views/Calendar.js';
-import { PrioritiesWizard } from './views/PrioritiesWizard.js';
-import { Balance } from './views/Balance.js';
-import { AllTasks } from './views/AllTasks.js';
-import { Tags }     from './views/Tags.js';
-import { Settings } from './views/Settings.js';
-import { Jobs }     from './views/Jobs.js';
 import { setElementModal, blocks, taskOf, tags, patternPrefs, prefs, refetchPrefs, showToast, refetchTasks, refetchBlocks, refetchFlightPlan, closeRitualTask, closeRitualQueue, advanceCloseRitual, clearCloseRitual } from './stores/index.js';
 import { api } from './lib/api.js';
 import {
@@ -42,6 +30,22 @@ import {
 } from './lib/notifications.js';
 import { RecurringScopeDialog } from './components/RecurringScopeDialog.js';
 import { GuestPlanner } from './components/GuestPlanner.js';
+
+// Keep each page out of the startup bundle until its route is opened. The planner has
+// several substantial views; importing every route here made the initial JS chunk
+// nearly 1 MB even though a user sees only one page at a time.
+const Login = lazy(() => import('./views/Login.js').then((m) => ({ default: m.Login })));
+const Signup = lazy(() => import('./views/Signup.js').then((m) => ({ default: m.Signup })));
+const ResetPassword = lazy(() => import('./views/ResetPassword.js').then((m) => ({ default: m.ResetPassword })));
+const Today = lazy(() => import('./views/Today.js').then((m) => ({ default: m.Today })));
+const Focus = lazy(() => import('./views/Focus.js').then((m) => ({ default: m.Focus })));
+const Calendar = lazy(() => import('./views/Calendar.js').then((m) => ({ default: m.Calendar })));
+const PrioritiesWizard = lazy(() => import('./views/PrioritiesWizard.js').then((m) => ({ default: m.PrioritiesWizard })));
+const Balance = lazy(() => import('./views/Balance.js').then((m) => ({ default: m.Balance })));
+const AllTasks = lazy(() => import('./views/AllTasks.js').then((m) => ({ default: m.AllTasks })));
+const Tags = lazy(() => import('./views/Tags.js').then((m) => ({ default: m.Tags })));
+const Settings = lazy(() => import('./views/Settings.js').then((m) => ({ default: m.Settings })));
+const Jobs = lazy(() => import('./views/Jobs.js').then((m) => ({ default: m.Jobs })));
 
 /**
  * T7 — wire browser reminders into the app root. Ask once for permission, then

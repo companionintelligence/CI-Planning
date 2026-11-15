@@ -26,6 +26,13 @@ version at `GET /api/health` (`release`).
   app sends you to the login screen it remembers where you were going (same-origin paths only, for ten
   minutes), and the Portal round trip, the first-time account confirmation and the username sign-in all
   return you there. Before, every sign-in landed on the home page.
+- **AI works through your CI Hub when the Hub is not running Ollama.** On a Hub whose AI runs on vLLM or
+  Lemonade, Planning uses the Hub's OpenAI-compatible endpoint for chat, and for embeddings when one is named.
+  An Ollama address always wins when one is set.
+- **The first-run connect step shows your Companion Memory and AI.** It says whether Companion Memory is connected
+  or configured for this server, and whether an AI model is ready. Connecting stays in Settings.
+- **A Companion Portal sign-in by someone without an account here says so.** The sign-in screen explains that the
+  account is not set up on this server, instead of showing a bare error.
 - **Changing the suggested category in the Add dialog now counts as a correction.** When the AI picks a
   category from the Describe-it line and you press Add, the app records its pick and what you saved. If
   you changed it (a different order counts), the correction is closed at once; if you kept it, it waits
@@ -152,6 +159,8 @@ version at `GET /api/health` (`release`).
   recurrence test compares the New York wall clock across a DST change (it compared UTC
   hours, so it failed whenever its window crossed one), and `startTestServer` clears the
   stored VAPID pair so a pair sealed by an earlier test file cannot leave push dormant.
+- **The Hub's Ollama address is read.** The CI Hub writes `APP_OLLAMA_URL` for the app; Planning now reads it, so an
+  Ollama on the Hub is found without also setting `OLLAMA_URL`.
 
 ### Added
 - **Triality now records which weights ranked each suggestion.** Every suggestion it shows is stamped `learned`

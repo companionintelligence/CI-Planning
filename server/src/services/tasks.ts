@@ -21,6 +21,7 @@ import { isMotivation } from '../agents/rubric.js';
 import { classifyMotivationKeyword } from './motivation.js';
 import { canonicalValue, recordCorrection } from './classification-learning.js';
 import { truncateSeriesFrom } from '../engine/series-scope.js';
+import { recomputeTaskHierarchy } from './task-hierarchy.js';
 
 /**
  * Task CRUD orchestration (Phase W step 3.1) — extracted from routes/tasks.ts so
@@ -169,7 +170,7 @@ export type CreateTaskInput = {
 };
 
 export type CreateTaskResult =
-  | { ok: true; task: TaskRow }
+  | { ok: true; task: TaskRow; hierarchyUpdatedTaskIds: string[]; hierarchyUpdatedBlockIds: string[] }
   | { ok: false; error: 'title_required' }
   | { ok: false; error: 'dependency_cycle'; detail: string };
 
@@ -261,9 +262,10 @@ export async function createTask(ownerId: string, input: CreateTaskInput): Promi
   await syncTaskReminders(ownerId, task.id); // Phase H (b): derive reminders from due_at + Reminder Defaults
   // §H: creating a subtask promotes its parent to an objective (task list star).
   if (parentId) await ensureTaskPromoted(parentId, ownerId);
+  const hierarchy = await recomputeTaskHierarchy(ownerId, [task.id]);
 
   writeAudit({ ownerId, actor: 'owner', action: 'create', entity: `task:${task.id}` });
-  return { ok: true, task };
+  return { ok: true, task, hierarchyUpdatedTaskIds: hierarchy.taskIds, hierarchyUpdatedBlockIds: hierarchy.blockIds };
 }
 
 /** Mark an AI-created task as reviewed by a person; idempotent and owner-scoped. */
@@ -415,6 +417,10 @@ export type UpdateTaskResult =
        *  (completed on task done; back to planned on reopen) — the caller broadcasts
        *  block:updated for each so the Planner refreshes. */
       mirroredBlockIds: string[];
+      /** Parent/ancestor tasks whose status rolled up from their subtasks. */
+      hierarchyUpdatedTaskIds: string[];
+      /** Calendar blocks mirrored because an ancestor crossed its done boundary. */
+      hierarchyUpdatedBlockIds: string[];
       /** Present when a series edit re-materialized instances (recurrence:generated). */
       generated?: GenerateResult;
     }
@@ -730,6 +736,8 @@ export async function updateTask(
     }
   }
 
+  const hierarchy = await recomputeTaskHierarchy(ownerId, [targetId, prevParentId, newParentId]);
+
   writeAudit({ ownerId, actor, action: 'update', entity: `task:${targetId}` });
   // Phase L: stamp version/field_ts so concurrent sync ops from other devices compare
   // correctly against this online edit using field-level LWW. Moved in from
@@ -739,11 +747,20 @@ export async function updateTask(
   // (the route stamped after the service returned; audit already fired inside the service).
   if (updatedFields.length > 0) await stampRow('task', targetId, updatedFields);
 
-  return { ok: true, task, targetId, updatedFields, syncedBlockId, unscheduled, mirroredBlockIds, generated };
+  // The edited task row may itself have been normalized by child status rollup.
+  if (hierarchy.taskIds.includes(targetId)) {
+    const normalized = await db.select().from(tasks).where(and(eq(tasks.id, targetId), eq(tasks.ownerId, ownerId)));
+    if (normalized[0]) Object.assign(task, normalized[0]);
+    for (const field of ['status', 'completedAt']) if (!updatedFields.includes(field)) updatedFields.push(field);
+  }
+  return {
+    ok: true, task, targetId, updatedFields, syncedBlockId, unscheduled, mirroredBlockIds,
+    hierarchyUpdatedTaskIds: hierarchy.taskIds, hierarchyUpdatedBlockIds: hierarchy.blockIds, generated,
+  };
 }
 
 export type DeleteTaskResult =
-  | { ok: true; task: TaskRow; cancelledBlockIds: string[]; seriesTruncated?: boolean }
+  | { ok: true; task: TaskRow; cancelledBlockIds: string[]; hierarchyUpdatedTaskIds: string[]; hierarchyUpdatedBlockIds: string[]; seriesTruncated?: boolean }
   | { ok: false; error: 'not_found' };
 
 /** Recurring instances only: 'instance' cancels just this occurrence; 'following' also
@@ -787,6 +804,7 @@ export async function deleteTask(ownerId: string, id: string, scope: DeleteTaskS
   await dropSourceObjective(id, ownerId);
   if (task.parentId) await unpromoteIfEmpty(task.parentId, ownerId);
   await recomputeObjectivesForTask(id);
+  const hierarchy = await recomputeTaskHierarchy(ownerId, [id, task.parentId]);
   // 'following': truncate the series at this occurrence so it stops recurring from here.
   // Done AFTER the row is cancelled so the clicked occurrence settles the same way it
   // would under 'instance' — the truncation only governs what comes after it.
@@ -796,7 +814,7 @@ export async function deleteTask(ownerId: string, id: string, scope: DeleteTaskS
     seriesTruncated = r.ok;
   }
   writeAudit({ ownerId, actor, action: 'delete', entity: `task:${id}` });
-  return { ok: true, task, cancelledBlockIds, seriesTruncated };
+  return { ok: true, task, cancelledBlockIds, hierarchyUpdatedTaskIds: hierarchy.taskIds, hierarchyUpdatedBlockIds: hierarchy.blockIds, seriesTruncated };
 }
 
 export type PromoteToHabitResult = { ok: true; task: TaskRow } | { ok: false; error: 'not_found' };

@@ -145,6 +145,8 @@ export const taskResolvers = {
         throw new GraphQLError('dependency cycle', { extensions: { code: 'CONFLICT', detail: res.detail } });
       }
       broadcast(owner, 'task:created', taskToApi(res.task));
+      for (const blockId of res.hierarchyUpdatedBlockIds) broadcast(owner, 'block:updated', { id: blockId });
+      for (const taskId of res.hierarchyUpdatedTaskIds) broadcast(owner, 'task:updated', { id: taskId });
       requestReplan('task:created'); // B2: a new task can shift today's plan
       return { task: res.task, success: true };
     },
@@ -167,7 +169,9 @@ export const taskResolvers = {
       if (res.syncedBlockId) broadcast(owner, 'block:updated', { id: res.syncedBlockId });
       // Task→block done-state mirror parity with REST: refresh each flipped block.
       for (const blockId of res.mirroredBlockIds) broadcast(owner, 'block:updated', { id: blockId });
+      for (const blockId of res.hierarchyUpdatedBlockIds) broadcast(owner, 'block:updated', { id: blockId });
       broadcast(owner, 'task:updated', taskToApi(res.task));
+      for (const taskId of res.hierarchyUpdatedTaskIds) broadcast(owner, 'task:updated', { id: taskId });
       // B2: only a scheduling-relevant column change can re-order the day (mirrors REST).
       if (updateTouchesSchedule(res.updatedFields)) requestReplan('task:updated');
       return { task: res.task, success: true };
@@ -178,6 +182,8 @@ export const taskResolvers = {
       const res = await deleteTaskService(owner, args.input.id);
       if (!res.ok) throw new GraphQLError('task not found', { extensions: { code: 'NOT_FOUND' } });
       broadcast(owner, 'task:updated', taskToApi(res.task)); // REST DELETE emits task:updated (soft-delete)
+      for (const taskId of res.hierarchyUpdatedTaskIds) broadcast(owner, 'task:updated', { id: taskId });
+      for (const blockId of res.hierarchyUpdatedBlockIds) broadcast(owner, 'block:updated', { id: blockId });
       for (const blockId of res.cancelledBlockIds) broadcast(owner, 'block:updated', { id: blockId });
       requestReplan('task:deleted'); // B2: a cancelled task frees its slot
       return { deletedId: args.input.id, success: true };

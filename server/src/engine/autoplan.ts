@@ -86,6 +86,7 @@ interface PrefsRow {
   // query for just this column.
   balance_bias_enabled: number | null;
   plan_autofill_gaps: number | null;
+  view_prefs: string | null;
 }
 interface PlanRow {
   id: string;
@@ -181,7 +182,7 @@ async function recordRun(owner: string, runId: string, blocksCreated: number): P
 
 async function prefsOf(owner: string): Promise<PrefsRow | undefined> {
   return await store()
-    .prepare(`SELECT timezone, min_break_minutes, max_focus_block_minutes, auto_fill_workday, fill_order, default_time_block_minutes, balance_bias_enabled, plan_autofill_gaps FROM scheduling_prefs WHERE owner_id = ?`)
+    .prepare(`SELECT timezone, min_break_minutes, max_focus_block_minutes, auto_fill_workday, fill_order, default_time_block_minutes, balance_bias_enabled, plan_autofill_gaps, view_prefs FROM scheduling_prefs WHERE owner_id = ?`)
     .get(owner) as PrefsRow | undefined;
 }
 
@@ -657,8 +658,8 @@ async function pinTaskAt(
  * converted to UTC ms. Replaces the flat workday_start/workday_end fallback:
  * `directionWindowsByName` does the name→id lookup + DB read (shared with
  * patterns-place.ts/triality-vector.ts), this just adds the per-date wall-clock
- * conversion every caller here needs. Empty when no matching tag/window exists —
- * never a hardcoded default.
+ * conversion every caller here needs. If no pattern windows exist for the day,
+ * the general work/community fill uses the owner's saved wake/bed bounds.
  */
 async function directionWindowsMs(
   owner: string,
@@ -666,12 +667,43 @@ async function directionWindowsMs(
   date: string,
   tz: string,
   names: readonly string[],
+  prefs?: PrefsRow,
 ): Promise<{ start: number; end: number }[]> {
   const ranges = await directionWindowsByName(owner, dayType, names, date);
-  return ranges.map((r) => ({
+  const timedRanges = ranges.map((r) => ({
     start: Date.parse(zonedWallTimeToUTC(date, r.start_time, tz)),
     end: Date.parse(zonedWallTimeToUTC(date, r.end_time, tz)),
   }));
+  if (timedRanges.length > 0) return timedRanges;
+
+  const isGeneralFill = names.length === FALLBACK_FILL_DIRECTION_NAMES.length
+    && FALLBACK_FILL_DIRECTION_NAMES.every((name) => names.includes(name));
+  if (!isGeneralFill) return timedRanges;
+
+  // A completely unset pattern means there are no direction windows to guide Auto.
+  // Use the wake/bed bounds already saved by Time and place (or the planner's 7am–9pm
+  // defaults) so onboarding can be skipped without making Auto schedule in the night.
+  const datedWindows = await getPatternBlocksForDate(owner, date);
+  const hasAnyPattern = Object.values(datedWindows.windows).some((windows) => windows.length > 0);
+  if (hasAnyPattern) return timedRanges;
+
+  let viewPrefs: { planner?: { topEndMin?: unknown; bottomStartMin?: unknown } } = {};
+  try {
+    const parsed = prefs?.view_prefs ? JSON.parse(prefs.view_prefs) as typeof viewPrefs : {};
+    if (parsed && typeof parsed === 'object') viewPrefs = parsed;
+  } catch { /* malformed saved view state uses the planner's built-in bounds */ }
+  const top = viewPrefs.planner?.topEndMin;
+  const bottom = viewPrefs.planner?.bottomStartMin;
+  let startMin = typeof top === 'number' && Number.isFinite(top) ? Math.round(top) : 7 * 60;
+  let endMin = typeof bottom === 'number' && Number.isFinite(bottom) ? Math.round(bottom) : 21 * 60;
+  startMin = Math.min(12 * 60, Math.max(0, startMin));
+  endMin = Math.min(24 * 60, Math.max(12 * 60, endMin));
+  if (endMin - startMin < 60) { startMin = 7 * 60; endMin = 21 * 60; }
+  const wallTime = (minute: number) => `${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`;
+  return [{
+    start: Date.parse(zonedWallTimeToUTC(date, wallTime(startMin), tz)),
+    end: Date.parse(zonedWallTimeToUTC(date, wallTime(endMin), tz)),
+  }];
 }
 
 /** Collapses a set of ranges to one earliest-start/latest-end pair, or null when empty. */
@@ -727,8 +759,8 @@ async function placeHintWindows(
   if (timed.length === 0) return { placedTaskIds, constrainedIds, blocksCreated };
 
   const fullDay = { start: Date.parse(zonedWallTimeToUTC(date, '00:00', tz)), end: Date.parse(zonedWallTimeToUTC(date, '24:00', tz)) };
-  const baseBound = outerBound(await directionWindowsMs(owner, dayType, date, tz, FALLBACK_FILL_DIRECTION_NAMES)) ?? fullDay;
-  const homeBound = outerBound(await directionWindowsMs(owner, dayType, date, tz, [HOME_DIRECTION_NAME]));
+  const baseBound = outerBound(await directionWindowsMs(owner, dayType, date, tz, FALLBACK_FILL_DIRECTION_NAMES, prefs)) ?? fullDay;
+  const homeBound = outerBound(await directionWindowsMs(owner, dayType, date, tz, [HOME_DIRECTION_NAME], prefs));
 
   // tag → explicit per-side hint bound only; null = "no hint on this side", so a
   // per-task default (base or home-widened) can still apply there.
@@ -1242,7 +1274,7 @@ export async function placeFlightPlan(
       // flat workday_start/workday_end window. Placed range-by-range (not collapsed
       // to one min/max span) so a gap between two configured windows is honored;
       // each range only gets tasks the previous range didn't already place.
-      for (const range of await directionWindowsMs(owner, dayType, date, tz, FALLBACK_FILL_DIRECTION_NAMES)) {
+      for (const range of await directionWindowsMs(owner, dayType, date, tz, FALLBACK_FILL_DIRECTION_NAMES, prefs)) {
         const stillOpen = ordered.filter((t) => !placedIds.has(t.task_id));
         if (stillOpen.length === 0) break;
         const r = await placeIntoWindow(owner, stillOpen, range.start, range.end, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs, slotKeyCache, scorerCache, taskScorerCache, intelligence, dayType: dayTypeForPlacement, timezone: tz });
@@ -1347,7 +1379,7 @@ export async function fillByPriority(owner: string = currentOwnerId(), opts: { d
   // workday_start/workday_end window — same range-by-range placement as Pass 2b.
   const placedByFill = new Set<string>();
   let fillBlocksCreated = 0;
-  for (const range of await directionWindowsMs(owner, dayType, date, tz, FALLBACK_FILL_DIRECTION_NAMES)) {
+  for (const range of await directionWindowsMs(owner, dayType, date, tz, FALLBACK_FILL_DIRECTION_NAMES, prefs)) {
     const stillOpen = unconstrained.filter((t) => !placedByFill.has(t.task_id));
     if (stillOpen.length === 0) break;
     const r = await placeIntoWindow(owner, stillOpen, range.start, range.end, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs, slotKeyCache, scorerCache, taskScorerCache, intelligence, dayType, timezone: tz });
@@ -1653,7 +1685,7 @@ export async function placeStartAnchoredTask(
 
   // 0156: fallback-fill union (work+community pattern_blocks) on that date, replacing
   // the flat workday_start/workday_end window — same shared helper as Pass 2b.
-  for (const range of await directionWindowsMs(owner, dayType, date, tz, FALLBACK_FILL_DIRECTION_NAMES)) {
+  for (const range of await directionWindowsMs(owner, dayType, date, tz, FALLBACK_FILL_DIRECTION_NAMES, prefs)) {
     const s = await earliestFit(range.start, range.end);
     if (s !== null) return create(s, s + durMs);
   }

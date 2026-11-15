@@ -398,6 +398,8 @@ export function tasksRouter() {
       blocked: (await blockedTaskIds()).has(task.id),
     };
     broadcast(owner, 'task:created', out);
+    for (const blockId of res.hierarchyUpdatedBlockIds) broadcast(owner, 'block:updated', { id: blockId });
+    for (const taskId of res.hierarchyUpdatedTaskIds) broadcast(owner, 'task:updated', { id: taskId });
     requestReplan('task:created'); // B2: a new task can shift today's plan (debounced + toggle-gated)
     await settlePreviewClaim(owner, task, rawClaim, body.categories, out.categories);
     ctx.status = 201;
@@ -870,6 +872,7 @@ export function tasksRouter() {
     // Task→block done-state mirror: checking the task off completed its block(s) (or a
     // reopen revived them) — tell the Planner to refresh each.
     for (const blockId of res.mirroredBlockIds) broadcast(mutationOwner, 'block:updated', { id: blockId });
+    for (const blockId of res.hierarchyUpdatedBlockIds) broadcast(mutationOwner, 'block:updated', { id: blockId });
     // Clearing the start intent unscheduled the task (its block was removed) — tell the
     // Planner to drop it.
     if (res.unscheduled) broadcast(mutationOwner, 'block:updated', { unscheduled: id });
@@ -884,6 +887,7 @@ export function tasksRouter() {
       blocked: sharedOwner ? false : (await blockedTaskIds()).has(res.targetId),
     };
     broadcast(mutationOwner, 'task:updated', out);
+    for (const taskId of res.hierarchyUpdatedTaskIds) broadcast(mutationOwner, 'task:updated', { id: taskId });
     if (sharedOwner) broadcast(owner, 'task:updated', out);
     if (res.generated) broadcast(mutationOwner, 'recurrence:generated', res.generated);
     // B2: only a scheduling-relevant column change can re-order the day — a title/notes/
@@ -904,8 +908,10 @@ export function tasksRouter() {
     if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     const out = { ...taskToApi(res.task), ...(sharedOwner ? { shared: true } : await peopleFor(res.task.id)), tags: [] as string[] };
     broadcast(mutationOwner, 'task:updated', out);
+    for (const taskId of res.hierarchyUpdatedTaskIds) broadcast(mutationOwner, 'task:updated', { id: taskId });
     if (sharedOwner) broadcast(owner, 'task:updated', out);
     for (const blockId of res.cancelledBlockIds) broadcast(mutationOwner, 'block:updated', { id: blockId });
+    for (const blockId of res.hierarchyUpdatedBlockIds) broadcast(mutationOwner, 'block:updated', { id: blockId });
     if (!sharedOwner) requestReplan('task:deleted'); // B2: re-pack only the caller's own plan
     ctx.body = { task: out };
   });
@@ -961,6 +967,8 @@ export function tasksRouter() {
       blocked: sharedOwner ? false : (await blockedTaskIds()).has(id),
     };
     broadcast(mutationOwner, 'task:updated', out);
+    for (const taskId of res.hierarchyUpdatedTaskIds) broadcast(mutationOwner, 'task:updated', { id: taskId });
+    for (const blockId of res.hierarchyUpdatedBlockIds) broadcast(mutationOwner, 'block:updated', { id: blockId });
     if (sharedOwner) broadcast(owner, 'task:updated', out);
     ctx.body = { task: out, closed: { completed_at: res.completedAt, reaction_at: res.reactionAt, score: res.score, actual_minutes: res.actualMinutes } };
   });

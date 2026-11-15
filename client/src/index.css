@@ -1325,3 +1325,17 @@
   .objective-kanban-column:not(.objective-kanban-column-active) { display: none; }
   .objective-kanban-column { width: 100%; min-height: 16rem; }
 }
+
+/* Yellow and amber utility text was tuned for dark surfaces, so it washed out
+   against light cards. Keep the existing palette in dark mode; use the semantic
+   warning orange in light mode. Leave the conflict banner's intentionally muted
+   amber text alone because it sits on a dark amber surface. */
+:root:not(.dark) .text-amber-400,
+:root:not(.dark) .text-amber-500,
+:root:not(.dark) .text-yellow-400,
+:root:not(.dark) .text-yellow-500,
+:root:not(.dark) .text-orange-500,
+:root:not(.dark) .text-amber-400\/80,
+:root:not(.dark) .text-amber-400\/90 {
+  color: var(--warning);
+}
