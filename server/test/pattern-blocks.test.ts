@@ -303,11 +303,10 @@ describe('direction-aware Auto placement', () => {
     expect(wb.end_at <= `${WEEKDAY}T18:00:00.000Z`).toBe(true);
   });
 
-  it('no work/community pattern_blocks → a direction-less task stays unplaced (no flat fallback anymore)', async () => {
-    // 0156: this used to backward-compatibly fall back to a flat workday_start/
-    // workday_end default. That flat pref is gone; with no work/community windows
-    // configured, the fallback-fill union is empty and there's nowhere left to place
-    // an undirected task — it's a deliberate behavior change, not a bug.
+  it('no work/community pattern_blocks → a direction-less task is placed inside the default day window, never at night', async () => {
+    // Owner decision pending (2A): this replaces the older "stays unplaced" contract from
+    // 2bd1b581. The default window is deliberate, so onboarding can be skipped without
+    // Auto scheduling in the night. Revert this test if the owner picks 2B instead.
     seedDirections(); // clears any pattern_blocks the shared resetDb baseline seeded
 
     const t = insertTask('Classic task', 30);
@@ -316,7 +315,13 @@ describe('direction-aware Auto placement', () => {
     await api(srv.url, '/api/auto/run', { method: 'POST', json: { date: WEEKDAY } });
     await api(srv.url, '/api/auto/priority', { method: 'POST', json: { date: WEEKDAY } }); // D5: explicit workday fill
 
-    expect(placedBlocks().find((b) => b.title === 'Classic task')).toBeUndefined();
+    // An owner with no pattern windows gets the saved wake/bed bounds, or the planner's
+    // 7am–9pm defaults (autoplan.ts directionWindowsMs, commit 4028694f). Auto must place
+    // the undirected task inside that window, not outside it.
+    const wb = placedBlocks().find((b) => b.title === 'Classic task');
+    expect(wb).toBeTruthy();
+    expect(wb!.start_at >= `${WEEKDAY}T07:00:00.000Z`).toBe(true);
+    expect(wb!.end_at <= `${WEEKDAY}T21:00:00.000Z`).toBe(true);
   });
 
   it('weekend date uses the weekend pattern windows', async () => {
