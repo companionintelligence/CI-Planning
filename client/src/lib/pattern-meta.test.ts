@@ -17,10 +17,10 @@ describe('directionColorForTask', () => {
   });
 
   it('falls back to the brand default by lowercased name', () => {
-    // Home default = chart-1, Work = chart-4, Community = primary (BASE_TAG_DEFAULTS)
-    expect(directionColorForTask({ tags: ['Home'] }, TAGS, {})).toBe('var(--chart-1)');
-    expect(directionColorForTask({ tags: ['Work'] }, TAGS, {})).toBe('var(--chart-4)');
-    expect(directionColorForTask({ tags: ['Community'] }, TAGS, {})).toBe('var(--primary)');
+    // Home default = tag-1, Work = tag-7, Community = tag-6 (BASE_TAG_DEFAULTS)
+    expect(directionColorForTask({ tags: ['Home'] }, TAGS, {})).toBe('var(--tag-1)');
+    expect(directionColorForTask({ tags: ['Work'] }, TAGS, {})).toBe('var(--tag-7)');
+    expect(directionColorForTask({ tags: ['Community'] }, TAGS, {})).toBe('var(--tag-6)');
   });
 
   it('returns var(--primary) when the task has no direction (only intention tags)', () => {
@@ -31,6 +31,6 @@ describe('directionColorForTask', () => {
 
   it('ignores an intention tag that shares a direction name slot', () => {
     // a pattern-tag wins even if listed after an intention tag
-    expect(directionColorForTask({ tags: ['errands', 'Home'] }, TAGS, {})).toBe('var(--chart-1)');
+    expect(directionColorForTask({ tags: ['errands', 'Home'] }, TAGS, {})).toBe('var(--tag-1)');
   });
 });

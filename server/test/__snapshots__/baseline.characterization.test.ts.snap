@@ -1169,6 +1169,27 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   },
   {
     "columns": [
+      "column_id",
+      "owner_id",
+      "position",
+      "task_id",
+      "updated_at",
+    ],
+    "table": "objective_board_cards",
+  },
+  {
+    "columns": [
+      "created_at",
+      "id",
+      "name",
+      "owner_id",
+      "position",
+      "system_key",
+    ],
+    "table": "objective_board_columns",
+  },
+  {
+    "columns": [
       "field_ts",
       "id",
       "linked",
@@ -1645,6 +1666,27 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "z_experiment_arm",
     ],
     "table": "scheduling_prefs",
+  },
+  {
+    "columns": [
+      "created_at",
+      "email",
+      "id",
+      "owner_id",
+      "recipient_owner_id",
+      "status",
+      "updated_at",
+    ],
+    "table": "shared_planner_invites",
+  },
+  {
+    "columns": [
+      "created_at",
+      "entity_id",
+      "entity_kind",
+      "invite_id",
+    ],
+    "table": "shared_planner_items",
   },
   {
     "columns": [

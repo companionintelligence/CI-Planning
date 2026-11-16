@@ -34,8 +34,11 @@ import { PlanLoopTile } from './PlanLoopTile.js';
 
 export const LEARNING_HEADING = 'What the app has measured';
 
+// Two sentences, so the first card is not pushed down the screen by the intro. Plan loop is the
+// odd one out and the intro says so: its rate is a model scoring the app's own plans, so it is not
+// a result of anything the owner corrected or chose.
 export const LEARNING_INTRO =
-  "The app checks four things weekly. Three use your choices and changes. One checks the app's plans. A model scores those plans. Each number shows how much data exists. Small samples can confuse results. No reading does not mean zero. Each card explains what numbers miss.";
+  "The app takes four weekly readings of its own guesses and plans, recalculated early on Monday (server time): the first three come from your corrections and choices, and the fourth is the app's own plans scored by a model, not anything you did. Every figure shows how many cases are behind it, a week with nothing measured is never shown as zero, and each card says what its number does not show, because a reading is evidence, not proof.";
 
 export interface LearningPanelProps {
   /**
