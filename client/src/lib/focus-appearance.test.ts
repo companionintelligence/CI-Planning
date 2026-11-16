@@ -89,7 +89,7 @@ describe('resolveFocusTint', () => {
 
   it('uses the task direction colour by default (Work / Home / Community)', () => {
     const tint = resolveFocusTint({ task: { tags: ['Work'] }, tagDefs: TAGS, block });
-    expect(tint).toBe('var(--chart-4)'); // BASE_TAG_DEFAULTS.work
+    expect(tint).toBe('var(--tag-7)'); // BASE_TAG_DEFAULTS.work
   });
 
   it('prefers the owner-saved direction colour over the brand default', () => {
