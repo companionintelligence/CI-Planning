@@ -22,8 +22,11 @@ export async function startTestServer(): Promise<TestServer> {
   // would do that here, so each server boots with a pair of its own.
   sqlite.exec(`DELETE FROM app_config WHERE key LIKE 'vapid_%'`);
   const app = await buildApp();
+  // Listen on loopback, the address `url` names. A wildcard listener can be shadowed: another
+  // process on this host may bind 127.0.0.1 on the same port, and loopback traffic then goes to
+  // that process, which answered 404 "not found" as plain text.
   const server: Server = await new Promise((resolve) => {
-    const s = app.listen(0, () => resolve(s));
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });
   const { port } = server.address() as AddressInfo;
   return {

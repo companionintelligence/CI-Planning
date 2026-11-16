@@ -3,7 +3,8 @@ name: Desktop Build
 # Builds the Companion Planning desktop app (desktop/, Tauri 2) for macOS, Windows and Linux.
 # Each job first builds the web client (client/dist, the bundle the app ships; see the
 # beforeBuildCommand in desktop/src-tauri/tauri.conf.json), then compiles the app and bundles it,
-# and uploads the bundles as workflow artifacts that expire after 7 days.
+# and uploads the bundles as workflow artifacts that expire after 7 days. On Linux, a last job
+# (smoke-linux) then starts the AppImage on a clean runner to check that its window opens.
 #
 # Manual only, like every other workflow in this repo (org CI policy: workflow_dispatch only;
 # hosted runner minutes are the expensive ones). Run it by hand when a change to desktop/ or
@@ -82,6 +83,19 @@ jobs:
       - name: Build the desktop app
         run: pnpm --filter desktop build
 
+      # Linux only. A SHA-256 manifest of the AppImage, .deb and .rpm, written into the bundle
+      # folder so that it is uploaded with them. The paths are relative to that folder, so a
+      # download can be checked from its own root with: sha256sum -c SHA256SUMS
+      - name: Write SHA256SUMS for the Linux bundles
+        if: runner.os == 'Linux'
+        shell: bash
+        working-directory: desktop/src-tauri/target/release/bundle
+        run: |
+          list="$(find . -type f \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) | sed 's|^\./||' | sort)"
+          test -n "$list" || { echo "No Linux bundles were found" >&2; exit 1; }
+          printf '%s\n' "$list" | tr '\n' '\0' | xargs -0 sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
       - name: Upload the bundles
         uses: actions/upload-artifact@v7
         with:
@@ -89,3 +103,41 @@ jobs:
           path: desktop/src-tauri/target/release/bundle/
           retention-days: 7
           if-no-files-found: error
+
+  # Runs after every bundle leg succeeds. It downloads the Linux artifact onto a clean runner,
+  # checks the SHA256SUMS, and starts the AppImage on a virtual display. It installs only Xvfb and
+  # xdotool, not the WebKitGTK development packages the bundle job uses.
+  smoke-linux:
+    name: Smoke-test the Linux AppImage
+    needs: bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download the Linux bundles
+        uses: actions/download-artifact@v7
+        with:
+          name: companion-planning-desktop-Linux
+          path: bundles
+
+      - name: Verify the checksums
+        shell: bash
+        working-directory: bundles
+        run: sha256sum -c SHA256SUMS
+
+      - name: Install Xvfb and xdotool
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb xauth xdotool
+
+      # The window must appear within 120 seconds, and the app must still be running and showing
+      # it 15 seconds later. The script's header describes both checks.
+      - name: Start the AppImage and wait for its window
+        shell: bash
+        run: |
+          appimage="$(find bundles/appimage -maxdepth 1 -name '*.AppImage' | head -n 1)"
+          test -n "$appimage" || { echo "No AppImage in the artifact" >&2; exit 1; }
+          bash scripts/smoke-linux-appimage.sh "$appimage" "Companion Planning"
