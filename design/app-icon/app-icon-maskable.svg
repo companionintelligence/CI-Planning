@@ -4,13 +4,17 @@
       <stop offset="0" stop-color="#58ebbf"/>
       <stop offset="1" stop-color="#409b9b"/>
     </linearGradient>
+    <mask id="circle-cutout" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="#fff" />
+      <circle cx="524" cy="594" r="286" fill="#000" />
+    </mask>
+    <clipPath id="disk-clip" clipPathUnits="userSpaceOnUse">
+      <path d="M524 128 128 860H920Z" />
+    </clipPath>
   </defs>
   <rect width="1024" height="1024" fill="url(#bg)"/>
   <g transform="translate(512 512) scale(0.86) translate(-512 -512)">
-  <rect x="232" y="276" width="560" height="530" rx="64" fill="#041620"/>
-  <path d="M232 340 A64 64 0 0 1 296 276 H728 A64 64 0 0 1 792 340 V396 H232 Z" fill="#0a6358"/>
-  <rect x="330" y="216" width="36" height="120" rx="18" fill="#041620"/>
-  <rect x="658" y="216" width="36" height="120" rx="18" fill="#041620"/>
-  <path d="M372 610 L468 706 L652 512" fill="none" stroke="#58ebbf" stroke-width="58" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M524 128 128 860H920Z" fill="#041620" mask="url(#circle-cutout)" />
+    <circle cx="576" cy="578" r="220" fill="#041620" clip-path="url(#disk-clip)" />
   </g>
 </svg>

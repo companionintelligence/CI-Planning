@@ -1,6 +1,6 @@
 # App icon
 
-The sources are the SVG files in this folder. `app-icon-rounded.svg` has transparent corners, for the favicon and for desktop icons. `app-icon.svg` is square and opaque, for iOS, Android and the web. `app-icon-foreground.svg` is the glyph alone, for the Android adaptive icon.
+The logo is a triangle with a circular knockout at its center. The knockout is 30% larger than the black disk; the disk starts centered in the triangle, then shifts right and slightly up to leave the tapered crescent. The lower-right triangle leg clips the disk slightly. `app-mark.svg` is the monochrome, transparent version. The platform SVGs repeat that geometry in the app's dark ink over its teal treatment: `app-icon-rounded.svg` has transparent corners for the favicon and desktop icons; `app-icon.svg` is square and opaque for iOS, Android and the web; `app-icon-foreground.svg` is the scaled glyph alone for the Android adaptive icon.
 
 To regenerate the 1024 px PNGs, use librsvg and ImageMagick:
 
