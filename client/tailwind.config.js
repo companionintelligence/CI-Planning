@@ -82,13 +82,13 @@ export default {
           500: 'var(--muted-foreground)', 600: 'var(--muted-foreground)', 700: 'var(--muted-foreground)',
           800: 'var(--card)', 900: 'var(--sidebar)', 950: 'var(--background)',
         },
-        // Signature CI teal scale — constant across modes (brand accent: CTA, focus, glow).
+        // Signature CI scale; variables let the selected colorway update utilities too.
         ci: {
-          1: '#ABD4D8', 2: '#85c3b4', 3: '#58ebbf', 4: '#409b9b', 5: '#2c676d',
-          6: '#1d5f6e', 7: '#0f717a', 8: '#079d99', 9: '#82ffe1', 10: '#244859', 11: '#172e39',
+          1: 'var(--ci-1)', 2: 'var(--ci-2)', 3: 'var(--ci-3)', 4: 'var(--ci-4)', 5: 'var(--ci-5)',
+          6: 'var(--ci-6)', 7: 'var(--ci-7)', 8: 'var(--ci-8)', 9: 'var(--ci-9)', 10: 'var(--ci-10)', 11: 'var(--ci-11)',
         },
-        // accent-* kept as the bright legacy teal for rings/badges; sub-keys unchanged.
-        accent: { DEFAULT: '#409b9b', hi: '#58ebbf', light: '#ABD4D8', glow: '#82ffe1' },
+        // Brand accent utilities follow the selected colorway.
+        accent: { DEFAULT: 'var(--brand-accent)', hi: 'var(--brand-accent-hi)', light: 'var(--brand-accent-light)', glow: 'var(--brand-accent-glow)' },
       },
       keyframes: {
         slideDown: {

@@ -28,7 +28,7 @@ import { LearningPanel } from '../components/learning/LearningPanel.js';
 import { learningCanReset } from '../lib/learning-access.js';
 import { shareApiExport, shareTextExport } from '../lib/native-export.js';
 import { clearDeviceLock, hasDeviceLock, setDeviceLockPassword } from '../lib/native-app-lock.js';
-import { setTheme, theme, type Theme } from '../lib/theme.js';
+import { colorway, setColorway, setTheme, theme, type Colorway, type Theme } from '../lib/theme.js';
 import { setTextSize, textSize, type TextSize } from '../lib/text-size.js';
 
 const BROWSER_TZ = (() => {
@@ -1183,14 +1183,26 @@ export function Settings() {
             </div>
             <label class="flex items-center justify-between gap-3">
               <span>
-                <span class="block text-sm text-foreground leading-tight">Color theme</span>
-                <span class="block text-[11px] text-muted-foreground">System follows your device; Light and Dark use Companion Planning’s built-in colorways.</span>
+                <span class="block text-sm text-foreground leading-tight">Theme mode</span>
+                <span class="block text-[11px] text-muted-foreground">System follows your device’s light or dark preference.</span>
               </span>
-              <select class="input py-1 text-sm w-32 flex-shrink-0" aria-label="Color theme"
+              <select class="input py-1 text-sm w-32 flex-shrink-0" aria-label="Theme mode"
                 value={theme()} onChange={(e) => setTheme(e.currentTarget.value as Theme)}>
                 <option value="system">System</option>
                 <option value="light">Light</option>
                 <option value="dark">Dark</option>
+              </select>
+            </label>
+            <label class="flex items-center justify-between gap-3">
+              <span>
+                <span class="block text-sm text-foreground leading-tight">Colorway</span>
+                <span class="block text-[11px] text-muted-foreground">Choose the app’s accent palette. Each colorway supports light and dark mode.</span>
+              </span>
+              <select class="input py-1 text-sm w-32 flex-shrink-0" aria-label="Colorway"
+                value={colorway()} onChange={(e) => setColorway(e.currentTarget.value as Colorway)}>
+                <option value="calm">Calm</option>
+                <option value="cool">Cool</option>
+                <option value="collected">Collected</option>
               </select>
             </label>
             <label class="flex items-center justify-between gap-3">
