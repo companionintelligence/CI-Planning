@@ -5,6 +5,11 @@
 @config "../tailwind.config.js";
 @reference "tailwindcss";
 
+/* Text scale stays local to this device and scales the rem-based app type/layout
+   together, so larger labels have room to wrap instead of clipping. */
+html[data-text-size="large"] { font-size: 112.5%; }
+html[data-text-size="larger"] { font-size: 125%; }
+
 /* ──────────────────────────────────────────────────────────────────────────
    Companion Planning surface overrides on the canon token layer above.
    These are this app's deliberate divergences (surfaces, backgrounds); --primary is

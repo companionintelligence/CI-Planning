@@ -28,6 +28,8 @@ import { LearningPanel } from '../components/learning/LearningPanel.js';
 import { learningCanReset } from '../lib/learning-access.js';
 import { shareApiExport, shareTextExport } from '../lib/native-export.js';
 import { clearDeviceLock, hasDeviceLock, setDeviceLockPassword } from '../lib/native-app-lock.js';
+import { setTheme, theme, type Theme } from '../lib/theme.js';
+import { setTextSize, textSize, type TextSize } from '../lib/text-size.js';
 
 const BROWSER_TZ = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
@@ -949,7 +951,7 @@ export function Settings() {
             <div class="flex flex-col gap-2">
               <h3 class="text-sm font-semibold text-foreground">Where your information goes</h3>
               <p class="text-sm text-muted-foreground">
-                Your planning records are stored by the Companion Planning server you use. The app keeps that server address, a session cookie, cached information, and unsynced offline edits on this device. Offline edits are sent to your selected server when the connection returns. Changing servers discards edits that have not synced.
+                Your planning records are stored by the Companion Planning server you use. The app keeps that server address, a session cookie, cached information, your appearance choices, and unsynced offline edits on this device. Appearance choices are not sent to the server. Offline edits are sent to your selected server when the connection returns. Changing servers discards edits that have not synced.
               </p>
               <p class="text-sm text-muted-foreground">
                 The app does not include or run an AI model on your phone. If your server is configured to use a local model, such as Ollama on your Hub or another computer you control, requests are processed by that server's model endpoint. The server operator chooses where that endpoint runs and what it retains. If the operator configures a remote AI provider or another integration, relevant information may be sent to that provider under its terms.
@@ -1173,6 +1175,37 @@ export function Settings() {
 
         {/* ── PREFERENCES TAB ─────────────────────────────────────────────────── */}
         <Show when={activeTab() === 'preferences'}>
+
+          <section class="card flex flex-col gap-4">
+            <div>
+              <div class="section-label mb-1">Appearance and accessibility</div>
+              <p class="text-xs text-muted-foreground">Choose the app color theme and a comfortable reading size. These choices are saved on this device.</p>
+            </div>
+            <label class="flex items-center justify-between gap-3">
+              <span>
+                <span class="block text-sm text-foreground leading-tight">Color theme</span>
+                <span class="block text-[11px] text-muted-foreground">System follows your device; Light and Dark use Companion Planning’s built-in colorways.</span>
+              </span>
+              <select class="input py-1 text-sm w-32 flex-shrink-0" aria-label="Color theme"
+                value={theme()} onChange={(e) => setTheme(e.currentTarget.value as Theme)}>
+                <option value="system">System</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+              </select>
+            </label>
+            <label class="flex items-center justify-between gap-3">
+              <span>
+                <span class="block text-sm text-foreground leading-tight">Text size</span>
+                <span class="block text-[11px] text-muted-foreground">Larger text may show less content at once.</span>
+              </span>
+              <select class="input py-1 text-sm w-32 flex-shrink-0" aria-label="Text size"
+                value={textSize()} onChange={(e) => setTextSize(e.currentTarget.value as TextSize)}>
+                <option value="default">Default</option>
+                <option value="large">Large</option>
+                <option value="larger">Largest</option>
+              </select>
+            </label>
+          </section>
 
           {/* Schedule Patterns — per-direction availability windows */}
           <section id="schedule-patterns" class="card">

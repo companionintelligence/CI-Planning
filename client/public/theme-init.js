@@ -17,4 +17,8 @@
   var el = document.documentElement;
   el.classList.toggle('dark', dark);
   el.classList.toggle('light', !dark);
+  try {
+    var textSize = localStorage.getItem('ci-planning-text-size');
+    el.dataset.textSize = textSize === 'large' || textSize === 'larger' ? textSize : 'default';
+  } catch (e) { el.dataset.textSize = 'default'; }
 })();
