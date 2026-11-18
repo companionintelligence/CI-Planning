@@ -17,7 +17,7 @@
   var el = document.documentElement;
   try {
     var colorway = localStorage.getItem('ci-planning-colorway');
-    el.dataset.colorway = colorway === 'cool' || colorway === 'collected' ? colorway : 'calm';
+    el.dataset.colorway = ['cool', 'collected', 'colorful', 'grounding', 'void'].indexOf(colorway) >= 0 ? colorway : 'calm';
   } catch (e) { el.dataset.colorway = 'calm'; }
   el.classList.toggle('dark', dark);
   el.classList.toggle('light', !dark);

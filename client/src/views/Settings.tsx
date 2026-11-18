@@ -1203,6 +1203,9 @@ export function Settings() {
                 <option value="calm">Calm</option>
                 <option value="cool">Cool</option>
                 <option value="collected">Collected</option>
+                <option value="colorful">Colorful</option>
+                <option value="grounding">Grounding</option>
+                <option value="void">Void</option>
               </select>
             </label>
             <label class="flex items-center justify-between gap-3">

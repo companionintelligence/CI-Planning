@@ -12,7 +12,7 @@ import { createSignal } from 'solid-js';
  */
 export type Theme = 'light' | 'dark' | 'system';
 export type ResolvedTheme = 'light' | 'dark';
-export type Colorway = 'calm' | 'cool' | 'collected';
+export type Colorway = 'calm' | 'cool' | 'collected' | 'colorful' | 'grounding' | 'void';
 
 // Canonical CI storage key (matches the shadcn/vite-ui ThemeProvider convention
 // used across the CI frontends). Previously 'ci-theme'.
@@ -52,7 +52,7 @@ export { resolvedTheme };
 function initialColorway(): Colorway {
   try {
     const value = localStorage.getItem(COLORWAY_KEY);
-    if (value === 'cool' || value === 'collected' || value === 'calm') return value;
+    if (value === 'cool' || value === 'collected' || value === 'colorful' || value === 'grounding' || value === 'void' || value === 'calm') return value;
   } catch {
     /* localStorage unavailable */
   }

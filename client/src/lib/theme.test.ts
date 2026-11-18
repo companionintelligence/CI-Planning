@@ -23,7 +23,7 @@ describe('device colorway preference', () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it.each(['calm', 'cool', 'collected'] as const)('applies and persists %s', async (value) => {
+  it.each(['calm', 'cool', 'collected', 'colorful', 'grounding', 'void'] as const)('applies and persists %s', async (value) => {
     const { colorway, setColorway } = await import('./theme.js');
     setColorway(value);
     expect(colorway()).toBe(value);
