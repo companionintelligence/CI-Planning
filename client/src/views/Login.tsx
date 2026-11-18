@@ -1,12 +1,13 @@
-import { createSignal, createResource, createEffect, Show } from 'solid-js';
+import { createSignal, createResource, createEffect, Show, onMount, onCleanup } from 'solid-js';
 import { useLocation, useNavigate, useSearchParams } from '@solidjs/router';
 import { LogIn, Loader2, UserRound } from 'lucide-solid';
 import { BrandMark } from '../components/BrandMark.js';
 import { api, CIPORTAL_START } from '../lib/api.js';
+import { apiUrl, isCapacitorShell, isNativeShell, supportsRedirectFlows } from '../lib/server-config.js';
+import { beginNativePortalLogin } from '../lib/native-portal-auth.js';
 import { showToast } from '../stores/index.js';
 import { ForgotPassword } from '../components/ForgotPassword.js';
 import { ServerConnection } from '../components/ServerConnection.js';
-import { isNativeShell, supportsRedirectFlows } from '../lib/server-config.js';
 
 /**
  * U3/A4 — the login screen. Rendered OUTSIDE the app shell (no nav/top bar), reached
@@ -23,12 +24,9 @@ import { isNativeShell, supportsRedirectFlows } from '../lib/server-config.js';
  *                 sign-up toggle), `invite`/`open` (B2 — /signup), or nothing.
  * `test`/`standalone` never reach this component (App.tsx renders the ungated router).
  *
- * In the Capacitor app shell only the username form is ever offered. The Portal button
- * and both sign-up links are redirects that have to come back with a cookie, which the
- * shell cannot do (see `supportsRedirectFlows`), and with no sign-up there is no account
- * creation in the app (App Store guideline 5.1.1(v) asks for in-app deletion wherever
- * there is). A server that offers Portal sign-in alone has nothing the shell can use, and
- * the screen says so rather than showing a dead button.
+ * The Capacitor shell opens Portal in the system browser and returns through a registered
+ * app link with a PKCE-bound, one-time handoff. Other external identity flows still use
+ * `supportsRedirectFlows`; they need their own native integration.
  *
  * House-style only (this app's tokens/classes) — CI-Portal/CI-Hub visual parity is a
  * later reconciliation pass, per the plan (their components aren't available here).
@@ -80,10 +78,23 @@ export function Login() {
   const [username, setUsername] = createSignal('');
   const [password, setPassword] = createSignal('');
   const [submitting, setSubmitting] = createSignal(false);
+  const [portalBusy, setPortalBusy] = createSignal(false);
   const [showForgot, setShowForgot] = createSignal(false);
   // A4: with both methods on, the username form starts folded behind a secondary action.
   const [localExpanded, setLocalExpanded] = createSignal(false);
   let usernameInput: HTMLInputElement | undefined;
+
+  onMount(() => {
+    if (!isCapacitorShell()) return;
+    let disposed = false;
+    let listener: { remove: () => Promise<void> } | undefined;
+    void import('@capacitor/browser').then(async ({ Browser }) => {
+      if (disposed) return;
+      listener = await Browser.addListener('browserFinished', () => setPortalBusy(false));
+      if (disposed) await listener.remove();
+    }).catch(() => {});
+    onCleanup(() => { disposed = true; void listener?.remove(); });
+  });
 
   const location = useLocation();
   /** Where to send them once they are signed in (see returnPath). */
@@ -95,17 +106,28 @@ export function Login() {
   };
 
   const redirects = supportsRedirectFlows();
-  const portal = () => redirects && cfg()?.portal === true;
+  const portal = () => (redirects || isCapacitorShell()) && cfg()?.portal === true;
   const local = () => cfg()?.local === true;
   const showLocalForm = () => local() && (!portal() || localExpanded());
-  const signup = () => (redirects ? (cfg()?.signup ?? 'off') : 'off');
+  const signup = () => ((redirects || isCapacitorShell()) ? (cfg()?.signup ?? 'off') : 'off');
   /** The shell, on a server that signs in with Companion Portal alone: nothing it can offer. */
-  const portalOnlyServer = () => !redirects && cfg()?.portal === true && !local();
+  const portalOnlyServer = () => !portal() && cfg()?.portal === true && !local();
 
   function expandLocal() {
     setLocalExpanded(true);
     // `autofocus` only fires on initial render; the form is mounting on a click.
     queueMicrotask(() => usernameInput?.focus());
+  }
+
+  async function startPortalLogin() {
+    if (!isCapacitorShell()) return;
+    setPortalBusy(true);
+    try {
+      await beginNativePortalLogin(apiUrl(portalHref()), from() ?? '/');
+    } catch (error) {
+      showToast((error as Error).message || 'Could not open Companion Portal', 'error');
+      setPortalBusy(false);
+    }
   }
 
   // A provider error bounced back from the Companion Portal callback (?sso_error=…).
@@ -159,7 +181,17 @@ export function Login() {
                 fallback={
                   <Show
                     when={accountMissing()}
-                    fallback={<>Companion Portal sign-in was cancelled or failed ({ssoError()}). Please try again.</>}
+                    fallback={
+                      ssoError() === 'confirmation_expired'
+                        ? <>This sign-in link expired. Start again to continue.</>
+                        : ssoError() === 'mobile_handoff_failed'
+                          ? <>Planning couldn't finish the sign-in handoff. Check the server connection and try again.</>
+                          : ssoError() === 'cancelled'
+                            ? <>Companion Portal sign-in was cancelled. You can try again.</>
+                            : ssoError() === 'account_unavailable'
+                              ? <>This Companion Portal account cannot be used on this Planning server. Contact its operator.</>
+                              : <>Companion Portal sign-in failed ({ssoError()}). Please try again.</>
+                    }
                   >
                     Companion Portal signed you in, but this server has no account for you yet ({ssoError()}). Ask the
                     server's operator to create one, then try again.
@@ -190,7 +222,9 @@ export function Login() {
                           : 'Sign-in is not enabled on this deployment.'
                     }
                   >
-                    Use your Companion Portal account to continue.
+                    <Show when={isCapacitorShell()} fallback={<>Use your Companion Portal account to continue.</>}>
+                      Use your Companion Portal account to continue. The app returns to this selected server after sign-in.
+                    </Show>
                   </Show>
                 </p>
                 <Show when={portalOnlyServer()}>
@@ -202,10 +236,17 @@ export function Login() {
 
               {/* Companion Portal SSO — top-level navigation (NOT fetch) so the browser follows the redirect to the portal. */}
               <Show when={portal()}>
-                <a class="btn-primary w-full justify-center" href={portalHref()} rel="external">
-                  <LogIn size={16} />
-                  Continue with Companion Portal
-                </a>
+                <Show when={isCapacitorShell()} fallback={
+                  <a class="btn-primary w-full justify-center" href={portalHref()} rel="external">
+                    <LogIn size={16} /> Continue with Companion Portal
+                  </a>
+                }>
+                  <button type="button" class="btn-primary w-full justify-center" onClick={startPortalLogin} disabled={portalBusy()}>
+                    <Show when={portalBusy()} fallback={<><LogIn size={16} /> Continue with Companion Portal</>}>
+                      <Loader2 class="animate-spin" size={16} /> Waiting for Companion Portal…
+                    </Show>
+                  </button>
+                </Show>
               </Show>
 
               {/* A4 — both methods on one screen: the username form expands in place. */}
@@ -271,9 +312,11 @@ export function Login() {
         <Show when={signup() === 'portal'}>
           <p class="text-center text-xs text-muted-foreground mt-4">
             Don't have an account?{' '}
-            <a class="text-foreground underline underline-offset-2 hover:text-primary transition-colors" href={portalHref()} rel="external">
-              Create one with Companion Portal
-            </a>
+            <Show when={isCapacitorShell()} fallback={
+              <a class="text-foreground underline underline-offset-2 hover:text-primary transition-colors" href={portalHref()} rel="external">Create one with Companion Portal</a>
+            }>
+              <button type="button" class="text-foreground underline underline-offset-2 hover:text-primary transition-colors" onClick={startPortalLogin}>Create one with Companion Portal</button>
+            </Show>
           </p>
           <p class="text-center text-[11px] text-muted-foreground/80 mt-1">
             On a Hub, your Portal account also needs to be a member of the Hub's organization first — ask its owner for an invitation.

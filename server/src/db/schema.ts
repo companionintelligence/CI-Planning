@@ -757,6 +757,7 @@ export const authStates = sqliteTable('auth_states', {
   codeVerifier: text('code_verifier').notNull(),
   nonce: text('nonce').notNull(),
   redirectUri: text('redirect_uri'),
+  nativeCodeChallenge: text('native_code_challenge'),
   createdAt: text('created_at').notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
   expiresAt: text('expires_at').notNull(),
 });

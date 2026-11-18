@@ -42,6 +42,11 @@ interface CapacitorGlobal {
  */
 export function isNativeShell(): boolean {
   if (isTauriShell()) return true;
+  return isCapacitorShell();
+}
+
+/** True only in the Capacitor iOS/Android shells (not the Tauri desktop app). */
+export function isCapacitorShell(): boolean {
   try {
     const cap = (globalThis as { Capacitor?: CapacitorGlobal }).Capacitor;
     return cap?.isNativePlatform?.() === true;
@@ -51,15 +56,15 @@ export function isNativeShell(): boolean {
 }
 
 /**
- * Can a flow that sends the page to another site, and expects that site to send the
- * person back with something in the cookie jar, work here?
+ * Can a generic browser redirect flow send the page to another site and return with
+ * its browser cookie in this shell?
  *
  * In a browser, yes. In the shell, no: Capacitor cancels a top-level navigation to any
  * host that is not the app's own and opens it in the system browser instead (read in
  * 8.6.0: `WebViewDelegationHandler` on iOS, `Bridge.launchIntent` on Android). The flow
- * then runs in Safari or Chrome, the session cookie is set there, and nothing ever comes
- * back to the app. That is every flow built as "redirect out, redirect back": signing in
- * with Companion Portal, "Connect Google", and the Companion Memory Portal connect.
+ * then runs in Safari or Chrome, and its cookies stay there. Portal sign-in is supported
+ * separately through a PKCE-bound one-time handoff; generic flows such as Connect Google
+ * and the Companion Memory Portal connector still need their own native integration.
  */
 export function supportsRedirectFlows(): boolean {
   return !isNativeShell();

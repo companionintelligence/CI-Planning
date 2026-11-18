@@ -1,7 +1,7 @@
 import { createSignal, createEffect, Show, createResource, For, onMount } from 'solid-js';
 import { useSearchParams } from '@solidjs/router';
 import { ViewHeader } from '../components/ViewHeader.js';
-import { BellRing, Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, Database, AlertTriangle, Users, KeyRound, ScrollText, Eye, FileJson, FileText, Mail, Ticket } from 'lucide-solid';
+import { BellRing, Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, Database, AlertTriangle, Users, KeyRound, ScrollText, Eye, FileJson, FileText, Mail, Ticket, ShieldCheck, ExternalLink } from 'lucide-solid';
 import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast, texturesEnabled, setTexturesEnabled, focusAppearance, setFocusAppearance, plannerAxisState, setPlannerCollapseBounds, integrations, refetchIntegrations, recheckIntegrations, aiAvailable, connections, refetchConnections, openOnboardingAt, openTimeRange, setOpenTimeRange, refetchPatternTypes,
 } from '../stores/index.js';
 import { api, type PlanningSession } from '../lib/api.js';
@@ -15,7 +15,8 @@ import { CategorySettings } from '../components/CategorySettings.js';
 import { PeopleSettings } from '../components/PeopleSettings.js';
 import { SharedAccessSettings } from '../components/SharedAccessSettings.js';
 import { enablePush, disablePush, pushState } from '../lib/push.js';
-import { apiUrl, isNativeShell, supportsRedirectFlows } from '../lib/server-config.js';
+import { apiUrl, isCapacitorShell, isNativeShell, supportsRedirectFlows } from '../lib/server-config.js';
+import { disableNativeReminders, nativeRemindersEnabled, requestNativeReminderPermission, setNativeRemindersEnabled, syncNativeReminders } from '../lib/native-reminders.js';
 import { ServerConnection } from '../components/ServerConnection.js';
 import { on } from '../lib/sse.js';
 import { GOOGLE_CONNECT_ENABLED } from '../lib/flags.js';
@@ -25,6 +26,10 @@ import { ConnectionAppearance } from '../components/ConnectionAppearance.js';
 import { FOCUS_STYLES, type FocusStyle } from '../lib/focus-appearance.js';
 import { LearningPanel } from '../components/learning/LearningPanel.js';
 import { learningCanReset } from '../lib/learning-access.js';
+import { shareApiExport, shareTextExport } from '../lib/native-export.js';
+import { clearDeviceLock, hasDeviceLock, setDeviceLockPassword } from '../lib/native-app-lock.js';
+import { colorway, setColorway, setTheme, theme, type Colorway, type Theme } from '../lib/theme.js';
+import { setTextSize, textSize, type TextSize } from '../lib/text-size.js';
 
 const BROWSER_TZ = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
@@ -104,7 +109,7 @@ function fmtHourLabel(min: number): string {
 
 export function Settings() {
   const [searchParams] = useSearchParams();
-  const [activeTab, setActiveTab] = createSignal<'profile' | 'preferences' | 'people' | 'connections' | 'learning' | 'logs'>('profile');
+  const [activeTab, setActiveTab] = createSignal<'profile' | 'preferences' | 'people' | 'connections' | 'learning' | 'logs' | 'policy'>('profile');
   createEffect(() => {
     if (searchParams.tab === 'preferences') setActiveTab('preferences');
     if (searchParams.tab === 'people') setActiveTab('people');
@@ -124,6 +129,39 @@ export function Settings() {
   // Connecting Companion Memory through the Portal is a redirect out and back, which the app
   // shell cannot complete (see supportsRedirectFlows); there the URL + key form is the way.
   const memoryPortalConnect = () => ssoAvailable() && supportsRedirectFlows();
+  const [deviceLockEnabled, setDeviceLockEnabled] = createSignal(false);
+  const [deviceLockEditing, setDeviceLockEditing] = createSignal(false);
+  const [deviceLockPassword, setDeviceLockPasswordInput] = createSignal('');
+  const [deviceLockConfirm, setDeviceLockConfirm] = createSignal('');
+  const [deviceLockBusy, setDeviceLockBusy] = createSignal(false);
+  onMount(() => {
+    if (isCapacitorShell()) void hasDeviceLock().then(setDeviceLockEnabled).catch(() => {});
+  });
+  async function saveDeviceLock() {
+    if (deviceLockBusy()) return;
+    if (deviceLockPassword().length < 8) { showToast('Use at least 8 characters for the app password', 'error'); return; }
+    if (deviceLockPassword() !== deviceLockConfirm()) { showToast('The app passwords do not match', 'error'); return; }
+    setDeviceLockBusy(true);
+    try {
+      await setDeviceLockPassword(deviceLockPassword());
+      setDeviceLockEnabled(true);
+      setDeviceLockEditing(false);
+      setDeviceLockPasswordInput(''); setDeviceLockConfirm('');
+      showToast('Device app password saved', 'success');
+    } catch (err) { showToast((err as Error).message || 'Could not save app password', 'error'); }
+    finally { setDeviceLockBusy(false); }
+  }
+  async function removeDeviceLock() {
+    if (deviceLockBusy()) return;
+    setDeviceLockBusy(true);
+    try {
+      await clearDeviceLock();
+      setDeviceLockEnabled(false);
+      setDeviceLockEditing(false);
+      showToast('Device app password removed');
+    } catch (err) { showToast((err as Error).message || 'Could not remove app password', 'error'); }
+    finally { setDeviceLockBusy(false); }
+  }
   const [backupEmail, setBackupEmail] = createSignal('');
   const [backupSaving, setBackupSaving] = createSignal(false);
   createEffect(() => { if (me()) setBackupEmail(me()!.backupEmail ?? ''); });
@@ -311,7 +349,39 @@ export function Settings() {
   //    real Notification permission + SW push subscription, not a pref column.
   const [pushOn, setPushOn] = createSignal(false);
   const [pushBusy, setPushBusy] = createSignal(false);
+  const [nativeRemindersOn, setNativeRemindersOn] = createSignal(nativeRemindersEnabled());
+  const [nativeRemindersBusy, setNativeRemindersBusy] = createSignal(false);
   void pushState().then((s) => setPushOn(s === 'subscribed'));
+  async function toggleNativeReminders() {
+    if (nativeRemindersBusy()) return;
+    setNativeRemindersBusy(true);
+    try {
+      if (nativeRemindersOn()) {
+        await disableNativeReminders();
+        setNativeRemindersOn(false);
+        showToast('Device reminders disabled');
+        return;
+      }
+      const permission = await requestNativeReminderPermission();
+      if (permission !== 'granted') {
+        showToast(permission === 'denied'
+          ? 'Allow notifications for Companion Planning in device settings'
+          : 'Local notifications are unavailable on this device', 'error');
+        return;
+      }
+      setNativeRemindersEnabled(true);
+      setNativeRemindersOn(true);
+      const { reminders } = await api.reminders.list();
+      await syncNativeReminders(reminders);
+      showToast('Device reminders enabled', 'success');
+    } catch (err) {
+      setNativeRemindersEnabled(false);
+      setNativeRemindersOn(false);
+      showToast((err as Error).message || 'Could not enable device reminders', 'error');
+    } finally {
+      setNativeRemindersBusy(false);
+    }
+  }
   async function togglePush() {
     if (pushBusy()) return;
     setPushBusy(true);
@@ -485,16 +555,33 @@ export function Settings() {
     }
   }
 
-  function downloadSession(session: PlanningSession, format: 'json' | 'md') {
+  async function downloadSession(session: PlanningSession, format: 'json' | 'md') {
     const content = format === 'json' ? sessionToJson(session) : sessionToMarkdown(session);
+    const filename = exportFilename(session, format);
+    if (isCapacitorShell()) {
+      try {
+        await shareTextExport(filename, content, `Export ${session.entry_branch}`);
+      } catch (err) {
+        showToast((err as Error).message || 'Could not share export', 'error');
+      }
+      return;
+    }
     const mime = format === 'json' ? 'application/json' : 'text/markdown';
     const blob = new Blob([content], { type: mime });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = exportFilename(session, format);
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function exportServerJson() {
+    try {
+      await shareApiExport('/api/export', 'companion-export.json', 'Export Companion Planning data');
+    } catch (err) {
+      showToast((err as Error).message || 'Could not export data', 'error');
+    }
   }
 
   async function deleteSession(session: PlanningSession) {
@@ -841,7 +928,89 @@ export function Settings() {
         >
           <ScrollText size={13} /> Logs
         </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('policy')}
+          role="tab" class="view-tab flex items-center gap-1.5"
+          aria-selected={activeTab() === 'policy'}
+        >
+          <ShieldCheck size={13} /> Privacy
+        </button>
       </div>
+
+      <Show when={activeTab() === 'policy'}>
+        <div class="flex flex-col gap-5">
+          <section class="card flex flex-col gap-4">
+            <div>
+              <div class="section-label flex items-center gap-1.5 mb-1"><ShieldCheck size={13} /> Companion Planning privacy</div>
+              <p class="text-sm text-muted-foreground">
+                Companion Planning sends its requests to the server address you choose. It does not send your plans, calendar, or reflections to Companion Intelligence by default; your selected server operator can see the information processed by that server.
+              </p>
+            </div>
+
+            <div class="flex flex-col gap-2">
+              <h3 class="text-sm font-semibold text-foreground">Where your information goes</h3>
+              <p class="text-sm text-muted-foreground">
+                Your planning records are stored by the Companion Planning server you use. The app keeps that server address, a session cookie, cached information, your appearance choices, and unsynced offline edits on this device. Appearance choices are not sent to the server. Offline edits are sent to your selected server when the connection returns. Changing servers discards edits that have not synced.
+              </p>
+              <p class="text-sm text-muted-foreground">
+                The app does not include or run an AI model on your phone. If your server is configured to use a local model, such as Ollama on your Hub or another computer you control, requests are processed by that server's model endpoint. The server operator chooses where that endpoint runs and what it retains. If the operator configures a remote AI provider or another integration, relevant information may be sent to that provider under its terms.
+              </p>
+              <p class="text-sm text-muted-foreground">
+                The iOS and Android apps do not send analytics, usage metrics, crash reports, or performance telemetry to Companion Intelligence. Optional services enabled on your server, including calendar or account integrations, have their own data flows and controls.
+              </p>
+            </div>
+
+            <div class="flex flex-col gap-2">
+              <h3 class="text-sm font-semibold text-foreground">Your choices and requests</h3>
+              <p class="text-sm text-muted-foreground">
+                The server operator controls server-side records, backups, connected services, and any server-level retention. Contact that operator to request changes or deletion of server data. Removing the app clears its on-device storage according to your device's operating system; it does not delete data from the server.
+              </p>
+            </div>
+
+            <Show when={isCapacitorShell() && (authCfg()?.portal || deviceLockEnabled())}>
+              <div class="flex flex-col gap-3 border-t border-border pt-4">
+                <div>
+                  <h3 class="text-sm font-semibold text-foreground">Device app password</h3>
+                  <p class="text-xs text-muted-foreground mt-1">Optional lock for this device. Its password verifier stays in this device’s secure storage and is never sent to your Planning server. Planning asks for it when you return from the background. When Hub sign-in is enabled, this password is an additional device check after Hub authentication.</p>
+                </div>
+                <Show when={!deviceLockEnabled() || deviceLockEditing()}>
+                  <label class="flex flex-col gap-1 text-xs text-muted-foreground">New app password
+                    <input class="input" type="password" autocomplete="new-password" maxlength="256" value={deviceLockPassword()} onInput={(e) => setDeviceLockPasswordInput(e.currentTarget.value)} placeholder="At least 8 characters" />
+                  </label>
+                  <label class="flex flex-col gap-1 text-xs text-muted-foreground">Confirm app password
+                    <input class="input" type="password" autocomplete="new-password" maxlength="256" value={deviceLockConfirm()} onInput={(e) => setDeviceLockConfirm(e.currentTarget.value)} />
+                  </label>
+                  <button type="button" class="btn-primary self-start text-xs" disabled={deviceLockBusy()} onClick={saveDeviceLock}>
+                    {deviceLockBusy() ? 'Saving…' : deviceLockEnabled() ? 'Change app password' : 'Set app password'}
+                  </button>
+                </Show>
+                <Show when={deviceLockEnabled() && !deviceLockEditing()}>
+                  <div class="flex gap-2">
+                    <button type="button" class="btn-secondary text-xs" disabled={deviceLockBusy()} onClick={() => setDeviceLockEditing(true)}>Change password</button>
+                    <button type="button" class="btn-ghost text-xs" disabled={deviceLockBusy()} onClick={removeDeviceLock}>Turn off app lock</button>
+                  </div>
+                </Show>
+              </div>
+            </Show>
+
+            <div class="flex flex-col gap-2">
+              <h3 class="text-sm font-semibold text-foreground">Published information</h3>
+              <a class="text-sm text-primary hover:underline inline-flex items-center gap-1.5" href="https://ci.computer/privacy-policy" target="_blank" rel="noopener noreferrer">
+                Companion Intelligence Privacy Policy <ExternalLink size={13} />
+              </a>
+              <a class="text-sm text-primary hover:underline inline-flex items-center gap-1.5" href="https://docs.ci.computer/docs/companion-planning" target="_blank" rel="noopener noreferrer">
+                Companion Planning product and privacy details <ExternalLink size={13} />
+              </a>
+              <a class="text-sm text-primary hover:underline inline-flex items-center gap-1.5" href="mailto:support@ci.computer">
+                Contact Companion Intelligence privacy support
+              </a>
+            </div>
+
+            <p class="text-xs text-muted-foreground">Last reviewed: November 17, 2026. This in-app notice supplements the published company policy; the server operator's policy also applies to data stored on that server.</p>
+          </section>
+        </div>
+      </Show>
 
       <form onSubmit={save} class="flex flex-col gap-5">
 
@@ -954,7 +1123,12 @@ export function Settings() {
             <div class="section-label flex items-center gap-1.5 mb-3"><Database size={12} /> Backup &amp; Export</div>
             <div class="flex flex-col gap-4">
               <div class="flex items-center gap-3 flex-wrap">
-                {/* A download link saves nothing in the native WebView, so the shells leave it out. */}
+                <Show when={isCapacitorShell()}>
+                  <button type="button" class="btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5" onClick={exportServerJson}>
+                    <Database size={12} /> Export JSON
+                  </button>
+                </Show>
+                {/* Browser downloads continue to use the server's attachment response. */}
                 <Show when={!isNativeShell()}>
                   <a
                     href={apiUrl('/api/export')}
@@ -1001,6 +1175,52 @@ export function Settings() {
 
         {/* ── PREFERENCES TAB ─────────────────────────────────────────────────── */}
         <Show when={activeTab() === 'preferences'}>
+
+          <section class="card flex flex-col gap-4">
+            <div>
+              <div class="section-label mb-1">Appearance and accessibility</div>
+              <p class="text-xs text-muted-foreground">Choose the app color theme and a comfortable reading size. These choices are saved on this device.</p>
+            </div>
+            <label class="flex items-center justify-between gap-3">
+              <span>
+                <span class="block text-sm text-foreground leading-tight">Theme mode</span>
+                <span class="block text-[11px] text-muted-foreground">System follows your device’s light or dark preference.</span>
+              </span>
+              <select class="input py-1 text-sm w-32 flex-shrink-0" aria-label="Theme mode"
+                value={theme()} onChange={(e) => setTheme(e.currentTarget.value as Theme)}>
+                <option value="system">System</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+              </select>
+            </label>
+            <label class="flex items-center justify-between gap-3">
+              <span>
+                <span class="block text-sm text-foreground leading-tight">Colorway</span>
+                <span class="block text-[11px] text-muted-foreground">Choose the app’s accent palette. Each colorway supports light and dark mode.</span>
+              </span>
+              <select class="input py-1 text-sm w-32 flex-shrink-0" aria-label="Colorway"
+                value={colorway()} onChange={(e) => setColorway(e.currentTarget.value as Colorway)}>
+                <option value="calm">Calm</option>
+                <option value="cool">Cool</option>
+                <option value="collected">Collected</option>
+                <option value="colorful">Colorful</option>
+                <option value="grounding">Grounding</option>
+                <option value="void">Void</option>
+              </select>
+            </label>
+            <label class="flex items-center justify-between gap-3">
+              <span>
+                <span class="block text-sm text-foreground leading-tight">Text size</span>
+                <span class="block text-[11px] text-muted-foreground">Larger text may show less content at once.</span>
+              </span>
+              <select class="input py-1 text-sm w-32 flex-shrink-0" aria-label="Text size"
+                value={textSize()} onChange={(e) => setTextSize(e.currentTarget.value as TextSize)}>
+                <option value="default">Default</option>
+                <option value="large">Large</option>
+                <option value="larger">Largest</option>
+              </select>
+            </label>
+          </section>
 
           {/* Schedule Patterns — per-direction availability windows */}
           <section id="schedule-patterns" class="card">
@@ -1306,13 +1526,26 @@ export function Settings() {
             <div class="flex items-center justify-between mb-3">
               <div
                 class="section-label flex items-center gap-1.5"
-                title="Applies to every task with a time or a due date — not just ones on the planner. Shared by Home, Community and Work. Reminders fire in-app; enable push for delivery when the app is closed."
+                title="Applies to every task with a time or a due date — not just ones on the planner. Shared by Home, Community and Work. Device reminders are refreshed from this server when the app opens or resumes."
               ><BellRing size={12} /> Reminders</div>
               <button type="button" onClick={saveReminderDefaults} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
             </div>
             <div class="flex flex-col gap-3">
-              {/* Push notifications — opt-in browser delivery (Phase H). Web Push does not
-                  reach the native WebView, so the shells leave this switch out. */}
+              {/* On-device local notifications for the Capacitor apps. */}
+              <Show when={isCapacitorShell()}>
+                <label class="flex items-start gap-2 cursor-pointer select-none">
+                  <button type="button" role="switch" aria-checked={nativeRemindersOn()} disabled={nativeRemindersBusy()} onClick={toggleNativeReminders}
+                    class="relative w-9 h-5 rounded-sm transition-colors flex-shrink-0 mt-0.5 disabled:opacity-50"
+                    classList={{ 'bg-primary': nativeRemindersOn(), 'bg-muted border border-border': !nativeRemindersOn() }}>
+                    <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-circle bg-card transition-transform" classList={{ 'translate-x-4': nativeRemindersOn() }} />
+                  </button>
+                  <div>
+                    <div class="text-sm text-foreground leading-tight">Device reminders</div>
+                    <div class="text-[11px] text-muted-foreground">Schedule generic reminders on this device. They refresh when the app opens or resumes; edits made elsewhere while it is closed may not update until then. These do not use Apple or Google push services.</div>
+                  </div>
+                </label>
+              </Show>
+              {/* Browser Web Push remains separate from the mobile local-notification path. */}
               <Show when={!isNativeShell()}>
                 <label class="flex items-start gap-2 cursor-pointer select-none">
                   <button type="button" role="switch" aria-checked={pushOn()} disabled={pushBusy()} onClick={togglePush}

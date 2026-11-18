@@ -12,10 +12,12 @@ import { createSignal } from 'solid-js';
  */
 export type Theme = 'light' | 'dark' | 'system';
 export type ResolvedTheme = 'light' | 'dark';
+export type Colorway = 'calm' | 'cool' | 'collected' | 'colorful' | 'grounding' | 'void';
 
 // Canonical CI storage key (matches the shadcn/vite-ui ThemeProvider convention
 // used across the CI frontends). Previously 'ci-theme'.
 const KEY = 'vite-ui-theme';
+const COLORWAY_KEY = 'ci-planning-colorway';
 
 const media = () =>
   typeof window !== 'undefined' && typeof window.matchMedia === 'function'
@@ -46,6 +48,37 @@ export { theme };
 // (icon, label, class checks) should read this, not `theme()`.
 const [resolvedTheme, setResolvedSignal] = createSignal<ResolvedTheme>(resolve(theme()));
 export { resolvedTheme };
+
+function initialColorway(): Colorway {
+  try {
+    const value = localStorage.getItem(COLORWAY_KEY);
+    if (value === 'cool' || value === 'collected' || value === 'colorful' || value === 'grounding' || value === 'void' || value === 'calm') return value;
+  } catch {
+    /* localStorage unavailable */
+  }
+  return 'calm';
+}
+
+const [colorway, setColorwaySignal] = createSignal<Colorway>(initialColorway());
+export { colorway };
+
+/** Apply a colorway independently of the light/dark/system mode. */
+export function applyColorway(value: Colorway): void {
+  if (typeof document !== 'undefined') document.documentElement.dataset.colorway = value;
+}
+
+/** Set and persist the selected app colorway on this device. */
+export function setColorway(value: Colorway): void {
+  setColorwaySignal(value);
+  try {
+    localStorage.setItem(COLORWAY_KEY, value);
+  } catch {
+    /* keep the current-session choice even if persistence is unavailable */
+  }
+  applyColorway(value);
+}
+
+applyColorway(colorway());
 
 /** Apply a preference to <html> (adds `.dark`/`.light`, the tokens key off `.dark`). */
 export function applyTheme(t: Theme): void {

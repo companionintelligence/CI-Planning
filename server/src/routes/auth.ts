@@ -1,5 +1,5 @@
 import Router from '@koa/router';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { store } from '../db/store.js';
 import { config } from '../lib/config.js';
 import { logger } from '../lib/logger.js';
@@ -257,7 +257,33 @@ interface AuthStateRow {
   code_verifier: string;
   nonce: string;
   redirect_uri: string | null;
+  native_code_challenge: string | null;
   expires_at: string;
+}
+
+const NATIVE_CALLBACK_URI = 'com.companionintelligence.planning://auth/callback';
+const NATIVE_CHALLENGE_RE = /^[A-Za-z0-9_-]{43}$/;
+const NATIVE_HANDOFF_TTL_MS = 2 * 60 * 1000;
+
+function sha256Hex(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+/** Issue a short-lived, single-use code. The raw code is only ever in the app link. */
+async function issueNativeHandoff(ownerId: string, challenge: string): Promise<string> {
+  const ticket = randomBytes(32).toString('base64url');
+  const now = Date.now();
+  await store().prepare(
+    `INSERT INTO native_auth_handoffs (ticket_hash, owner_id, code_challenge, created_at, expires_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(sha256Hex(ticket), ownerId, challenge, new Date(now).toISOString(), new Date(now + NATIVE_HANDOFF_TTL_MS).toISOString());
+  return ticket;
+}
+
+function redirectNativeAuthError(ctx: { redirect: (url: string) => void }, challenge: string | null | undefined, error: string): boolean {
+  if (!challenge) return false;
+  ctx.redirect(`${NATIVE_CALLBACK_URI}?error=${encodeURIComponent(error)}`);
+  return true;
 }
 
 interface PortalTokenResponse {
@@ -571,10 +597,17 @@ export function authRouter() {
     // Opportunistic hygiene: expired rows are minted unauthenticated and abandoned
     // logins never consume theirs, so prune on every start.
     await store().prepare(`DELETE FROM auth_states WHERE expires_at <= ?`).run(new Date().toISOString());
+    await store().prepare(`DELETE FROM native_auth_handoffs WHERE expires_at <= ?`).run(new Date().toISOString());
 
     const codeVerifier = base64url(randomBytes(64)); // ~86 chars (within 43–128)
     const state = base64url(randomBytes(32));
     const nonce = base64url(randomBytes(32));
+    const nativeChallenge = typeof ctx.query.native_code_challenge === 'string'
+      ? ctx.query.native_code_challenge
+      : null;
+    if (nativeChallenge && !NATIVE_CHALLENGE_RE.test(nativeChallenge)) {
+      throw httpError(400, 'invalid native login challenge');
+    }
     // Stored with the state so /callback exchanges the code with the SAME redirect_uri
     // the Portal saw (RFC 6749 §4.1.3), whichever of the two shapes this login used.
     const redirectUri = loginRedirectUriFor(ctx);
@@ -582,8 +615,8 @@ export function authRouter() {
     const now = Date.now();
     await store()
       .prepare(
-        `INSERT INTO auth_states (id, state, code_verifier, nonce, redirect_uri, created_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO auth_states (id, state, code_verifier, nonce, redirect_uri, native_code_challenge, created_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         newId(),
@@ -591,6 +624,7 @@ export function authRouter() {
         codeVerifier,
         nonce,
         redirectUri,
+        nativeChallenge,
         new Date(now).toISOString(),
         new Date(now + STATE_TTL_MS).toISOString(),
       );
@@ -636,6 +670,20 @@ export function authRouter() {
       // to the login screen with a displayable reason, mirroring Google's UX shape.
       logger.warn('CI-Portal callback returned provider error', { error });
       clearPortalRedirect(ctx);
+      const errorState = typeof ctx.query.state === 'string' ? ctx.query.state : undefined;
+      const boundState = consumeLoginState(ctx);
+      if (errorState && boundState === errorState) {
+        const failed = await store().prepare(
+          `DELETE FROM auth_states WHERE state = ? RETURNING native_code_challenge`,
+        ).get<{ native_code_challenge: string | null }>(errorState);
+        if (failed?.native_code_challenge) {
+          const result = ['access_denied', 'invalid_redirect_uri', 'unauthorized_client'].includes(error)
+            ? 'hub_access_denied'
+            : 'cancelled';
+          ctx.redirect(`${NATIVE_CALLBACK_URI}?error=${result}`);
+          return;
+        }
+      }
       ctx.redirect(`/login?sso_error=${encodeURIComponent(error)}`);
       return;
     }
@@ -662,7 +710,7 @@ export function authRouter() {
     const row = await store()
       .prepare(
         `DELETE FROM auth_states WHERE state = ?
-         RETURNING id, code_verifier, nonce, redirect_uri, expires_at`,
+         RETURNING id, code_verifier, nonce, redirect_uri, native_code_challenge, expires_at`,
       )
       .get<AuthStateRow>(state);
 
@@ -672,6 +720,7 @@ export function authRouter() {
       return;
     }
     if (new Date(row.expires_at) <= new Date()) {
+      if (redirectNativeAuthError(ctx, row.native_code_challenge, 'confirmation_expired')) return;
       ctx.status = 400;
       ctx.body = { error: 'expired_state' };
       return;
@@ -684,6 +733,7 @@ export function authRouter() {
       doc = await ciportalEndpoints();
     } catch (err) {
       logger.warn('CI-Portal discovery failed in callback', { err: (err as Error).message });
+      if (redirectNativeAuthError(ctx, row.native_code_challenge, 'failed')) return;
       ctx.status = 503;
       ctx.body = { error: 'ci_portal_unavailable' };
       return;
@@ -709,6 +759,7 @@ export function authRouter() {
       });
       if (!res.ok) {
         logger.warn('CI-Portal token exchange failed', { status: res.status });
+        if (redirectNativeAuthError(ctx, row.native_code_challenge, 'failed')) return;
         ctx.status = 400;
         ctx.body = { error: 'token_exchange_failed', status: res.status };
         return;
@@ -716,6 +767,7 @@ export function authRouter() {
       tok = (await res.json()) as PortalTokenResponse;
     } catch (err) {
       logger.error('CI-Portal token exchange error', { err: (err as Error).message });
+      if (redirectNativeAuthError(ctx, row.native_code_challenge, 'failed')) return;
       ctx.status = 502;
       ctx.body = { error: 'token_exchange_error' };
       return;
@@ -725,6 +777,7 @@ export function authRouter() {
     // The nonce is always enforced: we minted one for this flow (auth_states.nonce
     // is NOT NULL), so a token from any other flow can't be spliced in.
     if (!tok.id_token) {
+      if (redirectNativeAuthError(ctx, row.native_code_challenge, 'failed')) return;
       ctx.status = 400;
       ctx.body = { error: 'no_id_token' };
       return;
@@ -739,6 +792,7 @@ export function authRouter() {
       expectedNonce: row.nonce,
     });
     if (!claims || typeof claims.sub !== 'string' || !claims.sub) {
+      if (redirectNativeAuthError(ctx, row.native_code_challenge, 'failed')) return;
       ctx.status = 400;
       ctx.body = { error: 'invalid_id_token' };
       return;
@@ -756,6 +810,10 @@ export function authRouter() {
         // on a blank page with no way forward.
         logger.warn('CI-Portal login rejected: unknown subject and auto-provision is off');
         clearPortalRedirect(ctx);
+        if (row.native_code_challenge) {
+          ctx.redirect(`${NATIVE_CALLBACK_URI}?error=unknown_account`);
+          return;
+        }
         ctx.redirect('/login?sso_error=unknown_account');
         return;
       }
@@ -763,6 +821,10 @@ export function authRouter() {
       // rather than after asking the user to confirm an account that can never exist.
       if (await subHeldBySentinel(claims.sub)) {
         logger.warn('CI-Portal login rejected: subject is reserved (N-SENTINEL)');
+        if (row.native_code_challenge) {
+          ctx.redirect(`${NATIVE_CALLBACK_URI}?error=account_unavailable`);
+          return;
+        }
         ctx.status = 403;
         ctx.body = { error: 'subject_unavailable' };
         return;
@@ -771,12 +833,18 @@ export function authRouter() {
       // 10-minute intent cookie and let the person confirm on a no-JS page — the
       // guard against creating a tenant from the wrong Portal account (and, on an
       // operator-less instance, against accidentally claiming the operator role).
-      setPortalIntent(ctx, portalIdentity(claims));
+      setPortalIntent(ctx, portalIdentity(claims), row.native_code_challenge ?? undefined);
       logger.info('CI-Portal login: unknown subject — awaiting account confirmation');
-      ctx.redirect('/api/auth/ciportal/confirm-account');
+      ctx.redirect(`/api/auth/ciportal/confirm-account${row.native_code_challenge ? '?native=1' : ''}`);
       return;
     }
 
+    if (row.native_code_challenge) {
+      const ticket = await issueNativeHandoff(owner.id, row.native_code_challenge);
+      clearPortalRedirect(ctx);
+      ctx.redirect(`${NATIVE_CALLBACK_URI}?ticket=${encodeURIComponent(ticket)}`);
+      return;
+    }
     await setSession(ctx, owner.id);
     logger.info('CI-Portal login established', { owner: owner.id });
     const next = readPortalRedirect(ctx);
@@ -795,6 +863,10 @@ export function authRouter() {
     const intent = readPortalIntent(ctx);
     if (!intent) {
       clearPortalIntent(ctx);
+      if (ctx.query.native === '1') {
+        ctx.redirect(`${NATIVE_CALLBACK_URI}?error=confirmation_expired`);
+        return;
+      }
       ctx.redirect('/login?sso_error=confirmation_expired');
       return;
     }
@@ -828,6 +900,10 @@ export function authRouter() {
     if (body.decision !== 'create') {
       logger.info('CI-Portal account confirmation declined — nothing provisioned');
       clearPortalRedirect(ctx);
+      if (intent.nativeCodeChallenge) {
+        ctx.redirect(`${NATIVE_CALLBACK_URI}?error=cancelled`);
+        return;
+      }
       ctx.redirect('/login');
       return;
     }
@@ -835,13 +911,27 @@ export function authRouter() {
     if (!config.auth.autoProvision && !shareInvitation) {
       logger.warn('CI-Portal account confirmation refused: auto-provision is off');
       clearPortalRedirect(ctx);
+      if (intent.nativeCodeChallenge) {
+        ctx.redirect(`${NATIVE_CALLBACK_URI}?error=unknown_account`);
+        return;
+      }
       ctx.redirect('/login?sso_error=unknown_account');
       return;
     }
     const outcome = await provisionPortalOwner(intent);
     if (outcome === 'subject_unavailable') {
+      if (intent.nativeCodeChallenge) {
+        ctx.redirect(`${NATIVE_CALLBACK_URI}?error=account_unavailable`);
+        return;
+      }
       ctx.status = 403;
       ctx.body = { error: 'subject_unavailable' };
+      return;
+    }
+    if (intent.nativeCodeChallenge) {
+      const ticket = await issueNativeHandoff(outcome.id, intent.nativeCodeChallenge);
+      clearPortalRedirect(ctx);
+      ctx.redirect(`${NATIVE_CALLBACK_URI}?ticket=${encodeURIComponent(ticket)}`);
       return;
     }
     await setSession(ctx, outcome.id);
@@ -849,6 +939,35 @@ export function authRouter() {
     const next = readPortalRedirect(ctx);
     clearPortalRedirect(ctx);
     ctx.redirect(next ?? '/');
+  });
+
+  // Native shell exchanges a one-time PKCE-bound handoff for its own server session.
+  // The URL ticket is short-lived and useless without the verifier retained on-device.
+  router.post('/api/auth/ciportal/mobile-complete', async (ctx) => {
+    if (!ssoLoginEnabled()) throw httpError(404, 'Companion Portal login is not enabled');
+    if (rateLimited(ctx.ip)) throw httpError(429, 'too many login attempts — try again shortly');
+    const body = (ctx.request.body ?? {}) as { ticket?: unknown; code_verifier?: unknown };
+    if (typeof body.ticket !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(body.ticket)
+      || typeof body.code_verifier !== 'string' || !/^[A-Za-z0-9_-]{43,128}$/.test(body.code_verifier)) {
+      throw httpError(400, 'invalid or expired mobile sign-in handoff');
+    }
+    const ticketHash = sha256Hex(body.ticket);
+    const handoff = await store().prepare(
+      `SELECT owner_id, code_challenge, expires_at FROM native_auth_handoffs WHERE ticket_hash = ?`,
+    ).get<{ owner_id: string; code_challenge: string; expires_at: string }>(ticketHash);
+    if (!handoff || new Date(handoff.expires_at).getTime() <= Date.now()) {
+      await store().prepare(`DELETE FROM native_auth_handoffs WHERE ticket_hash = ?`).run(ticketHash);
+      throw httpError(410, 'mobile sign-in handoff expired; please try again');
+    }
+    if (s256(body.code_verifier) !== handoff.code_challenge) {
+      throw httpError(400, 'invalid or expired mobile sign-in handoff');
+    }
+    const consumed = await store().prepare(
+      `DELETE FROM native_auth_handoffs WHERE ticket_hash = ? AND code_challenge = ? AND expires_at > ?`,
+    ).run(ticketHash, handoff.code_challenge, new Date().toISOString());
+    if (consumed.changes !== 1) throw httpError(410, 'mobile sign-in handoff expired; please try again');
+    await setSession(ctx, handoff.owner_id);
+    ctx.body = { ok: true };
   });
 
   return router;

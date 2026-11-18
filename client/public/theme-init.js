@@ -15,6 +15,14 @@
     else if (t === 'system') dark = prefersDark();
   } catch (e) { /* localStorage unavailable */ }
   var el = document.documentElement;
+  try {
+    var colorway = localStorage.getItem('ci-planning-colorway');
+    el.dataset.colorway = ['cool', 'collected', 'colorful', 'grounding', 'void'].indexOf(colorway) >= 0 ? colorway : 'calm';
+  } catch (e) { el.dataset.colorway = 'calm'; }
   el.classList.toggle('dark', dark);
   el.classList.toggle('light', !dark);
+  try {
+    var textSize = localStorage.getItem('ci-planning-text-size');
+    el.dataset.textSize = textSize === 'large' || textSize === 'larger' ? textSize : 'default';
+  } catch (e) { el.dataset.textSize = 'default'; }
 })();

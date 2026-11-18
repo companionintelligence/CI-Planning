@@ -1,5 +1,5 @@
 /**
- * The app's own mark: the calendar-and-check icon from design/app-icon, drawn inline so it needs no
+ * The app's own mark: the triangle, crescent and circle from design/app-icon, drawn inline so it needs no
  * request and takes the size of the space it sits in. It replaces the generic chip icon the
  * navigation and sign-in screens used to show, so the app matches its icon and its launch screens.
  * Decorative: the name beside it says what the app is.
@@ -7,8 +7,11 @@
 let markCount = 0;
 
 export function BrandMark(props: { size: number; class?: string }) {
-  // Each mark names its own gradient, so two marks on one page never share an id.
-  const gradientId = `brand-mark-bg-${++markCount}`;
+  // Each mark names its own gradient and clip, so repeated marks never share an id.
+  const markId = ++markCount;
+  const gradientId = `brand-mark-bg-${markId}`;
+  const maskId = `brand-mark-circle-cutout-${markId}`;
+  const clipId = `brand-mark-disk-clip-${markId}`;
   return (
     <svg
       class={props.class}
@@ -22,13 +25,17 @@ export function BrandMark(props: { size: number; class?: string }) {
           <stop offset="0" stop-color="#58ebbf" />
           <stop offset="1" stop-color="#409b9b" />
         </linearGradient>
+        <mask id={maskId} maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+          <rect width="1024" height="1024" fill="#fff" />
+          <circle cx="524" cy="594" r="286" fill="#000" />
+        </mask>
+        <clipPath id={clipId} clipPathUnits="userSpaceOnUse">
+          <path d="M524 128 128 860H920Z" />
+        </clipPath>
       </defs>
       <rect width="1024" height="1024" rx="230" fill={`url(#${gradientId})`} />
-      <rect x="232" y="276" width="560" height="530" rx="64" fill="#041620" />
-      <path d="M232 340 A64 64 0 0 1 296 276 H728 A64 64 0 0 1 792 340 V396 H232 Z" fill="#0a6358" />
-      <rect x="330" y="216" width="36" height="120" rx="18" fill="#041620" />
-      <rect x="658" y="216" width="36" height="120" rx="18" fill="#041620" />
-      <path d="M372 610 L468 706 L652 512" fill="none" stroke="#58ebbf" stroke-width="58" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M524 128 128 860H920Z" fill="#041620" mask={`url(#${maskId})`} />
+      <circle cx="576" cy="578" r="220" fill="#041620" clip-path={`url(#${clipId})`} />
     </svg>
   );
 }

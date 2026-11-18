@@ -220,11 +220,11 @@ describe('Login — ?sso_error= from the Portal callback (B1)', () => {
     },
   );
 
-  it('any other error keeps the generic "cancelled or failed" copy', async () => {
+  it('an expired handoff link asks the user to restart sign-in', async () => {
     currentParams = { sso_error: 'confirmation_expired' };
     const { container } = await renderLogin(cfg({}));
     const alert = container.querySelector('[role="alert"]')!;
-    expect(alert.textContent).toMatch(/Companion Portal sign-in was cancelled or failed \(confirmation_expired\)\. Please try again\./);
+    expect(alert.textContent).toMatch(/This sign-in link expired\. Start again to continue\./);
     expect(alert.textContent).not.toMatch(/invite you to the organization/);
   });
 
@@ -276,10 +276,8 @@ describe('Login — Capacitor mobile shell', () => {
   });
 });
 
-describe('Login — Capacitor mobile shell: username and password only', () => {
-  // Capacitor hands any top-level navigation off the app's own origin to the system browser,
-  // so a sign-in that redirects out and back finishes in Safari with the cookie, and the app
-  // never sees the session. The shell therefore offers the one sign-in it can complete.
+describe('Login — Capacitor mobile shell', () => {
+  // Portal sign-in uses the native one-time handoff; local username sign-in remains available.
   beforeEach(() => {
     vi.stubGlobal('Capacitor', { isNativePlatform: () => true });
     localStorage.setItem('ci-planning.server-url', 'http://192.168.1.20:3848');
@@ -288,34 +286,35 @@ describe('Login — Capacitor mobile shell: username and password only', () => {
     localStorage.removeItem('ci-planning.server-url');
   });
 
-  it('on a server with Portal and username sign-in, shows the username form alone: no Portal button, no toggle, no sign-up', async () => {
+  it('on a server with Portal and username sign-in, shows native Portal sign-in and keeps the username form available', async () => {
     const { container, getByText, queryByText } = await renderLogin(cfg({ portal: true, local: true, signup: 'portal' }));
 
-    expect(usernameInput(container)).toBeTruthy(); // not folded behind "Sign in with username instead"
-    expect(passwordInput(container)).toBeTruthy();
-    expect(getByText('Enter your username and password.')).toBeInTheDocument();
-    expect(portalButton(container)).toBeNull();
-    expect(queryByText('Continue with Companion Portal')).toBeNull();
-    expect(queryByText('Sign in with username instead')).toBeNull();
+    expect(container.querySelector('button.btn-primary')).toHaveTextContent('Continue with Companion Portal');
+    expect(queryByText('Continue with Companion Portal')).toBeInTheDocument();
+    expect(queryByText('Sign in with username instead')).toBeInTheDocument();
+    expect(usernameInput(container)).toBeNull(); // folded until the user asks for it
     expect(createWithPortal(container)).toBeUndefined();
-    expect(queryByText(/Don't have an account\?/)).toBeNull();
-    expect(container.querySelector(`a[href="${START}"]`)).toBeNull(); // no way out at all
+    expect(getByText(/Don't have an account\?/)).toBeInTheDocument();
+    fireEvent.click(getByText('Sign in with username instead'));
+    expect(usernameInput(container)).toBeTruthy();
+    expect(passwordInput(container)).toBeTruthy();
   });
 
-  it.each(['invite', 'open'] as const)('offers no /signup link where the server allows sign-up (%s)', async (signup) => {
+  it.each(['invite', 'open'] as const)('offers the configured /signup path where enabled (%s)', async (signup) => {
     const { container, queryByText } = await renderLogin(cfg({ portal: false, local: true, signup }));
 
     expect(usernameInput(container)).toBeTruthy();
-    expect(signupLink(container)).toBeNull();
-    expect(queryByText(/Don't have an account\?/)).toBeNull();
+    expect(signupLink(container)).toBeTruthy();
+    expect(queryByText(/Don't have an account\?/)).toBeInTheDocument();
   });
 
-  it('on a server that only offers Portal sign-in, says so instead of showing a button that cannot work', async () => {
+  it('on a server that only offers Portal sign-in, offers the native flow', async () => {
     const { container, getByText, queryByText } = await renderLogin(cfg({ portal: true, local: false, signup: 'portal' }));
 
-    expect(getByText(/only offers Companion Portal sign-in, which the app can't do yet/)).toBeInTheDocument();
-    expect(getByText(/Sign in from a browser, or ask whoever runs this server/)).toBeInTheDocument();
+    expect(getByText(/Use your Companion Portal account to continue/)).toBeInTheDocument();
+    expect(getByText('Continue with Companion Portal')).toBeInTheDocument();
     expect(portalButton(container)).toBeNull();
+    expect(container.querySelector('button.btn-primary')).toBeTruthy();
     expect(usernameInput(container)).toBeNull();
     expect(queryByText('Sign-in is not enabled on this deployment.')).toBeNull();
     // The way back to the connect screen is still there: the wrong server is the likeliest cause.
@@ -326,6 +325,8 @@ describe('Login — Capacitor mobile shell: username and password only', () => {
     const assign = vi.fn();
     vi.stubGlobal('location', { ...window.location, assign });
     const { container } = await renderLogin(cfg({ portal: true, local: true }));
+
+    fireEvent.click(container.querySelector('button.btn-secondary')!);
 
     fireEvent.input(usernameInput(container)!, { target: { value: '  ada  ' } });
     fireEvent.input(passwordInput(container)!, { target: { value: 'pw' } });

@@ -54,10 +54,11 @@ describe('iOS', () => {
     expect(manifest).toMatch(/<key>NSPrivacyTrackingDomains<\/key>\s*<array\/>/);
   });
 
-  it('declares no collected data and no required-reason API, which the build scan supports', () => {
+  it('declares no collected data and declares the Filesystem required-reason API', () => {
     const manifest = readFileSync(join(repo, 'mobile', 'ios', 'ios', 'App', 'App', 'PrivacyInfo.xcprivacy'), 'utf8');
     expect(manifest).toMatch(/<key>NSPrivacyCollectedDataTypes<\/key>\s*<array\/>/);
-    expect(manifest).toMatch(/<key>NSPrivacyAccessedAPITypes<\/key>\s*<array\/>/);
+    expect(manifest).toMatch(/<key>NSPrivacyAccessedAPITypes<\/key>[\s\S]*?<key>NSPrivacyAccessedAPIType<\/key>\s*<string>NSPrivacyAccessedAPICategoryFileTimestamp<\/string>/);
+    expect(manifest).toMatch(/<key>NSPrivacyAccessedAPITypeReasons<\/key>\s*<array>\s*<string>C617\.1<\/string>/);
   });
 
   it('answers the export-compliance question, so TestFlight does not ask on every upload', () => {
@@ -115,15 +116,21 @@ describe('Android', () => {
 });
 
 describe('native dependencies', () => {
-  it('adds no Capacitor plugin without a new privacy review', () => {
-    // The privacy manifests declare nothing because there are no plugins. A plugin brings its own
-    // data types and required-reason APIs, so adding one must start by re-running the build scan
-    // that the manifest describes.
+  it('declares only the reviewed native plugins used by the mobile flows', () => {
     const core = new Set(['@capacitor/core', '@capacitor/android', '@capacitor/ios', '@capacitor/cli']);
+    const reviewed = new Set([
+      '@capacitor/app',
+      '@capacitor/browser',
+      '@capacitor/filesystem',
+      '@capacitor/local-notifications',
+      '@capacitor/share',
+      '@aparajita/capacitor-secure-storage',
+    ]);
     for (const platform of ['ios', 'android'] as const) {
       const pkg = JSON.parse(read('mobile', platform, 'package.json'));
       const names = [...Object.keys(pkg.dependencies ?? {}), ...Object.keys(pkg.devDependencies ?? {})];
-      expect(names.filter((n) => n.startsWith('@capacitor/') && !core.has(n)), platform).toEqual([]);
+      expect(names.filter((n) => (n.startsWith('@capacitor/') || n.startsWith('@aparajita/')) && !core.has(n)).sort(), platform)
+        .toEqual([...reviewed].sort());
     }
   });
 });

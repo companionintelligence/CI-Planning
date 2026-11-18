@@ -33,6 +33,8 @@ export interface PortalIntent {
   csrf: string;
   /** Absolute expiry (ms since epoch) — enforced server-side. */
   exp: number;
+  /** PKCE challenge for the native app return; never a session credential. */
+  nativeCodeChallenge?: string;
 }
 
 // Mirrors lib/auth/session.ts cookieOpts: signed, httpOnly, Lax, Secure over HTTPS.
@@ -49,13 +51,18 @@ function cookieOpts(ctx: Koa.Context, maxAge?: number) {
 }
 
 /** Park a verified-but-unprovisioned portal identity; returns the intent written. */
-export function setPortalIntent(ctx: Koa.Context, identity: { sub: string; name: string; email?: string }): PortalIntent {
+export function setPortalIntent(
+  ctx: Koa.Context,
+  identity: { sub: string; name: string; email?: string },
+  nativeCodeChallenge?: string,
+): PortalIntent {
   const intent: PortalIntent = {
     sub: identity.sub,
     name: identity.name,
     ...(identity.email ? { email: identity.email } : {}),
     csrf: randomBytes(32).toString('base64url'),
     exp: Date.now() + PORTAL_INTENT_TTL_MS,
+    ...(nativeCodeChallenge ? { nativeCodeChallenge } : {}),
   };
   ctx.cookies.set(PORTAL_INTENT_COOKIE, Buffer.from(JSON.stringify(intent)).toString('base64url'), cookieOpts(ctx, PORTAL_INTENT_TTL_MS));
   return intent;
@@ -81,12 +88,14 @@ export function readPortalIntent(ctx: Koa.Context): PortalIntent | null {
   if (typeof p.name !== 'string') return null;
   if (typeof p.csrf !== 'string' || !p.csrf) return null;
   if (typeof p.exp !== 'number' || !Number.isFinite(p.exp) || p.exp <= Date.now()) return null;
+  if (p.nativeCodeChallenge !== undefined && (typeof p.nativeCodeChallenge !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(p.nativeCodeChallenge))) return null;
   return {
     sub: p.sub,
     name: p.name,
     ...(typeof p.email === 'string' && p.email ? { email: p.email } : {}),
     csrf: p.csrf,
     exp: p.exp,
+    ...(p.nativeCodeChallenge ? { nativeCodeChallenge: p.nativeCodeChallenge } : {}),
   };
 }
 

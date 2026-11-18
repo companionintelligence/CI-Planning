@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Companion Planning mark</title>
+  <defs>
+    <mask id="circle-cutout" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+      <rect width="512" height="512" fill="#fff" />
+      <circle cx="262" cy="297" r="143" fill="#000" />
+    </mask>
+    <clipPath id="disk-clip" clipPathUnits="userSpaceOnUse">
+      <path d="M262 64 64 430H460Z" />
+    </clipPath>
+  </defs>
+  <path d="M262 64 64 430H460Z" fill="#050505" mask="url(#circle-cutout)" />
+  <circle cx="288" cy="289" r="110" fill="#050505" clip-path="url(#disk-clip)" />
+</svg>

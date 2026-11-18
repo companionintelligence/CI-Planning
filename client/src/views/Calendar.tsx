@@ -24,8 +24,9 @@ import type { TagAxis } from '../lib/overlay.js';
 import { isCommitment } from '../lib/overlay.js';
 import { tagColorVar } from '../lib/textures.js';
 import { api } from '../lib/api.js';
-import { apiUrl, isNativeShell } from '../lib/server-config.js';
+import { apiUrl, isCapacitorShell } from '../lib/server-config.js';
 import { showToast } from '../stores/index.js';
+import { shareApiExport } from '../lib/native-export.js';
 import { localISODate, rangeUTC, addDays, weekDaysOf, monthGridOf } from '../lib/dates.js';
 import { minutesIntoDay } from '../lib/grid.js';
 import { DayReflowBanner } from '../components/DayReflowBanner.js';
@@ -236,6 +237,15 @@ export function Calendar() {
     return apiUrl(`/api/blocks/export.ics?from=${encodeURIComponent(r.from)}&to=${encodeURIComponent(r.to)}`);
   });
 
+  async function exportCalendarRange() {
+    const days = visibleDays();
+    try {
+      await shareApiExport(exportHref(), `companion-${days[0]}-${days[days.length - 1]}.ics`, 'Export calendar range');
+    } catch (err) {
+      showToast((err as Error).message || 'Could not export calendar range', 'error');
+    }
+  }
+
   const views: ViewMode[] = ['day', 'week', 'month'];
 
   // ── Calendar review: weekly recap or rolling 30-day recap ────────────────────
@@ -358,8 +368,19 @@ export function Calendar() {
           {/* Below sm these four shed their WORDS, not themselves: each already carries a
               `title`, and the icon set is distinct. Keeping the labels here is what pushed
               the toolbar to three stacked rows on a phone and left the grid ~250px tall. */}
-          {/* A download saves nothing in the native WebView, so the shells leave this out. */}
-          <Show when={!isNativeShell()}>
+          {/* iOS and Android need the native share/save sheet; browsers keep a download link. */}
+          <Show when={isCapacitorShell()}>
+            <button
+              type="button"
+              onClick={exportCalendarRange}
+              class="btn-ghost text-xs gap-1"
+              aria-label="Export this range as an .ics calendar file"
+              title="Share this range as an .ics calendar file"
+            >
+              <Download size={13} /> <span class="hidden sm:inline">Export</span>
+            </button>
+          </Show>
+          <Show when={!isCapacitorShell()}>
             <a
               href={exportHref()}
               download=""

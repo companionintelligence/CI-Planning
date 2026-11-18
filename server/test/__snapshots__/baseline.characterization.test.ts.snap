@@ -850,6 +850,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "created_at",
       "expires_at",
       "id",
+      "native_code_challenge",
       "nonce",
       "redirect_uri",
       "state",
@@ -1152,6 +1153,16 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "updated_at",
     ],
     "table": "life_priorities",
+  },
+  {
+    "columns": [
+      "code_challenge",
+      "created_at",
+      "expires_at",
+      "owner_id",
+      "ticket_hash",
+    ],
+    "table": "native_auth_handoffs",
   },
   {
     "columns": [
