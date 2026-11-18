@@ -12,13 +12,16 @@ export default defineConfig({
     // The full Chromium build, not the "headless shell": the shell binary crashes at
     // launch on some Linux boxes (seen on the dev box with v1248), and the full build
     // runs these DOM tests identically. `playwright install chromium` provides both.
-    channel: "chromium",
+    channel: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ? undefined : "chromium",
     baseURL: process.env.APP_URL || "http://localhost:8080",
     ignoreHTTPSErrors: true,
     viewport: { width: 1280, height: 800 },
     // Software WebGL (SwiftShader) so three.js / WebGL apps actually render in
     // headless CI instead of producing a blank canvas. Harmless for DOM apps.
     launchOptions: {
+      ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+        ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+        : {}),
       args: [
         "--use-gl=angle",
         "--use-angle=swiftshader",

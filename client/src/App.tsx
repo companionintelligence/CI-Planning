@@ -1,6 +1,6 @@
 import { Navigate, Route, Router, useLocation, useNavigate, useSearchParams } from '@solidjs/router';
 import { ErrorBoundary, Show, createEffect, createResource, createSignal, lazy, onCleanup, onMount } from 'solid-js';
-import { Plus, RefreshCw, PanelLeft } from 'lucide-solid';
+import { Plus, RefreshCw, PanelLeft, LockKeyhole, Loader2 } from 'lucide-solid';
 import { BootScreen } from './components/BootScreen.js';
 import { BrandMark } from './components/BrandMark.js';
 import { DetailsDrawer, DetailsToggle } from './components/DetailsDrawer.js';
@@ -8,7 +8,8 @@ import { navCollapsed, toggleNav, detailsOpen } from './stores/ui.js';
 import { Nav }      from './components/Nav.js';
 import { CloseRitual } from './components/CloseRitual.js';
 import { ConnectServer } from './views/ConnectServer.js';
-import { needsServerSetup } from './lib/server-config.js';
+import { isCapacitorShell, needsServerSetup } from './lib/server-config.js';
+import { nativeRemindersEnabled, syncNativeReminders } from './lib/native-reminders.js';
 import { setSignedIn } from './lib/session.js';
 import { authGateActive, UNAUTHENTICATED_EVENT } from './lib/api.js';
 import { BottomNav } from './components/BottomNav.js';
@@ -21,7 +22,7 @@ import { OnboardingWizard } from './components/OnboardingWizard.js';
 import { TrustTrigger, TrustModal, type TrustMode } from './components/TrustModal.js';
 import { ErrorBoundaryFallback } from './components/ErrorBoundaryFallback.js';
 import { captureException } from './lib/telemetry.js';
-import { setElementModal, blocks, taskOf, tags, patternPrefs, prefs, refetchPrefs, showToast, refetchTasks, refetchBlocks, refetchFlightPlan, closeRitualTask, closeRitualQueue, advanceCloseRitual, clearCloseRitual } from './stores/index.js';
+import { setElementModal, blocks, taskOf, tags, patternPrefs, prefs, refetchPrefs, showToast, refetchTasks, refetchBlocks, refetchFlightPlan, reminders as serverReminders, refetchReminders, closeRitualTask, closeRitualQueue, advanceCloseRitual, clearCloseRitual } from './stores/index.js';
 import { api } from './lib/api.js';
 import {
   requestNotificationPermission,
@@ -30,6 +31,8 @@ import {
 } from './lib/notifications.js';
 import { RecurringScopeDialog } from './components/RecurringScopeDialog.js';
 import { GuestPlanner } from './components/GuestPlanner.js';
+import { handleNativePortalCallback } from './lib/native-portal-auth.js';
+import { clearDeviceLock, DEVICE_LOCK_CHANGED_EVENT, getDeviceLockVerifier, verifyDeviceLockPassword, type LockVerifier } from './lib/native-app-lock.js';
 
 // Keep each page out of the startup bundle until its route is opened. The planner has
 // several substantial views; importing every route here made the initial JS chunk
@@ -61,6 +64,9 @@ function useTaskReminders() {
   const [visibleTick, setVisibleTick] = createSignal(0);
 
   onMount(() => {
+    // Capacitor shells use OS scheduled notifications below. Web Notifications and
+    // JavaScript timers are foreground-only there and would duplicate reminders.
+    if (isCapacitorShell()) return;
     requestNotificationPermission();
     const onVisibility = () => {
       if (document.visibilityState === 'visible') setVisibleTick((n) => n + 1);
@@ -70,6 +76,7 @@ function useTaskReminders() {
   });
 
   createEffect(() => {
+    if (isCapacitorShell()) return;
     visibleTick(); // re-run when the tab becomes visible
 
     // Pattern-tag name → id, for blocks/tasks that carry tag names rather than ids.
@@ -356,6 +363,140 @@ function SessionGate(props: { children?: any }) {
 }
 
 export function App() {
+  useNativePortalCallback();
+  return <NativeAppLockBoundary><AppContent /></NativeAppLockBoundary>;
+}
+
+function NativeAppLockBoundary(props: { children: any }) {
+  const [ready, setReady] = createSignal(false);
+  const [locked, setLocked] = createSignal(false);
+  const [verifier, setVerifier] = createSignal<LockVerifier | null>(null);
+  const [storageError, setStorageError] = createSignal('');
+  const [password, setPassword] = createSignal('');
+  const [unlockBusy, setUnlockBusy] = createSignal(false);
+  const [error, setError] = createSignal('');
+  const [resetBusy, setResetBusy] = createSignal(false);
+
+  onMount(() => {
+    if (!isCapacitorShell()) { setReady(true); return; }
+    let initialized = false;
+    let disposed = false;
+    let appListener: { remove: () => Promise<void> } | undefined;
+    const loadVerifier = async () => {
+      try {
+        const value = await getDeviceLockVerifier();
+        setVerifier(value);
+        setStorageError('');
+        if (!initialized) setLocked(!!value);
+        else if (!value) setLocked(false);
+        initialized = true;
+      } catch (err) {
+        setStorageError((err as Error).message || 'Secure device storage is unavailable');
+      } finally { setReady(true); }
+    };
+    void loadVerifier();
+    const onChanged = () => { void loadVerifier(); };
+    window.addEventListener(DEVICE_LOCK_CHANGED_EVENT, onChanged);
+    void import('@capacitor/app').then(async ({ App: NativeApp }) => {
+      if (disposed) return;
+      appListener = await NativeApp.addListener('appStateChange', ({ isActive }) => {
+        if (!isActive && verifier()) {
+          setLocked(true);
+          setPassword('');
+          setError('');
+          setSignedIn(false);
+        }
+      });
+      if (disposed) await appListener.remove();
+    }).catch(() => {});
+    onCleanup(() => {
+      disposed = true;
+      window.removeEventListener(DEVICE_LOCK_CHANGED_EVENT, onChanged);
+      void appListener?.remove();
+    });
+  });
+
+  async function unlock(event: Event) {
+    event.preventDefault();
+    const current = verifier();
+    if (!current || unlockBusy()) return;
+    setUnlockBusy(true);
+    setError('');
+    try {
+      if (await verifyDeviceLockPassword(password(), current)) {
+        setPassword('');
+        setLocked(false);
+      } else {
+        setError('That password did not match. Try again.');
+        setPassword('');
+      }
+    } catch {
+      setError('Could not check the password. Try again.');
+    } finally { setUnlockBusy(false); }
+  }
+
+  async function resetAppLock() {
+    if (resetBusy()) return;
+    setResetBusy(true);
+    setError('');
+    try {
+      // The Hub sign-in becomes the recovery step; do not remove the lock offline.
+      await api.auth.logout();
+      await clearDeviceLock();
+      window.location.assign('/login');
+    } catch {
+      setError('Connect to your Planning server to sign out and reset this app lock.');
+      setResetBusy(false);
+    }
+  }
+
+  return (
+    <Show when={ready()} fallback={<BootScreen />}>
+      <Show when={storageError()}>
+        <div class="min-h-screen flex items-center justify-center p-6 bg-surface-950">
+          <section class="card w-full max-w-sm flex flex-col gap-3 text-center">
+            <LockKeyhole class="mx-auto text-primary" size={22} />
+            <h1 class="text-base font-semibold text-foreground">App lock unavailable</h1>
+            <p class="text-sm text-muted-foreground">Planning could not read the saved device lock. Your app stays locked until secure storage is available.</p>
+            <p class="text-xs text-destructive">{storageError()}</p>
+            <button type="button" class="btn-secondary w-full justify-center" onClick={() => { setReady(false); void getDeviceLockVerifier().then((v) => { setVerifier(v); setStorageError(''); setLocked(!!v); setReady(true); }).catch((err) => { setStorageError((err as Error).message); setReady(true); }); }}>Try again</button>
+            <button type="button" class="text-xs text-muted-foreground underline" disabled={resetBusy()} onClick={resetAppLock}>Sign out and reset app lock</button>
+          </section>
+        </div>
+      </Show>
+      <Show when={!storageError()}>
+        <Show when={locked()} fallback={props.children}>
+          <div class="min-h-screen flex items-center justify-center p-6 bg-surface-950">
+            <section class="card w-full max-w-sm flex flex-col gap-4">
+              <div class="text-center">
+                <LockKeyhole class="mx-auto mb-3 text-primary" size={24} />
+                <h1 class="text-base font-semibold text-foreground">Unlock Companion Planning</h1>
+                <p class="text-xs text-muted-foreground mt-1">Enter your device app password to continue.</p>
+              </div>
+              <form class="flex flex-col gap-3" onSubmit={unlock}>
+                <label class="flex flex-col gap-1">
+                  <span class="text-xs text-muted-foreground">App password</span>
+                  <input class="input" type="password" autocomplete="current-password" maxlength="256" value={password()} onInput={(e) => setPassword(e.currentTarget.value)} autofocus />
+                </label>
+                <Show when={error()}><p class="text-xs text-destructive" role="alert">{error()}</p></Show>
+                <button type="submit" class="btn-primary w-full justify-center" disabled={unlockBusy() || !password()}>
+                  <Show when={unlockBusy()} fallback="Unlock"><Loader2 class="animate-spin" size={15} /> Checking…</Show>
+                </button>
+              </form>
+              <button type="button" class="text-xs text-muted-foreground underline self-center" disabled={resetBusy()} onClick={resetAppLock}>
+                {resetBusy() ? 'Signing out…' : 'Forgot app password? Sign out and reset'}
+              </button>
+            </section>
+          </div>
+        </Show>
+      </Show>
+    </Show>
+  );
+}
+
+function AppContent() {
+  useNativeReminderSync();
+
   // Capacitor mobile shell, first run: the bundle is served from the app itself, so there
   // is no same-origin server to ask. Get the server's address before anything else loads.
   // Never true in a browser (lib/server-config.ts), so the web app is unchanged.
@@ -405,6 +546,54 @@ export function App() {
       </Show>
     </Show>
   );
+}
+
+/** Schedule server reminders on this device and refresh them whenever the app resumes. */
+function useNativeReminderSync() {
+  createEffect(() => {
+    const pending = serverReminders();
+    if (isCapacitorShell() && nativeRemindersEnabled() && pending) {
+      void syncNativeReminders(pending).catch(() => {});
+    }
+  });
+
+  onMount(() => {
+    if (!isCapacitorShell()) return;
+    let disposed = false;
+    let listener: { remove: () => Promise<void> } | undefined;
+    void import('@capacitor/app').then(async ({ App: NativeApp }) => {
+      if (disposed) return;
+      listener = await NativeApp.addListener('appStateChange', ({ isActive }) => {
+        if (isActive) refetchReminders();
+      });
+      if (disposed) await listener.remove();
+    }).catch(() => {});
+    onCleanup(() => {
+      disposed = true;
+      void listener?.remove();
+    });
+  });
+}
+
+/** Receive the fixed-scheme PKCE handoff from the system browser, including cold starts. */
+function useNativePortalCallback() {
+  onMount(() => {
+    if (!isCapacitorShell()) return;
+    let disposed = false;
+    let listener: { remove: () => Promise<void> } | undefined;
+    const handle = (url: string) => { void handleNativePortalCallback(url).catch(() => {}); };
+    void import('@capacitor/app').then(async ({ App: NativeApp }) => {
+      if (disposed) return;
+      listener = await NativeApp.addListener('appUrlOpen', ({ url }) => handle(url));
+      const launch = await NativeApp.getLaunchUrl();
+      if (launch?.url) handle(launch.url);
+      if (disposed) await listener.remove();
+    }).catch(() => {});
+    onCleanup(() => {
+      disposed = true;
+      void listener?.remove();
+    });
+  });
 }
 
 /** The pre-U3 router, unchanged — used verbatim in test/standalone (ungated) mode. */

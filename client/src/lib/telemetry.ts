@@ -24,7 +24,7 @@
 
 import * as Sentry from '@sentry/browser';
 import { scrubBreadcrumbData, scrubHeaders, scrubString, scrubUrl, scrubValue } from './telemetry-scrub.js';
-import { apiUrl } from './server-config.js';
+import { apiUrl, isCapacitorShell } from './server-config.js';
 
 let initialized = false;
 
@@ -136,7 +136,12 @@ export function isTelemetryEnabled(): boolean {
 export async function initTelemetry(): Promise<void> {
   if (initialized || typeof window === 'undefined') return;
 
-  // MUST stay the first check. With `VITE_SENTRY_DSN` unset Vite inlines `undefined`
+  // The iOS and Android apps do not send crash, usage, or performance reports.
+  // Keep this gate before any request to the server or Sentry initialization.
+  if (isCapacitorShell()) return;
+
+  // After the native-app exclusion, this must be the first telemetry gate. With
+  // `VITE_SENTRY_DSN` unset Vite inlines `undefined`
   // here, which makes everything below statically unreachable and lets the bundler drop
   // @sentry/browser from the bundle altogether (verified: no DSN ⇒ zero occurrences of
   // "sentry" in the output, and the bundle is the same size as before this feature).

@@ -1,17 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Apple Privacy Manifest for the app target. Capacitor and Cordova ship their own for their
-  frameworks (both declare nothing); this one covers the app's own bundle, and is where the
-  declarations for any Capacitor plugin added later belong.
-
-  NSPrivacyAccessedAPITypes is empty because nothing in the build uses a required-reason API.
-  Checked on 2026-10-30 by scanning the Debug Simulator build's App, App.debug.dylib,
-  Capacitor and Cordova binaries for the symbols and keys of the five categories (file
-  timestamps, system boot time, disk space, active keyboard, UserDefaults): no references.
-  There are no plugins today. Re-run that scan when one is added; each API it brings needs
-  a declaration here with an approved reason code, and App Store Connect rejects an upload
-  with an undeclared one (an automated email, after the build is processed).
+  Apple Privacy Manifest for the app target. Capacitor and its plugins ship framework
+  manifests; this one covers the app bundle. The Filesystem plugin reads file timestamps
+  for files managed inside the app container, declared below with Apple's C617.1 reason.
 
   NSPrivacyCollectedDataTypes is empty on purpose. Companion Planning is a client for a
   server the person runs; what they enter is sent only to that server, which Lifescope has
@@ -34,6 +26,15 @@
 	<key>NSPrivacyCollectedDataTypes</key>
 	<array/>
 	<key>NSPrivacyAccessedAPITypes</key>
-	<array/>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

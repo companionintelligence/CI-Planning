@@ -1206,6 +1206,8 @@ export const api = {
     me: () => request<AuthMe>('GET', '/auth/me'),
     login: (username: string, password: string) =>
       request<{ ok: boolean }>('POST', '/auth/login', { username, password }),
+    mobileComplete: (ticket: string, codeVerifier: string) =>
+      request<{ ok: boolean }>('POST', '/auth/ciportal/mobile-complete', { ticket, code_verifier: codeVerifier }),
     logout: () => request<{ ok: boolean }>('POST', '/auth/logout'),
     // V — password reset (local sign-in). reset-request always resolves to a neutral 200.
     // `delivery`/`message` are config-derived only (email vs. server-log fallback when

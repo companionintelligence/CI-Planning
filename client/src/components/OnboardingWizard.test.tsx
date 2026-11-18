@@ -98,6 +98,14 @@ vi.mock('../lib/api.js', () => ({
   },
 }));
 
+// The lock is covered by its own native integration tests. Loading the Capacitor secure-storage
+// plugin here replaces the shell global that these component tests stub to represent a device.
+vi.mock('../lib/native-app-lock.js', () => ({
+  hasDeviceLock: async () => false,
+  setDeviceLockPassword: async () => undefined,
+  clearDeviceLock: async () => undefined,
+}));
+
 type PrefsLike =
   | { onboarded_at: string | null; trust_mode?: 'cautious' | 'balanced' | 'hands_off' }
   | null | undefined;

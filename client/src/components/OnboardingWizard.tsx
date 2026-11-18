@@ -13,6 +13,8 @@ import { ConnectSourceStep } from './onboarding/ConnectSourceStep.js';
 import { RunFirstSyncStep } from './onboarding/RunFirstSyncStep.js';
 import { PatternTagsSetup, DayTypeSetup, WeekdayTypesStep } from './onboarding/PlanningSetupSteps.js';
 import { useNavigate } from '@solidjs/router';
+import { isCapacitorShell } from '../lib/server-config.js';
+import { clearDeviceLock, hasDeviceLock, setDeviceLockPassword } from '../lib/native-app-lock.js';
 
 const BROWSER_TZ = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
@@ -65,6 +67,22 @@ export function OnboardingWizard() {
 
   const [busy, setBusy] = createSignal(false);
   const [setupDayType, setSetupDayType] = createSignal('workday');
+  const [authConfig] = createResource(() => api.auth.config().catch(() => null));
+  const [deviceLockConfigured, setDeviceLockConfigured] = createSignal(false);
+  const [deviceLockReady, setDeviceLockReady] = createSignal(!isCapacitorShell());
+  const [deviceLockEnabled, setDeviceLockEnabled] = createSignal(false);
+  const [deviceLockPassword, setDeviceLockPasswordInput] = createSignal('');
+  const [deviceLockConfirm, setDeviceLockConfirm] = createSignal('');
+  const [deviceLockError, setDeviceLockError] = createSignal('');
+
+  onMount(() => {
+    if (!isCapacitorShell()) return;
+    void hasDeviceLock().then((enabled) => {
+      setDeviceLockConfigured(enabled);
+      setDeviceLockEnabled(enabled);
+    }).catch((err) => setDeviceLockError((err as Error).message || 'Secure storage is unavailable'))
+      .finally(() => setDeviceLockReady(true));
+  });
 
   const [me] = createResource(() => api.auth.me().catch(() => null));
 
@@ -125,6 +143,23 @@ export function OnboardingWizard() {
   async function completeOnboarding(): Promise<boolean> {
     setBusy(true);
     try {
+      if (isCapacitorShell() && authConfig()?.portal) {
+        if (!deviceLockReady()) throw new Error('Wait for secure device storage to load before finishing setup');
+        if (deviceLockError()) throw new Error('Could not check secure device storage. Try again before finishing setup.');
+        if (deviceLockEnabled()) {
+          if (!deviceLockConfigured() || deviceLockPassword() || deviceLockConfirm()) {
+            if (deviceLockPassword().length < 8) throw new Error('The app password must be at least 8 characters');
+            if (deviceLockPassword() !== deviceLockConfirm()) throw new Error('The app passwords do not match');
+            await setDeviceLockPassword(deviceLockPassword());
+            setDeviceLockConfigured(true);
+            setDeviceLockPasswordInput('');
+            setDeviceLockConfirm('');
+          }
+        } else if (deviceLockConfigured()) {
+          await clearDeviceLock();
+          setDeviceLockConfigured(false);
+        }
+      }
       await api.prefs.update({ onboarded_at: new Date().toISOString() });
       await refetchPrefs();
       try {
@@ -372,6 +407,29 @@ export function OnboardingWizard() {
           <Show when={onboardingStep() === 10}>
             <div class="flex flex-col gap-3">
               <div><h2 class="text-base font-semibold text-foreground">You’re ready to plan</h2><p class="text-xs text-muted-foreground mt-0.5">Your setup is saved. Want to set your life priorities and weekly balance now?</p></div>
+              <Show when={isCapacitorShell() && authConfig()?.portal && deviceLockReady()}>
+                <section class="rounded-lg border border-border bg-surface-900/60 p-3 flex flex-col gap-2">
+                  <label class="flex items-start gap-2 cursor-pointer">
+                    <input type="checkbox" class="mt-1 accent-primary" checked={deviceLockEnabled()} onChange={(e) => { setDeviceLockEnabled(e.currentTarget.checked); setDeviceLockError(''); }} />
+                    <span>
+                      <span class="block text-sm text-foreground">Add an app password on this device</span>
+                      <span class="block text-[11px] text-muted-foreground">Optional extra lock after Hub sign-in. It stays on this device and is requested when Planning returns from the background.</span>
+                    </span>
+                  </label>
+                  <Show when={deviceLockEnabled() && (!deviceLockConfigured() || deviceLockPassword() || deviceLockConfirm())}>
+                    <label class="flex flex-col gap-1 text-xs text-muted-foreground">App password
+                      <input class="input" type="password" autocomplete="new-password" maxlength="256" value={deviceLockPassword()} onInput={(e) => setDeviceLockPasswordInput(e.currentTarget.value)} placeholder="At least 8 characters" />
+                    </label>
+                    <label class="flex flex-col gap-1 text-xs text-muted-foreground">Confirm app password
+                      <input class="input" type="password" autocomplete="new-password" maxlength="256" value={deviceLockConfirm()} onInput={(e) => setDeviceLockConfirm(e.currentTarget.value)} />
+                    </label>
+                  </Show>
+                  <Show when={deviceLockConfigured() && deviceLockEnabled()}>
+                    <p class="text-[11px] text-muted-foreground">An app password is already set. Leave the password fields blank to keep it.</p>
+                  </Show>
+                  <Show when={deviceLockError()}><p class="text-xs text-destructive" role="alert">{deviceLockError()}</p></Show>
+                </section>
+              </Show>
               <div class="flex justify-between items-center pt-1"><button type="button" class="btn-ghost text-xs" disabled={busy()} onClick={() => void completeOnboarding()}>Finish</button><div class="flex gap-2"><button type="button" class="btn-ghost text-xs" disabled={busy()} onClick={() => setOnboardingStep(9)}>Back</button><button type="button" class="btn-primary text-xs" disabled={busy()} onClick={() => void finishToBalance()}>Set up Life Balance</button></div></div>
             </div>
           </Show>
