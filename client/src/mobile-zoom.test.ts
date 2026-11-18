@@ -76,7 +76,7 @@ describe('fields on a touch device', () => {
     expect(coarse).toMatch(/(^|[\s,])input:not\(/);
     expect(coarse).toMatch(/(^|[\s,])select\s*[,{]/);
     expect(coarse).toMatch(/(^|[\s,])textarea\s*[,{]/);
-    const sizes = [...coarse.matchAll(/font-size:\s*(\d+(?:\.\d+)?)px/g)].map((m) => Number(m[1]));
+    const sizes = [...coarse.matchAll(/font-size:\s*(?:calc\()?\s*(\d+(?:\.\d+)?)px/g)].map((m) => Number(m[1]));
     expect(sizes.length).toBeGreaterThan(0);
     expect(Math.min(...sizes)).toBeGreaterThanOrEqual(16);
   });
