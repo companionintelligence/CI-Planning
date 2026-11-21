@@ -1,8 +1,9 @@
 import { createSignal, createEffect, createResource, For, Show } from 'solid-js';
 import { Plus, Trash2 } from 'lucide-solid';
 import { A } from '@solidjs/router';
-import { tags, patternPrefs, refetchPatternPrefs, refetchPatternBlocks, refetchDayConflicts, showToast } from '../stores/index.js';
+import { tags, patternPrefs, plannerAxisState, refetchPatternPrefs, refetchPatternBlocks, refetchDayConflicts, showToast } from '../stores/index.js';
 import { api } from '../lib/api.js';
+import { bottomCollapseStart, topCollapseEnd } from '../lib/day-axis.js';
 
 /**
  * Per-direction availability windows (Pattern-blocks) for ONE day type, plus the
@@ -19,6 +20,11 @@ import { api } from '../lib/api.js';
  */
 
 interface Range { start_time: string; end_time: string }
+
+function timeValue(minutes: number): string {
+  const n = Math.max(0, Math.min(1439, Math.round(minutes)));
+  return `${String(Math.floor(n / 60) % 24).padStart(2, '0')}:${String(n % 60).padStart(2, '0')}`;
+}
 
 export interface SchedulePatternEditorProps {
   dayType: string;
@@ -37,6 +43,8 @@ export function SchedulePatternEditor(props: SchedulePatternEditorProps) {
       : { windows: (await api.patternBlocks.forDay(dayType)).windows, overriddenDirections: [] as string[] },
   );
   const overriddenDirections = () => data()?.overriddenDirections ?? [];
+  const earliestTime = () => timeValue(topCollapseEnd(plannerAxisState()));
+  const latestTime = () => timeValue(bottomCollapseStart(plannerAxisState()));
 
   const [windows, setWindows] = createSignal<Record<string, Range[]>>({});
   createEffect(() => {
@@ -49,7 +57,7 @@ export function SchedulePatternEditor(props: SchedulePatternEditorProps) {
 
   const getRanges = (dirId: string) => windows()[dirId] ?? [];
   const addRange = (dirId: string) => {
-    const next = [...getRanges(dirId), { start_time: '09:00', end_time: '17:00' }];
+    const next = [...getRanges(dirId), { start_time: earliestTime(), end_time: latestTime() }];
     setWindows((w) => ({ ...w, [dirId]: next }));
     void save(dirId, next);
   };
@@ -137,6 +145,8 @@ export function SchedulePatternEditor(props: SchedulePatternEditorProps) {
                     <input
                       type="time"
                       class={`input py-1 text-sm min-w-0 ${props.date ? 'w-full' : 'flex-1'}`}
+                      min={earliestTime()}
+                      max={latestTime()}
                       value={r.start_time}
                       aria-label={`${dir.name} window start`}
                       onInput={(e) => updateRange(dir.id, i(), 'start_time', e.currentTarget.value)}
@@ -146,6 +156,8 @@ export function SchedulePatternEditor(props: SchedulePatternEditorProps) {
                     <input
                       type="time"
                       class={`input py-1 text-sm min-w-0 ${props.date ? 'w-full' : 'flex-1'}`}
+                      min={earliestTime()}
+                      max={latestTime()}
                       value={r.end_time}
                       aria-label={`${dir.name} window end`}
                       onInput={(e) => updateRange(dir.id, i(), 'end_time', e.currentTarget.value)}

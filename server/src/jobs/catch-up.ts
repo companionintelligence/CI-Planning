@@ -19,7 +19,7 @@
 // WHO MAY BE CAUGHT UP. Only the kinds in CATCH_UP_KINDS, an explicit list. Nothing is derived
 // from the cron period: reset_routines, freeze_stars, review_day, auto_schedule and
 // generate_recurrences are all daily and differ in whether a late run is safe, and
-// advance_objectives is weekly yet moves its own cadence. A derived rule would also make every
+// advance_objectives is daily while each objective moves on its own cadence. A derived rule would also make every
 // new kind caught up by default, which is the unsafe default. Here a kind nobody has classified
 // is never caught up, and the test over the seeded kinds fails until someone puts it in
 // CATCH_UP_KINDS or gives it a reason in NOT_CAUGHT_UP. A kind belongs in the list when all
@@ -103,7 +103,7 @@ export const NOT_CAUGHT_UP: Readonly<Record<string, string>> = {
   enrich_tasks:
     'Fills blanks from memory and the model for up to 20 tasks per owner. It fixes itself at the next tick and would only add model and network load at boot.',
   advance_objectives:
-    'Stamps last_advanced_at with the run time, so a mid-week catch-up makes the following Monday see less than a period and skip, and the next nomination lands a week later than the cadence says.',
+    'Stamps last_advanced_at with the run time. Catching up once after downtime is safe; each objective still enforces its own daily, weekly, biweekly, or monthly interval.',
   fire_reminders:
     'Runs every minute and claims every reminder that is due, so the first tick after boot already makes it up.',
   ingest_gmail:

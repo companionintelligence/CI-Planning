@@ -1512,6 +1512,61 @@ html[data-colorway="void"]:not(.dark) {
   .objective-kanban-column { width: 100%; min-height: 16rem; }
 }
 
+/* Phone task cards keep the action rail inside the card: the dates, priority and
+   flight-plan controls wrap below the task actions instead of stretching the page. */
+.objective-mobile-add-task { display: none; }
+@media (max-width: 639px) {
+  .task-card-footer { align-items: flex-start; }
+  .task-card-footer-spacer { display: none; }
+  .task-card-footer-meta {
+    flex: 1 1 100%;
+    min-width: 0;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 0.375rem;
+  }
+
+  .objective-header {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    column-gap: 0.5rem;
+    row-gap: 0.375rem;
+  }
+  .objective-header-tools { grid-row: 1; grid-column: 1; }
+  .objective-actions {
+    grid-row: 1;
+    grid-column: 2;
+    justify-self: end;
+    opacity: 1;
+  }
+  .objective-title-content { grid-row: 2; grid-column: 1 / -1; width: 100%; }
+  .objective-title-text {
+    display: block;
+    flex: 1 1 100%;
+    min-width: 0;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+  }
+  .objective-progress {
+    grid-row: 3;
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+  .objective-mobile-add-task {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    align-self: flex-start;
+    margin: 0.25rem 0 0 2rem;
+    color: var(--primary);
+    font-size: 0.75rem;
+    min-height: 2rem;
+  }
+}
+
 /* Yellow and amber utility text was tuned for dark surfaces, so it washed out
    against light cards. Keep the existing palette in dark mode; use the semantic
    warning orange in light mode. Leave the conflict banner's intentionally muted

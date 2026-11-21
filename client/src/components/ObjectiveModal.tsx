@@ -43,6 +43,7 @@ const HORIZONS = [
 
 const CADENCES = [
   { value: 'none', label: 'No cadence' },
+  { value: 'daily', label: 'Daily' },
   { value: 'weekly', label: 'Weekly' },
   { value: 'biweekly', label: 'Bi-weekly' },
   { value: 'monthly', label: 'Monthly' },
