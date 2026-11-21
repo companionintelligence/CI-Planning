@@ -368,9 +368,8 @@ export function ObjectivesPanel() {
       </Show>
 
       {/* Modal */}
-      <Show when={modal()}>
-        {(m) => {
-          const mv = m();
+      <Show when={modal()} keyed>
+        {(mv) => {
           if (mv.mode === 'edit') {
             return (
               <ObjectiveModal

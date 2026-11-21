@@ -35,9 +35,9 @@ function positionFor(anchor: HTMLElement, preferredWidth: number): JSX.CSSProper
     top: `${top}px`,
     left: `${left}px`,
     width: `${width}px`,
-    maxHeight: `${maxHeight}px`,
-    overflowY: 'auto',
-    overscrollBehavior: 'contain',
+    'max-height': `${maxHeight}px`,
+    'overflow-y': 'auto',
+    'overscroll-behavior': 'contain',
   };
 }
 
