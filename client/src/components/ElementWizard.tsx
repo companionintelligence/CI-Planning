@@ -24,6 +24,7 @@ import { proposeSlot, narrowToBand } from '../lib/propose-slot.js';
 import { findSimilarTasks } from '../lib/similar-tasks.js';
 import { inheritedBlockTag } from '../lib/planner.js';
 import { api, type Task, type Person, type DurationSuggestion, type PatternWindows, type ClassificationClaim } from '../lib/api.js';
+import { ViewportOverlay } from './ViewportOverlay.js';
 
 const TB_REPEAT: RepeatPreset[] = ['none', 'daily', 'weekly', 'custom'];
 const TASK_REPEAT: RepeatPreset[] = ['none', 'daily', 'weekly', 'custom'];
@@ -1240,7 +1241,7 @@ export function ElementWizard() {
 
   return (
     <Show when={open()}>
-      <div class="modal-backdrop" onClick={(e) => e.target === e.currentTarget && close()}>
+      <ViewportOverlay class="modal-backdrop" onClick={(e) => e.target === e.currentTarget && close()}>
         <div class="modal md:max-w-[680px]">
           {/* ── Header: segmented tabs + close, then the borderless title ── */}
           <div class="px-5 pt-4 pb-3 border-b border-border">
@@ -2065,7 +2066,7 @@ export function ElementWizard() {
             onClose={() => setTextureOpen(false)}
           />
         </Show>
-      </div>
+      </ViewportOverlay>
     </Show>
   );
 }

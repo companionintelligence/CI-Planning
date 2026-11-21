@@ -634,12 +634,16 @@ html[data-colorway="void"]:not(.dark) {
   /* ── Modal ───────────────────────────────────────────────────── */
   .modal-backdrop {
     @apply fixed inset-0 z-[1000] flex items-center justify-center p-4;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     background: rgba(0,0,0,.7);
     backdrop-filter: blur(6px);
     animation: fadeIn 150ms ease both;
   }
   .modal {
     @apply rounded-xl shadow-2xl w-full max-w-lg overflow-hidden border;
+    min-width: 0;
     background: var(--card);
     border-color: var(--border);
     animation: modalIn 200ms cubic-bezier(0.34,1.56,0.64,1) both;
@@ -648,7 +652,7 @@ html[data-colorway="void"]:not(.dark) {
        cut off both the header and the footer, so the save/close controls were
        unreachable. Only the <768px sheet rule below used to cap the height, so
        this hit desktop only. Cap it here and let the body scroll instead. */
-    max-height: 90vh;
+    max-height: min(90vh, calc(100% - 24px));
     overflow-y: auto;
     overscroll-behavior: contain;
   }
@@ -750,7 +754,7 @@ html[data-colorway="void"]:not(.dark) {
   .modal-backdrop { align-items: flex-end; padding: 0; }
   .modal {
     max-width: 100%;
-    max-height: 92vh;
+    max-height: calc(100% - env(safe-area-inset-top));
     overflow-y: auto;
     border-radius: var(--radius-30) var(--radius-30) var(--radius-0) var(--radius-0);
     padding-bottom: env(safe-area-inset-bottom);

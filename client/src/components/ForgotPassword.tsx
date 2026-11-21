@@ -1,6 +1,7 @@
 import { createSignal, Show } from 'solid-js';
 import { X, Loader2 } from 'lucide-solid';
 import { api } from '../lib/api.js';
+import { ViewportOverlay } from './ViewportOverlay.js';
 
 /**
  * V6 — "Forgot password?" modal, opened from the local login form (Login.tsx). One
@@ -46,7 +47,7 @@ export function ForgotPassword(props: Props) {
   }
 
   return (
-    <div class="modal-backdrop" onClick={props.onClose}>
+    <ViewportOverlay class="modal-backdrop" onClick={props.onClose}>
       <div class="modal max-w-sm" onClick={(e) => e.stopPropagation()}>
         <div class="px-4 py-3 border-b border-border flex items-center justify-between">
           <span class="text-sm font-semibold text-foreground">Reset your password</span>
@@ -94,6 +95,6 @@ export function ForgotPassword(props: Props) {
           </form>
         </Show>
       </div>
-    </div>
+    </ViewportOverlay>
   );
 }

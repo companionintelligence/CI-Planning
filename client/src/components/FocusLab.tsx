@@ -6,6 +6,7 @@ import { focusState } from '../lib/focus.js';
 import { PATTERN_COLORS, colorVar } from '../lib/pattern-meta.js';
 import { SESSION_MINUTES, FOCUS_STYLES } from '../lib/focus-appearance.js';
 import { focusAppearance, setFocusAppearance, prefs } from '../stores/index.js';
+import { ViewportOverlay } from './ViewportOverlay.js';
 
 /**
  * FOCUS LAB — the pop-up behind the FOCUS header's tuner button.
@@ -49,7 +50,7 @@ export function FocusLab(props: {
 
   return (
     <Portal>
-      <div class="modal-backdrop" role="dialog" aria-label="Focus Lab" onClick={props.onClose}>
+      <ViewportOverlay class="modal-backdrop" role="dialog" aria-label="Focus Lab" onClick={props.onClose}>
         <div class="modal max-w-md" onClick={(e) => e.stopPropagation()}>
           <div class="flex items-start justify-between gap-3 px-4 pt-4">
             <div>
@@ -145,7 +146,7 @@ export function FocusLab(props: {
             <button class="btn-primary text-sm px-4 py-1.5" onClick={props.onClose}>Done</button>
           </div>
         </div>
-      </div>
+      </ViewportOverlay>
     </Portal>
   );
 }

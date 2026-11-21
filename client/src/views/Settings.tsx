@@ -30,6 +30,7 @@ import { shareApiExport, shareTextExport } from '../lib/native-export.js';
 import { clearDeviceLock, hasDeviceLock, setDeviceLockPassword } from '../lib/native-app-lock.js';
 import { colorway, setColorway, setTheme, theme, type Colorway, type Theme } from '../lib/theme.js';
 import { setTextSize, textSize, type TextSize } from '../lib/text-size.js';
+import { ViewportOverlay } from '../components/ViewportOverlay.js';
 
 const BROWSER_TZ = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
@@ -2627,7 +2628,7 @@ export function Settings() {
           for the ElementWizard). Closes on backdrop click or the X. */}
       <Show when={reviewing()}>
         {(session) => (
-          <div class="modal-backdrop" onClick={() => setReviewing(null)}>
+          <ViewportOverlay class="modal-backdrop" onClick={() => setReviewing(null)}>
             <div class="modal max-w-lg" onClick={(e) => e.stopPropagation()}>
               <div class="px-4 py-3 border-b border-border flex items-center justify-between">
                 <span class="text-sm font-semibold text-foreground">
@@ -2671,7 +2672,7 @@ export function Settings() {
                 </button>
               </div>
             </div>
-          </div>
+          </ViewportOverlay>
         )}
       </Show>
     </div>

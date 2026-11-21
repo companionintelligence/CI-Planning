@@ -32,6 +32,7 @@ import { splitTagNames } from '../lib/multi-tag.js';
 import { PatternBlockOverlay } from './PatternBlockOverlay.js';
 import { DirectionColumn } from './DirectionColumn.js';
 import { PlannerEntityCard } from './PlannerEntityCard.js';
+import { ViewportOverlay } from './ViewportOverlay.js';
 
 /** Open the unified Element wizard to edit a Time Block. */
 function editTimeBlock(id: string) {
@@ -684,7 +685,7 @@ function DeletePlanDialog(props: { plan: Block; childCount: number; onClose: () 
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
   return (
-    <div class="modal-backdrop" onClick={props.onClose}>
+    <ViewportOverlay class="modal-backdrop" onClick={props.onClose}>
       <div class="modal max-w-sm" onClick={(e) => e.stopPropagation()}>
         <div class="px-4 py-3 border-b border-border">
           <span class="text-sm font-semibold text-foreground">Remove "{props.plan.title}"?</span>
@@ -701,7 +702,7 @@ function DeletePlanDialog(props: { plan: Block; childCount: number; onClose: () 
           </div>
         </div>
       </div>
-    </div>
+    </ViewportOverlay>
   );
 }
 

@@ -5,6 +5,7 @@ import { planWeekModal, setPlanWeekModal, showToast, aiAvailable } from '../stor
 import { PlanWeekFill } from './PlanWeekFill.js';
 import { PlanWeekScheduleTasks } from './PlanWeekScheduleTasks.js';
 import { PlanWeekReviewBranch } from './PlanWeekReviewBranch.js';
+import { ViewportOverlay } from './ViewportOverlay.js';
 
 /**
  * PlanWeekAssistant (FTUE · T2, #338) — the "Plan my week" shell.
@@ -240,7 +241,7 @@ export function PlanWeekAssistant() {
 
   return (
     <Show when={open()}>
-      <div class="modal-backdrop" onClick={() => void close('abandoned')}>
+      <ViewportOverlay class="modal-backdrop" onClick={() => void close('abandoned')}>
         <div class="modal max-w-lg" onClick={(e) => e.stopPropagation()}>
           {/* Header */}
           <div class="px-4 py-3 border-b border-border flex items-center justify-between">
@@ -300,7 +301,7 @@ export function PlanWeekAssistant() {
             </button>
           </div>
         </div>
-      </div>
+      </ViewportOverlay>
     </Show>
   );
 }

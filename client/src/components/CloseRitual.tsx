@@ -4,6 +4,7 @@ import { api, DECLINED_SCORE, type Block, type Score, type Task } from '../lib/a
 import { blocks, refetchTasks, showToast } from '../stores/index.js';
 import { defaultDuration, pickBlock } from '../lib/close-ritual-duration.js';
 import { FACE_KEYS, scoreOf, toggleFace, type FaceKey } from '../lib/close-ritual-score.js';
+import { ViewportOverlay } from './ViewportOverlay.js';
 
 /**
  * The close ritual — a small sheet offered right AFTER a task is ticked off: how did it
@@ -142,7 +143,7 @@ export function CloseRitual(props: {
 
   return (
     <Show when={reviewConfirmed()} fallback={
-      <div class="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4" onClick={props.onAdvance}>
+      <ViewportOverlay class="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4" onClick={props.onAdvance}>
         <div class="card w-full max-w-sm p-0 overflow-hidden" onClick={(e) => e.stopPropagation()}>
           <div class="flex items-center gap-2 px-4 py-3 border-b border-border">
             <AlertTriangle size={16} class="text-amber-500 flex-shrink-0" />
@@ -159,9 +160,9 @@ export function CloseRitual(props: {
             </div>
           </div>
         </div>
-      </div>
+      </ViewportOverlay>
     }>
-    <div class="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4" onClick={skip}>
+    <ViewportOverlay class="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4" onClick={skip}>
       <div class="card w-full max-w-sm p-0 overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div class="flex items-center gap-2 px-4 py-3 border-b border-border">
           <div class="flex-1 min-w-0">
@@ -276,7 +277,7 @@ export function CloseRitual(props: {
           </button>
         </Show>
       </div>
-    </div>
+    </ViewportOverlay>
     </Show>
   );
 }

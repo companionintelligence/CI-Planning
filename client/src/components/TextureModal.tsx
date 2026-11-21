@@ -2,6 +2,7 @@ import { Show } from 'solid-js';
 import { X } from 'lucide-solid';
 import { ItemColorPicker } from './ItemColorPicker.js';
 import { colorVar } from '../lib/pattern-meta.js';
+import { ViewportOverlay } from './ViewportOverlay.js';
 
 /**
  * Texture picker (0135) as a pop-up, plus the trigger pill that opens it.
@@ -54,7 +55,7 @@ export function TextureModal(props: {
   onClose: () => void;
 }) {
   return (
-    <div
+    <ViewportOverlay
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
       role="dialog"
       aria-modal="true"
@@ -108,6 +109,6 @@ export function TextureModal(props: {
           </button>
         </div>
       </div>
-    </div>
+    </ViewportOverlay>
   );
 }
