@@ -5,6 +5,7 @@ import { patternTypes, refetchPatternTypes, showToast } from '../stores/index.js
 import { ShapeIcon } from './ShapeIcon.js';
 import { ItemColorPicker } from './ItemColorPicker.js';
 import { colorVar } from '../lib/pattern-meta.js';
+import { ViewportOverlay } from './ViewportOverlay.js';
 
 /**
  * PatternTypeManager (#391) — the first UI for the pattern-type CRUD
@@ -48,7 +49,7 @@ export function PatternTypeManager(props: { onClose: () => void }) {
   };
 
   return (
-    <div class="modal-backdrop" onClick={props.onClose}>
+    <ViewportOverlay class="modal-backdrop" onClick={props.onClose}>
       <div class="modal max-w-md" onClick={(e) => e.stopPropagation()}>
         <div class="px-4 py-3 border-b border-border flex items-center justify-between">
           <span class="text-sm font-semibold text-foreground">Pattern types</span>
@@ -107,6 +108,6 @@ export function PatternTypeManager(props: { onClose: () => void }) {
           </Show>
         </div>
       </div>
-    </div>
+    </ViewportOverlay>
   );
 }

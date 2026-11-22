@@ -37,6 +37,7 @@ export async function advanceObjectives(
 
   // Period thresholds in days.
   const PERIOD_DAYS: Record<string, number> = {
+    daily: 1,
     weekly: 7,
     biweekly: 14,
     monthly: 30,

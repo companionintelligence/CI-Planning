@@ -1,5 +1,6 @@
 import { For, Show } from 'solid-js';
 import { X } from 'lucide-solid';
+import { ViewportOverlay } from './ViewportOverlay.js';
 
 /**
  * The trust dial (`scheduling_prefs.trust_mode`, 0070) as a pop-up, plus the trigger
@@ -85,7 +86,7 @@ export function TrustModal(props: {
   onClose: () => void;
 }) {
   return (
-    <div
+    <ViewportOverlay
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
       role="dialog"
       aria-modal="true"
@@ -125,6 +126,6 @@ export function TrustModal(props: {
           </Show>
         </div>
       </div>
-    </div>
+    </ViewportOverlay>
   );
 }

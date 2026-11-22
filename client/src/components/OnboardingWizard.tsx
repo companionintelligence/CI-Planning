@@ -15,6 +15,7 @@ import { PatternTagsSetup, DayTypeSetup, WeekdayTypesStep } from './onboarding/P
 import { useNavigate } from '@solidjs/router';
 import { isCapacitorShell } from '../lib/server-config.js';
 import { clearDeviceLock, hasDeviceLock, setDeviceLockPassword } from '../lib/native-app-lock.js';
+import { ViewportOverlay } from './ViewportOverlay.js';
 
 const BROWSER_TZ = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
@@ -270,7 +271,7 @@ export function OnboardingWizard() {
 
   return (
     <Show when={shouldOnboard()}>
-      <div
+      <ViewportOverlay
         class="fixed inset-0 z-[1000] flex items-center justify-center p-4"
         style={{ background: 'rgba(0,0,0,.7)', 'backdrop-filter': 'blur(6px)' }}
       >
@@ -434,7 +435,7 @@ export function OnboardingWizard() {
             </div>
           </Show>
         </div>
-      </div>
+      </ViewportOverlay>
     </Show>
   );
 }

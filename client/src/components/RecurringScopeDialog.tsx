@@ -1,6 +1,7 @@
 import { Show } from 'solid-js';
 import { Repeat } from 'lucide-solid';
 import { recurringScopeAsk, answerRecurringScope } from '../stores/index.js';
+import { ViewportOverlay } from './ViewportOverlay.js';
 
 /**
  * "Just this one, or this and everything after it?" — asked before changing or deleting
@@ -20,7 +21,7 @@ export function RecurringScopeDialog() {
 
   return (
     <Show when={ask().open}>
-      <div
+      <ViewportOverlay
         class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
         role="dialog"
         aria-modal="true"
@@ -69,7 +70,7 @@ export function RecurringScopeDialog() {
             </button>
           </div>
         </div>
-      </div>
+      </ViewportOverlay>
     </Show>
   );
 }

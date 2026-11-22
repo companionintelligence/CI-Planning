@@ -9,6 +9,7 @@ import { api } from '../lib/api.js';
 import type { Priority, Task } from '../lib/api.js';
 import { BalanceMetrics } from '../components/BalanceMetrics.js';
 import { SchedulingPreferences } from '../components/SchedulingPreferences.js';
+import { ViewportOverlay } from '../components/ViewportOverlay.js';
 
 interface CategoryConfig { key: string; name: string; icon: typeof Heart; colorClass: string; }
 
@@ -239,7 +240,7 @@ export function Balance() {
           edit wizard (the app-global ElementWizard), same affordance as a card edit. */}
       <Show when={modalCat()}>
         {(cat) => (
-          <div class="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setTasksModal(null)}>
+          <ViewportOverlay class="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setTasksModal(null)}>
             <div class="card w-full max-w-md max-h-[70vh] flex flex-col p-0 overflow-hidden" onClick={(e) => e.stopPropagation()}>
               <div class="flex items-center gap-2.5 px-4 py-3 border-b border-border">
                 <div class={`p-1.5 rounded-lg bg-muted ${cat().colorClass}`}>{(() => { const I = cat().icon; return <I class="w-4 h-4" />; })()}</div>
@@ -270,7 +271,7 @@ export function Balance() {
                 </Show>
               </div>
             </div>
-          </div>
+          </ViewportOverlay>
         )}
       </Show>
     </div>

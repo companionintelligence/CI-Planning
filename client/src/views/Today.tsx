@@ -16,6 +16,7 @@ import { OpenTimeSummary } from '../components/OpenTimeSummary.js';
 import { DayStarsRow } from '../components/DayStarsRow.js';
 import { ReplanBanner } from '../components/ReplanBanner.js';
 import { FocusMenu, BriefMenu } from '../components/DayGoals.js';
+import { ViewportOverlay } from '../components/ViewportOverlay.js';
 
 /**
  * TODAY — the planner cockpit (Phase G, G5). **Day Overview** (day/date + today's
@@ -325,7 +326,7 @@ export function Today() {
 
       {/* Due — popup modal (button lives in the day-header icon row above). */}
       <Show when={dueOpen()}>
-        <div class="modal-backdrop" onClick={() => setDueOpen(false)}>
+        <ViewportOverlay class="modal-backdrop" onClick={() => setDueOpen(false)}>
           <div class="modal max-w-md max-h-[85vh] overflow-auto p-4" onClick={(e) => e.stopPropagation()}>
             <DueCard
               date={selectedDay()}
@@ -335,7 +336,7 @@ export function Today() {
               bare
             />
           </div>
-        </div>
+        </ViewportOverlay>
       </Show>
 
       {/* Replan suggestion — a big-disruption reflow asks to re-plan with AI (B4) */}
@@ -364,7 +365,7 @@ export function Today() {
 
       {/* Create-Routine-from-selection modal (Phase F). */}
       <Show when={routineModal().open}>
-        <div class="modal-backdrop" onClick={() => setRoutineModal({ open: false, name: '' })}>
+        <ViewportOverlay class="modal-backdrop" onClick={() => setRoutineModal({ open: false, name: '' })}>
           <div class="modal max-w-md" onClick={(e) => e.stopPropagation()}>
             <div class="px-4 py-3 border-b border-border flex items-center gap-2">
               <Repeat size={14} class="text-primary" />
@@ -393,7 +394,7 @@ export function Today() {
               </div>
             </div>
           </div>
-        </div>
+        </ViewportOverlay>
       </Show>
     </div>
   );

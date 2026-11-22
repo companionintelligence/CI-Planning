@@ -4,6 +4,7 @@ import { api, type WeeklyGoal, type ReflectionWrite, type DaySummary, type TopTa
 import { isoWeekKey } from '../lib/dates.js';
 import { flattenObjectives, matchObjectives, type FlatObjective } from '../lib/objectives.js';
 import { showToast, setElementModal, refetchTasks, aiAvailable, openCloseRitual, taskOf, type ToastAction } from '../stores/index.js';
+import { createAnchoredPopoverStyle } from '../lib/anchored-popover.js';
 
 type Tab = 'today' | 'week';
 
@@ -18,6 +19,8 @@ type Tab = 'today' | 'week';
 export function FocusMenu(props: { date: string }) {
   const [open, setOpen] = createSignal(false);
   const [tab, setTab] = createSignal<Tab>('today');
+  let trigger: HTMLButtonElement | undefined;
+  const popoverStyle = createAnchoredPopoverStyle(open, () => trigger, 352);
 
   const [data, { refetch }] = createResource(() => props.date, (d) => api.reflections.get(d));
 
@@ -161,6 +164,7 @@ export function FocusMenu(props: { date: string }) {
     <div class="relative">
       {/* Bullseye trigger — accent-tinted when a focus is set. */}
       <button
+        ref={trigger}
         class="btn-icon"
         classList={{ 'text-primary': hasFocus(), 'text-muted-foreground': !hasFocus() }}
         onClick={() => setOpen((o) => !o)}
@@ -172,7 +176,7 @@ export function FocusMenu(props: { date: string }) {
       <Show when={open()}>
         {/* click-away backdrop */}
         <div class="fixed inset-0 z-20" onClick={() => setOpen(false)} />
-        <div class="absolute right-0 mt-1 z-30 w-[22rem] max-w-[calc(100vw-2rem)] rounded-xl border border-border bg-popover p-4 shadow-lg">
+        <div style={popoverStyle()} class="z-30 w-[22rem] max-w-[calc(100vw-1.5rem)] rounded-xl border border-border bg-popover p-4 shadow-lg">
           {/* FOCUS label · [ Today | This week ] toggle */}
           <div class="flex items-center justify-between mb-3">
             <div class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary">Focus</div>
@@ -402,6 +406,8 @@ function Typeahead(props: {
  */
 export function BriefMenu(props: { date: string }) {
   const [open, setOpen] = createSignal(false);
+  let trigger: HTMLButtonElement | undefined;
+  const popoverStyle = createAnchoredPopoverStyle(open, () => trigger, 384);
   // Fetch only while the popover is open (matches the old modal's mount-on-open).
   const [summary, { mutate }] = createResource(() => (open() ? props.date : null), (d) => api.summary.get(d));
   const [topTasks, { refetch: refetchTop }] = createResource(() => (open() ? props.date : null), (d) => api.summary.topTasks(d).then((r) => r.tasks));
@@ -505,6 +511,7 @@ export function BriefMenu(props: { date: string }) {
     <div class="relative">
       {/* Cpu trigger — same btn-icon idiom as the FocusMenu bullseye. */}
       <button
+        ref={trigger}
         class="btn-icon text-muted-foreground"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open()}
@@ -515,7 +522,7 @@ export function BriefMenu(props: { date: string }) {
       <Show when={open()}>
         {/* click-away backdrop */}
         <div class="fixed inset-0 z-20" onClick={() => setOpen(false)} />
-        <div class="absolute right-0 mt-1 z-30 w-[24rem] max-w-[calc(100vw-2rem)] rounded-xl border border-border bg-popover shadow-lg">
+        <div style={popoverStyle()} class="z-30 w-[24rem] max-w-[calc(100vw-1.5rem)] rounded-xl border border-border bg-popover shadow-lg">
           <div class="px-4 py-3 border-b border-border flex items-center justify-between">
             <span class="flex items-center gap-1.5 text-sm font-semibold text-foreground">
               <Cpu size={14} class="text-primary" /> Today's Brief

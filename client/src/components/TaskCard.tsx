@@ -740,7 +740,7 @@ export function TaskCard(props: Props) {
         {/* Row D — footer: [sub · add · objective · habit · routine] ··· [due · start · priority · flight].
             One row of uniform 32px (h-8) controls, hairline-separated. Accent = the
             reference mint (accent-hi / --mint #58ebbf), the same teal the P3 chip uses. */}
-        <div class="flex items-center gap-2 flex-wrap mt-2.5 pt-2.5 border-t border-border/60">
+        <div class="task-card-footer flex items-center gap-2 flex-wrap mt-2.5 pt-2.5 border-t border-border/60">
           <Show when={!props.task.shared}>
           {/* subtask count (expand) — only when there are subtasks */}
           <Show when={subtaskCount() > 0}>
@@ -850,10 +850,10 @@ export function TaskCard(props: Props) {
           </Show>
 
           {/* spacer — pushes dates/priority/flight to the right, balancing the two clusters */}
-          <div class="flex-1 min-w-[8px]" />
+          <div class="task-card-footer-spacer flex-1 min-w-[8px]" />
 
           {/* dates · priority · send-to-flight-plan */}
-          <div class="flex items-center gap-1.5 flex-shrink-0">
+          <div class="task-card-footer-meta flex items-center gap-1.5 flex-shrink-0">
             <DateField label="Due" value={props.task.due_at} overdue={dueOverdue()} onSet={setDue} />
             <DateField label="Start" value={props.task.scheduled_for} highlight={startHighlight()} onSet={setStart} />
             <PriorityToggle value={p()} onPick={setPriority} />

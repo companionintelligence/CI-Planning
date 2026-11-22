@@ -368,9 +368,8 @@ export function ObjectivesPanel() {
       </Show>
 
       {/* Modal */}
-      <Show when={modal()}>
-        {(m) => {
-          const mv = m();
+      <Show when={modal()} keyed>
+        {(mv) => {
           if (mv.mode === 'edit') {
             return (
               <ObjectiveModal
@@ -541,37 +540,39 @@ function ObjectiveNode(props: {
          onDrop={(ev) => props.onObjectiveDrop(obj().id, ev)}
          onDragLeave={(ev) => props.onObjectiveDragLeave(obj().id, ev)}>
       {/* Row header */}
-      <div class="flex items-center gap-2 px-3 py-2.5 group">
+      <div class="objective-header flex items-center gap-2 px-3 py-2.5 group">
         {/* Expand/collapse chevron */}
-        <button
-          class="flex-shrink-0 btn-icon opacity-50 hover:opacity-100"
-          classList={{ 'invisible': !expandable() }}
-          onClick={() => setExpanded(!expanded())}
-          title={expanded() ? 'Collapse' : 'Expand'}
-        >
-          <Show when={expanded()} fallback={<ChevronRight size={13} />}>
-            <ChevronDown size={13} />
-          </Show>
-        </button>
+        <div class="objective-header-tools flex items-center gap-2 flex-shrink-0">
+          <button
+            class="flex-shrink-0 btn-icon opacity-50 hover:opacity-100"
+            classList={{ 'invisible': !expandable() }}
+            onClick={() => setExpanded(!expanded())}
+            title={expanded() ? 'Collapse' : 'Expand'}
+          >
+            <Show when={expanded()} fallback={<ChevronRight size={13} />}>
+              <ChevronDown size={13} />
+            </Show>
+          </button>
 
-        {/* Level icon + rot dot */}
-        <span class="relative flex-shrink-0">
-          {/* #391: a user-chosen colour tints the icon (active only — a paused/done
-              objective stays muted so status keeps priority over identity). */}
-          <span style={obj().color_token && obj().status === 'active' ? { color: `var(--${obj().color_token})` } : {}}>
-            <LevelIcon
-              level={obj().level}
-              class={`flex-shrink-0 ${obj().status === 'active' ? (obj().color_token ? '' : 'text-primary') : 'text-muted-foreground'}`}
-            />
+          {/* Level icon + rot dot */}
+          <span class="relative flex-shrink-0">
+            {/* #391: a user-chosen colour tints the icon (active only — a paused/done
+                objective stays muted so status keeps priority over identity). */}
+            <span style={obj().color_token && obj().status === 'active' ? { color: `var(--${obj().color_token})` } : {}}>
+              <LevelIcon
+                level={obj().level}
+                class={`flex-shrink-0 ${obj().status === 'active' ? (obj().color_token ? '' : 'text-primary') : 'text-muted-foreground'}`}
+              />
+            </span>
+            <Show when={isRotting()}>
+              <span class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-circle bg-amber-400" title="Needs attention" />
+            </Show>
           </span>
-          <Show when={isRotting()}>
-            <span class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-circle bg-amber-400" title="Needs attention" />
-          </Show>
-        </span>
+        </div>
 
         {/* Progress track — completion reads as color filling in (Phase O · O3). A
             done objective fills the ring gold; NULL progress stays the rot dashes. */}
-        <div class="relative flex-shrink-0 w-8 sm:w-16 h-1.5 rounded-sm bg-background border border-border overflow-hidden"
+        <div class="objective-progress relative flex-shrink-0 w-8 sm:w-16 h-1.5 rounded-sm bg-background border border-border overflow-hidden"
              title={obj().status === 'done' ? 'Complete' : (progressPct() ?? 'No plan yet')}>
           <Show when={obj().status === 'done'}>
             <div class="absolute inset-0 rounded-sm" style={{ 'background-color': 'var(--star-gold)' }} />
@@ -589,14 +590,14 @@ function ObjectiveNode(props: {
         </div>
 
         {/* Title + meta */}
-        <div class="flex-1 min-w-0">
+        <div class="objective-title-content flex-1 min-w-0">
           <div class="flex items-baseline gap-2 flex-wrap">
             {/* AF-D: the title opens the DETAILS DRAWER, not the edit form. Answering
                 "what is this objective?" with a modal edit form meant the subtasks were
                 only reachable by expanding the row, and the form itself was clipped on a
                 short viewport. Editing keeps its own affordance — the pencil below. */}
             <span
-              class={`text-sm font-medium truncate cursor-pointer ${STATUS_CLASSES[obj().status]}`}
+              class={`objective-title-text text-sm font-medium truncate cursor-pointer ${STATUS_CLASSES[obj().status]}`}
               onClick={() => setActiveEntity('objective', obj().id)}
             >
               {obj().title}
@@ -636,7 +637,7 @@ function ObjectiveNode(props: {
         </div>
 
         {/* Actions (hover reveal) */}
-        <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+        <div class="objective-actions flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
           <button
             class="btn-icon text-muted-foreground hover:text-primary"
             onClick={openQuickAdd}
@@ -686,10 +687,11 @@ function ObjectiveNode(props: {
       </Show>
 
       {/* Expandable linked task list + inline title-only quick-add. */}
-      <Show when={expanded() && (objectiveTasks().length > 0 || quickAdd())}>
+      <Show when={expanded() && (objectiveTasks().length > 0 || quickAdd() || !hasChildren())}>
         <div class="border-t border-border/50 px-3 py-1.5 flex flex-col">
           <For each={objectiveTasks()}>
-            {(t) => (
+            {(t, index) => (
+              <>
               <div
                 draggable={true}
                 onDragStart={(ev) => props.onTaskDragStart(t.id, obj().id, ev)}
@@ -745,8 +747,20 @@ function ObjectiveNode(props: {
                   </button>
                 </Show>
               </div>
+              <Show when={index() === 0}>
+                <button type="button" class="objective-mobile-add-task" onClick={openQuickAdd}>
+                  <Plus size={13} /> Add task to this objective
+                </button>
+              </Show>
+              </>
             )}
           </For>
+
+          <Show when={objectiveTasks().length === 0 && !quickAdd()}>
+            <button type="button" class="objective-mobile-add-task" onClick={openQuickAdd}>
+              <Plus size={13} /> Add task to this objective
+            </button>
+          </Show>
 
           {/* Inline quick-add: Enter creates the task and opens its full editor. */}
           <Show when={quickAdd()}>

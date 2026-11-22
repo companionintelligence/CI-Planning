@@ -3,6 +3,7 @@ import { X } from 'lucide-solid';
 import { api, type Objective, type ObjectiveInput } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
 import { ItemColorPicker } from './ItemColorPicker.js';
+import { ViewportOverlay } from './ViewportOverlay.js';
 
 /** Flatten the objectives tree into indented rows for the parent picker.
  *  AF-CU2: deliberately NOT the shared lib/objectives.ts `flattenObjectives`
@@ -42,6 +43,7 @@ const HORIZONS = [
 
 const CADENCES = [
   { value: 'none', label: 'No cadence' },
+  { value: 'daily', label: 'Daily' },
   { value: 'weekly', label: 'Weekly' },
   { value: 'biweekly', label: 'Bi-weekly' },
   { value: 'monthly', label: 'Monthly' },
@@ -107,7 +109,7 @@ export function ObjectiveModal(props: Props) {
   }
 
   return (
-    <div class="modal-backdrop" onClick={props.onClose}>
+    <ViewportOverlay class="modal-backdrop" onClick={props.onClose}>
       <div class="modal max-w-lg" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div class="px-4 py-3 border-b border-border flex items-center justify-between">
@@ -204,6 +206,6 @@ export function ObjectiveModal(props: Props) {
           </button>
         </div>
       </div>
-    </div>
+    </ViewportOverlay>
   );
 }

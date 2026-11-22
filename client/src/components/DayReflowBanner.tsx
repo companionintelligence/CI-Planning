@@ -2,6 +2,7 @@ import { Show, For, createSignal, createResource } from 'solid-js';
 import { AlertTriangle, ArrowRight, Lock, Inbox } from 'lucide-solid';
 import { api, type ReflowProposal } from '../lib/api.js';
 import { selectedDay, dayConflicts, refetchDayConflicts, refetchBlocks, refetchTasks, showToast } from '../stores/index.js';
+import { ViewportOverlay } from './ViewportOverlay.js';
 
 /**
  * Phase 7 — the day-type conflict banner and its confirmation.
@@ -72,7 +73,7 @@ export function DayReflowBanner(props: { date?: string } = {}) {
       </div>
 
       <Show when={open()}>
-        <div
+        <ViewportOverlay
           class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
           onClick={() => !applying() && setOpen(false)}
         >
@@ -167,7 +168,7 @@ export function DayReflowBanner(props: { date?: string } = {}) {
               )}
             </Show>
           </div>
-        </div>
+        </ViewportOverlay>
       </Show>
     </Show>
   );

@@ -2221,7 +2221,7 @@ export interface Objective {
   status: 'active' | 'paused' | 'done' | 'dropped';
   category_id: string | null;
   progress_cache: number | null;
-  cadence: 'weekly' | 'biweekly' | 'monthly' | 'none';
+  cadence: 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'none';
   last_advanced_at: string | null;
   priority: number;
   created_at: string;
@@ -2350,7 +2350,7 @@ export interface ObjectiveInput {
   parent_id?: string | null;
   horizon?: 'year' | 'quarter' | 'month' | 'week' | 'none';
   status?: 'active' | 'paused' | 'done' | 'dropped';
-  cadence?: 'weekly' | 'biweekly' | 'monthly' | 'none';
+  cadence?: 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'none';
   target_date?: string | null;
   category_id?: string | null;
   priority?: number;

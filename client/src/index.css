@@ -634,12 +634,16 @@ html[data-colorway="void"]:not(.dark) {
   /* ── Modal ───────────────────────────────────────────────────── */
   .modal-backdrop {
     @apply fixed inset-0 z-[1000] flex items-center justify-center p-4;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     background: rgba(0,0,0,.7);
     backdrop-filter: blur(6px);
     animation: fadeIn 150ms ease both;
   }
   .modal {
     @apply rounded-xl shadow-2xl w-full max-w-lg overflow-hidden border;
+    min-width: 0;
     background: var(--card);
     border-color: var(--border);
     animation: modalIn 200ms cubic-bezier(0.34,1.56,0.64,1) both;
@@ -648,7 +652,7 @@ html[data-colorway="void"]:not(.dark) {
        cut off both the header and the footer, so the save/close controls were
        unreachable. Only the <768px sheet rule below used to cap the height, so
        this hit desktop only. Cap it here and let the body scroll instead. */
-    max-height: 90vh;
+    max-height: min(90vh, calc(100% - 24px));
     overflow-y: auto;
     overscroll-behavior: contain;
   }
@@ -750,7 +754,7 @@ html[data-colorway="void"]:not(.dark) {
   .modal-backdrop { align-items: flex-end; padding: 0; }
   .modal {
     max-width: 100%;
-    max-height: 92vh;
+    max-height: calc(100% - env(safe-area-inset-top));
     overflow-y: auto;
     border-radius: var(--radius-30) var(--radius-30) var(--radius-0) var(--radius-0);
     padding-bottom: env(safe-area-inset-bottom);
@@ -1506,6 +1510,61 @@ html[data-colorway="void"]:not(.dark) {
   .objective-kanban-grid { display: block; }
   .objective-kanban-column:not(.objective-kanban-column-active) { display: none; }
   .objective-kanban-column { width: 100%; min-height: 16rem; }
+}
+
+/* Phone task cards keep the action rail inside the card: the dates, priority and
+   flight-plan controls wrap below the task actions instead of stretching the page. */
+.objective-mobile-add-task { display: none; }
+@media (max-width: 639px) {
+  .task-card-footer { align-items: flex-start; }
+  .task-card-footer-spacer { display: none; }
+  .task-card-footer-meta {
+    flex: 1 1 100%;
+    min-width: 0;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 0.375rem;
+  }
+
+  .objective-header {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    column-gap: 0.5rem;
+    row-gap: 0.375rem;
+  }
+  .objective-header-tools { grid-row: 1; grid-column: 1; }
+  .objective-actions {
+    grid-row: 1;
+    grid-column: 2;
+    justify-self: end;
+    opacity: 1;
+  }
+  .objective-title-content { grid-row: 2; grid-column: 1 / -1; width: 100%; }
+  .objective-title-text {
+    display: block;
+    flex: 1 1 100%;
+    min-width: 0;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+  }
+  .objective-progress {
+    grid-row: 3;
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+  .objective-mobile-add-task {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    align-self: flex-start;
+    margin: 0.25rem 0 0 2rem;
+    color: var(--primary);
+    font-size: 0.75rem;
+    min-height: 2rem;
+  }
 }
 
 /* Yellow and amber utility text was tuned for dark surfaces, so it washed out
