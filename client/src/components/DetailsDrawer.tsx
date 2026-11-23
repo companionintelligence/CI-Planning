@@ -136,7 +136,19 @@ function TaskPanel(props: { task: () => Task }) {
     if (Number.isFinite(n) && n > 0 && n !== t().estimated_minutes) patch({ estimated_minutes: n });
   }
 
-  const [editingNotes, setEditingNotes] = createSignal(false);
+  const [noteHistory, { refetch: refetchNoteHistory }] = createResource(() => t().id, (id) => api.taskAgent.notes(id));
+  const [addingNote, setAddingNote] = createSignal(false);
+  const [newNote, setNewNote] = createSignal('');
+  const [savingNote, setSavingNote] = createSignal(false);
+  async function addNote() {
+    const body = newNote().trim();
+    if (!body) return;
+    setSavingNote(true);
+    try { await api.taskAgent.addNote(t().id, body); setNewNote(''); setAddingNote(false); await refetchNoteHistory(); }
+    catch (err) { showToast((err as Error).message, 'error'); }
+    finally { setSavingNote(false); }
+  }
+    const [editingNotes, setEditingNotes] = createSignal(false);
   const [notesDraft, setNotesDraft] = createSignal('');
   function startNotes() { setNotesDraft(t().notes ?? t().description ?? ''); setEditingNotes(true); }
   function commitNotes() {
@@ -219,6 +231,25 @@ function TaskPanel(props: { task: () => Task }) {
           />
         </Show>
 
+        <Group label="Notes">
+          <div class="space-y-2">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs text-muted-foreground">Updates and context</span>
+              <button type="button" class="btn-ghost text-xs" onClick={() => setAddingNote(true)}>+ Add note</button>
+            </div>
+            <Show when={addingNote()}>
+              <div class="space-y-1">
+                <textarea class="textarea w-full text-sm" rows="3" aria-label="New task note" placeholder="Add a note…" value={newNote()} onInput={(e) => setNewNote(e.currentTarget.value)} />
+                <div class="flex gap-2 justify-end"><button class="btn-ghost text-xs" onClick={() => { setAddingNote(false); setNewNote(''); }}>Cancel</button><button class="btn-primary text-xs" disabled={!newNote().trim() || savingNote()} onClick={() => void addNote()}>Save note</button></div>
+              </div>
+            </Show>
+            <For each={noteHistory()?.notes ?? []}>{(entry) => <article class="rounded-md border border-border p-2 text-sm min-w-0"><time class="text-xs text-muted-foreground" dateTime={entry.created_at}>{new Date(entry.created_at).toLocaleString()}</time><p class="whitespace-pre-wrap break-words mt-1">{entry.body}</p></article>}</For>
+            <Show when={t().notes || t().description}><div class="text-xs text-muted-foreground">Task description</div><p class="drawer-note whitespace-pre-wrap break-words">{t().notes ?? t().description}</p></Show>
+            <button type="button" class="text-xs text-muted-foreground hover:text-primary" onClick={startNotes}>Edit task description</button>
+            <Show when={editingNotes()}><textarea class="textarea w-full text-sm" rows="3" aria-label="Task description" value={notesDraft()} onInput={(e) => setNotesDraft(e.currentTarget.value)} onBlur={commitNotes} /></Show>
+          </div>
+        </Group>
+
         <Group label="Planning">
           <dl class="drawer-grid">
             <Field label="Priority" when={true}>
@@ -280,28 +311,6 @@ function TaskPanel(props: { task: () => Task }) {
             </div>
           </Group>
         </Show>
-
-        <Group label="Notes">
-          <Show
-            when={editingNotes()}
-            fallback={
-              <button type="button" class="text-left w-full" onClick={startNotes} title="Edit notes">
-                <Show when={t().notes || t().description} fallback={<span class="text-xs text-muted-foreground">No notes — click to add</span>}>
-                  <p class="drawer-note hover:text-primary transition-colors">{t().notes ?? t().description}</p>
-                </Show>
-              </button>
-            }
-          >
-            <textarea
-              class="w-full bg-transparent border border-border rounded px-1.5 py-1 text-sm outline-none focus:border-primary resize-y min-h-[4.5rem]"
-              value={notesDraft()}
-              autofocus
-              onInput={(e) => setNotesDraft(e.currentTarget.value)}
-              onBlur={commitNotes}
-              onKeyDown={(e) => { if (e.key === 'Escape') setEditingNotes(false); }}
-            />
-          </Show>
-        </Group>
 
         {/* People on work (0151) — read-only here; the wizard is where they are edited.
             Rendered ABOVE Context because "who" is a first-class fact about the task,

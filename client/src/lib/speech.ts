@@ -1,8 +1,8 @@
 /**
  * T14 (#350) — browser speech capture for the NL input surfaces (ElementWizard's
  * quick line, InstructBox). Web Speech API ONLY (SpeechRecognition /
- * webkitSpeechRecognition): transcription happens locally in the browser engine —
- * no cloud STT, per the local-first invariant. Voice is sugar over the existing
+ * webkitSpeechRecognition): transcription is handled by the browser's speech
+ * service, which may send audio to its provider. Voice is sugar over the existing
  * text path: a transcript lands in the same input the user could have typed into.
  *
  * Degrades cleanly: `speechSupported()` is false where the API is absent (Firefox,
@@ -94,9 +94,9 @@ export function createSpeechCapture(handlers: {
       };
       try {
         rec.start();
-      } catch {
-        // start() throws if called while another capture runs — treat as a no-op.
+      } catch (error) {
         active = null;
+        handlers.onError?.(`Could not start microphone: ${error instanceof Error ? error.message : 'check browser permission'}`);
         handlers.onDone?.();
       }
     },
