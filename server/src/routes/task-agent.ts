@@ -5,8 +5,9 @@ import { generateJson, llmOrNull } from '../mcp/ollama.js';
 import { ownerTimezone } from '../engine/recurrence-generate.js';
 import { placeStartAnchoredTask } from '../engine/autoplan.js';
 import { taskMetrics } from '../services/task-metrics.js';
+import { listSharedTasks } from '../services/shared-tasks.js';
 
-type TaskSummary = { id: string; title: string; status: string; priority: number; due_at: string | null; scheduled_for: string | null; task_time: string | null; completed_at: string | null };
+type TaskSummary = { id: string; title: string; status: string; priority: number; due_at: string | null; scheduled_for: string | null; task_time: string | null; completed_at: string | null; shared?: boolean };
 type ObjectiveSummary = { id: string; title: string; task_id: string | null };
 type Screen = { path: string; tab: string; selectedTaskId: string | null; selectedBlockId: string | null; selectedEntity: { kind: string; id: string } | null; headings: string[] };
 type Action =
@@ -46,7 +47,7 @@ function taskCandidates(rows: TaskSummary[], request: string, selectedId: string
   return (matches.length ? matches : scored.slice(0, 40)).map((entry) => entry.row);
 }
 function taskFact(task: TaskSummary): string {
-  return `“${task.title}” is ${task.status}, priority ${task.priority ?? 3}${task.scheduled_for ? `, scheduled for ${task.scheduled_for}${task.task_time ? ` at ${task.task_time}` : ''}` : ''}${task.due_at ? `, due ${task.due_at}` : ''}${task.completed_at ? `, completed ${task.completed_at}` : ''}.`;
+  return `${task.shared ? 'Shared task ' : ''}“${task.title}” is ${task.status}, priority ${task.priority ?? 3}${task.scheduled_for ? `, scheduled for ${task.scheduled_for}${task.task_time ? ` at ${task.task_time}` : ''}` : ''}${task.due_at ? `, due ${task.due_at}` : ''}${task.completed_at ? `, completed ${task.completed_at}` : ''}.`;
 }
 
 /** The model proposes actions; only this allowlist reaches the client. The client
@@ -64,11 +65,14 @@ export function taskAgentRouter() {
     if (!text || text.length > 2000) { ctx.status = 422; ctx.body = { error: 'Enter a request under 2,000 characters.' }; return; }
     const owner = currentOwnerId();
     const screen = cleanScreen(body.screen);
-    const [allTasks, objectives] = await Promise.all([
+    const [allTasks, objectives, sharedTasks] = await Promise.all([
       store().prepare(`SELECT id, title, status, priority, due_at, scheduled_for, task_time, completed_at FROM tasks WHERE owner_id = ? ORDER BY COALESCE(updated_at, created_at) DESC`).all<TaskSummary>(owner),
       store().prepare(`SELECT o.id, o.title, ot.task_id FROM objectives o LEFT JOIN objective_tasks ot ON ot.objective_id = o.id WHERE o.owner_id = ? AND o.status = 'active'`).all<ObjectiveSummary>(owner),
+      listSharedTasks(owner),
     ]);
+    const readableTasks: TaskSummary[] = [...allTasks, ...sharedTasks.map((task) => ({ id: task.id, title: task.title, status: task.status, priority: task.priority, due_at: task.due_at, scheduled_for: null, task_time: null, completed_at: null, shared: true }))];
     const taskRows = taskCandidates(allTasks, text, screen.selectedTaskId);
+    const readRows = taskCandidates(readableTasks, text, screen.selectedTaskId);
     const timezone = await ownerTimezone(owner);
     const now = new Date().toLocaleString('en-US', { timeZone: timezone, hour12: false });
     const readOnly = !/\b(create|add|edit|update|change|move|reschedule|schedule|mark|complete|finish|set|delete|remove|cancel)\b/i.test(text);
@@ -84,7 +88,7 @@ export function taskAgentRouter() {
       return;
     }
     if (readOnly && /\b(screen|page|view|here)\b/i.test(text)) {
-      const selected = allTasks.find((task) => task.id === screen.selectedTaskId);
+      const selected = readableTasks.find((task) => task.id === screen.selectedTaskId);
       const activeCount = allTasks.filter((task) => ['open', 'scheduled', 'in_progress'].includes(task.status)).length;
       const block = screen.selectedBlockId ? await store().prepare(`SELECT title, status, start_at, end_at FROM time_blocks WHERE id = ? AND owner_id = ?`).get<{ title: string; status: string; start_at: string; end_at: string }>(screen.selectedBlockId, owner) : null;
       const objective = screen.selectedEntity?.kind === 'objective' ? await store().prepare(`SELECT title, status, progress_cache FROM objectives WHERE id = ? AND owner_id = ?`).get<{ title: string; status: string; progress_cache: number | null }>(screen.selectedEntity.id, owner) : null;
@@ -93,8 +97,8 @@ export function taskAgentRouter() {
       return;
     }
     if (readOnly && /\b(status|state|due|scheduled|priority|when|where)\b/i.test(text)) {
-      const selected = allTasks.find((task) => task.id === screen.selectedTaskId);
-      const matches = taskRows.filter((task) => {
+      const selected = readableTasks.find((task) => task.id === screen.selectedTaskId);
+      const matches = readRows.filter((task) => {
         const title = task.title.toLowerCase();
         return text.toLowerCase().includes(title) || (task.id === selected?.id && /\b(this task|selected task)\b/i.test(text));
       });
@@ -117,7 +121,7 @@ export function taskAgentRouter() {
       `{"kind":"move_task","task_id":"exact ID from tasks","source_objective_id":"current objective ID if linked","target_objective_id":"exact objective ID"}. ` +
       `Omit unchanged fields. At most four actions. For a time change, set scheduled_for and task_time. Describe proposed changes in future tense; never claim they are saved. ` +
       `If a target is missing or ambiguous, ask a short clarifying question and return no actions. Never invent IDs, dates, or task names. ` +
-      `Current screen: ${JSON.stringify(screen)}. Tasks matching the request (including archived tasks): ${JSON.stringify(taskRows)}. Objectives and task links: ${JSON.stringify(objectives.slice(0, 200))}. ` +
+      `Current screen: ${JSON.stringify(screen)}. Your tasks matching the request (including archived tasks): ${JSON.stringify(taskRows)}. Shared tasks (read only): ${JSON.stringify(readRows.filter((task) => task.shared).slice(0, 20))}. Objectives and task links: ${JSON.stringify(objectives.slice(0, 200))}. ` +
       `Recent conversation: ${JSON.stringify(recent)}. User request: ${JSON.stringify(text)}`,
       { purpose: 'plan_instruct', tier: 'quality', timeoutMs: 45_000, think: false },
     ));

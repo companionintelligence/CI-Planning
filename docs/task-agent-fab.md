@@ -8,7 +8,7 @@ The sheet follows the [WAI modal dialog keyboard pattern](https://www.w3.org/WAI
 
 ## Limits for this version
 
-- The server can inspect all of the owner's tasks, including completed and archived tasks. It sends only the strongest title matches (up to 80) to the model. If a request does not identify a task, the model sees the 40 most recent tasks and should ask for a narrower request.
+- The server can inspect all of the owner's tasks, including completed and archived tasks. It can also report the limited read-only summaries of tasks shared with the account. It sends only the strongest owned-task title matches (up to 80) to the model for actions. If a request does not identify a task, the model sees the 40 most recent owned tasks and should ask for a narrower request.
 - A semantic screen snapshot includes the route, selected tab, visible headings, and selected entity. It does not capture unsaved form fields or arbitrary page text. The assistant is available on all authenticated screens.
 - Metrics recaps come from the same owner-scoped task metrics service as the Balance metrics tab. The response labels rolling windows and separates current open counts from windowed completions.
 - Up to four actions can be proposed per turn. Deletion, bulk rearrangement, and changes to shared tasks are outside the assistant's tool set.
