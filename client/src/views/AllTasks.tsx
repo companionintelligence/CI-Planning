@@ -22,8 +22,10 @@ import { SuggestionsSection } from '../components/SuggestionsSection.js';
 import { splitBlockTag } from '../lib/element.js';
 import { Skeleton } from '../components/Skeleton.js';
 import { SharedTasksPanel } from '../components/SharedTasksPanel.js';
+import { BulkTaskAdd } from '../components/BulkTaskAdd.js';
 
 export function AllTasks() {
+  const [bulkOpen, setBulkOpen] = createSignal(false);
   const [showFilters, setShowFilters] = createSignal(false);
   const [showArchive, setShowArchive] = createSignal(false);
   const [order, setOrder] = createSignal<SortOrder>('priority');
@@ -242,6 +244,7 @@ export function AllTasks() {
     <div class="view-container page-enter">
       <ViewHeader title="Tasks" sub={view() === 'shared' ? 'Read-only shared tasks' : `${activeTaskCount()} open`}>
         <Show when={isTaskTab()}>
+          <Show when={view() === 'tasks'}><button class="btn-secondary whitespace-nowrap" onClick={() => setBulkOpen(true)}>Bulk add</button></Show>
           <Show when={view() === 'tasks'}>
             <button
               onClick={() => selectTab('objectives', 'board')}
@@ -457,6 +460,7 @@ export function AllTasks() {
       <Show when={view() === 'routines'}><RoutinesPanel /></Show>
       <Show when={view() === 'timeblocks'}><TimeBlocksPanel /></Show>
       <Show when={view() === 'shared'}><SharedTasksPanel /></Show>
+      <Show when={bulkOpen()}><BulkTaskAdd onClose={() => setBulkOpen(false)} /></Show>
     </div>
   );
 }
