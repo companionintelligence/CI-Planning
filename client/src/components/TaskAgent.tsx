@@ -78,7 +78,13 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
   };
   const send = async () => {
     const text = input().trim();
-    if (!text || busy() || plan()) return;
+    if (!text || busy()) return;
+    const quickReply = text.toLowerCase().replace(/[.!?\s]+$/g, '');
+    if (plan() && ['confirm', 'yes', 'do it'].includes(quickReply)) { setInput(''); await apply(); return; }
+    if (plan() && quickReply === 'forget') { setInput(''); setPlan(null); props.onClose(); return; }
+    // Any other message is an edit/follow-up to the proposed changes. Send it with
+    // the existing conversation so the assistant can revise the plan.
+    if (plan()) setPlan(null);
     const history = messages().slice(-6);
     setInput('');
     setMessages((previous) => [...previous, { role: 'user', text }]);
@@ -184,6 +190,11 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
       setBusy(false);
     }
   };
+  const editProposal = () => {
+    setPlan(null);
+    setInput('');
+    queueMicrotask(() => messageInput?.focus());
+  };
 
   return <ViewportOverlay class="z-[100] bg-black/70 flex items-end md:items-center md:justify-end p-2 md:p-5" role="presentation">
     <section ref={panel} role="dialog" aria-modal="true" aria-label="Task assistant" onKeyDown={dialogKeys} class="card w-full md:w-[26rem] h-full md:h-auto min-h-0 max-h-full md:max-h-[85vh] flex flex-col gap-3 overflow-hidden">
@@ -225,11 +236,15 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
           </div>
         </> : <p>• {actionText(action, current())}</p>}</For>
         <p class="text-xs text-muted-foreground">Notes and task changes save when applied. Draft fields open in the task form and remain unsaved until you save there.</p>
-        <div class="flex gap-2 justify-end"><button class="btn-ghost" disabled={busy()} onClick={() => setPlan(null)}>Dismiss</button><button class="btn-primary" disabled={busy() || !current().actions.length || current().actions.some((action) => action.kind === 'create_tasks' && action.tasks.some((task) => !task.title.trim() || (task.estimated_minutes !== undefined && (!Number.isInteger(task.estimated_minutes) || task.estimated_minutes < 5 || task.estimated_minutes > 480))))} onClick={() => void apply()}>Apply changes</button></div>
+        <div class="flex items-center justify-between gap-2 border-t border-border pt-2">
+          <button type="button" class="btn-ghost text-sm" disabled={busy()} onClick={() => { setPlan(null); props.onClose(); }}>Forget</button>
+          <button type="button" class="btn-secondary text-sm" disabled={busy()} onClick={editProposal}>Edit</button>
+          <button type="button" class="btn-primary text-sm" disabled={busy() || !current().actions.length || current().actions.some((action) => action.kind === 'create_tasks' && action.tasks.some((task) => !task.title.trim() || (task.estimated_minutes !== undefined && (!Number.isInteger(task.estimated_minutes) || task.estimated_minutes < 5 || task.estimated_minutes > 480))))} onClick={() => void apply()}>Confirm</button>
+        </div>
       </div>}</Show>
       <Show when={error()}><p role="alert" class="text-sm text-destructive">{error()}</p></Show>
-      <Show when={!plan()}><div class="flex items-end gap-2"><textarea ref={messageInput} class="input flex-1 min-w-0 min-h-12 max-h-32" aria-label="Message the task assistant" placeholder="What would you like done?" value={input()} disabled={!!plan() || busy()} onInput={(event) => setInput(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} /><Show when={ios} fallback={<MicButton title="Dictate your request" disabled={!!plan() || busy()} onTranscript={(text) => { setInput((value) => value ? `${value} ${text}` : text); setError(''); }} onError={setError} />}><button type="button" class="btn-icon" aria-label="Open keyboard for voice dictation" title="Use keyboard microphone" disabled={!!plan() || busy()} onClick={() => { messageInput.focus(); setError('Tap the microphone on your keyboard to dictate, then review your message and tap Send.'); }}><Mic size={17} /></button></Show><button class="btn-primary" disabled={!input().trim() || !!plan() || busy()} onClick={() => void send()}>Send</button></div>
-      <p class="text-[11px] text-muted-foreground">{ios ? 'On iPhone, tap the mic above to open the keyboard, then use the keyboard microphone. Review the text here before Send.' : 'Tap the mic to dictate. Review the text here before Send. Your browser’s speech service may send audio to its provider.'}</p></Show>
+      <div class="flex items-end gap-2"><textarea ref={messageInput} class="input flex-1 min-w-0 min-h-12 max-h-32" aria-label="Message the task assistant" placeholder={plan() ? 'What should I change?' : 'What would you like done?'} value={input()} disabled={busy()} onInput={(event) => setInput(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} /><Show when={ios} fallback={<MicButton title="Dictate your request" disabled={busy()} onTranscript={(text) => { setInput((value) => value ? `${value} ${text}` : text); setError(''); }} onError={setError} />}><button type="button" class="btn-icon" aria-label="Open keyboard for voice dictation" title="Use keyboard microphone" disabled={busy()} onClick={() => { messageInput.focus(); setError('Tap the microphone on your keyboard to dictate, then review the text and tap Send.'); }}><Mic size={17} /></button></Show><button class="btn-primary" disabled={!input().trim() || busy()} onClick={() => void send()}>Send</button></div>
+      <p class="text-[11px] text-muted-foreground">{ios ? 'On iPhone, tap the mic above to open the keyboard. Review the text here before Send.' : 'Tap the mic to dictate. Review the text here before Send. Your browser’s speech service may send audio to its provider.'}</p>
     </section>
   </ViewportOverlay>;
 }

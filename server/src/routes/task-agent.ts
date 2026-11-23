@@ -96,6 +96,8 @@ export function taskAgentRouter() {
       listSharedTasks(owner),
       store().prepare(`SELECT tb.id, tb.title, tb.start_at, tb.end_at, tb.status, COALESCE((SELECT group_concat(t.name, ', ') FROM entity_tags et JOIN tags t ON t.id = et.tag_id WHERE et.entity_kind = 'time_block' AND et.entity_id = tb.id AND et.level = 1), tb.tag) AS tag FROM time_blocks tb WHERE tb.owner_id = ? AND tb.block_kind = 'timeblock' AND tb.start_at BETWEEN ? AND ? ORDER BY tb.start_at LIMIT 250`).all<BlockSummary>(owner, new Date(Date.now() - 2 * 86400000).toISOString(), new Date(Date.now() + 30 * 86400000).toISOString()),
     ]);
+    const timezone = await ownerTimezone(owner);
+    const todayLocal = new Date().toLocaleDateString('en-CA', { timeZone: timezone });
     const readableTasks: TaskSummary[] = [...allTasks, ...sharedTasks.map((task) => ({ id: task.id, title: task.title, status: task.status, priority: task.priority, due_at: task.due_at, scheduled_for: null, task_time: null, completed_at: null, shared: true }))];
     const broadTaskRequest = /\b(?:all|every|each|open|incomplete|unfinished)\b/i.test(text) && /\b(tasks?|everything)\b/i.test(text);
     const taskRows = broadTaskRequest
@@ -106,11 +108,13 @@ export function taskAgentRouter() {
     // Treat bulk unscheduling as a first-class operation. Without this deterministic
     // route the model sometimes mistakes the phrase "reschedule open tasks" for a
     // request to create a task literally named "Reschedule open tasks".
-    const asksToUnSchedule = /\b(?:un\s*[-]?\s*schedule|clear (?:the )?schedule|remove (?:the )?schedule)\b/i.test(text);
+    const asksToUnSchedule = /\b(?:un\s*[-]?\s*schedule|clear (?:the )?schedule|remove (?:the )?schedule|move (?:them|tasks?) to unscheduled|unscheduled)\b/i.test(text);
     const asksForAllOpen = broadTaskRequest;
     if (asksToUnSchedule && asksForAllOpen) {
+      const asksForPast = /\b(?:past|overdue|from the past)\b/i.test(text);
       const candidates = allTasks.filter((task) => ['open', 'scheduled', 'in_progress'].includes(task.status)
-        && (task.scheduled_for || task.task_time || task.status === 'scheduled'));
+        && (task.scheduled_for || task.task_time || task.status === 'scheduled')
+        && (!asksForPast || (!!task.due_at && task.due_at.slice(0, 10) < todayLocal)));
       const action: Action = { kind: 'bulk_unschedule_tasks', tasks: candidates.map((task) => ({ task_id: task.id, title: task.title, scheduled_for: task.scheduled_for, task_time: task.task_time })) };
       ctx.body = {
         reply: candidates.length ? `I found ${candidates.length} unfinished scheduled tasks. Review the list, then apply to unschedule them; they will remain open in Tasks for later scheduling.` : 'I did not find any unfinished scheduled tasks to unschedule.',
@@ -122,7 +126,6 @@ export function taskAgentRouter() {
     const relevantBlocks = blockCandidates.filter((block) => block.id === selectedBlock?.id || blockWords.some((word) => block.title.toLowerCase().includes(word))).slice(0, 30);
     const blocksForPlan = relevantBlocks.length ? relevantBlocks : blockCandidates.slice(0, 20);
     const readRows = taskCandidates(readableTasks, text, screen.selectedTaskId);
-    const timezone = await ownerTimezone(owner);
     const now = new Date().toLocaleString('en-US', { timeZone: timezone, hour12: false });
     const readOnly = !/\b(draft|suggest|fill|create|add|edit|update|change|move|reschedule|schedule|mark|complete|finish|set|delete|remove|cancel)\b/i.test(text);
     const metricsRequest = /\b(metrics?|recap|progress|performance|completion|completions|tracked time)\b/i.test(text);
