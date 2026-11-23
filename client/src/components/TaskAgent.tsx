@@ -146,7 +146,7 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
       </div>}</Show>
       <Show when={error()}><p role="alert" class="text-sm text-destructive">{error()}</p></Show>
       <div class="flex items-end gap-2"><textarea class="input flex-1 min-w-0 min-h-12 max-h-32" aria-label="Message the task assistant" placeholder="What would you like done?" value={input()} disabled={!!plan() || busy()} onInput={(event) => setInput(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} /><MicButton title="Dictate your request" disabled={!!plan() || busy()} onTranscript={(text) => setInput((value) => value ? `${value} ${text}` : text)} onError={setError} /><button class="btn-primary" disabled={!input().trim() || !!plan() || busy()} onClick={() => void send()}>Send</button></div>
-      <p class="text-[11px] text-muted-foreground">Voice input uses your browser’s speech service and may require microphone access.</p>
+      <p class="text-[11px] text-muted-foreground">Voice input uses your browser’s speech service and requires microphone permission. Some browsers send audio to their speech provider.</p>
     </section>
   </ViewportOverlay>;
 }

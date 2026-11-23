@@ -5,7 +5,7 @@ import { speechSupported, createSpeechCapture } from './speech.js';
  * T14 (#350) — the speech helper's contract: feature-detect (jsdom has no
  * SpeechRecognition → unsupported), one-shot transcript delivery, error mapping
  * (denied mic / silence), and onDone firing on every end so hosts can clear a
- * listening flag. No cloud STT anywhere — the API IS the engine.
+ * listening flag. The browser may use a remote speech provider.
  */
 
 class FakeRecognition {
@@ -82,6 +82,16 @@ describe('createSpeechCapture', () => {
     capture.start();
     FakeRecognition.instances[0].onerror!({ error: 'no-speech' });
     expect(onError).toHaveBeenCalledWith('No speech detected');
+  });
+
+  it('reports a browser failure to start capture', () => {
+    class BrokenRecognition extends FakeRecognition { start(): void { throw new Error('permission blocked'); } }
+    vi.stubGlobal('SpeechRecognition', BrokenRecognition);
+    const onError = vi.fn();
+    const onDone = vi.fn();
+    createSpeechCapture({ onTranscript: vi.fn(), onError, onDone }).start();
+    expect(onError).toHaveBeenCalledWith('Could not start microphone: permission blocked');
+    expect(onDone).toHaveBeenCalledOnce();
   });
 
   it('stop() aborts an in-flight capture (no transcript fires)', () => {

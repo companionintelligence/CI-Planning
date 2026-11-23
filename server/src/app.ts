@@ -192,7 +192,7 @@ function securityHeaders(): Koa.Middleware {
     ctx.set('X-Content-Type-Options', 'nosniff');
     ctx.set('Referrer-Policy', 'strict-origin-when-cross-origin');
     ctx.set('X-Frame-Options', 'DENY');
-    ctx.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    ctx.set('Permissions-Policy', 'camera=(), microphone=(self), geolocation=()');
     ctx.set(
       'Content-Security-Policy',
       ctx.path.startsWith('/api/graphql/sandbox') ? sandboxPolicy() : appPolicy(),
