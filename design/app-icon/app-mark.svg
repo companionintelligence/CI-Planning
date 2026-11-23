@@ -6,9 +6,9 @@
       <circle cx="262" cy="297" r="143" fill="#000" />
     </mask>
     <clipPath id="disk-clip" clipPathUnits="userSpaceOnUse">
-      <path d="M262 64 64 430H460Z" />
+      <path d="M259.361 68.877L66.395 425.573A3 3 0 0 0 69.034 430H454.966A3 3 0 0 0 457.605 425.573L264.639 68.877A3 3 0 0 0 259.361 68.877Z" />
     </clipPath>
   </defs>
-  <path d="M262 64 64 430H460Z" fill="#050505" mask="url(#circle-cutout)" />
+  <path d="M259.361 68.877L66.395 425.573A3 3 0 0 0 69.034 430H454.966A3 3 0 0 0 457.605 425.573L264.639 68.877A3 3 0 0 0 259.361 68.877Z" fill="#050505" mask="url(#circle-cutout)" />
   <circle cx="288" cy="289" r="110" fill="#050505" clip-path="url(#disk-clip)" />
 </svg>
