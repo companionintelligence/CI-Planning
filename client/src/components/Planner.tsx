@@ -1,5 +1,5 @@
 import { For, Show, createMemo, createSignal, createEffect, createResource, onCleanup } from 'solid-js';
-import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Repeat, Check, CheckCircle2, ArrowUpRight, Eraser, X, ListChecks, ChevronRight, ChevronDown, CalendarCheck, Undo2 } from 'lucide-solid';
+import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Repeat, Check, CheckCircle2, ArrowUpRight, Eraser, X, ListChecks, ChevronRight, ChevronDown, CalendarCheck, Undo2, Zap } from 'lucide-solid';
 import { api, type Block, type RecurringScope, type Task } from '../lib/api.js';
 import { PX_PER_MIN, MINUTES_PER_DAY, SNAP_MIN, minutesIntoDay } from '../lib/grid.js';
 import {
@@ -730,6 +730,7 @@ export function Planner(props: { taskLookup?: (id: string) => Task | undefined }
   // Now-line and next-up are today-relative — gated off other days.
   const isToday = () => day() === localISODate();
   const [updateMode, setUpdateMode] = createSignal(false);
+  const [quickActionsOpen, setQuickActionsOpen] = createSignal(false);
   const [deletePlan, setDeletePlan] = createSignal<{ plan: Block; childCount: number } | null>(null);
 
   // Segmented day axis: the whole day renders at natural height with the two night
@@ -1104,7 +1105,10 @@ export function Planner(props: { taskLookup?: (id: string) => Task | undefined }
         <div class="flex items-center gap-2">
           <span class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary">Planner</span>
         </div>
-        <div class="flex items-center gap-3">
+        <div class="relative flex items-center">
+          <button type="button" class="btn-icon" aria-label="Planner quick actions" title="Planner quick actions" aria-expanded={quickActionsOpen()} onClick={() => setQuickActionsOpen((open) => !open)}><Zap size={15} /></button>
+          <Show when={quickActionsOpen()}>
+          <div class="absolute right-0 top-full z-50 mt-1 flex min-w-40 flex-col gap-1 rounded-lg border border-border bg-card p-2 shadow-xl">
           {/* Multi-select → Routine: a one-click entry point for the Shift++ chord,
               shown once ≥2 task chips are selected (opens the same Create-Routine modal). */}
           <Show when={selection().size >= 2}>
@@ -1120,7 +1124,7 @@ export function Planner(props: { taskLookup?: (id: string) => Task | undefined }
           <button
             onClick={runSchedule}
             disabled={scheduling()}
-            class="btn-primary !rounded-sm !py-0.5 !px-2.5 text-[11px] flex items-center gap-1 flex-shrink-0 disabled:opacity-40"
+            class="btn-primary !rounded-sm !py-1 !px-2.5 text-[11px] flex items-center gap-1 flex-shrink-0 disabled:opacity-40"
             title="Place the included flight-plan tasks into this day"
           >
             <CalendarCheck size={12} classList={{ 'animate-pulse': scheduling() }} /> Schedule
@@ -1130,7 +1134,7 @@ export function Planner(props: { taskLookup?: (id: string) => Task | undefined }
             <Show when={undoConfirm()} fallback={
               <button
                 onClick={() => setUndoConfirm(true)}
-                class="planner-undo inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-sm border transition-colors flex-shrink-0"
+            class="planner-undo inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-sm border transition-colors flex-shrink-0"
                 title="Undo the last Schedule run"
               >
                 <Undo2 size={11} /> Undo
@@ -1168,6 +1172,8 @@ export function Planner(props: { taskLookup?: (id: string) => Task | undefined }
           >
             <CheckCircle2 size={12} /> {updateMode() ? 'Done' : 'Update'}
           </button>
+          </div>
+          </Show>
         </div>
       </div>
 

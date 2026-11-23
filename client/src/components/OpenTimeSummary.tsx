@@ -412,27 +412,6 @@ export function OpenTimeSummary(props: { date: string; filterOpen?: boolean; onT
           )}</For>
         </div>
 
-        <div class="open-time-window-edges" aria-label="Availability window changes">
-          <For each={windowEdges()}>{(edge) => (
-            <div
-              class="open-time-window-edge"
-              classList={{ 'is-first': edge.minute <= range().start, 'is-last': edge.minute >= range().end }}
-              style={{ left: percent(edge.minute, range()) }}
-            >
-              <For each={edge.items}>{(item) => (
-                <span
-                  class="open-time-bug"
-                  classList={{
-                    'is-dimmed': edge.minute < currentMinute() || dimmedDirections().has(item.direction),
-                    'is-ending': item.edge === 'end',
-                  }}
-                  style={{ '--bug-color': directionColor(item.direction) }}
-                  title={`${item.direction} window ${item.edge === 'end' ? 'ends' : item.edge === 'both' ? 'changes' : 'starts'} at ${formatClock(edge.minute)}`}
-                >{item.direction.charAt(0).toUpperCase()}</span>
-              )}</For>
-            </div>
-          )}</For>
-        </div>
           </>}
         </Show>
 
