@@ -130,7 +130,7 @@ export async function generateRecurrences(opts: { today?: string; horizonDays?: 
               recurrence_rule, recurrence_dtstart, recurrence_exdates
          FROM tasks
         WHERE recurrence_rule IS NOT NULL AND recurrence_parent_id IS NULL
-          AND status NOT IN ('cancelled') AND owner_id = ?`
+          AND status NOT IN ('cancelled', 'archived') AND owner_id = ?`
     )
     .all(owner) as TemplateRow[];
 

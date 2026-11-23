@@ -57,7 +57,7 @@ export function mergeTags(llm: string[], heuristic: string[], vocabulary: string
 const SELECT_UNTAGGED = `
   SELECT t.id, t.title FROM tasks t
   WHERE t.owner_id = ?
-    AND t.status NOT IN ('cancelled', 'done')
+    AND t.status NOT IN ('cancelled', 'archived', 'done')
     AND t.parent_id IS NULL
     AND t.recurrence_parent_id IS NULL
     AND NOT EXISTS (

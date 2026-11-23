@@ -774,10 +774,10 @@ export type DeleteTaskScope = 'instance' | 'following';
  * GC its parent's objective when now empty; and recompute any objective still
  * linking it so progress doesn't count the abandoned task.
  */
-export async function deleteTask(ownerId: string, id: string, scope: DeleteTaskScope = 'instance', actor = 'owner'): Promise<DeleteTaskResult> {
+export async function deleteTask(ownerId: string, id: string, scope: DeleteTaskScope = 'instance', actor = 'owner', disposition: 'cancelled' | 'archived' = 'cancelled'): Promise<DeleteTaskResult> {
   const [task] = await db
     .update(tasks)
-    .set({ status: 'cancelled' })
+    .set({ status: disposition })
     .where(and(eq(tasks.id, id), eq(tasks.ownerId, ownerId))) // W3.1a: owner-scoped
     .returning();
   if (!task) return { ok: false, error: 'not_found' };
@@ -801,7 +801,7 @@ export async function deleteTask(ownerId: string, id: string, scope: DeleteTaskS
   if (unstaged.changes > 0) {
     writeAudit({ ownerId, actor, action: 'remove', entity: `flight-plan:${id}` });
   }
-  await dropSourceObjective(id, ownerId);
+  if (disposition === 'cancelled') await dropSourceObjective(id, ownerId);
   if (task.parentId) await unpromoteIfEmpty(task.parentId, ownerId);
   await recomputeObjectivesForTask(id);
   const hierarchy = await recomputeTaskHierarchy(ownerId, [id, task.parentId]);
@@ -813,7 +813,7 @@ export async function deleteTask(ownerId: string, id: string, scope: DeleteTaskS
     const r = await truncateSeriesFrom(ownerId, 'tasks', task.recurrenceParentId, task.occurrenceDate);
     seriesTruncated = r.ok;
   }
-  writeAudit({ ownerId, actor, action: 'delete', entity: `task:${id}` });
+  writeAudit({ ownerId, actor, action: disposition === 'archived' ? 'archive' : 'delete', entity: `task:${id}` });
   return { ok: true, task, cancelledBlockIds, hierarchyUpdatedTaskIds: hierarchy.taskIds, hierarchyUpdatedBlockIds: hierarchy.blockIds, seriesTruncated };
 }
 

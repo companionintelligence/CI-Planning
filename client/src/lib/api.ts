@@ -707,6 +707,7 @@ export const api = {
       >,
       scope?: 'instance' | 'series',
     ) => request<{ task: Task }>('PATCH', `/tasks/${id}${scope === 'series' ? '?scope=series' : ''}`, body),
+    archive: (id: string) => request<{ task: Task }>('POST', `/tasks/${id}/archive`, {}),
     delete: (id: string, scope?: RecurringScope) =>
       request<{ task: Task }>('DELETE', `/tasks/${id}${scope === 'following' ? '?scope=following' : ''}`),
     subtasks: (id: string) => request<{ subtasks: Task[] }>('GET', `/tasks/${id}/subtasks`),

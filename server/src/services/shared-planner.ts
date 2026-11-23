@@ -59,7 +59,7 @@ export async function sharedTaskOwnerForRecipient(recipientOwnerId: string, task
   const row = await store().prepare(
     `SELECT t.owner_id
        FROM tasks t
-      WHERE t.id = ? AND t.owner_id <> ? AND t.status <> 'cancelled' AND (
+      WHERE t.id = ? AND t.owner_id <> ? AND t.status NOT IN ('cancelled', 'archived') AND (
         EXISTS (SELECT 1 FROM shared_planner_items si JOIN shared_planner_invites i ON i.id = si.invite_id
                  WHERE i.recipient_owner_id = ? AND i.status = 'active' AND si.entity_kind = 'task' AND si.entity_id = t.id)
         OR EXISTS (SELECT 1 FROM shared_planner_items si JOIN shared_planner_invites i ON i.id = si.invite_id
@@ -80,7 +80,7 @@ export async function listTasksSharedWithOwner(recipientOwnerId: string): Promis
   return store().prepare(
     `SELECT DISTINCT t.*, t.owner_id AS source_owner_id, source.name AS shared_by
        FROM tasks t JOIN owners source ON source.id = t.owner_id
-      WHERE t.owner_id <> ? AND t.status <> 'cancelled' AND COALESCE(t.subtype, 'standard') <> 'quick' AND (
+      WHERE t.owner_id <> ? AND t.status NOT IN ('cancelled', 'archived') AND COALESCE(t.subtype, 'standard') <> 'quick' AND (
         EXISTS (SELECT 1 FROM shared_planner_items si JOIN shared_planner_invites i ON i.id = si.invite_id
                  WHERE i.recipient_owner_id = ? AND i.status = 'active' AND si.entity_kind = 'task' AND si.entity_id = t.id)
         OR EXISTS (SELECT 1 FROM shared_planner_items si JOIN shared_planner_invites i ON i.id = si.invite_id
@@ -260,7 +260,7 @@ export async function listGuestSharedContent(recipientOwnerId: string): Promise<
                  AND p.owner_id = t.owner_id AND p.account_id = ?
             ) THEN 1 ELSE 0 END AS responsible
        FROM tasks t
-      WHERE t.owner_id <> ? AND t.status <> 'cancelled' AND (
+      WHERE t.owner_id <> ? AND t.status NOT IN ('cancelled', 'archived') AND (
         EXISTS (SELECT 1 FROM shared_planner_items si JOIN shared_planner_invites i ON i.id = si.invite_id
                  WHERE i.recipient_owner_id = ? AND i.status = 'active' AND si.entity_kind = 'task' AND si.entity_id = t.id)
         OR EXISTS (SELECT 1 FROM shared_planner_items si JOIN shared_planner_invites i ON i.id = si.invite_id
@@ -291,7 +291,7 @@ export async function listGuestSharedContent(recipientOwnerId: string): Promise<
     `SELECT DISTINCT b.id, b.task_id, b.title, b.start_at, b.end_at
        FROM time_blocks b JOIN tasks t ON t.id = b.task_id AND t.owner_id = b.owner_id
       WHERE b.owner_id <> ? AND b.task_id IN (${tasks.map(() => '?').join(',')})
-        AND b.status <> 'cancelled' ORDER BY b.start_at`,
+        AND b.status NOT IN ('cancelled', 'archived') ORDER BY b.start_at`,
   ).all<GuestSharedContent['blocks'][number]>(recipientOwnerId, ...tasks.map((t) => t.id));
 
   return {

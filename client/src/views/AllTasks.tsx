@@ -59,6 +59,7 @@ export function AllTasks() {
   };
   const [doneOpen, setDoneOpen] = createSignal(true);
   const [cancelledOpen, setCancelledOpen] = createSignal(true);
+  const [archivedOpen, setArchivedOpen] = createSignal(true);
   // §E / AF-7: the Tasks tab groups the backlog into New Today / Open / Scheduled /
   // Routine sections.
   const [newTodaySecOpen, setNewTodaySecOpen] = createSignal(true);
@@ -69,7 +70,7 @@ export function AllTasks() {
 
   // done + cancelled live in the Archive view now, not the status filter.
   const statusOptions = ['', 'open', 'scheduled', 'in_progress', 'deferred'];
-  const ARCHIVED = new Set(['done', 'cancelled']);
+  const ARCHIVED = new Set(['done', 'cancelled', 'archived']);
 
   // A task completed TODAY stays in the active list — rendered checked — and only falls
   // into the Archive once the day rolls over (derived by date, so no background job is
@@ -84,7 +85,7 @@ export function AllTasks() {
   // (checked) and the midnight `reset_routines` job flips them back to open. Only a
   // cancelled (thrown-away) routine task leaves the active list.
   const inActiveList = (t: Task) =>
-    isRoutineTask(t.id) ? t.status !== 'cancelled' : (!ARCHIVED.has(t.status) || isDoneToday(t));
+    isRoutineTask(t.id) ? !['cancelled', 'archived'].includes(t.status) : (!ARCHIVED.has(t.status) || isDoneToday(t));
 
   // Header "N open" count — owner decision (AF-7 follow-up): a task created today is
   // open IMMEDIATELY, so the count spans the New Today AND Open sections (a task sits in
@@ -230,12 +231,13 @@ export function AllTasks() {
   const [archived] = createResource(
     () => (showArchive() ? (tasks() ?? []) : null),
     async () => {
-      const [d, c] = await Promise.all([api.tasks.list({ status: 'done' }), api.tasks.list({ status: 'cancelled' })]);
+      const [d, c, a] = await Promise.all([api.tasks.list({ status: 'done' }), api.tasks.list({ status: 'cancelled' }), api.tasks.list({ status: 'archived' })]);
       return {
         // Routine tasks are never archived on completion (they reset at midnight), so
         // they never appear in Completed — only the day's completions are also withheld.
         done: d.tasks.filter((t) => isTopLevel(t) && !isDoneToday(t) && !isRoutineTask(t.id)),
         cancelled: c.tasks.filter(isTopLevel),
+        archived: a.tasks.filter(isTopLevel),
       };
     },
   );
@@ -379,7 +381,7 @@ export function AllTasks() {
                   <div class="card text-center text-slate-500 py-12 text-sm">No {view() === 'habits' ? 'habits' : 'tasks'} found.</div>
                 }>
                   <For each={view() === 'habits' ? shownList() : explicitList()}>
-                    {(task) => <TaskCard task={task} />}
+                    {(task) => <TaskCard task={task} swipeActions={view() === 'tasks'} />}
                   </For>
                 </Show>
               </div>
@@ -406,10 +408,10 @@ export function AllTasks() {
               {/* AF-7: everything created on the local today, above the standing sections.
                   Rolls into Open/Scheduled at the local midnight by pure date derivation. */}
               <Show when={newTodayList().length > 0}>
-                <ArchiveSection title="New Today" open={newTodaySecOpen()} onToggle={() => setNewTodaySecOpen((v) => !v)} items={newTodayList()} loading={false} emptyLabel="" />
+                <ArchiveSection swipeActions title="New Today" open={newTodaySecOpen()} onToggle={() => setNewTodaySecOpen((v) => !v)} items={newTodayList()} loading={false} emptyLabel="" />
               </Show>
               <Show when={openList().length > 0}>
-                <ArchiveSection title="Open" open={openSecOpen()} onToggle={() => setOpenSecOpen((v) => !v)} items={openList()} loading={false} emptyLabel="" />
+                <ArchiveSection swipeActions title="Open" open={openSecOpen()} onToggle={() => setOpenSecOpen((v) => !v)} items={openList()} loading={false} emptyLabel="" />
               </Show>
               <SomedayTasksSection
                 open={somedaySecOpen()}
@@ -418,7 +420,7 @@ export function AllTasks() {
                 defaultMinutes={prefs()?.concept_default_minutes ?? 60}
               />
               <Show when={scheduledList().length > 0}>
-                <ArchiveSection title="Scheduled" open={schedSecOpen()} onToggle={() => setSchedSecOpen((v) => !v)} items={scheduledList()} loading={false} emptyLabel="" />
+                <ArchiveSection swipeActions title="Scheduled" open={schedSecOpen()} onToggle={() => setSchedSecOpen((v) => !v)} items={scheduledList()} loading={false} emptyLabel="" />
               </Show>
               <Show when={routineList().length > 0}>
                 <RoutineSection
@@ -432,7 +434,7 @@ export function AllTasks() {
           </Show>
         </Show>
 
-        {/* Archive view — completed + thrown-away, in two collapsible containers. */}
+        {/* Archive view — completed, archived, and thrown-away tasks. */}
         <Show when={showArchive()}>
           <ArchiveSection
             title="Completed"
@@ -441,6 +443,14 @@ export function AllTasks() {
             items={archived()?.done ?? []}
             loading={archived.loading}
             emptyLabel="No completed tasks."
+          />
+          <ArchiveSection
+            title="Archived"
+            open={archivedOpen()}
+            onToggle={() => setArchivedOpen((v) => !v)}
+            items={archived()?.archived ?? []}
+            loading={archived.loading}
+            emptyLabel="No archived tasks."
           />
           <ArchiveSection
             title="Thrown away"
@@ -477,6 +487,7 @@ function ArchiveSection(props: {
   items: Task[];
   loading: boolean;
   emptyLabel: string;
+  swipeActions?: boolean;
 }) {
   return (
     <div class="card mb-3">
@@ -497,7 +508,7 @@ function ArchiveSection(props: {
             </div>
           </Show>
           <For each={props.items}>
-            {(task) => <TaskCard task={task} />}
+            {(task) => <TaskCard task={task} swipeActions={props.swipeActions} />}
           </For>
           <Show when={!props.loading && props.items.length === 0}>
             <div class="text-center text-slate-500 py-6 text-sm">{props.emptyLabel}</div>
@@ -611,7 +622,7 @@ function RoutineSection(props: {
                   <span class="opacity-60 tabular-nums">{g.items.length}</span>
                 </div>
                 <For each={g.items}>
-                  {(task) => <TaskCard task={task} />}
+                  {(task) => <TaskCard task={task} swipeActions />}
                 </For>
               </div>
             )}

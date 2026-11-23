@@ -93,7 +93,7 @@ export async function computeStars(
         WHERE t.owner_id = ?
           AND (t.scheduled_for = ?
                OR t.id IN (SELECT task_id FROM daily_plan WHERE owner_id = ? AND date = ?))
-          AND t.status NOT IN ('cancelled', 'recurring', 'skipped')
+          AND t.status NOT IN ('cancelled', 'archived', 'recurring', 'skipped')
           AND COALESCE(t.subtype, 'standard') != 'habit'
           AND t.recurrence_parent_id IS NULL
           AND t.id NOT IN (SELECT task_id FROM pattern_tasks)`,
