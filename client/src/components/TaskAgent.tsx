@@ -96,6 +96,7 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
     'task_id' in action ? current.tasks.find((task) => task.id === action.task_id)?.title ?? 'Task' : action.kind === 'create_task' ? action.title : 'New tasks';
   const actionText = (action: TaskAgentAction, current: TaskAgentPlan) => {
     if (action.kind === 'create_tasks') return `Create ${action.tasks.length} task draft${action.tasks.length === 1 ? '' : 's'}${action.target_block_id ? ` in “${current.blocks?.find((block) => block.id === action.target_block_id)?.title ?? 'time block'}”` : ''}${action.block_end_at ? `; extend block until ${new Date(action.block_end_at).toLocaleTimeString()}` : ''}`;
+    if (action.kind === 'bulk_unschedule_tasks') return `Unschedule ${action.tasks.length} unfinished task${action.tasks.length === 1 ? '' : 's'}`;
     if (action.kind === 'create_task') return `Create “${action.title}”${action.scheduled_for ? ` for ${action.scheduled_for}` : ''}`;
     if (action.kind === 'add_note') return `Add note to “${taskName(action, current)}”: ${action.body}`;
     if (action.kind === 'draft_task') return `Fill unsaved fields for “${taskName(action, current)}” — ${Object.entries(action).filter(([key]) => !['kind', 'task_id'].includes(key)).map(([key, value]) => `${key.replaceAll('_', ' ')}: ${value}`).join(', ')}`;
@@ -115,7 +116,12 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
       (await api.taskAgent.place(taskId).catch(() => ({ placement: { placed: false, reason: 'placement unavailable' } }))).placement;
     try {
       for (const action of current.actions) {
-        if (action.kind === 'create_tasks') {
+        if (action.kind === 'bulk_unschedule_tasks') {
+          for (const task of action.tasks) {
+            await api.tasks.update(task.task_id, { scheduled_for: null, task_time: null, status: 'open' });
+            saved.push({ text: `Unscheduled “${task.title}”`, taskId: task.task_id });
+          }
+        } else if (action.kind === 'create_tasks') {
           if (action.target_block_id && action.block_end_at) await api.blocks.update(action.target_block_id, { end_at: action.block_end_at });
           const taskIds: string[] = [];
           for (const draft of action.tasks) {
@@ -186,7 +192,12 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
       </div>
       <Show when={plan()}>{(current) => <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain border border-border rounded-lg p-3 flex flex-col gap-2 text-sm">
         <strong>Review changes</strong>
-        <For each={current().actions}>{(action, actionIndex) => <Show when={action.kind === 'create_tasks'} fallback={<p>• {actionText(action, current())}</p>}>
+        <For each={current().actions}>{(action, actionIndex) => action.kind === 'bulk_unschedule_tasks' ? <div class="space-y-2 min-w-0">
+          <p>{actionText(action, current())}</p>
+          <ul class="max-h-48 overflow-y-auto rounded border border-border divide-y divide-border/60">
+            <For each={action.tasks}>{(task) => <li class="px-2 py-1.5 text-xs flex justify-between gap-2"><span class="truncate">{task.title}</span><span class="text-muted-foreground whitespace-nowrap">{task.scheduled_for ?? task.task_time ?? 'scheduled'}</span></li>}</For>
+          </ul>
+        </div> : action.kind === 'create_tasks' ? <>
           <div class="space-y-2 min-w-0">
             <p>{actionText(action, current())}</p>
             <label class="block text-xs text-muted-foreground">Optional destination time block
@@ -205,7 +216,7 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
               <button class="btn-ghost text-xs" aria-label={`Remove draft task ${draftIndex() + 1}`} onClick={() => setPlan((previous) => previous && { ...previous, actions: previous.actions.map((item, index) => index === actionIndex() && item.kind === 'create_tasks' ? { ...item, tasks: item.tasks.filter((_, i) => i !== draftIndex()) } : item).filter((item) => item.kind !== 'create_tasks' || item.tasks.length > 0) })}>×</button>
             </div>}</For>
           </div>
-        </Show>}</For>
+        </> : <p>• {actionText(action, current())}</p>}</For>
         <p class="text-xs text-muted-foreground">Notes and task changes save when applied. Draft fields open in the task form and remain unsaved until you save there.</p>
         <div class="flex gap-2 justify-end"><button class="btn-ghost" disabled={busy()} onClick={() => setPlan(null)}>Dismiss</button><button class="btn-primary" disabled={busy() || !current().actions.length || current().actions.some((action) => action.kind === 'create_tasks' && action.tasks.some((task) => !task.title.trim() || (task.estimated_minutes !== undefined && (!Number.isInteger(task.estimated_minutes) || task.estimated_minutes < 5 || task.estimated_minutes > 480))))} onClick={() => void apply()}>Apply changes</button></div>
       </div>}</Show>

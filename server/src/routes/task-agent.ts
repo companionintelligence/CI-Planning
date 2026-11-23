@@ -15,6 +15,7 @@ type ObjectiveSummary = { id: string; title: string; task_id: string | null };
 type Screen = { path: string; tab: string; selectedTaskId: string | null; selectedBlockId: string | null; selectedEntity: { kind: string; id: string } | null; headings: string[] };
 type Action =
   | { kind: 'create_tasks'; tasks: Array<{ title: string; estimated_minutes?: number }>; target_block_id?: string }
+  | { kind: 'bulk_unschedule_tasks'; tasks: Array<{ task_id: string; title: string; scheduled_for: string | null; task_time: string | null }> }
   | { kind: 'create_task'; title: string; priority?: number; scheduled_for?: string; task_time?: string }
   | { kind: 'update_task'; task_id: string; title?: string; priority?: number; scheduled_for?: string | null; task_time?: string | null; status?: 'open' | 'done' }
   | { kind: 'add_note'; task_id: string; body: string }
@@ -98,6 +99,21 @@ export function taskAgentRouter() {
     const taskRows = taskCandidates(allTasks, text, screen.selectedTaskId);
     const selectedBlock = screen.selectedBlockId ? await store().prepare(`SELECT tb.id, tb.title, tb.start_at, tb.end_at, tb.status, COALESCE((SELECT group_concat(t.name, ', ') FROM entity_tags et JOIN tags t ON t.id = et.tag_id WHERE et.entity_kind = 'time_block' AND et.entity_id = tb.id AND et.level = 1), tb.tag) AS tag FROM time_blocks tb WHERE tb.id = ? AND tb.owner_id = ? AND tb.block_kind = 'timeblock'`).get<BlockSummary>(screen.selectedBlockId, owner) : undefined;
     const blockCandidates = [...(selectedBlock ? [selectedBlock] : []), ...blockRows.filter((block) => block.id !== selectedBlock?.id)];
+    // Treat bulk unscheduling as a first-class operation. Without this deterministic
+    // route the model sometimes mistakes the phrase "reschedule open tasks" for a
+    // request to create a task literally named "Reschedule open tasks".
+    const asksToUnSchedule = /\b(?:un\s*[-]?\s*schedule|clear (?:the )?schedule|remove (?:the )?schedule)\b/i.test(text);
+    const asksForAllOpen = /\b(?:all|every|open|incomplete|unfinished)\b/i.test(text) && /\b(tasks?|everything)\b/i.test(text);
+    if (asksToUnSchedule && asksForAllOpen) {
+      const candidates = allTasks.filter((task) => ['open', 'scheduled', 'in_progress'].includes(task.status)
+        && (task.scheduled_for || task.task_time || task.status === 'scheduled'));
+      const action: Action = { kind: 'bulk_unschedule_tasks', tasks: candidates.map((task) => ({ task_id: task.id, title: task.title, scheduled_for: task.scheduled_for, task_time: task.task_time })) };
+      ctx.body = {
+        reply: candidates.length ? `I found ${candidates.length} unfinished scheduled tasks. Review the list, then apply to unschedule them; they will remain open in Tasks for later scheduling.` : 'I did not find any unfinished scheduled tasks to unschedule.',
+        actions: candidates.length ? [action] : [], tasks: candidates, objectives: [],
+      };
+      return;
+    }
     const blockWords = (text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []);
     const relevantBlocks = blockCandidates.filter((block) => block.id === selectedBlock?.id || blockWords.some((word) => block.title.toLowerCase().includes(word))).slice(0, 30);
     const blocksForPlan = relevantBlocks.length ? relevantBlocks : blockCandidates.slice(0, 20);
