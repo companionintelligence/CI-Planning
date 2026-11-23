@@ -1,6 +1,6 @@
 import { Navigate, Route, Router, useLocation, useNavigate, useSearchParams } from '@solidjs/router';
 import { ErrorBoundary, Show, createEffect, createResource, createSignal, lazy, onCleanup, onMount } from 'solid-js';
-import { Plus, RefreshCw, PanelLeft, LockKeyhole, Loader2 } from 'lucide-solid';
+import { Plus, RefreshCw, PanelLeft, LockKeyhole, Loader2, MessageCircle } from 'lucide-solid';
 import { BootScreen } from './components/BootScreen.js';
 import { BrandMark } from './components/BrandMark.js';
 import { DetailsDrawer, DetailsToggle } from './components/DetailsDrawer.js';
@@ -17,6 +17,7 @@ import { ToastContainer } from './components/Toast.js';
 import { ConflictBanner } from './components/ConflictBanner.js';
 import { UpdateBanner } from './components/UpdateBanner.js';
 import { ElementWizard } from './components/ElementWizard.js';
+import { TaskAgent } from './components/TaskAgent.js';
 import { PlanWeekAssistant } from './components/PlanWeekAssistant.js';
 import { OnboardingWizard } from './components/OnboardingWizard.js';
 import { TrustTrigger, TrustModal, type TrustMode } from './components/TrustModal.js';
@@ -113,6 +114,7 @@ function useTaskReminders() {
 const FAB_ROUTES = ['/', '/tasks', '/calendar', '/tags', '/focus', '/jobs'];
 
 function Shell(props: { children?: any }) {
+  const [agentOpen, setAgentOpen] = createSignal(false);
   const location = useLocation();
   const [searchParams] = useSearchParams();
   useTaskReminders();
@@ -252,6 +254,7 @@ function Shell(props: { children?: any }) {
 
       {/* One shared mobile/desktop Create button across the planner's primary views. */}
       <Show when={hasFab()}>
+        <button class="fab bottom-36 md:bottom-20" onClick={() => setAgentOpen(true)} title="Talk to task assistant" aria-label="Talk to task assistant"><MessageCircle size={18} /></button>
         <button
           class="fab bottom-20 md:bottom-6"
           onClick={() => setElementModal({ open: true, mode: 'add', kind: null })}
@@ -260,6 +263,7 @@ function Shell(props: { children?: any }) {
           <Plus size={18} />
         </button>
       </Show>
+      <Show when={agentOpen()}><TaskAgent onClose={() => setAgentOpen(false)} /></Show>
 
       {/* Unified Add/Edit Element wizard — self-driven by the elementModal signal. */}
       <ElementWizard />

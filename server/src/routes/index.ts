@@ -47,6 +47,7 @@ import { placementRouter } from './placement.js';
 import { planLoopRouter } from './plan-loop.js';
 import { dismissalLearningRouter } from './dismissal-learning.js';
 import { demoRouter } from './demo.js';
+import { taskAgentRouter } from './task-agent.js';
 
 export function mountRoutes(app: Koa) {
   for (const router of [
@@ -98,6 +99,7 @@ export function mountRoutes(app: Koa) {
     planLoopRouter(),
     dismissalLearningRouter(),
     demoRouter(),
+    taskAgentRouter(),
   ]) {
     app.use(router.routes()).use(router.allowedMethods());
   }

@@ -23,6 +23,17 @@ export class ApiError extends Error {
   }
 }
 
+export type TaskAgentAction =
+  | { kind: 'create_task'; title: string; priority?: number; scheduled_for?: string; task_time?: string }
+  | { kind: 'update_task'; task_id: string; title?: string; priority?: number; scheduled_for?: string | null; task_time?: string | null; status?: 'open' | 'done' }
+  | { kind: 'move_task'; task_id: string; source_objective_id?: string; target_objective_id: string };
+export interface TaskAgentPlan {
+  reply: string;
+  actions: TaskAgentAction[];
+  tasks: Array<{ id: string; title: string }>;
+  objectives: Array<{ id: string; title: string }>;
+}
+
 /** Dispatched on `window` when an app request comes back 401 (see `request`). */
 export const UNAUTHENTICATED_EVENT = 'auth:unauthenticated';
 
@@ -558,6 +569,11 @@ export interface LearningResetResult {
 }
 
 export const api = {
+  taskAgent: {
+    plan: (text: string, history: Array<{ role: 'user' | 'assistant'; text: string }>) =>
+      request<TaskAgentPlan>('POST', '/task-agent/plan', { text, history }),
+    place: (taskId: string) => request<{ placement: { placed: boolean; startAt?: string; reason?: string } }>('POST', `/task-agent/tasks/${encodeURIComponent(taskId)}/place`, {}),
+  },
   // Triality (0139, design §8) — the suggestion read + outcome write. Both 404
   // while the flag is off: gate every call on prefs().triality_enabled, never probe.
   triality: {
