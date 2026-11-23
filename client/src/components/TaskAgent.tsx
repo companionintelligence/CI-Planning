@@ -1,5 +1,5 @@
 import { createSignal, For, Show, onCleanup, onMount } from 'solid-js';
-import { MessageCircle, Volume2, VolumeX, X } from 'lucide-solid';
+import { MessageCircle, Mic, Volume2, VolumeX, X } from 'lucide-solid';
 import { ViewportOverlay } from './ViewportOverlay.js';
 import { MicButton } from './MicButton.js';
 import { api, type TaskAgentAction, type TaskAgentPlan, type TaskAgentScreenContext } from '../lib/api.js';
@@ -12,6 +12,7 @@ type Result = { text: string; taskId?: string };
 
 export function TaskAgent(props: { onClose: () => void; screenContext?: () => TaskAgentScreenContext }) {
   let panel!: HTMLElement;
+  let messageInput!: HTMLTextAreaElement;
   let previousFocus: HTMLElement | null = null;
   const [messages, setMessages] = createSignal<Message[]>([]);
   const [input, setInput] = createSignal('');
@@ -21,6 +22,9 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
   const [voice, setVoice] = createSignal(false);
   const [results, setResults] = createSignal<Result[]>([]);
   const canSpeak = typeof window !== 'undefined' && 'speechSynthesis' in window;
+  // iOS in-app browsers can expose webkitSpeechRecognition without delivering results.
+  // Their keyboard dictation writes directly into the focused textarea instead.
+  const ios = typeof navigator !== 'undefined' && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
   onMount(() => {
     previousFocus = document.activeElement as HTMLElement | null;
     panel.querySelector<HTMLElement>('button')?.focus();
@@ -145,8 +149,8 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
         <div class="flex gap-2 justify-end"><button class="btn-ghost" disabled={busy()} onClick={() => setPlan(null)}>Dismiss</button><button class="btn-primary" disabled={busy()} onClick={() => void apply()}>Apply changes</button></div>
       </div>}</Show>
       <Show when={error()}><p role="alert" class="text-sm text-destructive">{error()}</p></Show>
-      <div class="flex items-end gap-2"><textarea class="input flex-1 min-w-0 min-h-12 max-h-32" aria-label="Message the task assistant" placeholder="What would you like done?" value={input()} disabled={!!plan() || busy()} onInput={(event) => setInput(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} /><MicButton title="Dictate your request" disabled={!!plan() || busy()} onTranscript={(text) => setInput((value) => value ? `${value} ${text}` : text)} onError={setError} /><button class="btn-primary" disabled={!input().trim() || !!plan() || busy()} onClick={() => void send()}>Send</button></div>
-      <p class="text-[11px] text-muted-foreground">Voice input uses your browser’s speech service and requires microphone permission. Some browsers send audio to their speech provider.</p>
+      <div class="flex items-end gap-2"><textarea ref={messageInput} class="input flex-1 min-w-0 min-h-12 max-h-32" aria-label="Message the task assistant" placeholder="What would you like done?" value={input()} disabled={!!plan() || busy()} onInput={(event) => setInput(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} /><Show when={ios} fallback={<MicButton title="Dictate your request" disabled={!!plan() || busy()} onTranscript={(text) => { setInput((value) => value ? `${value} ${text}` : text); setError(''); }} onError={setError} />}><button type="button" class="btn-icon" aria-label="Open keyboard for voice dictation" title="Use keyboard microphone" disabled={!!plan() || busy()} onClick={() => { messageInput.focus(); setError('Tap the microphone on your keyboard to dictate, then review your message and tap Send.'); }}><Mic size={17} /></button></Show><button class="btn-primary" disabled={!input().trim() || !!plan() || busy()} onClick={() => void send()}>Send</button></div>
+      <p class="text-[11px] text-muted-foreground">{ios ? 'On iPhone, tap the mic above to open the keyboard, then use the keyboard microphone. Review the text here before Send.' : 'Tap the mic to dictate. Review the text here before Send. Your browser’s speech service may send audio to its provider.'}</p>
     </section>
   </ViewportOverlay>;
 }

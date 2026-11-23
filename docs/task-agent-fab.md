@@ -27,3 +27,7 @@ The sheet follows the [WAI modal dialog keyboard pattern](https://www.w3.org/WAI
 The assistant can find an owned task and propose a timestamped note. The proposal is reviewed before the note is appended. The task drawer shows note history near the title and has a prominent Add note button. The older single notes field remains available as the task description.
 
 When asked to suggest or draft field changes, the assistant can fill the task edit form with title, priority, date, time, and description values. These values remain unsaved until the user reviews and saves the form. This path does not save the task directly.
+
+## Voice input on iPhone
+
+The assistant never sends a dictated request automatically. Browser speech recognition fills the editable message field. On iPhone and iPad, the assistant microphone focuses the message field so the user can use the system keyboard's dictation microphone; this avoids iOS in-app browsers that expose Web Speech recognition but do not produce results. The user reviews the text and taps Send.
