@@ -4,9 +4,11 @@ import { store } from '../db/store.js';
 import { generateJson, llmOrNull } from '../mcp/ollama.js';
 import { ownerTimezone } from '../engine/recurrence-generate.js';
 import { placeStartAnchoredTask } from '../engine/autoplan.js';
+import { taskMetrics } from '../services/task-metrics.js';
 
-type TaskSummary = { id: string; title: string; status: string; priority: number; scheduled_for: string | null; task_time: string | null };
+type TaskSummary = { id: string; title: string; status: string; priority: number; due_at: string | null; scheduled_for: string | null; task_time: string | null; completed_at: string | null };
 type ObjectiveSummary = { id: string; title: string; task_id: string | null };
+type Screen = { path: string; tab: string; selectedTaskId: string | null; selectedBlockId: string | null; selectedEntity: { kind: string; id: string } | null; headings: string[] };
 type Action =
   | { kind: 'create_task'; title: string; priority?: number; scheduled_for?: string; task_time?: string }
   | { kind: 'update_task'; task_id: string; title?: string; priority?: number; scheduled_for?: string | null; task_time?: string | null; status?: 'open' | 'done' }
@@ -19,6 +21,33 @@ const dateValid = (value: unknown): value is string => {
 };
 const timeValid = (value: unknown): value is string => typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 const priorityValid = (value: unknown): value is number => Number.isInteger(value) && Number(value) >= 1 && Number(value) <= 5;
+const screenPaths = new Set(['/', '/focus', '/calendar', '/tasks', '/tags', '/priorities', '/balance', '/settings', '/jobs']);
+function cleanScreen(value: unknown): Screen {
+  const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  return {
+    path: typeof raw.path === 'string' && screenPaths.has(raw.path) ? raw.path : '/',
+    tab: typeof raw.tab === 'string' ? raw.tab.slice(0, 40) : '',
+    selectedTaskId: typeof raw.selectedTaskId === 'string' ? raw.selectedTaskId : null,
+    selectedBlockId: typeof raw.selectedBlockId === 'string' ? raw.selectedBlockId : null,
+    selectedEntity: raw.selectedEntity && typeof raw.selectedEntity === 'object' && typeof (raw.selectedEntity as Record<string, unknown>).kind === 'string' && typeof (raw.selectedEntity as Record<string, unknown>).id === 'string'
+      ? { kind: String((raw.selectedEntity as Record<string, unknown>).kind).slice(0, 30), id: String((raw.selectedEntity as Record<string, unknown>).id).slice(0, 100) } : null,
+    headings: Array.isArray(raw.headings) ? raw.headings.filter((heading): heading is string => typeof heading === 'string').slice(0, 8).map((heading) => heading.slice(0, 80)) : [],
+  };
+}
+function taskCandidates(rows: TaskSummary[], request: string, selectedId: string | null): TaskSummary[] {
+  const ignored = new Set(['task', 'tasks', 'what', 'when', 'where', 'which', 'status', 'state', 'please', 'move', 'edit', 'update', 'create', 'schedule', 'change', 'show', 'tell', 'about', 'from', 'with', 'this', 'that', 'have', 'done', 'open']);
+  const words = (request.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).filter((word) => !ignored.has(word));
+  const scored = rows.map((row, index) => {
+    const title = row.title.toLowerCase();
+    const score = words.reduce((sum, word) => sum + (title.includes(word) ? 1 : 0), 0) + (row.id === selectedId ? 10 : 0);
+    return { row, index, score };
+  });
+  const matches = scored.filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score || a.index - b.index).slice(0, 80);
+  return (matches.length ? matches : scored.slice(0, 40)).map((entry) => entry.row);
+}
+function taskFact(task: TaskSummary): string {
+  return `“${task.title}” is ${task.status}, priority ${task.priority ?? 3}${task.scheduled_for ? `, scheduled for ${task.scheduled_for}${task.task_time ? ` at ${task.task_time}` : ''}` : ''}${task.due_at ? `, due ${task.due_at}` : ''}${task.completed_at ? `, completed ${task.completed_at}` : ''}.`;
+}
 
 /** The model proposes actions; only this allowlist reaches the client. The client
  * executes through the existing authenticated task/objective routes after review. */
@@ -30,16 +59,54 @@ export function taskAgentRouter() {
     ctx.body = { placement };
   });
   router.post('/api/task-agent/plan', async (ctx) => {
-    const body = (ctx.request.body ?? {}) as { text?: unknown; history?: unknown };
+    const body = (ctx.request.body ?? {}) as { text?: unknown; history?: unknown; screen?: unknown };
     const text = typeof body.text === 'string' ? body.text.trim() : '';
     if (!text || text.length > 2000) { ctx.status = 422; ctx.body = { error: 'Enter a request under 2,000 characters.' }; return; }
     const owner = currentOwnerId();
-    const [taskRows, objectives] = await Promise.all([
-      store().prepare(`SELECT id, title, status, priority, scheduled_for, task_time FROM tasks WHERE owner_id = ? AND status NOT IN ('cancelled', 'recurring') ORDER BY COALESCE(updated_at, created_at) DESC LIMIT 200`).all<TaskSummary>(owner),
-      store().prepare(`SELECT o.id, o.title, ot.task_id FROM objectives o LEFT JOIN objective_tasks ot ON ot.objective_id = o.id WHERE o.owner_id = ? AND o.status = 'active' LIMIT 200`).all<ObjectiveSummary>(owner),
+    const screen = cleanScreen(body.screen);
+    const [allTasks, objectives] = await Promise.all([
+      store().prepare(`SELECT id, title, status, priority, due_at, scheduled_for, task_time, completed_at FROM tasks WHERE owner_id = ? ORDER BY COALESCE(updated_at, created_at) DESC`).all<TaskSummary>(owner),
+      store().prepare(`SELECT o.id, o.title, ot.task_id FROM objectives o LEFT JOIN objective_tasks ot ON ot.objective_id = o.id WHERE o.owner_id = ? AND o.status = 'active'`).all<ObjectiveSummary>(owner),
     ]);
+    const taskRows = taskCandidates(allTasks, text, screen.selectedTaskId);
     const timezone = await ownerTimezone(owner);
     const now = new Date().toLocaleString('en-US', { timeZone: timezone, hour12: false });
+    const readOnly = !/\b(create|add|edit|update|change|move|reschedule|schedule|mark|complete|finish|set|delete|remove|cancel)\b/i.test(text);
+    const metricsRequest = /\b(metrics?|recap|progress|performance|completion|completions|tracked time)\b/i.test(text);
+    if (readOnly && metricsRequest) {
+      const days = /\b(week|7 days)\b/i.test(text) ? 7 : /\b(year|365 days)\b/i.test(text) ? 365 : 30;
+      const metrics = await taskMetrics(owner, days);
+      const group = /\b(habit|habits)\b/i.test(text) ? metrics.habits : metrics;
+      const axes = [...group.directions, ...group.categories].filter((axis) => text.toLowerCase().includes(axis.name.toLowerCase()));
+      const totals = group.totals;
+      const breakdown = axes.length ? ` ${axes.map((axis) => `${axis.name}: ${axis.open} open, ${axis.completed} completed, ${axis.actualMinutes} tracked minutes`).join('; ')}.` : '';
+      ctx.body = { reply: `Over the last ${days} days: ${totals.completed} ${group === metrics.habits ? 'habit occurrences' : 'tasks'} completed, ${totals.actualMinutes} minutes tracked, and ${totals.cancelled} scheduled items cancelled. ${totals.open} are currently open.${breakdown} Ratings: ${totals.score.samples} recorded${totals.score.mean === null ? '' : `, average ${totals.score.mean}/5`}.`, actions: [], tasks: [], objectives: [] };
+      return;
+    }
+    if (readOnly && /\b(screen|page|view|here)\b/i.test(text)) {
+      const selected = allTasks.find((task) => task.id === screen.selectedTaskId);
+      const activeCount = allTasks.filter((task) => ['open', 'scheduled', 'in_progress'].includes(task.status)).length;
+      const block = screen.selectedBlockId ? await store().prepare(`SELECT title, status, start_at, end_at FROM time_blocks WHERE id = ? AND owner_id = ?`).get<{ title: string; status: string; start_at: string; end_at: string }>(screen.selectedBlockId, owner) : null;
+      const objective = screen.selectedEntity?.kind === 'objective' ? await store().prepare(`SELECT title, status, progress_cache FROM objectives WHERE id = ? AND owner_id = ?`).get<{ title: string; status: string; progress_cache: number | null }>(screen.selectedEntity.id, owner) : null;
+      const details = selected ? ` Selected task: ${taskFact(selected)}` : block ? ` Selected block: “${block.title}” is ${block.status}, ${block.start_at} to ${block.end_at}.` : objective ? ` Selected objective: “${objective.title}” is ${objective.status}${objective.progress_cache === null ? '' : `, ${Math.round(objective.progress_cache * 100)}% complete`}.` : screen.selectedEntity ? ` Selected ${screen.selectedEntity.kind}: ${screen.selectedEntity.id}.` : '';
+      ctx.body = { reply: `You are on ${screen.path}${screen.tab ? `, ${screen.tab} tab` : ''}${screen.headings.length ? ` (${screen.headings.join(' · ')})` : ''}. ${activeCount} tasks are currently active.${details} I can inspect a named task or recap your metrics.`, actions: [], tasks: [], objectives: [] };
+      return;
+    }
+    if (readOnly && /\b(status|state|due|scheduled|priority|when|where)\b/i.test(text)) {
+      const selected = allTasks.find((task) => task.id === screen.selectedTaskId);
+      const matches = taskRows.filter((task) => {
+        const title = task.title.toLowerCase();
+        return text.toLowerCase().includes(title) || (task.id === selected?.id && /\b(this task|selected task)\b/i.test(text));
+      });
+      if (matches.length === 1) {
+        ctx.body = { reply: taskFact(matches[0]), actions: [], tasks: [matches[0]], objectives: [] };
+        return;
+      }
+      if (matches.length > 1) {
+        ctx.body = { reply: `I found multiple tasks: ${matches.slice(0, 5).map((task) => task.title).join(', ')}. Which one do you mean?`, actions: [], tasks: matches.slice(0, 5), objectives: [] };
+        return;
+      }
+    }
     const recent = Array.isArray(body.history) ? body.history.slice(-6).filter((entry): entry is { role: string; text: string } =>
       !!entry && typeof entry === 'object' && ['user', 'assistant'].includes(entry.role) && typeof entry.text === 'string').map((entry) => ({ role: entry.role, text: entry.text.slice(0, 500) })) : [];
     const result = await llmOrNull('taskAgent', () => generateJson<unknown>(
@@ -50,7 +117,7 @@ export function taskAgentRouter() {
       `{"kind":"move_task","task_id":"exact ID from tasks","source_objective_id":"current objective ID if linked","target_objective_id":"exact objective ID"}. ` +
       `Omit unchanged fields. At most four actions. For a time change, set scheduled_for and task_time. Describe proposed changes in future tense; never claim they are saved. ` +
       `If a target is missing or ambiguous, ask a short clarifying question and return no actions. Never invent IDs, dates, or task names. ` +
-      `Tasks: ${JSON.stringify(taskRows)}. Objectives and task links: ${JSON.stringify(objectives)}. ` +
+      `Current screen: ${JSON.stringify(screen)}. Tasks matching the request (including archived tasks): ${JSON.stringify(taskRows)}. Objectives and task links: ${JSON.stringify(objectives.slice(0, 200))}. ` +
       `Recent conversation: ${JSON.stringify(recent)}. User request: ${JSON.stringify(text)}`,
       { purpose: 'plan_instruct', tier: 'quality', timeoutMs: 45_000, think: false },
     ));

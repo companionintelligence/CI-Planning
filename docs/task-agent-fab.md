@@ -8,7 +8,9 @@ The sheet follows the [WAI modal dialog keyboard pattern](https://www.w3.org/WAI
 
 ## Limits for this version
 
-- The model sees the 200 most recently updated tasks and up to 200 active objective links. If a target is outside that window, it should ask for a narrower request.
+- The server can inspect all of the owner's tasks, including completed and archived tasks. It sends only the strongest title matches (up to 80) to the model. If a request does not identify a task, the model sees the 40 most recent tasks and should ask for a narrower request.
+- A semantic screen snapshot includes the route, selected tab, visible headings, and selected entity. It does not capture unsaved form fields or arbitrary page text. The assistant is available on all authenticated screens.
+- Metrics recaps come from the same owner-scoped task metrics service as the Balance metrics tab. The response labels rolling windows and separates current open counts from windowed completions.
 - Up to four actions can be proposed per turn. Deletion, bulk rearrangement, and changes to shared tasks are outside the assistant's tool set.
 - Conversation state is held in the open sheet and is cleared when it closes.
 - Speech is one utterance at a time. The transcript can be edited before sending.

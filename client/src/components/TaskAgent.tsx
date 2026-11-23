@@ -2,7 +2,7 @@ import { createSignal, For, Show, onCleanup, onMount } from 'solid-js';
 import { MessageCircle, Volume2, VolumeX, X } from 'lucide-solid';
 import { ViewportOverlay } from './ViewportOverlay.js';
 import { MicButton } from './MicButton.js';
-import { api, type TaskAgentAction, type TaskAgentPlan } from '../lib/api.js';
+import { api, type TaskAgentAction, type TaskAgentPlan, type TaskAgentScreenContext } from '../lib/api.js';
 import { refetchObjectives, refetchTasks } from '../stores/index.js';
 import { setActiveTask } from '../stores/selection.js';
 import { revealDetails } from '../stores/ui.js';
@@ -10,7 +10,7 @@ import { revealDetails } from '../stores/ui.js';
 type Message = { role: 'user' | 'assistant'; text: string };
 type Result = { text: string; taskId?: string };
 
-export function TaskAgent(props: { onClose: () => void }) {
+export function TaskAgent(props: { onClose: () => void; screenContext?: () => TaskAgentScreenContext }) {
   let panel!: HTMLElement;
   let previousFocus: HTMLElement | null = null;
   const [messages, setMessages] = createSignal<Message[]>([]);
@@ -56,7 +56,7 @@ export function TaskAgent(props: { onClose: () => void }) {
     setBusy(true);
     setError('');
     try {
-      const result = await api.taskAgent.plan(text, history);
+      const result = await api.taskAgent.plan(text, history, props.screenContext?.());
       setMessages((previous) => [...previous, { role: 'assistant', text: result.reply }]);
       if (result.actions.length) setPlan(result);
       say(result.reply);

@@ -14,7 +14,7 @@ beforeAll(async () => { server = await startTestServer(); });
 afterAll(async () => { await server.close(); });
 beforeEach(() => { resetDb(); model.mockReset(); });
 
-const plan = (text: string) => api<{ reply: string; actions: unknown[] }>(server.url, '/api/task-agent/plan', { method: 'POST', json: { text } });
+const plan = (text: string, screen?: unknown) => api<{ reply: string; actions: unknown[] }>(server.url, '/api/task-agent/plan', { method: 'POST', json: { text, screen } });
 
 describe('task agent proposals', () => {
   it('proposes an owned task update without writing it', async () => {
@@ -46,6 +46,32 @@ describe('task agent proposals', () => {
   it('rejects an empty request before invoking the model', async () => {
     const response = await plan('  ');
     expect(response.status).toBe(422);
+    expect(model).not.toHaveBeenCalled();
+  });
+
+  it('reports an archived task state outside the recent task window', async () => {
+    sqlite.prepare("INSERT INTO tasks (id, title, owner_id, status, priority, created_at) VALUES ('old-task', 'File tax return', ?, 'done', 1, '2020-01-01')").run(SYSTEM_OWNER);
+    const insert = sqlite.prepare("INSERT INTO tasks (id, title, owner_id, status) VALUES (?, 'Filler', ?, 'open')");
+    for (let i = 0; i < 210; i++) insert.run(`filler-${i}`, SYSTEM_OWNER);
+    const response = await plan('What is the status of File tax return?');
+    expect(response.body.reply).toContain('“File tax return” is done');
+    expect(response.body.actions).toEqual([]);
+    expect(model).not.toHaveBeenCalled();
+  });
+
+  it('recaps owner metrics from data without asking the model', async () => {
+    const response = await plan('Recap my metrics this week');
+    expect(response.status).toBe(200);
+    expect(response.body.reply).toContain('Over the last 7 days:');
+    expect(response.body.reply).toContain('currently open');
+    expect(model).not.toHaveBeenCalled();
+  });
+
+  it('reports the current screen and selected task from semantic context', async () => {
+    sqlite.prepare("INSERT INTO tasks (id, title, owner_id, status) VALUES ('agent-task', 'Call Sam', ?, 'scheduled')").run(SYSTEM_OWNER);
+    const response = await plan('What is on this screen?', { path: '/balance', tab: 'metrics', selectedTaskId: 'agent-task', headings: ['Life Balance', 'Metrics'] });
+    expect(response.body.reply).toContain('/balance, metrics tab');
+    expect(response.body.reply).toContain('Selected task: “Call Sam” is scheduled');
     expect(model).not.toHaveBeenCalled();
   });
 });

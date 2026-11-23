@@ -33,6 +33,14 @@ export interface TaskAgentPlan {
   tasks: Array<{ id: string; title: string }>;
   objectives: Array<{ id: string; title: string }>;
 }
+export interface TaskAgentScreenContext {
+  path: string;
+  tab: string;
+  selectedTaskId: string | null;
+  selectedBlockId: string | null;
+  selectedEntity: { kind: string; id: string } | null;
+  headings: string[];
+}
 
 /** Dispatched on `window` when an app request comes back 401 (see `request`). */
 export const UNAUTHENTICATED_EVENT = 'auth:unauthenticated';
@@ -570,8 +578,8 @@ export interface LearningResetResult {
 
 export const api = {
   taskAgent: {
-    plan: (text: string, history: Array<{ role: 'user' | 'assistant'; text: string }>) =>
-      request<TaskAgentPlan>('POST', '/task-agent/plan', { text, history }),
+    plan: (text: string, history: Array<{ role: 'user' | 'assistant'; text: string }>, screen?: TaskAgentScreenContext) =>
+      request<TaskAgentPlan>('POST', '/task-agent/plan', { text, history, screen }),
     place: (taskId: string) => request<{ placement: { placed: boolean; startAt?: string; reason?: string } }>('POST', `/task-agent/tasks/${encodeURIComponent(taskId)}/place`, {}),
   },
   // Triality (0139, design §8) — the suggestion read + outcome write. Both 404

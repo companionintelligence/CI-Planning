@@ -5,6 +5,7 @@ import { BootScreen } from './components/BootScreen.js';
 import { BrandMark } from './components/BrandMark.js';
 import { DetailsDrawer, DetailsToggle } from './components/DetailsDrawer.js';
 import { navCollapsed, toggleNav, detailsOpen } from './stores/ui.js';
+import { activeTask, activeBlock, activeEntity } from './stores/selection.js';
 import { Nav }      from './components/Nav.js';
 import { CloseRitual } from './components/CloseRitual.js';
 import { ConnectServer } from './views/ConnectServer.js';
@@ -121,6 +122,16 @@ function Shell(props: { children?: any }) {
   const hasFab = () =>
     FAB_ROUTES.includes(location.pathname)
     && !(location.pathname === '/tasks' && searchParams.tab === 'shared');
+  const screenContext = () => ({
+    path: location.pathname,
+    tab: typeof searchParams.tab === 'string' ? searchParams.tab : '',
+    selectedTaskId: activeTask(),
+    selectedBlockId: activeBlock(),
+    selectedEntity: activeEntity(),
+    headings: [...document.querySelectorAll('main h1, main h2, main [role="tab"][aria-selected="true"]')]
+      .filter((element) => (element as HTMLElement).getClientRects().length > 0)
+      .slice(0, 8).map((element) => element.textContent?.trim().slice(0, 80) ?? ''),
+  });
 
   // The trust dial (scheduling_prefs.trust_mode, 0070) — all three positions, via a
   // button that shows the one in force. The old Suggest/Schedule toggle here could only
@@ -220,13 +231,7 @@ function Shell(props: { children?: any }) {
 
         {/* Bottom padding clears the mobile tab bar — and, where one is rendered, the
             floating Create button that sits above it. */}
-        <div
-          class="flex-1 overflow-auto"
-          classList={{
-            'pb-16 md:pb-0': !hasFab(),
-            'pb-36 md:pb-20': hasFab(),
-          }}
-        >
+        <div class="flex-1 overflow-auto pb-36 md:pb-20">
           {/* Root ErrorBoundary — the app's only one. A routed view whose render throws
               (commonly a resource read hitting a 403/500) degrades to a recoverable
               fallback here instead of white-screening the whole SPA; the shell chrome
@@ -253,8 +258,8 @@ function Shell(props: { children?: any }) {
       <DetailsDrawer />
 
       {/* One shared mobile/desktop Create button across the planner's primary views. */}
+      <button class={`fab ${hasFab() ? 'bottom-36 md:bottom-20' : 'bottom-20 md:bottom-6'}`} onClick={() => setAgentOpen(true)} title="Talk to task assistant" aria-label="Talk to task assistant"><MessageCircle size={18} /></button>
       <Show when={hasFab()}>
-        <button class="fab bottom-36 md:bottom-20" onClick={() => setAgentOpen(true)} title="Talk to task assistant" aria-label="Talk to task assistant"><MessageCircle size={18} /></button>
         <button
           class="fab bottom-20 md:bottom-6"
           onClick={() => setElementModal({ open: true, mode: 'add', kind: null })}
@@ -263,7 +268,7 @@ function Shell(props: { children?: any }) {
           <Plus size={18} />
         </button>
       </Show>
-      <Show when={agentOpen()}><TaskAgent onClose={() => setAgentOpen(false)} /></Show>
+      <Show when={agentOpen()}><TaskAgent screenContext={screenContext} onClose={() => setAgentOpen(false)} /></Show>
 
       {/* Unified Add/Edit Element wizard — self-driven by the elementModal signal. */}
       <ElementWizard />
