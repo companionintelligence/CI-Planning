@@ -31,12 +31,12 @@ export async function recomputeTaskHierarchy(ownerId: string, seedIds: readonly 
     ).get<{ id: string; parent_id: string | null; status: string; completed_at: string | null }>(id, ownerId);
     if (!parent) continue;
 
-    if (parent.status !== 'cancelled') {
+    if (!['cancelled', 'archived'].includes(parent.status)) {
       const allChildren = await store().prepare(
         `SELECT status FROM tasks WHERE parent_id = ? AND owner_id = ?`,
       ).all<{ status: string }>(id, ownerId);
       if (allChildren.length > 0) {
-        const children = allChildren.filter((child) => child.status !== 'cancelled');
+        const children = allChildren.filter((child) => !['cancelled', 'archived'].includes(child.status));
         const nextStatus = children.length === 0
           ? 'open'
           : children.every((child) => child.status === 'done')

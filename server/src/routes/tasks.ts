@@ -896,6 +896,19 @@ export function tasksRouter() {
     ctx.body = { task: out, ...(res.generated ? { generated: res.generated } : {}) };
   });
 
+  // Archive unfinished work without recording a completion. Reversible from Archive.
+  router.post('/api/tasks/:id/archive', async (ctx) => {
+    const owner = currentOwnerId();
+    const res = await deleteTask(owner, ctx.params.id, 'instance', 'owner', 'archived');
+    if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    const out = { ...taskToApi(res.task), ...(await peopleFor(res.task.id)), tags: [] as string[] };
+    broadcast(owner, 'task:updated', out);
+    for (const taskId of res.hierarchyUpdatedTaskIds) broadcast(owner, 'task:updated', { id: taskId });
+    for (const blockId of res.cancelledBlockIds) broadcast(owner, 'block:updated', { id: blockId });
+    requestReplan('task:archived');
+    ctx.body = { task: out };
+  });
+
   // DELETE /api/tasks/:id  (soft delete)
   router.delete('/api/tasks/:id', async (ctx) => {
     const id = ctx.params.id;

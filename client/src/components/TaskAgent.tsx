@@ -19,7 +19,7 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
   const [plan, setPlan] = createSignal<TaskAgentPlan | null>(null);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal('');
-  const [voice, setVoice] = createSignal(false);
+  const [voice, setVoice] = createSignal(typeof localStorage !== 'undefined' && localStorage.getItem('task-agent-speech') !== 'off');
   const [results, setResults] = createSignal<Result[]>([]);
   const canSpeak = typeof window !== 'undefined' && 'speechSynthesis' in window;
   // iOS in-app browsers can expose webkitSpeechRecognition without delivering results.
@@ -61,8 +61,20 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
     if (!voice() || !canSpeak) return;
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = navigator.language || 'en-US';
-    window.speechSynthesis.speak(utterance);
+    const voices = window.speechSynthesis.getVoices();
+    const preferred = voices.find((item) => /lexicalish/i.test(item.name))
+      ?? voices.find((item) => /en[-_]US/i.test(item.lang) && item.default)
+      ?? voices.find((item) => /en[-_]US/i.test(item.lang))
+      ?? voices.find((item) => item.default);
+    utterance.lang = preferred?.lang ?? navigator.language ?? 'en-US';
+    if (preferred) utterance.voice = preferred;
+    // iOS and some desktop browsers populate voices asynchronously after the
+    // first synthesis request. Retry once the voice list arrives.
+    if (!voices.length) {
+      const onVoices = () => { window.speechSynthesis.removeEventListener('voiceschanged', onVoices); if (voice()) window.speechSynthesis.speak(utterance); };
+      window.speechSynthesis.addEventListener('voiceschanged', onVoices, { once: true });
+      window.setTimeout(() => { window.speechSynthesis.removeEventListener('voiceschanged', onVoices); if (!window.speechSynthesis.speaking && voice()) window.speechSynthesis.speak(utterance); }, 1200);
+    } else window.speechSynthesis.speak(utterance);
   };
   const send = async () => {
     const text = input().trim();
@@ -163,7 +175,7 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
   return <ViewportOverlay class="z-[100] bg-black/70 flex items-end md:items-center md:justify-end p-2 md:p-5" role="presentation">
     <section ref={panel} role="dialog" aria-modal="true" aria-label="Task assistant" onKeyDown={dialogKeys} class="card w-full md:w-[26rem] h-full md:h-auto min-h-0 max-h-full md:max-h-[85vh] flex flex-col gap-3 overflow-hidden">
       <div class="flex items-center justify-between gap-2"><h2 class="font-semibold flex items-center gap-2"><MessageCircle size={18} /> Task assistant</h2><div class="flex items-center gap-1">
-        <Show when={canSpeak}><button class="btn-icon" aria-label={voice() ? 'Mute replies' : 'Speak replies'} aria-pressed={voice()} onClick={() => { setVoice(!voice()); if (!voice()) window.speechSynthesis.cancel(); }}><Show when={voice()} fallback={<VolumeX size={17} />}><Volume2 size={17} /></Show></button></Show>
+        <Show when={canSpeak}><button class="btn-icon" aria-label={voice() ? 'Mute replies' : 'Speak replies'} aria-pressed={voice()} onClick={() => { const next = !voice(); setVoice(next); localStorage.setItem('task-agent-speech', next ? 'on' : 'off'); if (!next) window.speechSynthesis.cancel(); }}><Show when={voice()} fallback={<VolumeX size={17} />}><Volume2 size={17} /></Show></button></Show>
         <button class="btn-icon" aria-label="Close assistant" disabled={busy()} onClick={props.onClose}><X size={18} /></button>
       </div></div>
       <div class={plan() ? 'max-h-20 min-h-0 flex-none overflow-y-auto flex flex-col gap-2 text-sm' : 'flex-1 min-h-20 overflow-y-auto flex flex-col gap-2 text-sm'} aria-live="polite">

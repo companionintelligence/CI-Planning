@@ -32,6 +32,7 @@ export function Today() {
   const [reflections, { refetch: refetchReflections }] = createResource(selectedDay, (date) => api.reflections.get(date));
   const note = () => reflections()?.note ?? null;
   const [editingNote, setEditingNote] = createSignal(false);
+  const [directionFilterOpen, setDirectionFilterOpen] = createSignal(false);
   const [noteDraft, setNoteDraft] = createSignal('');
   function startEditNote() {
     setNoteDraft(note()?.body ?? '');
@@ -49,7 +50,7 @@ export function Today() {
   const isToday = () => selectedDay() === today();
   const viewedDate = () => new Date(selectedDay() + 'T12:00:00');
   const weekday = () => viewedDate().toLocaleDateString('en-US', { weekday: 'long' });
-  const monthDay = () => viewedDate().toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+  const monthDay = () => viewedDate().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   const stepDay = (n: number) => setSelectedDay(addDays(selectedDay(), n));
 
   function openTask(t: Task) {
@@ -174,8 +175,18 @@ export function Today() {
 
       {/* Day-stars tally — relocated up here (UI backlog request), directly below
           the top bar's Suggest/Schedule toggle instead of buried in the day card. */}
-      <div class="flex justify-end">
+      <div class="flex items-center justify-between gap-2">
         <DayStarsRow date={selectedDay()} />
+        <div class="flex items-center justify-end gap-1.5 md:hidden">
+          <button onClick={() => setDueOpen(true)} class="btn-icon relative" classList={{ 'text-destructive': dueBadgeCount() > 0, 'text-muted-foreground': dueBadgeCount() === 0 }} title="Due — deadlines for this day" aria-label="Due — deadlines for this day">
+            <CalendarClock size={16} />
+            <Show when={dueBadgeCount() > 0}><span class="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-[3px] rounded-sm bg-destructive text-[9px] leading-[14px] text-white text-center font-semibold">{dueBadgeCount()}</span></Show>
+          </button>
+          <BriefMenu date={selectedDay()} />
+          <FocusMenu date={selectedDay()} />
+          <button onClick={startEditNote} class="btn-icon" classList={{ 'text-primary': !!note(), 'text-muted-foreground': !note() }} title={note() ? 'Edit day note' : 'Add a note for the day'} aria-label={note() ? 'Edit day note' : 'Add a note for the day'}><NotebookPen size={16} fill={note() ? 'currentColor' : 'none'} /></button>
+          <Show when={currentFocusBlock()}><button onClick={() => setFocusOpen(true)} class="btn-icon text-primary" title="Enter the Focus Ritual for the block in progress" aria-label="Enter the Focus Ritual for the block in progress"><Zap size={16} /></button></Show>
+        </div>
       </div>
 
       {/* Day Overview — uncontained date controls and day actions, matching the
@@ -189,7 +200,7 @@ export function Today() {
               <button onClick={() => stepDay(-1)} class="btn-icon flex-shrink-0" title="Previous day"><ChevronLeft size={16} /></button>
               <div class="flex items-baseline gap-2 whitespace-nowrap">
                 <h1 class="text-xl font-semibold text-foreground">{weekday()}</h1>
-                <span class="text-sm text-muted-foreground">· {monthDay()}</span>
+              <span class="text-sm text-muted-foreground">· {monthDay()}</span>
               </div>
               <button onClick={() => stepDay(1)} class="btn-icon flex-shrink-0" title="Next day"><ChevronRight size={16} /></button>
               <label class="btn-icon relative cursor-pointer flex-shrink-0" title="Pick a day">
@@ -201,6 +212,7 @@ export function Today() {
                   onInput={(e) => e.currentTarget.value && setSelectedDay(e.currentTarget.value)}
                 />
               </label>
+              <button type="button" class="btn-icon flex-shrink-0" aria-label="Filter directions" title="Filter directions" aria-expanded={directionFilterOpen()} onClick={() => setDirectionFilterOpen((open) => !open)}><ListFilter size={15} /></button>
               <Show when={!isToday()}>
                 <button onClick={() => setSelectedDay(today())} class="text-xs text-primary hover:underline ml-1">Jump to today</button>
               </Show>
@@ -208,7 +220,7 @@ export function Today() {
           </div>
           {/* Right column, aligned with the date. The shared shell FAB handles Add
               at the same bottom-right position used by the other mobile views. */}
-          <div class="ml-auto flex w-full flex-shrink-0 self-start md:w-auto">
+          <div class="ml-auto hidden w-full flex-shrink-0 self-start md:flex md:w-auto">
             <div class="flex min-w-0 flex-1 flex-col items-stretch gap-2 md:flex-none md:items-start">
               <div class="flex items-center justify-end gap-1.5">
                 {/* Due — was an always-open card; now a button + popup modal. */}
@@ -287,7 +299,7 @@ export function Today() {
             header answers is where something new could go. */}
         <Show when={!firstRun()}>
           <div class="mt-3">
-            <OpenTimeSummary date={selectedDay()} />
+            <OpenTimeSummary date={selectedDay()} filterOpen={directionFilterOpen()} onToggleFilter={() => setDirectionFilterOpen((open) => !open)} hideFilterTrigger />
           </div>
         </Show>
 
@@ -326,8 +338,8 @@ export function Today() {
 
       {/* Due — popup modal (button lives in the day-header icon row above). */}
       <Show when={dueOpen()}>
-        <ViewportOverlay class="modal-backdrop" onClick={() => setDueOpen(false)}>
-          <div class="modal max-w-md max-h-[85vh] overflow-auto p-4" onClick={(e) => e.stopPropagation()}>
+        <ViewportOverlay class="modal-backdrop due-modal-backdrop" onClick={() => setDueOpen(false)}>
+          <div class="modal due-modal max-w-md overflow-auto p-4" onClick={(e) => e.stopPropagation()}>
             <DueCard
               date={selectedDay()}
               taskList={() => dueTasks() ?? []}

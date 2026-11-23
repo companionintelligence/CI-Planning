@@ -345,7 +345,7 @@ export async function buildTree(owner: string) {
  * the denominator rather than counting as incomplete forever. Add a status here and both
  * the query below AND every recompute trigger widen together — that is the point.
  */
-export const ROLLUP_EXCLUDED_TASK_STATUSES = ['cancelled'] as const;
+export const ROLLUP_EXCLUDED_TASK_STATUSES = ['cancelled', 'archived'] as const;
 /** SQL list literal for `t.status NOT IN (${ROLLUP_EXCLUDED_TASK_STATUS_SQL})`. */
 export const ROLLUP_EXCLUDED_TASK_STATUS_SQL = ROLLUP_EXCLUDED_TASK_STATUSES.map((s) => `'${s}'`).join(',');
 /** The one status the rollup counts as complete (the numerator). */

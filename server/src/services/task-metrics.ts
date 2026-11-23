@@ -137,7 +137,7 @@ const ROW_COLS = `
 const WINDOW = `
   t.owner_id = ?
   AND (
-    t.status NOT IN ('done', 'cancelled')
+    t.status NOT IN ('done', 'cancelled', 'archived')
     OR (t.status = 'done' AND t.completed_at >= ?)
     OR (
       t.status = 'cancelled'

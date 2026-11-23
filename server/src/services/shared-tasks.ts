@@ -60,7 +60,7 @@ export async function listSharedTasks(accountId: string): Promise<SharedTask[]> 
           AND beneficiary_person.owner_id = t.owner_id
           AND beneficiary_person.account_id = ?
         WHERE t.owner_id <> ?
-          AND t.status <> 'cancelled'
+          AND t.status NOT IN ('cancelled', 'archived')
           AND (beneficiary_person.id IS NOT NULL OR EXISTS (
             SELECT 1 FROM shared_planner_items si JOIN shared_planner_invites i ON i.id = si.invite_id
              WHERE i.recipient_owner_id = ? AND i.status = 'active' AND si.entity_kind = 'task' AND si.entity_id = t.id

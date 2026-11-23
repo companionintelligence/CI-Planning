@@ -18,6 +18,7 @@ const statusClass: Record<string, string> = {
   done:      'text-slate-500 line-through',
   scheduled: 'text-blue-300',
   cancelled: 'text-slate-600 line-through',
+  archived: 'text-slate-500',
   deferred:  'text-yellow-500',
 };
 
@@ -244,12 +245,48 @@ function ObjectiveMenu(props: { task: Task; close: () => void }) {
 interface Props {
   task: Task;
   depth?: number;
+  swipeActions?: boolean;
 }
 
 export function TaskCard(props: Props) {
 
   const depth = () => props.depth ?? 0;
   const [expanded, setExpanded] = createSignal(false);
+  const [swipeOpen, setSwipeOpen] = createSignal(false);
+  const [swipeOffset, setSwipeOffset] = createSignal(0);
+  const [dragging, setDragging] = createSignal(false);
+  const canSwipe = () => !!props.swipeActions && !props.task.shared && !['done', 'cancelled', 'archived'].includes(props.task.status);
+  let touchStart: { x: number; y: number; tracking: boolean } | null = null;
+  let suppressTap = false;
+  const resetSwipe = () => { setDragging(false); setSwipeOffset(swipeOpen() ? -144 : 0); };
+  const onSwipeStart = (event: TouchEvent) => {
+    if (!canSwipe() || (event.target as HTMLElement).closest('button,a,input,select,textarea')) return;
+    const touch = event.touches[0];
+    touchStart = { x: touch.clientX, y: touch.clientY, tracking: false };
+  };
+  const onSwipeMove = (event: TouchEvent) => {
+    if (!touchStart) return;
+    const touch = event.touches[0];
+    const dx = touch.clientX - touchStart.x;
+    const dy = touch.clientY - touchStart.y;
+    if (!touchStart.tracking && Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.3) touchStart.tracking = true;
+    if (!touchStart.tracking) return;
+    setDragging(true);
+    setSwipeOffset(Math.max(-144, Math.min(90, dx + (swipeOpen() ? -144 : 0))));
+  };
+  const onSwipeEnd = (event: TouchEvent) => {
+    const start = touchStart;
+    touchStart = null;
+    if (!start?.tracking) { resetSwipe(); return; }
+    suppressTap = true;
+    window.setTimeout(() => { suppressTap = false; }, 350);
+    const dx = event.changedTouches[0].clientX - start.x;
+    if (dx > 72 && !swipeOpen()) { setSwipeOpen(false); setSwipeOffset(0); void sendToFlightPlan(); }
+    else if (dx < -55) { setSwipeOpen(true); setSwipeOffset(-144); }
+    else if (dx > 55) { setSwipeOpen(false); setSwipeOffset(0); }
+    else resetSwipe();
+    setDragging(false);
+  };
   const pastScheduled = () => {
     if (!['open', 'scheduled', 'in_progress'].includes(props.task.status) || !props.task.scheduled_for) return false;
     const start = props.task.scheduled_for;
@@ -297,7 +334,7 @@ export function TaskCard(props: Props) {
       // Both archive states un-do to open: 'done' un-completes, 'cancelled' restores.
       // 'cancelled' used to fall through to the else branch, so clicking the checkbox
       // on a Thrown-away card marked it DONE instead of bringing it back.
-      if (props.task.status === 'done' || props.task.status === 'cancelled') {
+      if (props.task.status === 'done' || props.task.status === 'cancelled' || props.task.status === 'archived') {
         await api.tasks.update(props.task.id, { status: 'open', completed_at: null });
       } else {
         await api.tasks.update(props.task.id, { completed: true });
@@ -341,6 +378,14 @@ export function TaskCard(props: Props) {
     finally { setEnriching(false); }
   }
 
+  async function archiveTask() {
+    try {
+      await api.tasks.archive(props.task.id);
+      showToast('Task archived', 'default');
+      refetchTasks();
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
   async function remove() {
     // A repeating occurrence is ambiguous — ask which occurrences this applies to. The
     // dialog carries its own confirmation, so the blunt confirm() is only for one-offs.
@@ -352,11 +397,11 @@ export function TaskCard(props: Props) {
     } else {
       // DELETE is a soft cancel (services/tasks.ts: status → 'cancelled'), so the task
       // lands in the Archive — but nothing restores it from there, so don't imply it.
-      if (!confirm(`Cancel "${props.task.title}"? It moves to the Archive.`)) return;
+      if (!confirm(`Delete "${props.task.title}"? It moves to Thrown away and can be restored.`)) return;
     }
     try {
       await api.tasks.delete(props.task.id, deleteScope);
-      showToast('Task cancelled', 'default');
+      showToast('Task moved to Thrown away', 'default');
       refetchTasks();
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
@@ -484,7 +529,7 @@ export function TaskCard(props: Props) {
   // rendered but reads as "in the flight-plan" (subtle accent tint) instead of the filled
   // "send" CTA — see the button's classList below.
   const inFlightPlan = () => flightPlanTaskIds().has(props.task.id);
-  const dimmed = () => props.task.status === 'cancelled' || inFlightPlan();
+  const dimmed = () => props.task.status === 'cancelled' || props.task.status === 'archived' || inFlightPlan();
   // Phase C: EVERY task can paint a texture now (was routine-only). Resolution lives
   // in elementTextureStyle: per-element opt-out → colour override → category stripes
   // (position order) → the legacy routine motif → none. Still skipped when dimmed
@@ -515,10 +560,22 @@ export function TaskCard(props: Props) {
     <div class={depth() > 0 ? 'pl-6 relative' : ''}>
       {depth() > 0 && <div class="absolute left-4 top-0 bottom-0 w-px bg-surface-600/60" />}
 
+      <div class="relative overflow-hidden">
+        <Show when={canSwipe()}>
+          <div class="absolute inset-y-0 left-0 flex items-center px-4 text-xs text-accent-hi gap-1" aria-hidden="true"><Rocket size={15} /> Flight Plan</div>
+          <div class="absolute inset-y-0 right-0 flex items-center gap-1 px-1">
+            <button type="button" class="h-10 px-2 rounded-md bg-muted text-foreground text-xs" aria-label={`Archive ${props.task.title}`} tabIndex={swipeOpen() ? 0 : -1} onClick={() => { setSwipeOpen(false); setSwipeOffset(0); void archiveTask(); }}>Archive</button>
+            <button type="button" class="h-10 px-2 rounded-md bg-destructive text-destructive-foreground text-xs" aria-label={`Delete ${props.task.title}`} tabIndex={swipeOpen() ? 0 : -1} onClick={() => { setSwipeOpen(false); setSwipeOffset(0); void remove(); }}>Delete</button>
+          </div>
+        </Show>
       <div
+        onTouchStart={onSwipeStart}
+        onTouchMove={onSwipeMove}
+        onTouchEnd={onSwipeEnd}
+        onTouchCancel={() => { touchStart = null; resetSwipe(); }}
         // A plain tap expands the row; controls retain their own actions.
         onClick={(e) => {
-          if ((e.target as HTMLElement).closest('button,a,input,select,textarea,[role="group"]')) return;
+          if (suppressTap || (e.target as HTMLElement).closest('button,a,input,select,textarea,[role="group"]')) return;
           setExpanded((value) => !value);
         }}
         // Balanced layout (chips redesign): a vertical stack — title row, description,
@@ -536,6 +593,9 @@ export function TaskCard(props: Props) {
         }}
         style={{
           'margin-bottom': '6px',
+          'touch-action': canSwipe() ? 'pan-y' : undefined,
+          transform: canSwipe() ? `translateX(${swipeOffset()}px)` : undefined,
+          transition: canSwipe() && !dragging() ? 'transform 160ms ease-out' : undefined,
           outline: pastScheduled() ? '2px solid #ef4444' : undefined,
           'outline-offset': pastScheduled() ? '-2px' : undefined,
           ...(awaitingHumanApproval() ? {
@@ -583,7 +643,7 @@ export function TaskCard(props: Props) {
                   ? { background: dirColor(), 'border-color': dirColor() }
                   : { 'border-color': dirColor() }}
                 title={props.task.status === 'done' ? 'Mark open'
-                  : props.task.status === 'cancelled' ? 'Restore to open'
+                  : props.task.status === 'cancelled' || props.task.status === 'archived' ? 'Restore to open'
                   : 'Mark done'}
                 aria-pressed={props.task.status === 'done'}
               >
@@ -887,6 +947,7 @@ export function TaskCard(props: Props) {
         </div>
         </Show>
       </div>
+      </div>
 
       {/* Subtasks */}
       <Show when={expanded() && showSubs()}>
@@ -895,7 +956,7 @@ export function TaskCard(props: Props) {
             <div class="pl-6 py-2 text-xs text-slate-500 animate-pulse2">Loading subtasks…</div>
           </Show>
           <For each={subtasks()}>
-            {(sub) => <TaskCard task={sub} depth={(depth()) + 1} />}
+            {(sub) => <TaskCard task={sub} depth={(depth()) + 1} swipeActions={props.swipeActions} />}
           </For>
           <Show when={(subtasks()?.length ?? 0) === 0 && !subtasks.loading}>
             <div class="pl-6 py-1.5 text-xs text-slate-600 italic">No subtasks yet</div>

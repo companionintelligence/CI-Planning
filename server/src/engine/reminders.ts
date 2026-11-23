@@ -164,7 +164,7 @@ export async function syncTaskReminders(ownerId: string, taskId: string): Promis
   if (!task) return 0;
   // A done/cancelled/skipped/missed task gets no reminders — clearing the auto rows
   // above is the whole job (completing a task via PATCH flows through here).
-  if (['done', 'completed', 'cancelled', 'skipped', 'missed'].includes(task.status)) return 0;
+  if (['done', 'completed', 'cancelled', 'archived', 'skipped', 'missed'].includes(task.status)) return 0;
 
   // Anchor on the task's SCHEDULED START — `scheduled_for`/`occurrence_date` + `task_time`,
   // which is exactly what the offsets ("minutes before start") are defined against and what

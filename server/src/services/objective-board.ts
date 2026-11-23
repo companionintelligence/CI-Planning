@@ -72,7 +72,7 @@ export async function listObjectiveBoard(ownerId: string): Promise<{
        JOIN objective_tasks ot ON ot.task_id = t.id AND ot.linked = 1
        JOIN objectives o ON o.id = ot.objective_id AND o.owner_id = t.owner_id AND o.archived_at IS NULL
        LEFT JOIN objective_board_cards bc ON bc.owner_id = t.owner_id AND bc.task_id = t.id
-      WHERE t.owner_id = ? AND t.status <> 'cancelled'
+      WHERE t.owner_id = ? AND t.status NOT IN ('cancelled', 'archived')
       GROUP BY t.id
       ORDER BY t.created_at, t.id`,
   ).all<{
@@ -180,7 +180,7 @@ export async function moveObjectiveBoardCard(ownerId: string, taskId: string, co
   const db = store();
   const task = await db.prepare(
     `SELECT t.id FROM tasks t
-      WHERE t.id = ? AND t.owner_id = ? AND t.status <> 'cancelled'
+      WHERE t.id = ? AND t.owner_id = ? AND t.status NOT IN ('cancelled', 'archived')
         AND EXISTS (
           SELECT 1 FROM objective_tasks ot JOIN objectives o ON o.id = ot.objective_id
            WHERE ot.task_id = t.id AND ot.linked = 1 AND o.owner_id = ? AND o.archived_at IS NULL

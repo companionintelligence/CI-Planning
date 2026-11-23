@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render } from '@solidjs/testing-library';
+import { fireEvent, render, waitFor } from '@solidjs/testing-library';
 import type { Task } from '../lib/api.js';
 
 /**
@@ -20,6 +20,7 @@ vi.mock('../lib/api.js', () => ({
       streak: vi.fn(async () => null),
       update: vi.fn(async () => ({})),
       delete: vi.fn(async () => ({})),
+      archive: vi.fn(async () => ({})),
       skip: vi.fn(async () => ({})),
       promoteObjective: vi.fn(async () => ({})),
       // Never called by TaskCard — mocked so ENTITY-4 can ASSERT it stays that way
@@ -72,7 +73,8 @@ const baseTask = {
 describe('TaskCard — tag row (AF-11 → Phase C: categories are the visible secondary axis)', () => {
   it('renders the L1 direction as a solid badge and CATEGORIES as ghost chips (intentions stay off the card)', () => {
     const t = { ...baseTask, categories: ['health', 'finance'] } as unknown as Task;
-    const { container } = render(() => <TaskCard task={t} />);
+    const { container, getByLabelText } = render(() => <TaskCard task={t} />);
+    fireEvent.click(getByLabelText('Expand task'));
     // Primary (level 1): solid badge with the # prefix — unchanged.
     const solid = [...container.querySelectorAll('.badge-neutral')].map((el) => el.textContent);
     expect(solid).toEqual(['#work']);
@@ -85,7 +87,8 @@ describe('TaskCard — tag row (AF-11 → Phase C: categories are the visible se
 
   it('renders category chips even when the task has NO level-1 direction (tags: [])', () => {
     const t = { ...baseTask, id: 't2', tags: [], secondary_tags: ['deep'], categories: ['health'] } as unknown as Task;
-    const { container } = render(() => <TaskCard task={t} />);
+    const { container, getByLabelText } = render(() => <TaskCard task={t} />);
+    fireEvent.click(getByLabelText('Expand task'));
     expect(container.querySelectorAll('.badge-neutral').length).toBe(0);
     const cats = [...container.querySelectorAll('[title="category"]')].map((el) => el.textContent?.trim());
     expect(cats).toEqual(['health']);
@@ -164,6 +167,7 @@ describe('TaskCard — archive checkbox un-does both archive states', () => {
 describe('TaskCard — "New objective" row in the objective picker (ENTITY-4)', () => {
   const openPicker = async (t: Task) => {
     const r = render(() => <TaskCard task={t} />);
+    fireEvent.click(r.getByLabelText('Expand task'));
     (r.getByTitle('Add to objective') as HTMLButtonElement).click();
     // The tree resource is fetched lazily on open; wait for the loading state to clear.
     // Match the stem only — the sentence finishes differently per promotability.
@@ -209,5 +213,44 @@ describe('TaskCard — "New objective" row in the objective picker (ENTITY-4)', 
     // Direct promotion: never the ENTITY-3-era prompt → tasks.create({parent_id}) path.
     expect(api.tasks.create).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(rowOf(container)).toBeUndefined()); // menu unmounted
+  });
+});
+
+
+describe('TaskCard mobile swipe actions', () => {
+  const gesture = (card: HTMLElement, fromX: number, toX: number, toY = 100) => {
+    fireEvent.touchStart(card, { touches: [{ clientX: fromX, clientY: 100 }] });
+    fireEvent.touchMove(card, { touches: [{ clientX: toX, clientY: toY }] });
+    fireEvent.touchEnd(card, { changedTouches: [{ clientX: toX, clientY: toY }] });
+  };
+
+  it('stages a task when swiped right', async () => {
+    vi.mocked(api.flightPlan.addTask).mockClear();
+    const { container } = render(() => <TaskCard task={baseTask} swipeActions />);
+    gesture(container.querySelector('.card') as HTMLElement, 50, 160);
+    await waitFor(() => expect(api.flightPlan.addTask).toHaveBeenCalledWith('t1'));
+  });
+
+  it('reveals Archive and Delete on a left swipe, then archives only on tap', async () => {
+    vi.mocked(api.tasks.archive).mockClear();
+    const { container, getByLabelText } = render(() => <TaskCard task={baseTask} swipeActions />);
+    const card = container.querySelector('.card') as HTMLElement;
+    gesture(card, 180, 70);
+    const archive = getByLabelText('Archive Write the spec') as HTMLButtonElement;
+    const remove = getByLabelText('Delete Write the spec') as HTMLButtonElement;
+    expect(archive.tabIndex).toBe(0);
+    expect(remove.tabIndex).toBe(0);
+    expect(api.tasks.archive).not.toHaveBeenCalled();
+    fireEvent.click(archive);
+    await waitFor(() => expect(api.tasks.archive).toHaveBeenCalledWith('t1'));
+  });
+
+  it('keeps vertical scrolling and taps separate from swipe actions', () => {
+    vi.mocked(api.flightPlan.addTask).mockClear();
+    const { container } = render(() => <TaskCard task={baseTask} swipeActions />);
+    const card = container.querySelector('.card') as HTMLElement;
+    gesture(card, 100, 110, 200);
+    expect(api.flightPlan.addTask).not.toHaveBeenCalled();
+    expect(card.style.transform).toBe('translateX(0px)');
   });
 });

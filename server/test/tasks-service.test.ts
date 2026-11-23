@@ -300,6 +300,18 @@ describe('deleteTask — the task leaves every surface, including the flight pla
     ).toBe('cancelled');
   });
 
+  it('archives unfinished work without completing it and removes it from the flight plan', async () => {
+    const t = unwrap(await createTask(OWNER, { title: 'Save for later' })).task;
+    stage(t.id);
+
+    const res = await deleteTask(OWNER, t.id, 'instance', 'owner', 'archived');
+    expect(res.ok).toBe(true);
+    expect(staged(t.id)).toBe(false);
+    expect(sqlite.prepare(`SELECT status, completed_at FROM tasks WHERE id = ?`).get(t.id)).toMatchObject({
+      status: 'archived', completed_at: null,
+    });
+  });
+
   it('is fine when the task was never staged', async () => {
     const t = unwrap(await createTask(OWNER, { title: 'never staged' })).task;
     await expect(deleteTask(OWNER, t.id)).resolves.toMatchObject({ ok: true });

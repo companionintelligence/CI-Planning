@@ -18,6 +18,7 @@ import { type AxisState, yOf as axisYOf, axisHeightPx, visibleExtent, topCollaps
 import { isImmovable } from '../lib/drag.js';
 import { ShapeIcon } from './ShapeIcon.js';
 import { LockToggle } from './LockToggle.js';
+import { ViewportOverlay } from './ViewportOverlay.js';
 
 function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
@@ -318,11 +319,11 @@ export function PlannerEntityCard(props: {
     <Show when={open()}>
       {/* Backdrop: closes the card; stops propagation so it never falls through to
           click-to-create on the grid. */}
-      <div class="absolute inset-0 z-[44]" onPointerDown={(e) => { e.stopPropagation(); clearActiveEntity(); }} />
+      <ViewportOverlay class="fixed inset-0 z-[1000] flex items-center justify-center overflow-y-auto bg-black/55 p-3" onClick={() => clearActiveEntity()}>
       <div
-        class="absolute left-1.5 right-1.5 z-[45] rounded-none border border-border bg-popover shadow-2xl overflow-hidden"
-        style={{ top: `${topPx()}px`, 'border-left': `4px solid ${accent()}` }}
-        onPointerDown={(e) => e.stopPropagation()}
+        class="relative w-full max-w-md max-h-[calc(100dvh-24px)] overflow-y-auto overscroll-contain rounded-xl border border-border bg-popover shadow-2xl"
+        style={{ 'border-left': `4px solid ${accent()}`, 'padding-bottom': 'env(safe-area-inset-bottom)' }}
+        onClick={(e) => e.stopPropagation()}
       >
         {/* Header: type + title + close */}
         <div class="flex items-start gap-2 px-3 pt-2.5 pb-2 border-b border-border">
@@ -474,6 +475,7 @@ export function PlannerEntityCard(props: {
           </Show>
         </div>
       </div>
+      </ViewportOverlay>
     </Show>
   );
 }
