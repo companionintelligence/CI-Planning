@@ -326,8 +326,8 @@ export function Today() {
 
       {/* Due — popup modal (button lives in the day-header icon row above). */}
       <Show when={dueOpen()}>
-        <ViewportOverlay class="modal-backdrop" onClick={() => setDueOpen(false)}>
-          <div class="modal max-w-md max-h-[85vh] overflow-auto p-4" onClick={(e) => e.stopPropagation()}>
+        <ViewportOverlay class="modal-backdrop due-modal-backdrop" onClick={() => setDueOpen(false)}>
+          <div class="modal due-modal max-w-md overflow-auto p-4" onClick={(e) => e.stopPropagation()}>
             <DueCard
               date={selectedDay()}
               taskList={() => dueTasks() ?? []}

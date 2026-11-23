@@ -760,6 +760,17 @@ html[data-colorway="void"]:not(.dark) {
     padding-bottom: env(safe-area-inset-bottom);
     animation: sheetIn 240ms cubic-bezier(0.34, 1.2, 0.64, 1) both;
   }
+  /* The Due popup can contain a long overdue list. Keep it centered in the
+     visible mobile viewport so opening the overdue notice never leaves only
+     the sheet's top edge reachable at the bottom of the screen. */
+  .due-modal-backdrop { align-items: center; padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom)); }
+  .due-modal {
+    width: 100%;
+    max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 24px);
+    border-radius: var(--radius-xl, 0.75rem);
+    padding-bottom: 1rem;
+    animation: modalIn 180ms ease-out both;
+  }
   @keyframes sheetIn {
     from { transform: translateY(100%); opacity: 0.6; }
     to   { transform: translateY(0);    opacity: 1; }
