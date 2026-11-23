@@ -11,11 +11,11 @@
       <circle cx="524" cy="594" r="286" fill="#000" />
     </mask>
     <clipPath id="disk-clip" clipPathUnits="userSpaceOnUse">
-      <path d="M524 128 128 860H920Z" />
+      <path d="M518.723 137.755L132.790 851.145A6 6 0 0 0 138.068 860H909.932A6 6 0 0 0 915.210 851.145L529.277 137.755A6 6 0 0 0 518.723 137.755Z" />
     </clipPath>
   </defs>
   <g transform="translate(512 512) scale(.8) translate(-512 -512)">
-    <path d="M524 128 128 860H920Z" fill="#041620" mask="url(#circle-cutout)" />
+    <path d="M518.723 137.755L132.790 851.145A6 6 0 0 0 138.068 860H909.932A6 6 0 0 0 915.210 851.145L529.277 137.755A6 6 0 0 0 518.723 137.755Z" fill="#041620" mask="url(#circle-cutout)" />
     <circle cx="576" cy="578" r="220" fill="#041620" clip-path="url(#disk-clip)" />
   </g>
 </svg>
