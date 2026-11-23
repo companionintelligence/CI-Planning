@@ -97,6 +97,7 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
   const actionText = (action: TaskAgentAction, current: TaskAgentPlan) => {
     if (action.kind === 'create_tasks') return `Create ${action.tasks.length} task draft${action.tasks.length === 1 ? '' : 's'}${action.target_block_id ? ` in “${current.blocks?.find((block) => block.id === action.target_block_id)?.title ?? 'time block'}”` : ''}${action.block_end_at ? `; extend block until ${new Date(action.block_end_at).toLocaleTimeString()}` : ''}`;
     if (action.kind === 'bulk_unschedule_tasks') return `Unschedule ${action.tasks.length} unfinished task${action.tasks.length === 1 ? '' : 's'}`;
+    if (action.kind === 'bulk_reschedule_tasks') return `Reschedule ${action.tasks.length} task${action.tasks.length === 1 ? '' : 's'} for ${action.scheduled_for}${action.task_time ? ` at ${action.task_time}` : ''}`;
     if (action.kind === 'create_task') return `Create “${action.title}”${action.scheduled_for ? ` for ${action.scheduled_for}` : ''}`;
     if (action.kind === 'add_note') return `Add note to “${taskName(action, current)}”: ${action.body}`;
     if (action.kind === 'draft_task') return `Fill unsaved fields for “${taskName(action, current)}” — ${Object.entries(action).filter(([key]) => !['kind', 'task_id'].includes(key)).map(([key, value]) => `${key.replaceAll('_', ' ')}: ${value}`).join(', ')}`;
@@ -120,6 +121,12 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
           for (const task of action.tasks) {
             await api.tasks.update(task.task_id, { scheduled_for: null, task_time: null, status: 'open' });
             saved.push({ text: `Unscheduled “${task.title}”`, taskId: task.task_id });
+          }
+        } else if (action.kind === 'bulk_reschedule_tasks') {
+          for (const task of action.tasks) {
+            await api.tasks.update(task.task_id, { scheduled_for: action.scheduled_for, task_time: action.task_time ?? null, status: 'open' });
+            const placement = await place(task.task_id);
+            saved.push({ text: `Rescheduled “${task.title}” for ${action.scheduled_for}${placement.placed ? '' : `; no slot placed (${placement.reason ?? 'unavailable'})`}`, taskId: task.task_id });
           }
         } else if (action.kind === 'create_tasks') {
           if (action.target_block_id && action.block_end_at) await api.blocks.update(action.target_block_id, { end_at: action.block_end_at });
@@ -192,7 +199,7 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
       </div>
       <Show when={plan()}>{(current) => <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain border border-border rounded-lg p-3 flex flex-col gap-2 text-sm">
         <strong>Review changes</strong>
-        <For each={current().actions}>{(action, actionIndex) => action.kind === 'bulk_unschedule_tasks' ? <div class="space-y-2 min-w-0">
+        <For each={current().actions}>{(action, actionIndex) => action.kind === 'bulk_unschedule_tasks' || action.kind === 'bulk_reschedule_tasks' ? <div class="space-y-2 min-w-0">
           <p>{actionText(action, current())}</p>
           <ul class="max-h-48 overflow-y-auto rounded border border-border divide-y divide-border/60">
             <For each={action.tasks}>{(task) => <li class="px-2 py-1.5 text-xs flex justify-between gap-2"><span class="truncate">{task.title}</span><span class="text-muted-foreground whitespace-nowrap">{task.scheduled_for ?? task.task_time ?? 'scheduled'}</span></li>}</For>

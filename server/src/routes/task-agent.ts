@@ -16,6 +16,7 @@ type Screen = { path: string; tab: string; selectedTaskId: string | null; select
 type Action =
   | { kind: 'create_tasks'; tasks: Array<{ title: string; estimated_minutes?: number }>; target_block_id?: string }
   | { kind: 'bulk_unschedule_tasks'; tasks: Array<{ task_id: string; title: string; scheduled_for: string | null; task_time: string | null }> }
+  | { kind: 'bulk_reschedule_tasks'; tasks: Array<{ task_id: string; title: string; scheduled_for: string | null; task_time: string | null }>; scheduled_for: string; task_time?: string }
   | { kind: 'create_task'; title: string; priority?: number; scheduled_for?: string; task_time?: string }
   | { kind: 'update_task'; task_id: string; title?: string; priority?: number; scheduled_for?: string | null; task_time?: string | null; status?: 'open' | 'done' }
   | { kind: 'add_note'; task_id: string; body: string }
@@ -96,14 +97,17 @@ export function taskAgentRouter() {
       store().prepare(`SELECT tb.id, tb.title, tb.start_at, tb.end_at, tb.status, COALESCE((SELECT group_concat(t.name, ', ') FROM entity_tags et JOIN tags t ON t.id = et.tag_id WHERE et.entity_kind = 'time_block' AND et.entity_id = tb.id AND et.level = 1), tb.tag) AS tag FROM time_blocks tb WHERE tb.owner_id = ? AND tb.block_kind = 'timeblock' AND tb.start_at BETWEEN ? AND ? ORDER BY tb.start_at LIMIT 250`).all<BlockSummary>(owner, new Date(Date.now() - 2 * 86400000).toISOString(), new Date(Date.now() + 30 * 86400000).toISOString()),
     ]);
     const readableTasks: TaskSummary[] = [...allTasks, ...sharedTasks.map((task) => ({ id: task.id, title: task.title, status: task.status, priority: task.priority, due_at: task.due_at, scheduled_for: null, task_time: null, completed_at: null, shared: true }))];
-    const taskRows = taskCandidates(allTasks, text, screen.selectedTaskId);
+    const broadTaskRequest = /\b(?:all|every|each|open|incomplete|unfinished)\b/i.test(text) && /\b(tasks?|everything)\b/i.test(text);
+    const taskRows = broadTaskRequest
+      ? allTasks.filter((task) => ['open', 'scheduled', 'in_progress'].includes(task.status))
+      : taskCandidates(allTasks, text, screen.selectedTaskId);
     const selectedBlock = screen.selectedBlockId ? await store().prepare(`SELECT tb.id, tb.title, tb.start_at, tb.end_at, tb.status, COALESCE((SELECT group_concat(t.name, ', ') FROM entity_tags et JOIN tags t ON t.id = et.tag_id WHERE et.entity_kind = 'time_block' AND et.entity_id = tb.id AND et.level = 1), tb.tag) AS tag FROM time_blocks tb WHERE tb.id = ? AND tb.owner_id = ? AND tb.block_kind = 'timeblock'`).get<BlockSummary>(screen.selectedBlockId, owner) : undefined;
     const blockCandidates = [...(selectedBlock ? [selectedBlock] : []), ...blockRows.filter((block) => block.id !== selectedBlock?.id)];
     // Treat bulk unscheduling as a first-class operation. Without this deterministic
     // route the model sometimes mistakes the phrase "reschedule open tasks" for a
     // request to create a task literally named "Reschedule open tasks".
     const asksToUnSchedule = /\b(?:un\s*[-]?\s*schedule|clear (?:the )?schedule|remove (?:the )?schedule)\b/i.test(text);
-    const asksForAllOpen = /\b(?:all|every|open|incomplete|unfinished)\b/i.test(text) && /\b(tasks?|everything)\b/i.test(text);
+    const asksForAllOpen = broadTaskRequest;
     if (asksToUnSchedule && asksForAllOpen) {
       const candidates = allTasks.filter((task) => ['open', 'scheduled', 'in_progress'].includes(task.status)
         && (task.scheduled_for || task.task_time || task.status === 'scheduled'));
@@ -166,6 +170,7 @@ export function taskAgentRouter() {
       `Today and current time in ${timezone}: ${now}. Reply with JSON {"reply":"short plain response","actions":[]}. ` +
       `For a list of NEW tasks, return ONE action {"kind":"create_tasks","tasks":[{"title":"...","estimated_minutes":15}],"target_block_id":"exact ID from time blocks when requested"}. The tasks are editable drafts until the user applies. For a request to update a time block with tasks, create_tasks with target_block_id is REQUIRED; never use an existing-task edit action. Do not include target_block_id when no block is requested. Up to 20 new tasks. ` +
       `Allowed actions: {"kind":"create_task","title":"...","priority":1..5,"scheduled_for":"YYYY-MM-DD","task_time":"HH:MM"}; ` +
+      `For a user-requested bulk reschedule, return {"kind":"bulk_reschedule_tasks","task_ids":["exact IDs from tasks"],"scheduled_for":"YYYY-MM-DD","task_time":"HH:MM optional"}. Use only the explicitly requested task filter; include open/scheduled/in-progress tasks and exclude done/cancelled/archived tasks. Never invent a target date. If the date or scope is missing, ask one clarifying question instead of creating a task. ` +
       `{"kind":"update_task","task_id":"exact ID from tasks","title":"...","priority":1..5,"scheduled_for":"YYYY-MM-DD or null","task_time":"HH:MM or null","status":"open or done"}; ` +
       `{"kind":"move_task","task_id":"exact ID from tasks","source_objective_id":"current objective ID if linked","target_objective_id":"exact objective ID"}. ` +
       `For adding a timestamped note use {"kind":"add_note","task_id":"exact ID","body":"note text"}. For a suggestion that should fill an unsaved task edit form, use {"kind":"draft_task","task_id":"exact ID","title":"...","priority":1..5,"scheduled_for":"YYYY-MM-DD","task_time":"HH:MM","notes":"..."}. Use draft_task only for suggested changes to an EXISTING task, never for creating a new task. ` +
@@ -212,6 +217,11 @@ export function taskAgentRouter() {
         const changes = Object.fromEntries(['title', 'priority', 'scheduled_for', 'task_time', 'status'].filter((key) => a[key] !== undefined).map((key) => [key, a[key]]));
         if (!Object.keys(changes).length) { invalid = true; break; }
         actions.push({ kind: 'update_task', task_id: a.task_id, ...changes } as Action);
+      } else if (a.kind === 'bulk_reschedule_tasks') {
+        const ids = a.task_ids;
+        if (!Array.isArray(ids) || ids.length < 1 || ids.length > 100 || ids.some((id) => typeof id !== 'string' || !allTasks.some((task) => task.id === id && ['open', 'scheduled', 'in_progress'].includes(task.status))) || !dateValid(a.scheduled_for) || (a.task_time !== undefined && !timeValid(a.task_time))) { invalid = true; break; }
+        const uniqueIds = [...new Set(ids as string[])];
+        actions.push({ kind: 'bulk_reschedule_tasks', tasks: uniqueIds.map((id) => { const task = allTasks.find((row) => row.id === id)!; return { task_id: id, title: task.title, scheduled_for: task.scheduled_for, task_time: task.task_time }; }), scheduled_for: a.scheduled_for, ...(timeValid(a.task_time) ? { task_time: a.task_time } : {}) });
       } else if (a.kind === 'add_note') {
         if (typeof a.task_id !== 'string' || !knownTasks.has(a.task_id) || typeof a.body !== 'string' || !a.body.trim() || a.body.length > 10000) { invalid = true; break; }
         actions.push({ kind: 'add_note', task_id: a.task_id, body: a.body.trim() });
