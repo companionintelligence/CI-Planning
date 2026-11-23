@@ -1,14 +1,14 @@
-import { createSignal, createMemo, createResource, Show, For, onCleanup } from 'solid-js';
+import { createSignal, createMemo, createResource, createEffect, Show, For, onCleanup } from 'solid-js';
 import { setActiveTask } from '../stores/selection.js';
 import { revealDetails } from '../stores/ui.js';
-import { ChevronDown, ChevronRight, Crosshair, Play, Check, RotateCcw, NotebookPen, SlidersHorizontal } from 'lucide-solid';
+import { ChevronDown, ChevronRight, Crosshair, Play, Check, RotateCcw, NotebookPen, SlidersHorizontal, CalendarDays } from 'lucide-solid';
 import { FocusRitual } from '../components/FocusRitual.js';
 import { FocusLab } from '../components/FocusLab.js';
 import { FocusReminders } from '../components/FocusReminders.js';
 import { TrialityBanner } from '../components/TrialityBanner.js';
 import { BriefMenu, FocusMenu } from '../components/DayGoals.js';
 import { EmptyStateConnectCTA } from '../components/EmptyStateConnectCTA.js';
-import { blocks, tasks, taskOf, prefs, tags, patternPrefs, refetchTasks, refetchBlocks, showToast, setSelectedDay, openCloseRitual } from '../stores/index.js';
+import { blocks, tasks, taskOf, prefs, tags, patternPrefs, refetchTasks, refetchBlocks, showToast, selectedDay, setSelectedDay, openCloseRitual } from '../stores/index.js';
 import { api, type Block, type Task } from '../lib/api.js';
 import { localISODate } from '../lib/dates.js';
 import { focusState, formatRemaining } from '../lib/focus.js';
@@ -36,8 +36,8 @@ function taskNeedsApproval(task?: Task): boolean {
  * progress, a hero card shows the live countdown (lib/focus.ts state math) and
  * opens the full-screen Focus Ritual — the same Z3b surface Today launches.
  *
- * Reuses the shared `blocks` resource (selectedDay-keyed), pinned to today on
- * mount — FOCUS is today-only by design; other days live in Today/Calendar.
+ * Reuses the shared `blocks` resource keyed by the selected day, so a calendar
+ * choice shows that day's placements and task notes.
  */
 
 // Doable kinds. A `timeblock` is deliberately absent: it is a CONTAINER, so Phase 2
@@ -73,9 +73,8 @@ interface Entry {
 }
 
 export function Focus() {
-  // FOCUS is today-only: pin the shared cockpit day so the blocks resource covers today.
-  setSelectedDay(localISODate());
-  const today = localISODate();
+  const viewDay = () => selectedDay();
+  const isToday = () => viewDay() === localISODate();
 
   const [now, setNow] = createSignal(Date.now());
   const tick = setInterval(() => setNow(Date.now()), 30_000);
@@ -83,8 +82,8 @@ export function Focus() {
 
   const [pastOpen, setPastOpen] = createSignal(false);
   const [ritualOpen, setRitualOpen] = createSignal(false);
-  // Day note (the Today idiom, O1): one free-text note for today, inline editor.
-  const [reflections, { refetch: refetchReflections }] = createResource(() => today, (date) => api.reflections.get(date));
+  // The note follows the viewed day, including when the date picker changes it.
+  const [reflections, { refetch: refetchReflections }] = createResource(viewDay, (date) => api.reflections.get(date));
   const note = () => reflections()?.note ?? null;
   const [editingNote, setEditingNote] = createSignal(false);
   const [noteDraft, setNoteDraft] = createSignal('');
@@ -94,7 +93,7 @@ export function Focus() {
   }
   async function saveNote() {
     try {
-      await api.reflections.setNote(today, noteDraft());
+      await api.reflections.setNote(viewDay(), noteDraft());
       void refetchReflections();
     } catch (err) { showToast((err as Error).message, 'error'); }
     setEditingNote(false);
@@ -121,7 +120,7 @@ export function Focus() {
         taskId: b.task_id,
         title: t?.title ?? b.title,
         timeLabel: fmtTime(b.start_at),
-        sortMin: minutesIntoDay(b.start_at, today),
+        sortMin: minutesIntoDay(b.start_at, viewDay()),
         startMs, endMs,
         done: t?.status === 'done' || b.status === 'completed' || b.status === 'done',
         parentBlockId: b.parent_block_id ?? null,
@@ -129,7 +128,7 @@ export function Focus() {
       });
     }
     for (const t of tasks() ?? []) {
-      if ((t.scheduled_for ?? '').slice(0, 10) !== today) continue;
+      if ((t.scheduled_for ?? '').slice(0, 10) !== viewDay()) continue;
       if (t.parent_id) continue; // keep it simple: top-level tasks only
       if (t.status === 'cancelled') continue;
       if (placedTaskIds.has(t.id)) continue;
@@ -141,7 +140,7 @@ export function Focus() {
         const [h, m] = t.task_time.split(':').map(Number);
         if (Number.isFinite(h) && Number.isFinite(m)) {
           sortMin = h * 60 + m;
-          const d = new Date(`${today}T${t.task_time.length === 5 ? t.task_time : '00:00'}:00`);
+          const d = new Date(`${viewDay()}T${t.task_time.length === 5 ? t.task_time : '00:00'}:00`);
           startMs = d.getTime();
           endMs = startMs + Math.max(15, t.estimated_minutes || 30) * 60_000;
           timeLabel = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
@@ -162,7 +161,7 @@ export function Focus() {
       .map((b) => ({
         block: b,
         id: b.id,
-        sortMin: minutesIntoDay(b.start_at, today),
+        sortMin: minutesIntoDay(b.start_at, viewDay()),
         endMs: Date.parse(b.end_at),
       })),
   );
@@ -172,18 +171,23 @@ export function Focus() {
   // tick — `<For>` keys by reference, and re-created rows would wipe whatever is being
   // typed into a section's add box. Pastness is asked at render time instead.
   const items = createMemo(() => buildFocusItems(entries(), containers()));
-  const upcoming = () => items().filter((it) => !itemPast(it, now()));
-  const past = () => items().filter((it) => itemPast(it, now()));
-  const pastTally = () => countPastRows(items(), now());
+  const upcoming = () => isToday() ? items().filter((it) => !itemPast(it, now())) : items();
+  const past = () => isToday() ? items().filter((it) => itemPast(it, now())) : [];
+  const pastTally = () => isToday() ? countPastRows(items(), now()) : { rows: 0, done: 0 };
 
-  const isPast = (e: Entry) => memberPast(e, now());
+  const isPast = (e: Entry) => isToday() && memberPast(e, now());
   const isNow = (e: Entry) => !e.done && e.startMs != null && e.endMs != null && e.startMs <= now() && e.endMs > now();
 
-  // Collapse state per Time Block, for this mount — Focus is today-only, so "per-day"
-  // and "per-mount" are the same thing. Matches the `pastOpen` idiom above. Sections
+  // Collapse state resets on date changes. Sections
   // start EXPANDED: the view's job is "what am I doing", and a collapsed container
   // hides exactly that.
   const [collapsed, setCollapsed] = createSignal<ReadonlySet<string>>(new Set());
+  createEffect(() => {
+    viewDay();
+    setCollapsed(new Set<string>());
+    setPastOpen(false);
+    setEditingNote(false);
+  });
   const isCollapsed = (id: string) => collapsed().has(id);
   const toggleSection = (id: string) =>
     setCollapsed((prev) => {
@@ -195,7 +199,7 @@ export function Focus() {
   // ── Time-Sense integration (Phase Z) — mirrors Today's gating exactly ──────────
   const timeSenseOn = () => !!prefs()?.time_sense_enabled && prefs()?.focus_ritual_enabled !== false;
   const currentBlock = createMemo(() => {
-    if (!timeSenseOn()) return null;
+    if (!timeSenseOn() || !isToday()) return null;
     const t = now();
     return (blocks() ?? []).find(
       (b) => FOCUS_KINDS.has(b.block_kind) && b.status === 'planned' && Date.parse(b.start_at) <= t && Date.parse(b.end_at) > t,
@@ -435,20 +439,24 @@ export function Focus() {
 
   return (
     <div class="view-container page-enter">
-      {/* Open header like Calendar. Focus is today-only, so it has no day-stepper;
-          other dates live in Today/Calendar. */}
+      {/* Date selection changes the tasks, blocks, and note in this view. */}
       <div class="view-head">
         <div class="min-w-0">
           <h1 class="view-title flex items-center gap-2">
             <Crosshair size={18} class="text-accent-hi" /> Focus
           </h1>
           <p class="view-sub">
-            {new Date(`${today}T12:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+            {new Date(`${viewDay()}T12:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
           </p>
         </div>
         <div class="view-actions">
-          <BriefMenu date={today} />
-          <FocusMenu date={today} />
+          <label class="btn-icon relative cursor-pointer flex-shrink-0" title="Choose Focus day" aria-label="Choose Focus day">
+            <CalendarDays size={16} />
+            <input type="date" class="absolute inset-0 opacity-0 cursor-pointer w-full h-full" aria-label="Focus day" value={viewDay()} onInput={(event) => event.currentTarget.value && setSelectedDay(event.currentTarget.value)} />
+          </label>
+          <Show when={!isToday()}><button class="btn-ghost text-xs" onClick={() => setSelectedDay(localISODate())}>Today</button></Show>
+          <BriefMenu date={viewDay()} />
+          <FocusMenu date={viewDay()} />
           {/* Focus Lab — session length + the timer's colour. Display-only settings;
               the style itself is a standing pref in Settings. */}
           <button
@@ -474,7 +482,7 @@ export function Focus() {
         <div class="mb-5 flex flex-col gap-2">
           <textarea
             class="input text-sm min-h-[64px]"
-            placeholder="A note for today…"
+            placeholder="A note for this day…"
             value={noteDraft()}
             onInput={(e) => setNoteDraft(e.currentTarget.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void saveNote(); }}
@@ -592,8 +600,8 @@ export function Focus() {
         </For>
         <Show when={upcoming().length === 0}>
           <div class="text-sm text-muted-foreground text-center py-10 flex flex-col items-center gap-3">
-            <Show when={entries().length === 0} fallback={<span>All done for today. 🎉</span>}>
-              <span>Nothing scheduled today.</span>
+            <Show when={entries().length === 0} fallback={<span>All done for this day. 🎉</span>}>
+              <span>Nothing scheduled on this day.</span>
               <EmptyStateConnectCTA />
             </Show>
           </div>
