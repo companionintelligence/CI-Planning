@@ -103,7 +103,7 @@ function isInDay(block: Block, date: string): boolean {
   return !Number.isNaN(start.getTime()) && localISODate(start) === date;
 }
 
-export function OpenTimeSummary(props: { date: string }) {
+export function OpenTimeSummary(props: { date: string; filterOpen?: boolean; onToggleFilter?: () => void; hideFilterTrigger?: boolean }) {
   // Re-read when this date changes or its day-window overrides are edited.
   const [windows] = createResource(
     () => [props.date, patternBlocks()] as const,
@@ -230,6 +230,8 @@ export function OpenTimeSummary(props: { date: string }) {
 
   const [dimmedDirections, setDimmedDirections] = createSignal<Set<string>>(new Set());
   const [filtersOpen, setFiltersOpen] = createSignal(false);
+  const filterIsOpen = () => props.filterOpen ?? filtersOpen();
+  const toggleFilter = () => props.onToggleFilter ? props.onToggleFilter() : setFiltersOpen((open) => !open);
   function toggleDirection(direction: string) {
     setDimmedDirections((previous) => {
       const next = new Set(previous);
@@ -437,18 +439,20 @@ export function OpenTimeSummary(props: { date: string }) {
         <Show when={visibleDirections().length > 0}>
           <div class="open-time-filter-row">
             <div class="open-time-filter-wrap">
+              <Show when={!props.hideFilterTrigger}>
               <button
                 type="button"
                 class="open-time-filter-trigger"
-                aria-expanded={filtersOpen()}
+                aria-expanded={filterIsOpen()}
                 aria-label="Filter directions"
-                onClick={() => setFiltersOpen((open) => !open)}
+                onClick={toggleFilter}
               >
                 <ListFilter size={13} />
                 <span>Directions</span>
                 <ChevronDown size={12} />
               </button>
-              <Show when={filtersOpen()}>
+              </Show>
+              <Show when={filterIsOpen()}>
                 <div class="open-time-filter-menu" role="group" aria-label="Show directions">
                   <For each={visibleDirections()}>{(direction) => (
                     <label class="open-time-filter-option">

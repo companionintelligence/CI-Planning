@@ -32,6 +32,7 @@ export function Today() {
   const [reflections, { refetch: refetchReflections }] = createResource(selectedDay, (date) => api.reflections.get(date));
   const note = () => reflections()?.note ?? null;
   const [editingNote, setEditingNote] = createSignal(false);
+  const [directionFilterOpen, setDirectionFilterOpen] = createSignal(false);
   const [noteDraft, setNoteDraft] = createSignal('');
   function startEditNote() {
     setNoteDraft(note()?.body ?? '');
@@ -211,6 +212,7 @@ export function Today() {
                   onInput={(e) => e.currentTarget.value && setSelectedDay(e.currentTarget.value)}
                 />
               </label>
+              <button type="button" class="btn-icon flex-shrink-0" aria-label="Filter directions" title="Filter directions" aria-expanded={directionFilterOpen()} onClick={() => setDirectionFilterOpen((open) => !open)}><ListFilter size={15} /></button>
               <Show when={!isToday()}>
                 <button onClick={() => setSelectedDay(today())} class="text-xs text-primary hover:underline ml-1">Jump to today</button>
               </Show>
@@ -297,7 +299,7 @@ export function Today() {
             header answers is where something new could go. */}
         <Show when={!firstRun()}>
           <div class="mt-3">
-            <OpenTimeSummary date={selectedDay()} />
+            <OpenTimeSummary date={selectedDay()} filterOpen={directionFilterOpen()} onToggleFilter={() => setDirectionFilterOpen((open) => !open)} hideFilterTrigger />
           </div>
         </Show>
 
