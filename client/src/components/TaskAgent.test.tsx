@@ -31,10 +31,12 @@ beforeEach(() => {
 
 describe('task assistant review', () => {
   it('shows a proposed task edit before saving and applies only on confirmation', async () => {
-    render(() => <TaskAgent onClose={vi.fn()} />);
+    const screenContext = () => ({ path: '/balance', tab: 'metrics', selectedTaskId: 't1', selectedBlockId: null, selectedEntity: null, headings: ['Life Balance', 'Metrics'] });
+    render(() => <TaskAgent onClose={vi.fn()} screenContext={screenContext} />);
     fireEvent.input(screen.getByLabelText('Message the task assistant'), { target: { value: 'Move Call Sam to Friday' } });
     fireEvent.click(screen.getByText('Send'));
     await waitFor(() => expect(screen.getByText(/Review changes/)).toBeTruthy());
+    expect(plan).toHaveBeenCalledWith('Move Call Sam to Friday', [], screenContext());
     expect(update).not.toHaveBeenCalled();
     fireEvent.click(screen.getByText('Apply changes'));
     await waitFor(() => expect(update).toHaveBeenCalledWith('t1', { scheduled_for: '2026-11-27' }));
