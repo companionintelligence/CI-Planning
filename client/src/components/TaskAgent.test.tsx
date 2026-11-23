@@ -88,6 +88,20 @@ describe('task assistant review', () => {
     await waitFor(() => expect(addTasks).toHaveBeenCalledWith('b1', ['new-1', 'new-2']));
   });
 
+  it('keeps the focused duration field inside a scrollable review when the keyboard opens', async () => {
+    plan.mockResolvedValueOnce({ reply: 'Drafts ready.', actions: [{ kind: 'create_tasks', tasks: [{ title: 'Breakfast', estimated_minutes: 15 }], target_block_id: 'b1' }], tasks: [], objectives: [], blocks: [{ id: 'b1', title: 'Morning', start_at: '2026-11-23T16:00:00Z', end_at: '2026-11-23T17:00:00Z' }] });
+    render(() => <TaskAgent onClose={vi.fn()} />);
+    fireEvent.input(screen.getByLabelText('Message the task assistant'), { target: { value: 'Add breakfast to Morning' } });
+    fireEvent.click(screen.getByText('Send'));
+    const duration = await screen.findByLabelText('Minutes for draft task 1');
+    expect(duration.closest('.overflow-y-auto')).toBeTruthy();
+    expect(screen.queryByLabelText('Message the task assistant')).toBeNull();
+    const scroll = vi.fn();
+    duration.scrollIntoView = scroll;
+    fireEvent.focus(duration);
+    await waitFor(() => expect(scroll).toHaveBeenCalled());
+  });
+
   it('can extend a short block before creating and placing approved drafts', async () => {
     plan.mockResolvedValueOnce({ reply: 'Drafts ready.', actions: [{ kind: 'create_tasks', tasks: [{ title: 'Breakfast', estimated_minutes: 30 }, { title: 'Feed cats', estimated_minutes: 30 }], target_block_id: 'b1' }], tasks: [], objectives: [], blocks: [{ id: 'b1', title: 'Morning', start_at: '2026-11-23T16:00:00Z', end_at: '2026-11-23T17:00:00Z' }] });
     render(() => <TaskAgent onClose={vi.fn()} />);
