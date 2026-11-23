@@ -24,7 +24,7 @@ export class ApiError extends Error {
 }
 
 export type TaskAgentAction =
-  | { kind: 'create_tasks'; tasks: Array<{ title: string; estimated_minutes?: number }>; target_block_id?: string }
+  | { kind: 'create_tasks'; tasks: Array<{ title: string; estimated_minutes?: number }>; target_block_id?: string; block_end_at?: string }
   | { kind: 'create_task'; title: string; priority?: number; scheduled_for?: string; task_time?: string }
   | { kind: 'update_task'; task_id: string; title?: string; priority?: number; scheduled_for?: string | null; task_time?: string | null; status?: 'open' | 'done' }
   | { kind: 'add_note'; task_id: string; body: string }
