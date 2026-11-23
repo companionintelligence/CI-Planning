@@ -7,6 +7,7 @@ const model = vi.hoisted(() => vi.fn());
 vi.mock('../src/mcp/ollama.js', async (original) => ({
   ...(await original<typeof import('../src/mcp/ollama.js')>()),
   generateJson: model,
+  status: vi.fn(async () => ({ provider: 'ollama', modelSources: { quality: 'default' }, models: ['gemma3:12b'] })),
 }));
 
 let server: TestServer;
@@ -62,6 +63,21 @@ describe('task agent proposals', () => {
     expect(response.body.notes.map((note) => note.body)).toEqual(expect.arrayContaining(['First', 'Second']));
     expect(response.body.notes.every((note) => !Number.isNaN(Date.parse(note.created_at)))).toBe(true);
     expect((await api(server.url, '/api/task-agent/tasks/no-such-task/notes')).status).toBe(404);
+  });
+
+  it('plans multiple new task drafts for an existing time block without writing', async () => {
+    sqlite.prepare("INSERT INTO time_blocks (id, owner_id, title, block_kind, start_at, end_at) VALUES ('morning-block', ?, 'Morning', 'timeblock', ?, ?)").run(SYSTEM_OWNER, new Date(Date.now() + 86400000).toISOString(), new Date(Date.now() + 90000000).toISOString());
+    model.mockResolvedValue({ reply: 'I can draft those tasks for Morning.', actions: [{ kind: 'create_tasks', tasks: [{ title: 'Breakfast', estimated_minutes: 15 }, { title: 'Feed the cats', estimated_minutes: 15 }], target_block_id: 'morning-block' }] });
+    const response = await plan('Add breakfast and feed the cats to the Morning time block', { path: '/calendar', tab: 'schedule', selectedBlockId: 'morning-block' });
+    expect(model.mock.calls.at(-1)?.[1]).toMatchObject({ model: 'gemma3:12b' });
+    expect(response.body.actions).toEqual([{ kind: 'create_tasks', tasks: [{ title: 'Breakfast', estimated_minutes: 15 }, { title: 'Feed the cats', estimated_minutes: 15 }], target_block_id: 'morning-block' }]);
+    expect(sqlite.prepare("SELECT count(*) AS count FROM tasks WHERE title IN ('Breakfast', 'Feed the cats')").get()).toMatchObject({ count: 0 });
+  });
+
+  it('rejects a plan that targets an invented time block', async () => {
+    model.mockResolvedValue({ reply: 'Ready.', actions: [{ kind: 'create_tasks', tasks: [{ title: 'Breakfast' }], target_block_id: 'other-owner-block' }] });
+    const response = await plan('Add breakfast to my Morning block');
+    expect(response.body.actions).toEqual([]);
   });
 
   it('rejects an empty request before invoking the model', async () => {
