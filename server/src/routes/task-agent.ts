@@ -52,7 +52,7 @@ export function taskAgentRouter() {
       `If a target is missing or ambiguous, ask a short clarifying question and return no actions. Never invent IDs, dates, or task names. ` +
       `Tasks: ${JSON.stringify(taskRows)}. Objectives and task links: ${JSON.stringify(objectives)}. ` +
       `Recent conversation: ${JSON.stringify(recent)}. User request: ${JSON.stringify(text)}`,
-      { purpose: 'plan_instruct', think: false },
+      { purpose: 'plan_instruct', tier: 'quality', timeoutMs: 45_000, think: false },
     ));
     if (!result) { ctx.status = 503; ctx.body = { error: 'The local assistant is unavailable. Check the AI connection in Settings.' }; return; }
     const raw = result as { reply?: unknown; actions?: unknown };
