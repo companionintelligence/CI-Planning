@@ -9,7 +9,7 @@ import { listSharedTasks } from '../services/shared-tasks.js';
 import { newId } from '../lib/ids.js';
 import { writeAudit } from '../lib/audit.js';
 
-type TaskSummary = { id: string; title: string; status: string; priority: number; due_at: string | null; scheduled_for: string | null; task_time: string | null; completed_at: string | null; shared?: boolean };
+type TaskSummary = { id: string; title: string; status: string; priority: number; due_at: string | null; scheduled_for: string | null; task_time: string | null; completed_at: string | null; direction_tags?: string | null; shared?: boolean };
 type BlockSummary = { id: string; title: string; start_at: string; end_at: string; status: string; tag: string | null };
 type ObjectiveSummary = { id: string; title: string; task_id: string | null };
 type Screen = { path: string; tab: string; selectedTaskId: string | null; selectedBlockId: string | null; selectedEntity: { kind: string; id: string } | null; headings: string[] };
@@ -91,7 +91,7 @@ export function taskAgentRouter() {
     const owner = currentOwnerId();
     const screen = cleanScreen(body.screen);
     const [allTasks, objectives, sharedTasks, blockRows] = await Promise.all([
-      store().prepare(`SELECT id, title, status, priority, due_at, scheduled_for, task_time, completed_at FROM tasks WHERE owner_id = ? ORDER BY COALESCE(updated_at, created_at) DESC`).all<TaskSummary>(owner),
+      store().prepare(`SELECT ts.id, ts.title, ts.status, ts.priority, ts.due_at, ts.scheduled_for, ts.task_time, ts.completed_at, (SELECT group_concat(t.name, ', ') FROM entity_tags et JOIN tags t ON t.id = et.tag_id WHERE et.entity_kind = 'task' AND et.entity_id = ts.id AND et.level = 1) AS direction_tags FROM tasks ts WHERE ts.owner_id = ? ORDER BY COALESCE(ts.updated_at, ts.created_at) DESC`).all<TaskSummary>(owner),
       store().prepare(`SELECT o.id, o.title, ot.task_id FROM objectives o LEFT JOIN objective_tasks ot ON ot.objective_id = o.id WHERE o.owner_id = ? AND o.status = 'active'`).all<ObjectiveSummary>(owner),
       listSharedTasks(owner),
       store().prepare(`SELECT tb.id, tb.title, tb.start_at, tb.end_at, tb.status, COALESCE((SELECT group_concat(t.name, ', ') FROM entity_tags et JOIN tags t ON t.id = et.tag_id WHERE et.entity_kind = 'time_block' AND et.entity_id = tb.id AND et.level = 1), tb.tag) AS tag FROM time_blocks tb WHERE tb.owner_id = ? AND tb.block_kind = 'timeblock' AND tb.start_at BETWEEN ? AND ? ORDER BY tb.start_at LIMIT 250`).all<BlockSummary>(owner, new Date(Date.now() - 2 * 86400000).toISOString(), new Date(Date.now() + 30 * 86400000).toISOString()),
@@ -170,7 +170,7 @@ export function taskAgentRouter() {
       `Today and current time in ${timezone}: ${now}. Reply with JSON {"reply":"short plain response","actions":[]}. ` +
       `For a list of NEW tasks, return ONE action {"kind":"create_tasks","tasks":[{"title":"...","estimated_minutes":15}],"target_block_id":"exact ID from time blocks when requested"}. The tasks are editable drafts until the user applies. For a request to update a time block with tasks, create_tasks with target_block_id is REQUIRED; never use an existing-task edit action. Do not include target_block_id when no block is requested. Up to 20 new tasks. ` +
       `Allowed actions: {"kind":"create_task","title":"...","priority":1..5,"scheduled_for":"YYYY-MM-DD","task_time":"HH:MM"}; ` +
-      `For a user-requested bulk reschedule, return {"kind":"bulk_reschedule_tasks","task_ids":["exact IDs from tasks"],"scheduled_for":"YYYY-MM-DD","task_time":"HH:MM optional"}. Use only the explicitly requested task filter; include open/scheduled/in-progress tasks and exclude done/cancelled/archived tasks. Never invent a target date. If the date or scope is missing, ask one clarifying question instead of creating a task. ` +
+      `For a user-requested bulk reschedule, return {"kind":"bulk_reschedule_tasks","task_ids":["exact IDs from tasks"],"scheduled_for":"YYYY-MM-DD","task_time":"HH:MM optional"}. Use only the explicitly requested task filter: status, incomplete/open, scheduled (scheduled_for/task_time present), overdue (due_at before today in the owner's timezone), or matching direction_tags. For bulk operations exclude done/cancelled/archived. Never invent a target date. If the date or scope is missing, ask one clarifying question instead of creating a task. ` +
       `{"kind":"update_task","task_id":"exact ID from tasks","title":"...","priority":1..5,"scheduled_for":"YYYY-MM-DD or null","task_time":"HH:MM or null","status":"open or done"}; ` +
       `{"kind":"move_task","task_id":"exact ID from tasks","source_objective_id":"current objective ID if linked","target_objective_id":"exact objective ID"}. ` +
       `For adding a timestamped note use {"kind":"add_note","task_id":"exact ID","body":"note text"}. For a suggestion that should fill an unsaved task edit form, use {"kind":"draft_task","task_id":"exact ID","title":"...","priority":1..5,"scheduled_for":"YYYY-MM-DD","task_time":"HH:MM","notes":"..."}. Use draft_task only for suggested changes to an EXISTING task, never for creating a new task. ` +
