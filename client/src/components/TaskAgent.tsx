@@ -3,7 +3,7 @@ import { MessageCircle, Mic, Volume2, VolumeX, X } from 'lucide-solid';
 import { ViewportOverlay } from './ViewportOverlay.js';
 import { MicButton } from './MicButton.js';
 import { api, type TaskAgentAction, type TaskAgentPlan, type TaskAgentScreenContext } from '../lib/api.js';
-import { refetchObjectives, refetchTasks, setElementModal } from '../stores/index.js';
+import { refetchBlocks, refetchObjectives, refetchTasks, setElementModal } from '../stores/index.js';
 import { setActiveTask } from '../stores/selection.js';
 import { revealDetails } from '../stores/ui.js';
 
@@ -68,8 +68,9 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
     finally { setBusy(false); }
   };
   const taskName = (action: TaskAgentAction, current: TaskAgentPlan) =>
-    'task_id' in action ? current.tasks.find((task) => task.id === action.task_id)?.title ?? 'Task' : action.title;
+    'task_id' in action ? current.tasks.find((task) => task.id === action.task_id)?.title ?? 'Task' : action.kind === 'create_task' ? action.title : 'New tasks';
   const actionText = (action: TaskAgentAction, current: TaskAgentPlan) => {
+    if (action.kind === 'create_tasks') return `Create ${action.tasks.length} task draft${action.tasks.length === 1 ? '' : 's'}${action.target_block_id ? ` in “${current.blocks?.find((block) => block.id === action.target_block_id)?.title ?? 'time block'}”` : ''}`;
     if (action.kind === 'create_task') return `Create “${action.title}”${action.scheduled_for ? ` for ${action.scheduled_for}` : ''}`;
     if (action.kind === 'add_note') return `Add note to “${taskName(action, current)}”: ${action.body}`;
     if (action.kind === 'draft_task') return `Fill unsaved fields for “${taskName(action, current)}” — ${Object.entries(action).filter(([key]) => !['kind', 'task_id'].includes(key)).map(([key, value]) => `${key.replaceAll('_', ' ')}: ${value}`).join(', ')}`;
@@ -83,12 +84,25 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
     setBusy(true);
     setError('');
     let completed = 0;
+    let multiTaskSummary = '';
     const saved: Result[] = [];
     const place = async (taskId: string) =>
       (await api.taskAgent.place(taskId).catch(() => ({ placement: { placed: false, reason: 'placement unavailable' } }))).placement;
     try {
       for (const action of current.actions) {
-        if (action.kind === 'create_task') {
+        if (action.kind === 'create_tasks') {
+          const taskIds: string[] = [];
+          for (const draft of action.tasks) {
+            const created = await api.tasks.create({ title: draft.title.trim(), estimated_minutes: draft.estimated_minutes });
+            taskIds.push(created.task.id);
+            saved.push({ text: `Created “${draft.title.trim()}”`, taskId: created.task.id });
+          }
+          if (action.target_block_id && taskIds.length) {
+            const placement = await api.blocks.addTasks(action.target_block_id, taskIds);
+            multiTaskSummary = `${taskIds.length} tasks created; ${placement.placed} placed in the time block${placement.unplaced ? `; ${placement.unplaced} did not fit and remain in Tasks` : ''}.`;
+            saved.push({ text: multiTaskSummary });
+          }
+        } else if (action.kind === 'create_task') {
           const created = await api.tasks.create({ title: action.title, priority: action.priority, scheduled_for: action.scheduled_for, task_time: action.task_time, auto_place: !!action.scheduled_for });
           const placement = action.scheduled_for ? await place(created.task.id) : null;
           saved.push({ text: `${actionText(action, current)}${placement && !placement.placed ? ` (date saved; no calendar slot: ${placement.reason ?? 'unavailable'})` : ''}`, taskId: created.task.id });
@@ -116,16 +130,18 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
       }
       setPlan(null);
       setResults((previous) => [...previous, ...saved]);
-      const summary = current.actions.some((action) => action.kind === 'draft_task') ? 'Draft fields are ready to review in the task form.' : `${completed} change${completed === 1 ? '' : 's'} saved.`;
+      const summary = current.actions.some((action) => action.kind === 'draft_task') ? 'Draft fields are ready to review in the task form.' : multiTaskSummary || `${completed} change${completed === 1 ? '' : 's'} saved.`;
       setMessages((previous) => [...previous, { role: 'assistant', text: summary }]);
       say(summary);
     } catch (err) {
       setPlan(null); // A retry must replan against current data after partial success.
       setResults((previous) => [...previous, ...saved]);
-      setError(`${completed} of ${current.actions.length} changes saved. ${(err as Error).message}`);
+      const created = saved.filter((result) => result.text.startsWith('Created “')).length;
+      setError(`${created ? `${created} new task${created === 1 ? '' : 's'} created. ` : ''}${completed} of ${current.actions.length} plan steps completed. ${(err as Error).message}`);
     } finally {
       refetchTasks();
       refetchObjectives();
+      refetchBlocks();
       setBusy(false);
     }
   };
@@ -144,9 +160,20 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
       </div>
       <Show when={plan()}>{(current) => <div class="border border-border rounded-lg p-3 flex flex-col gap-2 text-sm">
         <strong>Review changes</strong>
-        <For each={current().actions}>{(action) => <p>• {actionText(action, current())}</p>}</For>
+        <For each={current().actions}>{(action, actionIndex) => <Show when={action.kind === 'create_tasks'} fallback={<p>• {actionText(action, current())}</p>}>
+          <div class="space-y-2 min-w-0">
+            <p>{actionText(action, current())}</p>
+            <Show when={current().blocks?.find((item) => item.id === (action as Extract<TaskAgentAction, { kind: 'create_tasks' }>).target_block_id)}>{(block) => <p class="text-xs text-muted-foreground">Block: {new Date(block().start_at).toLocaleString()}–{new Date(block().end_at).toLocaleTimeString()}. Tasks that do not fit stay in Tasks.</p>}</Show>
+            <Show when={current().blocks?.find((item) => item.id === (action as Extract<TaskAgentAction, { kind: 'create_tasks' }>).target_block_id)}>{(block) => <Show when={action.kind === 'create_tasks' && action.tasks.reduce((sum, item) => sum + (item.estimated_minutes ?? 15), 0) > (Date.parse(block().end_at) - Date.parse(block().start_at)) / 60000}><p class="text-xs text-amber-300">Task estimates exceed this block’s duration even before breaks. Some tasks may remain unplaced.</p></Show>}</Show>
+            <For each={action.kind === 'create_tasks' ? action.tasks : []}>{(draft, draftIndex) => <div class="flex items-center gap-1 min-w-0">
+              <input class="input flex-1 min-w-0 text-sm" aria-label={`Draft task ${draftIndex() + 1}`} value={draft.title} onChange={(event) => setPlan((previous) => previous && { ...previous, actions: previous.actions.map((item, index) => index === actionIndex() && item.kind === 'create_tasks' ? { ...item, tasks: item.tasks.map((task, i) => i === draftIndex() ? { ...task, title: event.currentTarget.value } : task) } : item) })} />
+              <input class="input w-14 text-sm" type="number" min="5" max="480" aria-label={`Minutes for draft task ${draftIndex() + 1}`} value={draft.estimated_minutes ?? 15} onChange={(event) => setPlan((previous) => previous && { ...previous, actions: previous.actions.map((item, index) => index === actionIndex() && item.kind === 'create_tasks' ? { ...item, tasks: item.tasks.map((task, i) => i === draftIndex() ? { ...task, estimated_minutes: Number(event.currentTarget.value) } : task) } : item) })} />
+              <button class="btn-ghost text-xs" aria-label={`Remove draft task ${draftIndex() + 1}`} onClick={() => setPlan((previous) => previous && { ...previous, actions: previous.actions.map((item, index) => index === actionIndex() && item.kind === 'create_tasks' ? { ...item, tasks: item.tasks.filter((_, i) => i !== draftIndex()) } : item).filter((item) => item.kind !== 'create_tasks' || item.tasks.length > 0) })}>×</button>
+            </div>}</For>
+          </div>
+        </Show>}</For>
         <p class="text-xs text-muted-foreground">Notes and task changes save when applied. Draft fields open in the task form and remain unsaved until you save there.</p>
-        <div class="flex gap-2 justify-end"><button class="btn-ghost" disabled={busy()} onClick={() => setPlan(null)}>Dismiss</button><button class="btn-primary" disabled={busy()} onClick={() => void apply()}>Apply changes</button></div>
+        <div class="flex gap-2 justify-end"><button class="btn-ghost" disabled={busy()} onClick={() => setPlan(null)}>Dismiss</button><button class="btn-primary" disabled={busy() || !current().actions.length || current().actions.some((action) => action.kind === 'create_tasks' && action.tasks.some((task) => !task.title.trim() || (task.estimated_minutes !== undefined && (!Number.isInteger(task.estimated_minutes) || task.estimated_minutes < 5 || task.estimated_minutes > 480))))} onClick={() => void apply()}>Apply changes</button></div>
       </div>}</Show>
       <Show when={error()}><p role="alert" class="text-sm text-destructive">{error()}</p></Show>
       <div class="flex items-end gap-2"><textarea ref={messageInput} class="input flex-1 min-w-0 min-h-12 max-h-32" aria-label="Message the task assistant" placeholder="What would you like done?" value={input()} disabled={!!plan() || busy()} onInput={(event) => setInput(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} /><Show when={ios} fallback={<MicButton title="Dictate your request" disabled={!!plan() || busy()} onTranscript={(text) => { setInput((value) => value ? `${value} ${text}` : text); setError(''); }} onError={setError} />}><button type="button" class="btn-icon" aria-label="Open keyboard for voice dictation" title="Use keyboard microphone" disabled={!!plan() || busy()} onClick={() => { messageInput.focus(); setError('Tap the microphone on your keyboard to dictate, then review your message and tap Send.'); }}><Mic size={17} /></button></Show><button class="btn-primary" disabled={!input().trim() || !!plan() || busy()} onClick={() => void send()}>Send</button></div>

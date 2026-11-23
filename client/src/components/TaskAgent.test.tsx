@@ -4,13 +4,16 @@ import { fireEvent, render, screen, waitFor } from '@solidjs/testing-library';
 const plan = vi.fn();
 const place = vi.fn();
 const update = vi.fn();
+const create = vi.fn();
+const addTasks = vi.fn();
 const refetchTasks = vi.fn();
 vi.mock('../lib/api.js', () => ({ api: {
   taskAgent: { plan: (...args: unknown[]) => plan(...args), place: (...args: unknown[]) => place(...args) },
-  tasks: { create: vi.fn(), update: (...args: unknown[]) => update(...args) },
+  tasks: { create: (...args: unknown[]) => create(...args), update: (...args: unknown[]) => update(...args) },
+  blocks: { addTasks: (...args: unknown[]) => addTasks(...args) },
   objectives: { moveTask: vi.fn(), linkTask: vi.fn() },
 } }));
-vi.mock('../stores/index.js', () => ({ refetchTasks: (...args: unknown[]) => refetchTasks(...args), refetchObjectives: vi.fn() }));
+vi.mock('../stores/index.js', () => ({ refetchTasks: (...args: unknown[]) => refetchTasks(...args), refetchObjectives: vi.fn(), refetchBlocks: vi.fn() }));
 vi.mock('../stores/selection.js', () => ({ setActiveTask: vi.fn() }));
 vi.mock('../stores/ui.js', () => ({ revealDetails: vi.fn() }));
 
@@ -28,6 +31,8 @@ beforeEach(() => {
   });
   update.mockResolvedValue({ task: { id: 't1' } });
   place.mockResolvedValue({ placement: { placed: true } });
+  create.mockResolvedValueOnce({ task: { id: 'new-1' } }).mockResolvedValueOnce({ task: { id: 'new-2' } });
+  addTasks.mockResolvedValue({ placed: 2, unplaced: 0, skipped: 0, blocksCreated: 2 });
 });
 
 describe('task assistant review', () => {
@@ -65,6 +70,20 @@ describe('task assistant review', () => {
     fireEvent.input(input, { target: { value: 'Review this dictated request' } });
     expect(input.value).toBe('Review this dictated request');
     expect(plan).not.toHaveBeenCalled();
+  });
+
+  it('reviews and edits new task drafts before placing them in a time block', async () => {
+    plan.mockResolvedValueOnce({ reply: 'I can add these to Morning.', actions: [{ kind: 'create_tasks', tasks: [{ title: 'Breakfast', estimated_minutes: 15 }, { title: 'Feed cats', estimated_minutes: 15 }], target_block_id: 'b1' }], tasks: [], objectives: [], blocks: [{ id: 'b1', title: 'Morning', start_at: '2026-11-23T16:00:00Z', end_at: '2026-11-23T17:00:00Z' }] });
+    render(() => <TaskAgent onClose={vi.fn()} />);
+    fireEvent.input(screen.getByLabelText('Message the task assistant'), { target: { value: 'Add breakfast and feed cats to Morning' } });
+    fireEvent.click(screen.getByText('Send'));
+    await waitFor(() => expect(screen.getByLabelText('Draft task 1')).toBeTruthy());
+    expect(create).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('Draft task 2'), { target: { value: 'Feed the cats' } });
+    fireEvent.click(screen.getByText('Apply changes'));
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+    expect(create).toHaveBeenNthCalledWith(2, { title: 'Feed the cats', estimated_minutes: 15 });
+    await waitFor(() => expect(addTasks).toHaveBeenCalledWith('b1', ['new-1', 'new-2']));
   });
 
   it('shows a proposed task edit before saving and applies only on confirmation', async () => {

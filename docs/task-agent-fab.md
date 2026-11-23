@@ -31,3 +31,9 @@ When asked to suggest or draft field changes, the assistant can fill the task ed
 ## Voice input on iPhone
 
 The assistant never sends a dictated request automatically. Browser speech recognition fills the editable message field. On iPhone and iPad, the assistant microphone focuses the message field so the user can use the system keyboard's dictation microphone; this avoids iOS in-app browsers that expose Web Speech recognition but do not produce results. The user reviews the text and taps Send.
+
+## Multi-task time-block plans
+
+A request to create several tasks for a Time-Block now produces one `create_tasks` proposal with an editable title and estimate for each task. The user may remove drafts before applying. The plan references an owner-scoped, existing Time-Block by exact ID; the assistant cannot invent one. Applying creates the tasks, then calls the existing block placement endpoint. The UI reports how many fit and leaves any unplaced tasks in Tasks. It warns when the task estimates already exceed the block duration; existing schedule and break constraints may reduce capacity further.
+
+The assistant uses the configured quality model by default. On a local Ollama installation with the default quality setting and `gemma3:12b` installed, it uses `gemma3:12b` for task-agent planning only. An explicit Settings model choice remains authoritative. This improves structured multi-step plans without changing other model-backed features.
