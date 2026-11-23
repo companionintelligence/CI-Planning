@@ -386,6 +386,15 @@ export function TaskCard(props: Props) {
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
+  async function confirmOverdueTask() {
+    try {
+      await api.tasks.update(props.task.id, { scheduled_for: localISODate(), task_time: null, status: 'open' });
+      const result = await api.taskAgent.place(props.task.id).catch(() => ({ placement: { placed: false, reason: 'no slot available' } }));
+      refetchTasks();
+      showToast(result.placement.placed ? 'Confirmed and scheduled for today' : 'Confirmed for today; it remains in Tasks until a slot is available', 'success');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
   async function remove() {
     // A repeating occurrence is ambiguous — ask which occurrences this applies to. The
     // dialog carries its own confirmation, so the blunt confirm() is only for one-offs.
@@ -717,6 +726,14 @@ export function TaskCard(props: Props) {
             </div>
           </div>
         </div>
+
+        <Show when={pastScheduled() && !props.task.is_habit && !props.task.shared}>
+          <div class="mt-2 ml-9 flex items-center gap-1.5" role="group" aria-label={`Triage overdue task ${props.task.title}`}>
+            <button type="button" class="rounded border border-primary/40 px-2 py-1 text-[11px] text-primary hover:bg-primary/10" title="Keep this task open and move it to today" onClick={() => void confirmOverdueTask()}>Confirmed</button>
+            <button type="button" class="rounded border border-border px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground" title="Change this task's details or schedule" onClick={() => setElementModal({ open: true, mode: 'edit', kind: 'task', editTarget: { kind: 'task', id: props.task.id } })}>Change</button>
+            <button type="button" class="rounded border border-border px-2 py-1 text-[11px] text-muted-foreground hover:border-destructive/50 hover:text-destructive" title="Forget this task by archiving it; you can restore it later" onClick={() => void archiveTask()}>Forget</button>
+          </div>
+        </Show>
 
         <Show when={expanded()}>
         {/* Row B — routine label + description. */}
