@@ -249,6 +249,14 @@ interface Props {
 export function TaskCard(props: Props) {
 
   const depth = () => props.depth ?? 0;
+  const [expanded, setExpanded] = createSignal(false);
+  const pastScheduled = () => {
+    if (!['open', 'scheduled', 'in_progress'].includes(props.task.status) || !props.task.scheduled_for) return false;
+    const start = props.task.scheduled_for;
+    return /^\d{4}-\d{2}-\d{2}$/.test(start)
+      ? start < localISODate()
+      : Number.isFinite(Date.parse(start)) && Date.parse(start) < Date.now();
+  };
   const p = () => Math.min(Math.max(props.task.priority, 1), 5);
   const [showSubs, setShowSubs] = createSignal(false);
   const [subsFetched, setSubsFetched] = createSignal(false);
@@ -508,12 +516,10 @@ export function TaskCard(props: Props) {
       {depth() > 0 && <div class="absolute left-4 top-0 bottom-0 w-px bg-surface-600/60" />}
 
       <div
-        // Drawer layout: a plain click on the card expands the task into the
-        // details drawer. Guarded so the card's own controls keep their meaning.
+        // A plain tap expands the row; controls retain their own actions.
         onClick={(e) => {
           if ((e.target as HTMLElement).closest('button,a,input,select,textarea,[role="group"]')) return;
-          setActiveTask(props.task.id);
-          revealDetails();
+          setExpanded((value) => !value);
         }}
         // Balanced layout (chips redesign): a vertical stack — title row, description,
         // full-width tags, then a single compact footer that collapses the former
@@ -530,6 +536,8 @@ export function TaskCard(props: Props) {
         }}
         style={{
           'margin-bottom': '6px',
+          outline: pastScheduled() ? '2px solid #ef4444' : undefined,
+          'outline-offset': pastScheduled() ? '-2px' : undefined,
           ...(awaitingHumanApproval() ? {
             'border-style': 'dotted',
             'border-width': '2px',
@@ -554,6 +562,9 @@ export function TaskCard(props: Props) {
         {/* Row A — merged direction-icon / done toggle · title · habit/instance markers ·
             estimate (swaps to edit / delete / skip on hover). */}
         <div class="flex items-start gap-2">
+          <button type="button" class="btn-icon flex-shrink-0" aria-label={expanded() ? 'Collapse task' : 'Expand task'} aria-expanded={expanded()} onClick={() => setExpanded((value) => !value)}>
+            <Show when={expanded()} fallback={<ChevronRight size={14} />}><ChevronDown size={14} /></Show>
+          </button>
           <div class="flex-shrink-0 flex justify-center">
             <Show
               when={!props.task.is_habit}
@@ -588,7 +599,7 @@ export function TaskCard(props: Props) {
             </Show>
           </div>
 
-          <span class={`flex-1 min-w-0 text-sm leading-snug ${statusClass[props.task.status] ?? 'text-slate-200'}`}>
+          <span class={`flex-1 min-w-0 text-sm leading-snug ${expanded() ? '' : 'truncate'} ${statusClass[props.task.status] ?? 'text-slate-200'}`}>
             {props.task.title}
           </span>
 
@@ -647,6 +658,7 @@ export function TaskCard(props: Props) {
           </div>
         </div>
 
+        <Show when={expanded()}>
         {/* Row B — routine label + description. */}
         <Show when={routine()}>
           {(r) => (
@@ -741,6 +753,7 @@ export function TaskCard(props: Props) {
             One row of uniform 32px (h-8) controls, hairline-separated. Accent = the
             reference mint (accent-hi / --mint #58ebbf), the same teal the P3 chip uses. */}
         <div class="task-card-footer flex items-center gap-2 flex-wrap mt-2.5 pt-2.5 border-t border-border/60">
+          <button type="button" class="btn-ghost text-xs" onClick={() => { setActiveTask(props.task.id); revealDetails(); }}>Details</button>
           <Show when={!props.task.shared}>
           {/* subtask count (expand) — only when there are subtasks */}
           <Show when={subtaskCount() > 0}>
@@ -872,10 +885,11 @@ export function TaskCard(props: Props) {
             </Show>
           </div>
         </div>
+        </Show>
       </div>
 
       {/* Subtasks */}
-      <Show when={showSubs()}>
+      <Show when={expanded() && showSubs()}>
         <div class="animate-slide-down">
           <Show when={subtasks.loading}>
             <div class="pl-6 py-2 text-xs text-slate-500 animate-pulse2">Loading subtasks…</div>
