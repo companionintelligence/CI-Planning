@@ -6,6 +6,8 @@ import { ownerTimezone } from '../engine/recurrence-generate.js';
 import { placeStartAnchoredTask } from '../engine/autoplan.js';
 import { taskMetrics } from '../services/task-metrics.js';
 import { listSharedTasks } from '../services/shared-tasks.js';
+import { newId } from '../lib/ids.js';
+import { writeAudit } from '../lib/audit.js';
 
 type TaskSummary = { id: string; title: string; status: string; priority: number; due_at: string | null; scheduled_for: string | null; task_time: string | null; completed_at: string | null; shared?: boolean };
 type ObjectiveSummary = { id: string; title: string; task_id: string | null };
@@ -13,6 +15,8 @@ type Screen = { path: string; tab: string; selectedTaskId: string | null; select
 type Action =
   | { kind: 'create_task'; title: string; priority?: number; scheduled_for?: string; task_time?: string }
   | { kind: 'update_task'; task_id: string; title?: string; priority?: number; scheduled_for?: string | null; task_time?: string | null; status?: 'open' | 'done' }
+  | { kind: 'add_note'; task_id: string; body: string }
+  | { kind: 'draft_task'; task_id: string; title?: string; priority?: number; scheduled_for?: string; task_time?: string; notes?: string }
   | { kind: 'move_task'; task_id: string; source_objective_id?: string; target_objective_id: string };
 
 const dateValid = (value: unknown): value is string => {
@@ -54,6 +58,23 @@ function taskFact(task: TaskSummary): string {
  * executes through the existing authenticated task/objective routes after review. */
 export function taskAgentRouter() {
   const router = new Router();
+  router.get('/api/task-agent/tasks/:id/notes', async (ctx) => {
+    const owner = currentOwnerId();
+    const task = await store().prepare('SELECT id FROM tasks WHERE id = ? AND owner_id = ?').get(ctx.params.id, owner);
+    if (!task) { ctx.status = 404; ctx.body = { error: 'task not found' }; return; }
+    ctx.body = { notes: await store().prepare('SELECT id, body, created_at FROM task_notes WHERE owner_id = ? AND task_id = ? ORDER BY created_at DESC, id DESC').all(owner, ctx.params.id) };
+  });
+  router.post('/api/task-agent/tasks/:id/notes', async (ctx) => {
+    const owner = currentOwnerId();
+    const body = (ctx.request.body as { body?: unknown } | undefined)?.body;
+    if (typeof body !== 'string' || !body.trim() || body.length > 10000) { ctx.status = 422; ctx.body = { error: 'Enter a note under 10,000 characters.' }; return; }
+    const task = await store().prepare('SELECT id FROM tasks WHERE id = ? AND owner_id = ?').get(ctx.params.id, owner);
+    if (!task) { ctx.status = 404; ctx.body = { error: 'task not found' }; return; }
+    const note = { id: newId(), body: body.trim(), created_at: new Date().toISOString() };
+    await store().prepare('INSERT INTO task_notes (id, owner_id, task_id, body, created_at) VALUES (?, ?, ?, ?, ?)').run(note.id, owner, ctx.params.id, note.body, note.created_at);
+    writeAudit({ ownerId: owner, actor: 'user', action: 'task_note_added', entity: ctx.params.id });
+    ctx.status = 201; ctx.body = { note };
+  });
   router.post('/api/task-agent/tasks/:id/place', async (ctx) => {
     const placement = await placeStartAnchoredTask(currentOwnerId(), ctx.params.id);
     if (!placement.placed && placement.reason === 'not_found') { ctx.status = 404; ctx.body = { error: 'task not found' }; return; }
@@ -75,7 +96,7 @@ export function taskAgentRouter() {
     const readRows = taskCandidates(readableTasks, text, screen.selectedTaskId);
     const timezone = await ownerTimezone(owner);
     const now = new Date().toLocaleString('en-US', { timeZone: timezone, hour12: false });
-    const readOnly = !/\b(create|add|edit|update|change|move|reschedule|schedule|mark|complete|finish|set|delete|remove|cancel)\b/i.test(text);
+    const readOnly = !/\b(draft|suggest|fill|create|add|edit|update|change|move|reschedule|schedule|mark|complete|finish|set|delete|remove|cancel)\b/i.test(text);
     const metricsRequest = /\b(metrics?|recap|progress|performance|completion|completions|tracked time)\b/i.test(text);
     if (readOnly && metricsRequest) {
       const days = /\b(week|7 days)\b/i.test(text) ? 7 : /\b(year|365 days)\b/i.test(text) ? 365 : 30;
@@ -119,6 +140,7 @@ export function taskAgentRouter() {
       `Allowed actions: {"kind":"create_task","title":"...","priority":1..5,"scheduled_for":"YYYY-MM-DD","task_time":"HH:MM"}; ` +
       `{"kind":"update_task","task_id":"exact ID from tasks","title":"...","priority":1..5,"scheduled_for":"YYYY-MM-DD or null","task_time":"HH:MM or null","status":"open or done"}; ` +
       `{"kind":"move_task","task_id":"exact ID from tasks","source_objective_id":"current objective ID if linked","target_objective_id":"exact objective ID"}. ` +
+      `For adding a timestamped note use {"kind":"add_note","task_id":"exact ID","body":"note text"}. For a suggestion that should fill an unsaved task edit form, use {"kind":"draft_task","task_id":"exact ID","title":"...","priority":1..5,"scheduled_for":"YYYY-MM-DD","task_time":"HH:MM","notes":"..."}. Use draft_task when user says suggest, draft, or unsaved. ` +
       `Omit unchanged fields. At most four actions. For a time change, set scheduled_for and task_time. Describe proposed changes in future tense; never claim they are saved. ` +
       `If a target is missing or ambiguous, ask a short clarifying question and return no actions. Never invent IDs, dates, or task names. ` +
       `Current screen: ${JSON.stringify(screen)}. Your tasks matching the request (including archived tasks): ${JSON.stringify(taskRows)}. Shared tasks (read only): ${JSON.stringify(readRows.filter((task) => task.shared).slice(0, 20))}. Objectives and task links: ${JSON.stringify(objectives.slice(0, 200))}. ` +
@@ -150,6 +172,19 @@ export function taskAgentRouter() {
         const changes = Object.fromEntries(['title', 'priority', 'scheduled_for', 'task_time', 'status'].filter((key) => a[key] !== undefined).map((key) => [key, a[key]]));
         if (!Object.keys(changes).length) { invalid = true; break; }
         actions.push({ kind: 'update_task', task_id: a.task_id, ...changes } as Action);
+      } else if (a.kind === 'add_note') {
+        if (typeof a.task_id !== 'string' || !knownTasks.has(a.task_id) || typeof a.body !== 'string' || !a.body.trim() || a.body.length > 10000) { invalid = true; break; }
+        actions.push({ kind: 'add_note', task_id: a.task_id, body: a.body.trim() });
+      } else if (a.kind === 'draft_task') {
+        if (typeof a.task_id !== 'string' || !knownTasks.has(a.task_id) ||
+            (a.title !== undefined && (typeof a.title !== 'string' || !a.title.trim() || a.title.length > 300)) ||
+            (a.priority !== undefined && !priorityValid(a.priority)) ||
+            (a.scheduled_for !== undefined && !dateValid(a.scheduled_for)) ||
+            (a.task_time !== undefined && !timeValid(a.task_time)) ||
+            (a.notes !== undefined && (typeof a.notes !== 'string' || a.notes.length > 10000))) { invalid = true; break; }
+        const changes = Object.fromEntries(['title', 'priority', 'scheduled_for', 'task_time', 'notes'].filter((key) => a[key] !== undefined).map((key) => [key, a[key]]));
+        if (!Object.keys(changes).length) { invalid = true; break; }
+        actions.push({ kind: 'draft_task', task_id: a.task_id, ...changes } as Action);
       } else if (a.kind === 'move_task') {
         const currentLinks = objectives.filter((objective) => objective.task_id === a.task_id).map((objective) => objective.id);
         if (typeof a.task_id !== 'string' || !knownTasks.has(a.task_id) || typeof a.target_objective_id !== 'string' || !knownObjectives.has(a.target_objective_id) ||

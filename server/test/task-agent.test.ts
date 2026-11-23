@@ -43,6 +43,27 @@ describe('task agent proposals', () => {
     expect(response.body.actions).toEqual([]);
   });
 
+  it('proposes a note and draft fields without writing either', async () => {
+    sqlite.prepare("INSERT INTO tasks (id, title, owner_id, status) VALUES ('agent-task', 'Call Sam', ?, 'open')").run(SYSTEM_OWNER);
+    model.mockResolvedValue({ reply: 'I can add that note.', actions: [{ kind: 'add_note', task_id: 'agent-task', body: 'Discuss Friday' }, { kind: 'draft_task', task_id: 'agent-task', priority: 1 }] });
+    const response = await plan('Add a note to Call Sam and suggest high priority');
+    expect(response.body.actions).toEqual([{ kind: 'add_note', task_id: 'agent-task', body: 'Discuss Friday' }, { kind: 'draft_task', task_id: 'agent-task', priority: 1 }]);
+    expect(sqlite.prepare("SELECT count(*) AS count FROM task_notes WHERE task_id = 'agent-task'").get()).toMatchObject({ count: 0 });
+  });
+
+  it('appends multiple timestamped notes and keeps them owner scoped', async () => {
+    sqlite.prepare("INSERT INTO tasks (id, title, owner_id, status) VALUES ('agent-task', 'Call Sam', ?, 'open')").run(SYSTEM_OWNER);
+    for (const body of ['First', 'Second']) {
+      const response = await api(server.url, '/api/task-agent/tasks/agent-task/notes', { method: 'POST', json: { body } });
+      expect(response.status).toBe(201);
+    }
+    const response = await api<{ notes: Array<{ body: string; created_at: string }> }>(server.url, '/api/task-agent/tasks/agent-task/notes');
+    expect(response.body.notes).toHaveLength(2);
+    expect(response.body.notes.map((note) => note.body)).toEqual(expect.arrayContaining(['First', 'Second']));
+    expect(response.body.notes.every((note) => !Number.isNaN(Date.parse(note.created_at)))).toBe(true);
+    expect((await api(server.url, '/api/task-agent/tasks/no-such-task/notes')).status).toBe(404);
+  });
+
   it('rejects an empty request before invoking the model', async () => {
     const response = await plan('  ');
     expect(response.status).toBe(422);

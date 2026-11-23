@@ -403,6 +403,14 @@ export function ElementWizard() {
       setPopover(null); setCalendarOpen(false); setCalTarget('start');
       setCalMonth((pf.day || localISODate()).slice(0, 8) + '01');
       if (st.mode === 'edit' && st.editTarget) loadForEdit(st.editTarget.kind, st.editTarget.id);
+      if (st.agentDraft && (st.kind === 'task' || st.kind === 'habit')) {
+        const draft = st.agentDraft;
+        if (draft.title !== undefined) setTitle(draft.title);
+        if (draft.priority !== undefined) setPriority(draft.priority);
+        if (draft.scheduled_for !== undefined) setScheduledFor(draft.scheduled_for);
+        if (draft.task_time !== undefined) setTaskTime(draft.task_time);
+        if (draft.notes !== undefined) { setNote(draft.notes); setNoteExpanded(true); }
+      }
     }
     wasOpen = st.open;
   });

@@ -3,7 +3,7 @@ import { MessageCircle, Volume2, VolumeX, X } from 'lucide-solid';
 import { ViewportOverlay } from './ViewportOverlay.js';
 import { MicButton } from './MicButton.js';
 import { api, type TaskAgentAction, type TaskAgentPlan, type TaskAgentScreenContext } from '../lib/api.js';
-import { refetchObjectives, refetchTasks } from '../stores/index.js';
+import { refetchObjectives, refetchTasks, setElementModal } from '../stores/index.js';
 import { setActiveTask } from '../stores/selection.js';
 import { revealDetails } from '../stores/ui.js';
 
@@ -67,6 +67,8 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
     'task_id' in action ? current.tasks.find((task) => task.id === action.task_id)?.title ?? 'Task' : action.title;
   const actionText = (action: TaskAgentAction, current: TaskAgentPlan) => {
     if (action.kind === 'create_task') return `Create “${action.title}”${action.scheduled_for ? ` for ${action.scheduled_for}` : ''}`;
+    if (action.kind === 'add_note') return `Add note to “${taskName(action, current)}”: ${action.body}`;
+    if (action.kind === 'draft_task') return `Fill unsaved fields for “${taskName(action, current)}” — ${Object.entries(action).filter(([key]) => !['kind', 'task_id'].includes(key)).map(([key, value]) => `${key.replaceAll('_', ' ')}: ${value}`).join(', ')}`;
     if (action.kind === 'move_task') return `Move “${taskName(action, current)}” to ${current.objectives.find((objective) => objective.id === action.target_objective_id)?.title ?? 'objective'}`;
     const changes = Object.entries(action).filter(([key]) => !['kind', 'task_id'].includes(key)).map(([key, value]) => `${key.replaceAll('_', ' ')}: ${value ?? 'clear'}`);
     return `Update “${taskName(action, current)}” — ${changes.join(', ')}`;
@@ -86,6 +88,14 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
           const created = await api.tasks.create({ title: action.title, priority: action.priority, scheduled_for: action.scheduled_for, task_time: action.task_time, auto_place: !!action.scheduled_for });
           const placement = action.scheduled_for ? await place(created.task.id) : null;
           saved.push({ text: `${actionText(action, current)}${placement && !placement.placed ? ` (date saved; no calendar slot: ${placement.reason ?? 'unavailable'})` : ''}`, taskId: created.task.id });
+        } else if (action.kind === 'add_note') {
+          await api.taskAgent.addNote(action.task_id, action.body);
+          saved.push({ text: actionText(action, current), taskId: action.task_id });
+        } else if (action.kind === 'draft_task') {
+          const { kind: _, task_id, ...agentDraft } = action;
+          setElementModal({ open: true, mode: 'edit', kind: 'task', editTarget: { kind: 'task', id: task_id }, agentDraft });
+          saved.push({ text: `Filled task form for review; save it when ready.`, taskId: task_id });
+          props.onClose();
         } else if (action.kind === 'update_task') {
           const { kind: _, task_id, ...changes } = action;
           await api.tasks.update(task_id, changes);
@@ -102,7 +112,7 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
       }
       setPlan(null);
       setResults((previous) => [...previous, ...saved]);
-      const summary = `${completed} change${completed === 1 ? '' : 's'} saved.`;
+      const summary = current.actions.some((action) => action.kind === 'draft_task') ? 'Draft fields are ready to review in the task form.' : `${completed} change${completed === 1 ? '' : 's'} saved.`;
       setMessages((previous) => [...previous, { role: 'assistant', text: summary }]);
       say(summary);
     } catch (err) {
@@ -131,7 +141,7 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
       <Show when={plan()}>{(current) => <div class="border border-border rounded-lg p-3 flex flex-col gap-2 text-sm">
         <strong>Review changes</strong>
         <For each={current().actions}>{(action) => <p>• {actionText(action, current())}</p>}</For>
-        <p class="text-xs text-muted-foreground">Nothing is saved until you apply these changes.</p>
+        <p class="text-xs text-muted-foreground">Notes and task changes save when applied. Draft fields open in the task form and remain unsaved until you save there.</p>
         <div class="flex gap-2 justify-end"><button class="btn-ghost" disabled={busy()} onClick={() => setPlan(null)}>Dismiss</button><button class="btn-primary" disabled={busy()} onClick={() => void apply()}>Apply changes</button></div>
       </div>}</Show>
       <Show when={error()}><p role="alert" class="text-sm text-destructive">{error()}</p></Show>

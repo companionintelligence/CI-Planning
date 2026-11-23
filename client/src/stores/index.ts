@@ -694,6 +694,7 @@ export const [elementModal, setElementModal] = createSignal<{
   kind: ElementKind | null;
   prefill?: { day?: string; start?: string; durationMin?: number };
   editTarget?: { kind: ElementKind; id: string };
+  agentDraft?: { title?: string; priority?: number; scheduled_for?: string; task_time?: string; notes?: string };
   parentId?: string; // when adding a subtask
 }>({ open: false, mode: 'add', kind: null });
 

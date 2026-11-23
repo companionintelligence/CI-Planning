@@ -21,3 +21,9 @@ The sheet follows the [WAI modal dialog keyboard pattern](https://www.w3.org/WAI
 - Persist conversations and action receipts with redaction controls.
 - Add optimistic version checks and undo for reversible edits.
 - Measure task matching, clarification, and action success on a fixed evaluation set before enabling automatic single-action execution.
+
+## Task notes and draft fields
+
+The assistant can find an owned task and propose a timestamped note. The proposal is reviewed before the note is appended. The task drawer shows note history near the title and has a prominent Add note button. The older single notes field remains available as the task description.
+
+When asked to suggest or draft field changes, the assistant can fill the task edit form with title, priority, date, time, and description values. These values remain unsaved until the user reviews and saves the form. This path does not save the task directly.
