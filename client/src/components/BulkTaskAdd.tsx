@@ -14,8 +14,8 @@ export function BulkTaskAdd(props: { onClose: () => void }) {
   let nextId = 0;
 
   const splitItems = (value: string) => value
-    .split(/\r?\n|;/)
-    .map((item) => item.trim().replace(/^(?:[-*•]|\d+[.)])\s*/, '').trim())
+    .split(/\r?\n|;|,\s+|[.!?]\s+(?=[A-Z])/)
+    .map((item) => item.trim().replace(/^(?:[-*•]|\d+[.)])\s*/, '').replace(/[.!?]$/, '').trim())
     .filter(Boolean);
   const prepare = () => {
     const items = splitItems(input());
@@ -51,7 +51,7 @@ export function BulkTaskAdd(props: { onClose: () => void }) {
   return <ViewportOverlay class="z-[100] bg-black/70 flex items-center justify-center p-3" role="presentation">
     <div role="dialog" aria-modal="true" aria-label="Add tasks in bulk" class="card w-full max-w-xl max-h-full overflow-y-auto flex flex-col gap-3">
       <div class="flex items-center justify-between gap-3"><h2 class="text-lg font-semibold">Add tasks in bulk</h2><button class="btn-ghost" onClick={props.onClose} disabled={busy()}>Close</button></div>
-      <p class="text-sm text-muted-foreground">Type or dictate a list. Put each task on a new line, or separate tasks with semicolons. Review them before saving.</p>
+      <p class="text-sm text-muted-foreground">Type or dictate a list. Use a new line, comma, or sentence for each task. Review them before saving.</p>
       <div class="flex items-start gap-2">
         <textarea class="input min-h-28 flex-1 min-w-0" aria-label="Task list" placeholder={'Buy groceries\nCall Alex\nPlan weekend'} value={input()} onInput={(event) => setInput(event.currentTarget.value)} />
         <MicButton title="Dictate tasks" onTranscript={(text) => setInput((current) => `${current}${current.trim() ? '\n' : ''}${text}`)} onError={setError} disabled={busy()} />
