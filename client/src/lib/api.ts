@@ -35,7 +35,7 @@ export interface TaskAgentPlan {
   actions: TaskAgentAction[];
   tasks: Array<{ id: string; title: string }>;
   objectives: Array<{ id: string; title: string }>;
-  blocks?: Array<{ id: string; title: string; start_at: string; end_at: string }> ;
+  blocks?: Array<{ id: string; title: string; start_at: string; end_at: string; tag?: string | null }> ;
 }
 export interface TaskAgentScreenContext {
   path: string;

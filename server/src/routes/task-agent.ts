@@ -10,7 +10,7 @@ import { newId } from '../lib/ids.js';
 import { writeAudit } from '../lib/audit.js';
 
 type TaskSummary = { id: string; title: string; status: string; priority: number; due_at: string | null; scheduled_for: string | null; task_time: string | null; completed_at: string | null; shared?: boolean };
-type BlockSummary = { id: string; title: string; start_at: string; end_at: string; status: string };
+type BlockSummary = { id: string; title: string; start_at: string; end_at: string; status: string; tag: string | null };
 type ObjectiveSummary = { id: string; title: string; task_id: string | null };
 type Screen = { path: string; tab: string; selectedTaskId: string | null; selectedBlockId: string | null; selectedEntity: { kind: string; id: string } | null; headings: string[] };
 type Action =
@@ -92,11 +92,11 @@ export function taskAgentRouter() {
       store().prepare(`SELECT id, title, status, priority, due_at, scheduled_for, task_time, completed_at FROM tasks WHERE owner_id = ? ORDER BY COALESCE(updated_at, created_at) DESC`).all<TaskSummary>(owner),
       store().prepare(`SELECT o.id, o.title, ot.task_id FROM objectives o LEFT JOIN objective_tasks ot ON ot.objective_id = o.id WHERE o.owner_id = ? AND o.status = 'active'`).all<ObjectiveSummary>(owner),
       listSharedTasks(owner),
-      store().prepare(`SELECT id, title, start_at, end_at, status FROM time_blocks WHERE owner_id = ? AND block_kind = 'timeblock' AND start_at BETWEEN ? AND ? ORDER BY start_at LIMIT 250`).all<BlockSummary>(owner, new Date(Date.now() - 2 * 86400000).toISOString(), new Date(Date.now() + 30 * 86400000).toISOString()),
+      store().prepare(`SELECT tb.id, tb.title, tb.start_at, tb.end_at, tb.status, COALESCE((SELECT group_concat(t.name, ', ') FROM entity_tags et JOIN tags t ON t.id = et.tag_id WHERE et.entity_kind = 'time_block' AND et.entity_id = tb.id AND et.level = 1), tb.tag) AS tag FROM time_blocks tb WHERE tb.owner_id = ? AND tb.block_kind = 'timeblock' AND tb.start_at BETWEEN ? AND ? ORDER BY tb.start_at LIMIT 250`).all<BlockSummary>(owner, new Date(Date.now() - 2 * 86400000).toISOString(), new Date(Date.now() + 30 * 86400000).toISOString()),
     ]);
     const readableTasks: TaskSummary[] = [...allTasks, ...sharedTasks.map((task) => ({ id: task.id, title: task.title, status: task.status, priority: task.priority, due_at: task.due_at, scheduled_for: null, task_time: null, completed_at: null, shared: true }))];
     const taskRows = taskCandidates(allTasks, text, screen.selectedTaskId);
-    const selectedBlock = screen.selectedBlockId ? await store().prepare(`SELECT id, title, start_at, end_at, status FROM time_blocks WHERE id = ? AND owner_id = ? AND block_kind = 'timeblock'`).get<BlockSummary>(screen.selectedBlockId, owner) : undefined;
+    const selectedBlock = screen.selectedBlockId ? await store().prepare(`SELECT tb.id, tb.title, tb.start_at, tb.end_at, tb.status, COALESCE((SELECT group_concat(t.name, ', ') FROM entity_tags et JOIN tags t ON t.id = et.tag_id WHERE et.entity_kind = 'time_block' AND et.entity_id = tb.id AND et.level = 1), tb.tag) AS tag FROM time_blocks tb WHERE tb.id = ? AND tb.owner_id = ? AND tb.block_kind = 'timeblock'`).get<BlockSummary>(screen.selectedBlockId, owner) : undefined;
     const blockCandidates = [...(selectedBlock ? [selectedBlock] : []), ...blockRows.filter((block) => block.id !== selectedBlock?.id)];
     const blockWords = (text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []);
     const relevantBlocks = blockCandidates.filter((block) => block.id === selectedBlock?.id || blockWords.some((word) => block.title.toLowerCase().includes(word))).slice(0, 30);
@@ -155,7 +155,8 @@ export function taskAgentRouter() {
       `For adding a timestamped note use {"kind":"add_note","task_id":"exact ID","body":"note text"}. For a suggestion that should fill an unsaved task edit form, use {"kind":"draft_task","task_id":"exact ID","title":"...","priority":1..5,"scheduled_for":"YYYY-MM-DD","task_time":"HH:MM","notes":"..."}. Use draft_task only for suggested changes to an EXISTING task, never for creating a new task. ` +
       `Omit unchanged fields. At most four actions, but use one create_tasks action for a list. For a time change, set scheduled_for and task_time. Describe proposed changes in future tense; never claim they are saved. ` +
       `When the user answers a clarifying question, continue the original request using that answer. Example: after asking which time block, if they reply "don't put them in a time block, create them individually", draft individual tasks with the original names and estimates and omit target_block_id. Do not ask them to repeat the task list. If an essential detail remains ambiguous, ask one focused follow-up and return no actions. Never invent IDs, dates, or task names. ` +
-      `Current screen: ${JSON.stringify(screen)}. Your tasks matching the request (including archived tasks): ${JSON.stringify(newTaskListRequest ? [] : taskRows.slice(0, 35))}. Shared tasks (read only): ${JSON.stringify(newTaskListRequest ? [] : readRows.filter((task) => task.shared).slice(0, 12))}. Objectives and task links: ${JSON.stringify(newTaskListRequest ? [] : objectives.slice(0, 50))}. Time blocks available for placement: ${JSON.stringify(blocksForPlan)}. ` +
+      `Current screen: ${JSON.stringify(screen)}. Your tasks matching the request (including archived tasks): ${JSON.stringify(newTaskListRequest ? [] : taskRows.slice(0, 35))}. Shared tasks (read only): ${JSON.stringify(newTaskListRequest ? [] : readRows.filter((task) => task.shared).slice(0, 12))}. Objectives and task links: ${JSON.stringify(newTaskListRequest ? [] : objectives.slice(0, 50))}. Existing time blocks available for placement, with their direction tags: ${JSON.stringify(blockCandidates.slice(0, 30))}. ` +
+      `When drafting tasks, use a tagged block only when the user explicitly requests scheduling or names that block. Otherwise keep tasks as individual drafts and mention matching tagged blocks as optional destinations in the reply; the review UI lets the user select one before applying. A task's direction tag should match a block tag for placement. ` +
       `Recent conversation: ${JSON.stringify(recent)}. User request: ${JSON.stringify(text)}`,
       { purpose: 'plan_instruct', tier: 'quality', ...(agentModel ? { model: agentModel } : {}), timeoutMs: 45_000, think: false },
     ));
@@ -218,7 +219,7 @@ export function taskAgentRouter() {
     }
     if (invalid || actions.length > 4) { ctx.body = { reply: 'I could not match that safely. Please name the task and the change you want.', actions: [], tasks: [], objectives: [] }; return; }
     const reply = actions.some((action) => action.kind === 'create_tasks') ? `I drafted the new tasks below. Review their names and estimates, then apply to create them${actions.some((action) => action.kind === 'create_tasks' && action.target_block_id) ? ' and place them in the selected time block' : ''}.` : typeof raw.reply === 'string' ? raw.reply.slice(0, 1000) : 'Here is what I found.';
-    ctx.body = { reply: actions.length ? reply : `${reply} No changes were made.`, actions, tasks: taskRows.filter((task) => actions.some((action) => 'task_id' in action && action.task_id === task.id)), objectives: objectives.filter((objective) => actions.some((action) => action.kind === 'move_task' && (action.target_objective_id === objective.id || action.source_objective_id === objective.id))), blocks: blocksForPlan.filter((block) => actions.some((action) => action.kind === 'create_tasks' && action.target_block_id === block.id)) };
+    ctx.body = { reply: actions.length ? reply : `${reply} No changes were made.`, actions, tasks: taskRows.filter((task) => actions.some((action) => 'task_id' in action && action.task_id === task.id)), objectives: objectives.filter((objective) => actions.some((action) => action.kind === 'move_task' && (action.target_objective_id === objective.id || action.source_objective_id === objective.id))), blocks: blockCandidates.slice(0, 30) };
   });
   return router;
 }
