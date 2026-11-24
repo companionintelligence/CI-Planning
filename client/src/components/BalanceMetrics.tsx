@@ -1,6 +1,8 @@
 import { createResource, createSignal, For, Show } from 'solid-js';
-import { TrendingUp, TrendingDown, Minus } from 'lucide-solid';
-import { api, type AxisMetrics, type MetricsGroup, type ScoreDistribution } from '../lib/api.js';
+import { TrendingUp, TrendingDown, Minus, Star } from 'lucide-solid';
+import { A } from '@solidjs/router';
+import { addDays, localISODate, shortDate } from '../lib/dates.js';
+import { api, type AxisMetrics, type DayStar, type MetricsGroup, type ScoreDistribution } from '../lib/api.js';
 import { TrialityMetricsTiles } from './TrialityMetricsTiles.js';
 import { Skeleton } from './Skeleton.js';
 
@@ -31,6 +33,88 @@ const SCORE_META: { key: 1 | 2 | 3 | 4 | 5; color: string; label: string }[] = [
 ];
 
 const fmtHours = (min: number) => (min >= 60 ? `${(min / 60).toFixed(1)}h` : `${min}m`);
+
+const STAR_PARTS: { key: keyof Pick<DayStar, 'objective' | 'habits' | 'tasks' | 'bonus' | 'note'>; label: string }[] = [
+  { key: 'objective', label: 'Objective' },
+  { key: 'habits', label: 'Habits' },
+  { key: 'tasks', label: 'Planned tasks' },
+  { key: 'bonus', label: 'Unplanned win' },
+  { key: 'note', label: 'Reflection note' },
+];
+
+function DailyCompletion(props: { days: number }) {
+  const [stars] = createResource(
+    () => props.days,
+    (days) => {
+      const to = localISODate();
+      return api.stars.range(addDays(to, -(days - 1)), to);
+    },
+  );
+  const average = () => {
+    const rows = stars() ?? [];
+    return rows.length ? (rows.reduce((sum, row) => sum + row.total, 0) / rows.length).toFixed(1) : '0.0';
+  };
+  const perfectDays = () => (stars() ?? []).filter((row) => row.total === 5).length;
+  const frozenDays = () => (stars() ?? []).filter((row) => row.frozen).length;
+
+  return (
+    <section class="flex flex-col gap-3" aria-labelledby="daily-completion-heading">
+      <div class="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h3 id="daily-completion-heading" class="text-sm font-bold text-foreground">Daily completion</h3>
+          <p class="text-[10px] text-muted-foreground mt-1">Five completion signals per day. Frozen days use their saved snapshot; other days are calculated live.</p>
+        </div>
+        <A href="/settings" class="btn-ghost text-[11px]">Open learning settings</A>
+      </div>
+
+      <Show when={stars()} fallback={<div role="status" class="card p-4 text-xs text-muted-foreground">Loading daily completion…</div>}>
+        {(rows) => (
+          <>
+            <div class="grid grid-cols-3 gap-2">
+              <div class="card p-3">
+                <div class="text-[9px] uppercase tracking-wider text-muted-foreground">Average stars</div>
+                <div class="text-xl font-mono font-bold text-foreground">{average()}<span class="text-xs text-muted-foreground"> / 5</span></div>
+              </div>
+              <div class="card p-3">
+                <div class="text-[9px] uppercase tracking-wider text-muted-foreground">Full days</div>
+                <div class="text-xl font-mono font-bold text-foreground">{perfectDays()}<span class="text-xs text-muted-foreground"> / {rows().length}</span></div>
+              </div>
+              <div class="card p-3">
+                <div class="text-[9px] uppercase tracking-wider text-muted-foreground">Frozen</div>
+                <div class="text-xl font-mono font-bold text-foreground">{frozenDays()}<span class="text-xs text-muted-foreground"> / {rows().length}</span></div>
+              </div>
+            </div>
+
+            <div class="card p-3">
+              <div class="grid grid-cols-7 sm:grid-cols-10 lg:grid-cols-[repeat(15,minmax(0,1fr))] gap-1.5">
+                <For each={rows()}>
+                  {(day) => {
+                    const parts = STAR_PARTS.filter((part) => day[part.key]).map((part) => part.label);
+                    const label = `${shortDate(day.date)}: ${day.total} of 5 stars${parts.length ? `; earned: ${parts.join(', ')}` : '; no stars earned'}. ${day.frozen ? 'Frozen snapshot.' : 'Live calculation.'}`;
+                    return (
+                      <div role="img" class="min-w-0 rounded border border-border/70 px-1 py-1.5 text-center" title={label} aria-label={label}>
+                        <div class="flex justify-center gap-px" aria-hidden="true">
+                          <For each={STAR_PARTS}>{(part) =>
+                            <Star size={9} class={day[part.key] ? 'fill-amber-300 text-amber-300' : 'text-muted-foreground/40'} />
+                          }</For>
+                        </div>
+                        <div class="mt-1 text-[9px] leading-tight text-muted-foreground truncate">{day.date.slice(5)}</div>
+                        <div class="text-[9px] font-mono text-foreground">{day.total}/5</div>
+                      </div>
+                    );
+                  }}
+                </For>
+              </div>
+              <div class="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[9px] text-muted-foreground">
+                <For each={STAR_PARTS}>{(part) => <span class="inline-flex items-center gap-1"><Star size={9} />{part.label}</span>}</For>
+              </div>
+            </div>
+          </>
+        )}
+      </Show>
+    </section>
+  );
+}
 
 /** Stacked 1-5 bar — proportions of the rated completions for one axis value. */
 function ScoreBar(props: { score: ScoreDistribution }) {
@@ -231,6 +315,8 @@ export function BalanceMetrics() {
           </For>
         </div>
       </div>
+
+      <DailyCompletion days={days()} />
 
       <Show when={metrics()} fallback={<div role="status" class="card p-6 flex flex-col gap-3"><span class="sr-only">Loading metrics</span><Skeleton class="h-4 w-1/3" /><Skeleton class="h-20" /></div>}>
         {(m) => (

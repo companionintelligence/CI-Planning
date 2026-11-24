@@ -140,6 +140,7 @@ flowchart LR
   MetricsAPI --> Balance["Balance → Metrics tab"]
   TrialityAPI --> Balance
   CalAPI --> Settings["Settings → learning metrics"]
+  Stars --> Metrics["Balance → Metrics: daily completion history"]
   Stars --> Focus["Focus stars"]
   Stars --> Calendar["Calendar recap and heatmap"]
   Balance --> Agent["Task assistant metrics recap"]
