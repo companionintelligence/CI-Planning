@@ -4,6 +4,33 @@ import { defineConfig, devices } from "@playwright/test";
 // starts the built image, then runs this against http://localhost:8080.
 export default defineConfig({
   testDir: ".",
+  // Keep browser checks selectable by purpose. Container startup/auth modes are
+  // different fixtures, so CI and the local runner should invoke only the suite
+  // that matches the container currently under test.
+  projects: [
+    {
+      name: "smoke",
+      testMatch: ["headers.spec.ts", "service-worker.spec.ts", "screenshot.spec.ts"],
+    },
+    {
+      name: "auth-local",
+      testMatch: "login.spec.ts",
+      grep: /local username\/password login/,
+    },
+    {
+      name: "auth-portal",
+      testMatch: "login.spec.ts",
+      grep: /Companion Portal login \(fixture portal\)/,
+    },
+    {
+      name: "mobile",
+      testMatch: "mobile-compartments.spec.ts",
+    },
+    {
+      name: "accessibility",
+      testMatch: "accessibility.spec.ts",
+    },
+  ],
   timeout: 90_000,
   expect: { timeout: 15_000 },
   reporter: "list",

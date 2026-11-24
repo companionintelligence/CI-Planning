@@ -137,7 +137,7 @@ jobs:
       - name: Container screenshot + headers test
         run: |
           cd tests/container
-          APP_URL=http://localhost:8080 SCREENSHOT_PATH="$GITHUB_WORKSPACE/screenshot.png" npx playwright test
+          APP_URL=http://localhost:8080 SCREENSHOT_PATH="$GITHUB_WORKSPACE/screenshot.png" npx playwright test --project=smoke
 
       - name: Upload screenshot
         if: always()
@@ -186,22 +186,22 @@ jobs:
       - name: Login test (local username/password)
         run: |
           cd tests/container
-          LOGIN_SPEC=local LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL=http://localhost:8081 npx playwright test login.spec.ts
+          LOGIN_SPEC=local LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL=http://localhost:8081 npx playwright test --project=auth-local
 
       - name: Mobile surface compartment regression (430x900)
         run: |
           cd tests/container
-          LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL=http://localhost:8081 npx playwright test mobile-compartments.spec.ts
+          LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL=http://localhost:8081 npx playwright test --project=mobile
 
       - name: Accessibility regressions (axe, keyboard, motion, text scaling, touch targets)
         run: |
           cd tests/container
-          LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL=http://localhost:8081 npx playwright test accessibility.spec.ts
+          LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL=http://localhost:8081 npx playwright test --project=accessibility
 
       - name: Login test (Companion Portal flow against the fixture)
         run: |
           cd tests/container
-          LOGIN_SPEC=portal APP_URL=http://localhost:8082 npx playwright test login.spec.ts
+          LOGIN_SPEC=portal APP_URL=http://localhost:8082 npx playwright test --project=auth-portal
 
       - name: Container logs (on failure)
         if: failure()

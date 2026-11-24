@@ -75,16 +75,19 @@ cd "$HERE"
 status=0
 echo "▶ phase 1 — standalone: screenshot, service worker, security headers"
 APP_URL="http://localhost:$P_STANDALONE" SCREENSHOT_PATH="$TMP/screenshot.png" \
-  node_modules/.bin/playwright test --reporter=line || status=1
+  node_modules/.bin/playwright test --project=smoke --reporter=line || status=1
 echo "▶ phase 2a — local username/password login"
 LOGIN_SPEC=local LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL="http://localhost:$P_LOCAL" \
-  node_modules/.bin/playwright test login.spec.ts --reporter=line || status=1
+  node_modules/.bin/playwright test --project=auth-local --reporter=line || status=1
+echo "▶ phase 2a — mobile compartment regressions"
+LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL="http://localhost:$P_LOCAL" \
+  node_modules/.bin/playwright test --project=mobile --workers=1 --reporter=line || status=1
 echo "▶ phase 2a — accessibility regressions"
 LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL="http://localhost:$P_LOCAL" \
-  node_modules/.bin/playwright test mobile-compartments.spec.ts accessibility.spec.ts --workers=1 --reporter=line || status=1
+  node_modules/.bin/playwright test --project=accessibility --workers=1 --reporter=line || status=1
 echo "▶ phase 2b — Companion Portal login against the fixture portal"
 LOGIN_SPEC=portal APP_URL="http://localhost:$P_PORTAL" \
-  node_modules/.bin/playwright test login.spec.ts --reporter=line || status=1
+  node_modules/.bin/playwright test --project=auth-portal --reporter=line || status=1
 
 if [ "$status" = 0 ]; then echo "✔ container smoke gate passed"; else echo "✘ container smoke gate FAILED — logs in $TMP (kept)"; KEEP=1; fi
 exit $status

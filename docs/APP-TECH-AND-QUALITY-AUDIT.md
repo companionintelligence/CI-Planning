@@ -45,17 +45,18 @@ Repository counts are from a filename and test-call scan; they are a point-in-ti
 
 | Project / phase | Flow | Main cases | Gate |
 |---|---|---|---|
-| `smoke` | App boot and navigation | App shell, route health, console/page errors, responsive shell | Every pull request |
-| `auth` | Sign-in and session | Local login, portal login contract, logout/session expiry, signup/reset basic path | Pull request; fixture identities only |
-| `tasks` | Create → edit → complete → note | Task form validation, timestamped notes, task list collapse/expand, archive/restore | Pull request |
-| `planner` | Stage → schedule → inspect | Flight Plan selection, auto placement, adjacent tasks with no overlap, block edit/move, overlap-warning recovery, undo | Pull request; use deterministic seeded calendar data |
-| `objectives` | Objective → add task → parent update | Parent prefill, clear parent to top-level, direct task add, status/progress update | Pull request |
-| `agent` | Ask → clarify → review → confirm | Typed request, transcript review, proposal edit, confirm/edit/forget, tool failure and partial batch | Pull request with stubbed LLM; nightly one opt-in local-model scenario |
-| `metrics` | Write → recap | Complete task/time entry/rating; verify Balance and agent read-only recap reflect persisted values | Pull request with fixed clock/seed |
-| `responsive` | Core journeys at phone/tablet/desktop sizes | Modal bounds, keyboard viewport, no horizontal overflow, visible action targets, drawer and Planner interactions | Pull request on key flows; full viewport matrix nightly |
-| `integrations` | Google, push, external model paths | Contract-level request/response and explicit mocked failures | Nightly or integration environment; no live account dependencies in standard CI |
+| `smoke` (implemented) | App boot and delivery headers | App shell, service worker, CSP/security headers, screenshot | Every pull request |
+| `auth-local`, `auth-portal` (implemented) | Sign-in and session | Local credentials and fixture-backed Companion Portal login contracts | Pull request; fixture identities only |
+| `mobile`, `accessibility` (implemented) | Representative mobile and accessibility regressions | Mobile drawer/assistant bounds and context; axe, keyboard focus, reduced motion, larger text, touch targets | Pull request |
+| `tasks` (planned) | Create → edit → complete → note | Task form validation, timestamped notes, task list collapse/expand, archive/restore | Pull request |
+| `planner` (planned) | Stage → schedule → inspect | Flight Plan selection, auto placement, adjacent tasks with no overlap, block edit/move, overlap-warning recovery, undo | Pull request; use deterministic seeded calendar data |
+| `objectives` (planned) | Objective → add task → parent update | Parent prefill, clear parent to top-level, direct task add, status/progress update | Pull request |
+| `agent` (planned) | Ask → clarify → review → confirm | Typed request, transcript review, proposal edit, confirm/edit/forget, tool failure and partial batch | Pull request with stubbed LLM; nightly one opt-in local-model scenario |
+| `metrics` (planned) | Write → recap | Complete task/time entry/rating; verify Balance and agent read-only recap reflect persisted values | Pull request with fixed clock/seed |
+| `responsive` (planned expansion) | Core journeys at phone/tablet/desktop sizes | Modal bounds, keyboard viewport, no horizontal overflow, visible action targets, drawer and Planner interactions | Pull request on key flows; full viewport matrix nightly |
+| `integrations` (planned) | Google, push, external model paths | Contract-level request/response and explicit mocked failures | Nightly or integration environment; no live account dependencies in standard CI |
 
-Implementation sequence: (1) split the current container smoke suite into named Playwright projects and fixtures; (2) add deterministic owner/task/blocks API seed helpers and cleanup; (3) add task and Planner paths first because they cross the most layers; (4) add agent and metrics with mocked external providers; (5) run a focused mobile viewport matrix for every modal/drawer family; (6) publish screenshots and traces for failed CI cases. Use role/name locators and stable test IDs only where semantics are insufficient. Keep server rule tests in Vitest; use Playwright for browser behavior and cross-layer journeys rather than duplicating every edge case.
+Implementation sequence: (1) **complete:** split the existing container checks into named smoke, local-auth, portal-auth, mobile and accessibility projects; (2) next, add deterministic owner/task/block seed helpers and cleanup; (3) add task and Planner paths first because they cross the most layers; (4) add agent and metrics with mocked external providers; (5) run a focused mobile viewport matrix for every modal/drawer family; (6) publish screenshots and traces for failed CI cases. Use role/name locators and stable test IDs only where semantics are insufficient. Keep server rule tests in Vitest; use Playwright for browser behavior and cross-layer journeys rather than duplicating every edge case.
 
 ## 6. Front-end style audit and compartmentalization
 
@@ -89,6 +90,8 @@ Implementation sequence: (1) split the current container smoke suite into named 
 **Feature recipe status (2026-11-23):** `client/src/ui/recipes.css` documents the contracts and narrow-screen behavior for Planner action menus and modal form layouts. The Planner quick-action menu and Objective modal use those recipes: actions share alignment and hit-area rules, objective field pairs stack on mobile and form two columns at 40rem, and footer actions can share the available width on very narrow screens. Extend recipes by feature slice when adjacent controls are updated; keep content-specific visual states semantic on the control.
 
 **Accessibility regression status (2026-11-23):** `tests/container/accessibility.spec.ts` injects axe-core and checks Today/Planner, Tasks and the Appearance/accessibility settings card in light and dark themes, including WCAG color contrast. It also checks keyboard-visible focus, browser reduced-motion behavior, larger-text scaling, and minimum 44px targets for mobile navigation, More, and the task-assistant FAB. All three accessibility checks and the mobile compartment check passed in the local container smoke run. The scans wait for route entrance animation to finish so contrast is measured at stable opacity. The initial scan found light-theme contrast and Tasks tab semantics issues; the implementation now uses a higher-contrast muted token, puts filters outside the tablist, and labels the direction select. Other Settings sections and dialogs remain outside the axe gate. `axe-core` is test-only and does not ship in the app runtime.
+
+**Playwright segmentation status (2026-11-23):** `tests/container/playwright.config.ts` now defines named `smoke`, `auth-local`, `auth-portal`, `mobile` and `accessibility` projects. `tests/container/run-local.sh` and the container publish workflow select the project matching each app/auth fixture explicitly, avoiding unrelated and intentionally skipped specs in those phases. Package scripts expose the same project selectors for focused runs. The broader task, Planner, objective, agent and metrics journeys remain planned.
 
 ### Suggested web compartmentalization refactor
 
