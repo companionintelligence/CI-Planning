@@ -1,12 +1,11 @@
-import { createSignal, createMemo, onCleanup, onMount, For, Show } from 'solid-js';
-import { Portal } from 'solid-js/web';
+import { createSignal, createMemo, For, Show } from 'solid-js';
 import { X, Check } from 'lucide-solid';
 import { FocusSurface } from './FocusSurface.js';
 import { focusState } from '../lib/focus.js';
 import { PATTERN_COLORS, colorVar } from '../lib/pattern-meta.js';
 import { SESSION_MINUTES, FOCUS_STYLES } from '../lib/focus-appearance.js';
 import { focusAppearance, setFocusAppearance, prefs } from '../stores/index.js';
-import { ViewportOverlay } from './ViewportOverlay.js';
+import { ModalSheet } from '../ui/index.js';
 
 /**
  * FOCUS LAB — the pop-up behind the FOCUS header's tuner button.
@@ -41,26 +40,30 @@ export function FocusLab(props: {
   const previewTint = () =>
     appearance().colorToken ? colorVar(appearance().colorToken!) : (props.directionTint ?? 'var(--primary)');
 
-  // Escape closes, matching the ritual itself.
-  onMount(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); props.onClose(); } };
-    window.addEventListener('keydown', onKey);
-    onCleanup(() => window.removeEventListener('keydown', onKey));
-  });
-
   return (
-    <Portal>
-      <ViewportOverlay class="modal-backdrop" role="dialog" aria-label="Focus Lab" onClick={props.onClose}>
-        <div class="modal max-w-md" onClick={(e) => e.stopPropagation()}>
-          <div class="flex items-start justify-between gap-3 px-4 pt-4">
+    <ModalSheet
+      open={true}
+      title="Focus Lab"
+      ariaLabel="Focus Lab"
+      onClose={props.onClose}
+      class="max-w-md"
+      header={
+        <header class="flex flex-shrink-0 items-start justify-between gap-3 border-b border-border px-4 pb-3 pt-4">
             <div>
-              <div class="text-sm font-semibold text-foreground">Focus Lab</div>
+              <h2 class="text-sm font-semibold text-foreground">Focus Lab</h2>
               <div class="text-[11px] text-muted-foreground mt-0.5">
                 How long a “Start now” session runs, and what the timer is lit with. Neither changes the task.
               </div>
             </div>
-            <button class="btn-icon flex-shrink-0" onClick={props.onClose} title="Close (Esc)"><X size={16} /></button>
-          </div>
+            <button type="button" class="btn-icon flex-shrink-0" onClick={props.onClose} aria-label="Close Focus Lab"><X size={16} /></button>
+        </header>
+      }
+      footer={
+        <div class="flex justify-end px-4 pb-1">
+          <button type="button" class="btn-primary text-sm px-4 py-1.5" onClick={props.onClose}>Done</button>
+        </div>
+      }
+    >
 
           {/* Live preview — the style chosen in Settings, at a mid-block moment. */}
           <div class="px-4 pt-3">
@@ -142,12 +145,7 @@ export function FocusLab(props: {
             </div>
           </div>
 
-          <div class="px-4 pb-4 flex justify-end">
-            <button class="btn-primary text-sm px-4 py-1.5" onClick={props.onClose}>Done</button>
-          </div>
-        </div>
-      </ViewportOverlay>
-    </Portal>
+    </ModalSheet>
   );
 }
 

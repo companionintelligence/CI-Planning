@@ -89,6 +89,13 @@ test.describe('authenticated accessibility regressions', () => {
       await expectAxeClean(page, `Focus date picker (${theme})`, '[role="dialog"]');
       await page.keyboard.press('Escape');
       await expect(focusDateDialog).toHaveCount(0);
+      await page.getByRole('button', { name: /Focus Lab — session length and timer colour/ }).click();
+      const focusLabDialog = page.getByRole('dialog', { name: 'Focus Lab' });
+      await expect(focusLabDialog).toBeVisible();
+      await waitForFiniteAnimations(focusLabDialog);
+      await expectAxeClean(page, `Focus Lab (${theme})`, '[role="dialog"]');
+      await page.keyboard.press('Escape');
+      await expect(focusLabDialog).toHaveCount(0);
 
       for (const [path, label] of [
         ['/', 'Today / Planner'],

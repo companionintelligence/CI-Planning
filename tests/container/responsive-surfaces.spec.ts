@@ -89,6 +89,28 @@ test('Focus day picker stays in the short mobile viewport and restores focus', a
   await expect(opener).toBeFocused();
 });
 
+test('Focus Lab stays in the short mobile viewport and keeps its close action reachable', async ({ page }) => {
+  test.skip(!username || !password, 'requires an authenticated container with LOGIN_USER and LOGIN_PASS');
+  await signInLocal(page, url);
+  await page.setViewportSize({ width: 430, height: 560 });
+  await page.goto(`${url}/focus`, { waitUntil: 'domcontentloaded' });
+
+  const opener = page.getByRole('button', { name: /Focus Lab — session length and timer colour/ });
+  await expect(opener).toBeVisible();
+  await opener.click();
+  const lab = page.getByRole('dialog', { name: 'Focus Lab' });
+  await expect(lab).toBeVisible();
+  await expect(lab.getByRole('button', { name: 'Close Focus Lab' })).toBeFocused();
+  await expectWithinVisualViewport(page, lab);
+
+  await page.setViewportSize({ width: 430, height: 420 });
+  await expectWithinVisualViewport(page, lab);
+  await expect(lab.getByRole('button', { name: 'Done' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(lab).toHaveCount(0);
+  await expect(opener).toBeFocused();
+});
+
 test('overdue due-list dialog stays in the short mobile viewport and returns focus', async ({ page }, testInfo) => {
   test.skip(!username || !password, 'requires an authenticated container with LOGIN_USER and LOGIN_PASS');
   const data = new OwnerFixtures(page.request, testInfo.testId);
