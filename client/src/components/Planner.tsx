@@ -891,6 +891,11 @@ export function Planner(props: { taskLookup?: (id: string) => Task | undefined }
   // tap (which does NOT stop propagation) means "toggle done", not "add".
   function clickToCreate(e: PointerEvent) {
     if (updateMode()) return;
+    // Pointer-down can bubble from PlannerChip through Solid's delegated event layer
+    // even when the chip's drag handler stops propagation. Only the grid's actual
+    // empty surface should arm click-to-create; an item tap must never open the
+    // Add wizard over its detail card.
+    if (e.target !== e.currentTarget) return;
     const startX = e.clientX, startY = e.clientY;
     const onUp = (ev: PointerEvent) => {
       window.removeEventListener('pointerup', onUp);

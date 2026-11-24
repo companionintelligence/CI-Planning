@@ -115,3 +115,105 @@ test('Planner auto-schedules staged tasks around a meeting without overlap and s
     await data.cleanup();
   }
 });
+
+test('Planner time blocks can be edited and an overlap warning clears after moving a block', async ({ page }, testInfo) => {
+  test.skip(!username || !password, 'requires a local-login container with LOGIN_USER and LOGIN_PASS');
+  test.setTimeout(60_000);
+  page.setDefaultTimeout(10_000);
+  const data = new OwnerFixtures(page.request, testInfo.testId);
+
+  try {
+    await signInLocal(page, url);
+    const unique = `${testInfo.testId}-${Date.now()}`;
+    const day = await page.evaluate(() => {
+      const target = new Date();
+      target.setDate(target.getDate() + 2);
+      const year = target.getFullYear();
+      const month = target.getMonth();
+      const dayNumber = target.getDate();
+      const pad = (value: number) => String(value).padStart(2, '0');
+      const date = `${year}-${pad(month + 1)}-${pad(dayNumber)}`;
+      const iso = (hour: number, minute: number) => new Date(year, month, dayNumber, hour, minute).toISOString();
+      const start = new Date(year, month, dayNumber);
+      const nextDay = new Date(year, month, dayNumber + 1);
+      return {
+        date,
+        from: start.toISOString(),
+        to: nextDay.toISOString(),
+        firstStart: iso(13, 0),
+        secondStart: iso(13, 30),
+        movedStart: iso(14, 30),
+        containerStart: iso(17, 0),
+        containerEnd: iso(18, 0),
+      };
+    });
+
+    const firstTask = await data.createTask({ title: `E2E overlap first ${unique}`, estimated_minutes: 60 });
+    const secondTask = await data.createTask({ title: `E2E overlap second ${unique}`, estimated_minutes: 60 });
+    const firstBlock = await data.createBlock({
+      title: firstTask.title, task_id: firstTask.id, block_kind: 'task',
+      start_at: day.firstStart, end_at: new Date(Date.parse(day.firstStart) + 60 * 60_000).toISOString(),
+    });
+    await data.createBlock({
+      title: secondTask.title, task_id: secondTask.id, block_kind: 'task',
+      start_at: day.secondStart, end_at: new Date(Date.parse(day.secondStart) + 60 * 60_000).toISOString(),
+    });
+    const timeBlock = await data.createBlock({
+      title: `E2E editable block ${unique}`,
+      block_kind: 'timeblock', start_at: day.containerStart, end_at: day.containerEnd,
+    });
+
+    await page.goto(`${url}/`, { waitUntil: 'domcontentloaded' });
+    const dayPicker = page.getByTitle('Pick a day').locator('input[type="date"]');
+    await dayPicker.fill(day.date);
+    await expect(dayPicker).toHaveValue(day.date);
+    const detailsToggle = page.getByRole('button', { name: /details drawer/i }).first();
+    if (await detailsToggle.getAttribute('aria-expanded') === 'true') await detailsToggle.click();
+
+    const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const firstChip = page.getByTitle(new RegExp(`^${escapeRegExp(firstTask.title)} ·`));
+    const secondChip = page.getByTitle(new RegExp(`^${escapeRegExp(secondTask.title)} ·`));
+    await expect(firstChip).toBeVisible();
+    await expect(secondChip).toBeVisible();
+    await expect(firstChip.locator('svg.text-destructive'), 'an overlapping task shows its warning').toBeVisible();
+    await expect(secondChip.locator('svg.text-destructive')).toBeVisible();
+
+    await firstChip.click();
+    await expect(page.locator('.modal-backdrop')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Edit time', exact: true }).click();
+    await page.getByLabel('Start', { exact: true }).fill('14:30');
+    const saveButton = page.getByRole('button', { name: 'Save time', exact: true });
+    const moved = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/blocks/${firstBlock.id}`) && response.request().method() === 'PATCH');
+    await saveButton.click();
+    expect((await moved).ok()).toBe(true);
+    await expect(firstChip.locator('svg.text-destructive')).toHaveCount(0);
+    await expect(secondChip.locator('svg.text-destructive')).toHaveCount(0);
+    await page.getByTitle('Close (Esc)').click();
+
+    const range = new URLSearchParams({ from: day.from, to: day.to });
+    const blocksResponse = await page.request.get(`${url}/api/blocks?${range}`);
+    expect(blocksResponse.ok()).toBe(true);
+    const blocks = (await blocksResponse.json()).blocks as Array<{ id: string; start_at: string }>;
+    expect(Date.parse(blocks.find((block) => block.id === firstBlock.id)!.start_at)).toBe(Date.parse(day.movedStart));
+
+    // The outer Time-Block outline is deliberately pointer-transparent; its
+    // colored title label is the interactive surface and drag handle.
+    await page.locator('[class*="group/label"]').getByText(timeBlock.title, { exact: true }).click();
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    const titleInput = page.getByPlaceholder('Time block title…');
+    await expect(titleInput).toHaveValue(timeBlock.title);
+    const updatedTitle = `E2E renamed block ${unique}`;
+    await titleInput.fill(updatedTitle);
+    const renamed = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/blocks/${timeBlock.id}`) && response.request().method() === 'PATCH');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    expect((await renamed).ok()).toBe(true);
+
+    const persistedResponse = await page.request.get(`${url}/api/blocks?${range}`);
+    const persistedBlocks = (await persistedResponse.json()).blocks as Array<{ id: string; title: string }>;
+    expect(persistedBlocks.find((block) => block.id === timeBlock.id)?.title).toBe(updatedTitle);
+  } finally {
+    await data.cleanup();
+  }
+});
