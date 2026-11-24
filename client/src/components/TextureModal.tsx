@@ -1,8 +1,7 @@
 import { Show } from 'solid-js';
-import { X } from 'lucide-solid';
 import { ItemColorPicker } from './ItemColorPicker.js';
 import { colorVar } from '../lib/pattern-meta.js';
-import { ViewportOverlay } from './ViewportOverlay.js';
+import { ModalSheet } from '../ui/index.js';
 
 /**
  * Texture picker (0135) as a pop-up, plus the trigger pill that opens it.
@@ -29,6 +28,8 @@ export function TextureTrigger(props: {
       onClick={props.onOpen}
       class="inline-flex items-center gap-2 text-xs px-2.5 py-1 rounded-sm border border-border text-muted-foreground hover:text-foreground transition-colors"
       aria-haspopup="dialog"
+      aria-label={`Texture: ${props.enabled ? (props.colorToken ? 'On' : 'On · Auto') : 'Off'}`}
+      title="Choose texture and colour"
     >
       <Show
         when={props.enabled}
@@ -55,23 +56,15 @@ export function TextureModal(props: {
   onClose: () => void;
 }) {
   return (
-    <ViewportOverlay
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="texture-modal-title"
-      onClick={(e) => { if (e.target === e.currentTarget) props.onClose(); }}
-      onKeyDown={(e) => { if (e.key === 'Escape') props.onClose(); }}
+    <ModalSheet
+      open
+      title="Texture"
+      ariaLabel="Texture"
+      closeLabel="Close texture settings"
+      onClose={props.onClose}
+      class="max-w-xs"
     >
-      <div class="w-full max-w-xs rounded-lg border border-border bg-popover shadow-xl">
-        <div class="flex items-center justify-between px-4 py-3 border-b border-border">
-          <h2 id="texture-modal-title" class="text-sm font-semibold text-foreground">Texture</h2>
-          <button type="button" onClick={props.onClose} class="text-muted-foreground hover:text-foreground" aria-label="Close">
-            <X size={15} />
-          </button>
-        </div>
-
-        <div class="p-4 flex flex-col gap-3">
+        <div class="px-4 flex flex-col gap-3">
           <div class="flex items-center justify-between gap-3">
             <span class="text-xs text-muted-foreground">Show the striped texture</span>
             <button
@@ -108,7 +101,6 @@ export function TextureModal(props: {
             Done
           </button>
         </div>
-      </div>
-    </ViewportOverlay>
+    </ModalSheet>
   );
 }

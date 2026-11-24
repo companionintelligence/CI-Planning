@@ -392,7 +392,11 @@ export function ElementWizard() {
       if (calendarOpen() && !dayEl?.contains(t)) setCalendarOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (!open() || e.key !== 'Escape') return;
+      // The wizard listens at document level so its own popovers can dismiss, but
+      // nested viewport portals (Texture settings, for example) live outside this
+      // dialog in the DOM. Do not let this parent listener dismiss the wizard when
+      // Escape originates from the topmost portal.
+      if (!open() || e.key !== 'Escape' || !modalRoot?.contains(e.target as Node)) return;
       if (popover() || calendarOpen()) { setPopover(null); setCalendarOpen(false); }
       else close();
     };

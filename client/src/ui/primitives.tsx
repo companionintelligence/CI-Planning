@@ -214,6 +214,10 @@ export function ModalSheet(props: ModalSheetProps) {
     function keyDown(event: KeyboardEvent & { currentTarget: HTMLDivElement }) {
       if (event.key === 'Escape') {
         event.preventDefault();
+        // A sheet can sit above a larger application modal (for example, Texture
+        // settings above the ElementWizard). Keep Escape scoped to the topmost
+        // surface so global or parent dismissal handlers cannot close both.
+        event.stopPropagation();
         props.onClose();
         return;
       }

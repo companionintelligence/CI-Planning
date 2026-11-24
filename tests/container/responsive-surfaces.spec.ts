@@ -320,3 +320,33 @@ test('Automation choices stay within the short mobile viewport and restore focus
   await expect(dialog).toHaveCount(0);
   await expect(opener).toBeFocused();
 });
+
+test('Texture settings stay within the short mobile viewport and restore focus', async ({ page }) => {
+  test.skip(!username || !password, 'requires an authenticated container with LOGIN_USER and LOGIN_PASS');
+  await signInLocal(page, url);
+  await page.setViewportSize({ width: 430, height: 560 });
+  await page.goto(`${url}/tasks`, { waitUntil: 'domcontentloaded' });
+
+  const addTask = page.locator('button[title="Add to calendar"]');
+  await addTask.click();
+  const taskDialog = page.getByRole('dialog', { name: 'Add task' });
+  await expect(taskDialog).toBeVisible();
+  await taskDialog.getByPlaceholder('Task title…').fill('Texture viewport fixture');
+  const opener = taskDialog.getByRole('button', { name: /^Texture:/ });
+  await expect(opener).toBeVisible();
+  await opener.click();
+
+  const dialog = page.getByRole('dialog', { name: 'Texture' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Close texture settings' })).toBeFocused();
+  await expect(dialog.getByRole('button', { name: 'On', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Inherit' })).toBeVisible();
+  await expectWithinVisualViewport(page, dialog);
+
+  await page.setViewportSize({ width: 430, height: 420 });
+  await expectWithinVisualViewport(page, dialog);
+  await expect(dialog.getByRole('button', { name: 'Done' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(opener).toBeFocused();
+});

@@ -341,6 +341,35 @@ test.describe('authenticated accessibility regressions', () => {
     }
   });
 
+  test('Texture settings dialog passes axe in both themes', async ({ page }) => {
+    await signInLocal(page, url);
+    await page.addInitScript({ content: axe.source });
+    await page.setViewportSize({ width: 430, height: 560 });
+
+    for (const theme of ['light', 'dark'] as const) {
+      await page.goto(`${url}/settings?tab=preferences`, { waitUntil: 'domcontentloaded' });
+      await expect(page.locator('[data-app-shell]')).toBeVisible();
+      await page.getByLabel('Theme mode').selectOption(theme);
+      await expect.poll(async () => /\bdark\b/.test((await page.locator('html').getAttribute('class')) ?? ''))
+        .toBe(theme === 'dark');
+
+      await page.goto(`${url}/tasks`, { waitUntil: 'domcontentloaded' });
+      await page.locator('button[title="Add to calendar"]').click();
+      const taskDialog = page.getByRole('dialog', { name: 'Add task' });
+      await expect(taskDialog).toBeVisible();
+      await taskDialog.getByPlaceholder('Task title…').fill('Texture accessibility fixture');
+      await taskDialog.getByRole('button', { name: /^Texture:/ }).click();
+      const dialog = page.getByRole('dialog', { name: 'Texture' });
+      await expect(dialog).toBeVisible();
+      await waitForFiniteAnimations(dialog);
+      await expectAxeClean(page, `Texture settings dialog (${theme})`, '[role="dialog"]:has(h2)');
+      await page.keyboard.press('Escape');
+      await expect(dialog).toHaveCount(0);
+      await expect(taskDialog.getByRole('button', { name: /^Texture:/ })).toBeFocused();
+      await taskDialog.getByRole('button', { name: 'Close task form' }).click();
+    }
+  });
+
   test('mobile primary navigation and assistant button meet 44px touch targets', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await signInLocal(page, url);
