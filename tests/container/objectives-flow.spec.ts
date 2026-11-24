@@ -8,6 +8,7 @@ const password = process.env.LOGIN_PASS;
 interface ObjectiveNodeResponse {
   id: string;
   parent_id: string | null;
+  status: 'active' | 'paused' | 'done' | 'dropped';
   progress_cache: number | null;
   tasks: Array<{ id: string; title: string }>;
   children?: ObjectiveNodeResponse[];
@@ -50,7 +51,7 @@ test('Objective child creation can be reset to top level and directly receive a 
 
     const createdObjective = page.locator('.objective-header').filter({ hasText: childTitle }).locator('..');
     await expect(createdObjective).toBeVisible();
-    const taskTitle = `E2E direct objective task ${testInfo.testId}`;
+    const taskTitle = `E2E direct objective task ${testInfo.testId}-${Date.now()}`;
     await createdObjective.getByRole('button', { name: 'Add task to this objective', exact: true }).click();
     const taskInput = page.getByPlaceholder('Task name — Enter to add and edit');
     await taskInput.fill(taskTitle);
@@ -72,6 +73,37 @@ test('Objective child creation can be reset to top level and directly receive a 
     expect(persisted?.parent_id).toBeNull();
     expect(persisted?.tasks.some((entry) => entry.id === task.id && entry.title === taskTitle)).toBe(true);
     expect(persisted?.progress_cache, 'a linked open task initializes objective progress').not.toBeNull();
+
+    // Quick-add opens the full task editor so the user can review its fields. Close
+    // that editor to return to the objective, then complete the linked task in place.
+    await page.locator('.modal-backdrop .modal > div').first().locator('button.btn-icon').click();
+    const objectiveRow = page.locator('.objective-header').filter({ hasText: childTitle }).locator('..');
+    const taskUpdate = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/tasks/${task.id}`) && response.request().method() === 'PATCH', { timeout: 10_000 });
+    await objectiveRow.getByTitle('Mark done').click();
+    expect((await taskUpdate).ok()).toBe(true);
+    await expect(page.getByTitle('Skip — the task stays done')).toBeVisible();
+    await page.getByTitle('Skip — the task stays done').click();
+
+    const readObjective = async () => {
+      const response = await page.request.get(`${url}/api/objectives`);
+      expect(response.ok()).toBe(true);
+      const nodes = (await response.json()).objectives as ObjectiveNodeResponse[];
+      return flatten(nodes).find((objective) => objective.id === created.id);
+    };
+    await expect.poll(async () => (await readObjective())?.progress_cache).toBe(1);
+    await expect(objectiveRow.getByText('100% complete', { exact: true })).toBeVisible();
+
+    const objectiveEdit = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/objectives/${created.id}`) && response.request().method() === 'PATCH', { timeout: 10_000 });
+    await objectiveRow.locator('.objective-header').getByTitle('Edit').click();
+    await page.getByLabel('Status', { exact: true }).selectOption('paused');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    const statusResponse = await objectiveEdit;
+    expect(statusResponse.ok()).toBe(true);
+    expect(((await statusResponse.json()).objective as { status: string }).status).toBe('paused');
+    await expect.poll(async () => (await readObjective())?.status).toBe('paused');
+    await expect.poll(async () => (await readObjective())?.progress_cache).toBe(1);
   } finally {
     await data.cleanup();
   }
