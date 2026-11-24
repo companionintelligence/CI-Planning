@@ -24,7 +24,18 @@ async function expectAxeClean(page: Page, surface: string, rootSelector = 'body'
       id: violation.id,
       impact: violation.impact,
       help: violation.help,
-      nodes: violation.nodes.map((node) => ({ target: node.target, summary: node.failureSummary })),
+      nodes: violation.nodes.map((node) => {
+        const element = node.target.length ? document.querySelector(node.target[0]!) : null;
+        const style = element ? getComputedStyle(element) : null;
+        return {
+          target: node.target,
+          summary: node.failureSummary,
+          text: element?.textContent?.trim(),
+          html: element?.outerHTML,
+          color: style?.color,
+          background: style?.backgroundColor,
+        };
+      }),
     }));
   }, { tags: WCAG_TAGS, selector: rootSelector });
   expect(result, `axe WCAG violations on ${surface}`).toEqual([]);
