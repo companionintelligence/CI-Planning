@@ -117,7 +117,7 @@ export async function proposeDayReflow(owner: string, date: string): Promise<Ref
   const prefs = await store()
     .prepare(`SELECT min_break_minutes FROM scheduling_prefs WHERE owner_id = ?`)
     .get<{ min_break_minutes: number | null }>(owner);
-  const breakMs = (prefs?.min_break_minutes ?? 10) * MS_PER_MIN;
+  const breakMs = 0; // Reflow places work back-to-back; breaks are not reserved slots.
 
   const facts = await taskFacts(owner, movable.map((c) => c.task_id).filter((t): t is string => !!t));
   const NO_FACTS: TaskFacts = { priority: null, due_at: null, estimated_minutes: null };

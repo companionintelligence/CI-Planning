@@ -77,7 +77,7 @@ type BoolField =
 
 const DEFAULTS: SettingsForm = {
   auto_fill_workday: true,
-  max_focus_block_minutes: 90, min_break_minutes: 10,
+  max_focus_block_minutes: 90, min_break_minutes: 3,
   max_time_block_minutes: 240, min_time_block_minutes: 15,
   default_time_block_minutes: 60,
   plan_allday_always: false, plan_daylong_for_promoted: false, plan_autofill_gaps: true,
@@ -273,7 +273,7 @@ export function Settings() {
     setForm({
       auto_fill_workday:          p.auto_fill_workday ?? true,
       max_focus_block_minutes:    p.max_focus_block_minutes ?? 90,
-      min_break_minutes:          p.min_break_minutes ?? 10,
+      min_break_minutes:          p.min_break_minutes ?? 3,
       max_time_block_minutes:     p.max_time_block_minutes ?? 240,
       min_time_block_minutes:     p.min_time_block_minutes ?? 15,
       default_time_block_minutes: p.default_time_block_minutes ?? 60,

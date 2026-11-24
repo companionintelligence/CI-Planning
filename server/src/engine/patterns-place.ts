@@ -278,7 +278,7 @@ export async function placePatternOnDay(
     const obsEndMs = hasPins ? Math.max(...windows.map((w) => w.endMs), dayEndMs) : Math.max(...windows.map((w) => w.endMs));
     const fixed = await dayObstacles(owner, obsStartMs, obsEndMs, { excludeBlockId: parentBlockId });
 
-    const breakMs = (prefs?.min_break_minutes ?? 10) * MS_PER_MIN;
+    const breakMs = 0; // Pattern placement does not insert gaps between tasks.
     const maxFocusMs = Math.max((prefs?.max_focus_block_minutes ?? 90) * MS_PER_MIN, MIN_SESSION_MS);
     const gaps = windows.flatMap((w) => buildGaps(w.startMs, w.endMs, fixed, breakMs));
 

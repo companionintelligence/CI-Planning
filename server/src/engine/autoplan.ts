@@ -453,7 +453,7 @@ async function placeIntoWindow(
   if (opts.notBeforeMs != null) windowStartMs = Math.max(windowStartMs, opts.notBeforeMs);
   if (windowEndMs <= windowStartMs || tasks.length === 0) return { blocksCreated: 0, placedTaskIds };
 
-  const breakMs = (prefs?.min_break_minutes ?? 10) * MS_PER_MIN;
+  const breakMs = 0; // Auto packs tasks back-to-back; configured breaks are not placement gaps.
   const maxFocusMs = Math.max((prefs?.max_focus_block_minutes ?? 90) * MS_PER_MIN, MIN_SESSION_MS);
   const fixed = await dayObstacles(owner, windowStartMs, windowEndMs, {
     includePlans: opts.includePlans,
@@ -631,7 +631,7 @@ async function pinTaskAt(
   }
 
   const durMs = Math.max((t.estimated_minutes ?? prefs?.default_time_block_minutes ?? 60) * MS_PER_MIN, MIN_SESSION_MS);
-  const breakMs = (prefs?.min_break_minutes ?? 10) * MS_PER_MIN;
+  const breakMs = 0;
   const create = async (startMs: number): Promise<boolean> => {
     const startAt = new Date(startMs).toISOString();
     const endAt = new Date(startMs + durMs).toISOString();
@@ -1622,7 +1622,7 @@ async function placeStartAnchoredTaskUnlocked(
   const nowMs = opts.nowMs ?? Date.now();
   const notBeforeMs = date === localDateInTZ(new Date(nowMs).toISOString(), tz) ? nowMs : null;
   const durMs = Math.max((task.estimated_minutes ?? prefs?.default_time_block_minutes ?? 60) * MS_PER_MIN, MIN_SESSION_MS);
-  const breakMs = (prefs?.min_break_minutes ?? 10) * MS_PER_MIN;
+  const breakMs = 0;
 
   const create = async (startMs: number, endMs: number): Promise<StartAnchoredOutcome> => {
     if (await placementConflicts(owner, startMs, endMs)) return { placed: false, reason: 'day_full' };

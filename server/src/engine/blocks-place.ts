@@ -55,7 +55,7 @@ export function placeTasksInBlock(owner: string, blockId: string, taskIds: strin
     const prefs = await store()
       .prepare(`SELECT min_break_minutes, max_focus_block_minutes FROM scheduling_prefs WHERE owner_id = ?`)
       .get<PrefsRow>(owner);
-    const breakMs = (prefs?.min_break_minutes ?? 10) * MS_PER_MIN;
+    const breakMs = 0; // Task placement fills consecutive available time.
     const maxFocusMs = Math.max((prefs?.max_focus_block_minutes ?? 90) * MS_PER_MIN, MIN_SESSION_MS);
 
     // Tasks already inside this block — never double-add the same task.
