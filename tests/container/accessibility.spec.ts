@@ -64,6 +64,7 @@ test.describe('authenticated accessibility regressions', () => {
       await expect.poll(async () => /\bdark\b/.test((await page.locator('html').getAttribute('class')) ?? ''))
         .toBe(theme === 'dark');
       await expectAxeClean(page, `Appearance settings (${theme})`, '[data-testid="appearance-accessibility-settings"]');
+      await expectAxeClean(page, `Preferences settings (${theme})`);
       await page.getByRole('tab', { name: 'Profile', exact: true }).click();
       await expect(page.getByRole('tab', { name: 'Profile', exact: true })).toHaveAttribute('aria-selected', 'true');
       await expectAxeClean(page, `Profile settings (${theme})`);
