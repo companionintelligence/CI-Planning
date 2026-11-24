@@ -5,7 +5,7 @@ import { patternTypes, refetchPatternTypes, showToast } from '../stores/index.js
 import { ShapeIcon } from './ShapeIcon.js';
 import { ItemColorPicker } from './ItemColorPicker.js';
 import { colorVar } from '../lib/pattern-meta.js';
-import { ViewportOverlay } from './ViewportOverlay.js';
+import { ModalSheet } from '../ui/index.js';
 
 /**
  * PatternTypeManager (#391) — the first UI for the pattern-type CRUD
@@ -49,14 +49,21 @@ export function PatternTypeManager(props: { onClose: () => void }) {
   };
 
   return (
-    <ViewportOverlay class="modal-backdrop" onClick={props.onClose}>
-      <div class="modal max-w-md" onClick={(e) => e.stopPropagation()}>
-        <div class="px-4 py-3 border-b border-border flex items-center justify-between">
-          <span class="text-sm font-semibold text-foreground">Pattern types</span>
-          <button class="btn-icon" aria-label="Close" onClick={props.onClose}><X size={15} /></button>
-        </div>
+    <ModalSheet
+      open={true}
+      title="Pattern types"
+      ariaLabel="Pattern types"
+      onClose={props.onClose}
+      class="max-w-md"
+      header={
+        <header class="flex flex-shrink-0 items-center justify-between gap-2 border-b border-border px-4 py-3">
+          <h2 class="text-sm font-semibold text-foreground">Pattern types</h2>
+          <button type="button" class="btn-icon" aria-label="Close dialog" onClick={props.onClose}><X size={15} /></button>
+        </header>
+      }
+    >
 
-        <div class="p-4 flex flex-col gap-2 max-h-[70vh] overflow-auto">
+        <div class="px-4 pb-4 flex flex-col gap-2">
           <For each={patternTypes() ?? []}>
             {(t) => (
               <div class="rounded-lg border border-border bg-card px-3 py-2 flex flex-col gap-2">
@@ -107,7 +114,6 @@ export function PatternTypeManager(props: { onClose: () => void }) {
             </div>
           </Show>
         </div>
-      </div>
-    </ViewportOverlay>
+    </ModalSheet>
   );
 }

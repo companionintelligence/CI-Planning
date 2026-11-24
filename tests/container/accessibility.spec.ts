@@ -88,6 +88,14 @@ test.describe('authenticated accessibility regressions', () => {
       await page.goto(`${url}/calendar`, { waitUntil: 'domcontentloaded' });
       await expect(page.getByRole('group', { name: 'Calendar quick actions' })).toBeVisible();
       await expectAxeClean(page, `Calendar view (${theme})`);
+      await page.goto(`${url}/tasks?tab=routines`, { waitUntil: 'domcontentloaded' });
+      await page.getByRole('button', { name: 'Manage types' }).click();
+      const patternTypesDialog = page.getByRole('dialog', { name: 'Pattern types' });
+      await expect(patternTypesDialog).toBeVisible();
+      await waitForFiniteAnimations(patternTypesDialog);
+      await expectAxeClean(page, `Pattern types dialog (${theme})`, '[role="dialog"]');
+      await page.keyboard.press('Escape');
+      await expect(patternTypesDialog).toHaveCount(0);
       await page.goto(`${url}/focus`, { waitUntil: 'domcontentloaded' });
       await page.getByRole('button', { name: 'Choose Focus day' }).click();
       const focusDateDialog = page.getByRole('dialog', { name: 'Choose Focus day' });

@@ -111,6 +111,27 @@ test('Focus Lab stays in the short mobile viewport and keeps its close action re
   await expect(opener).toBeFocused();
 });
 
+test('Pattern type manager stays in the short mobile viewport and restores its opener', async ({ page }) => {
+  test.skip(!username || !password, 'requires an authenticated container with LOGIN_USER and LOGIN_PASS');
+  await signInLocal(page, url);
+  await page.setViewportSize({ width: 430, height: 560 });
+  await page.goto(`${url}/tasks?tab=routines`, { waitUntil: 'domcontentloaded' });
+
+  const opener = page.getByRole('button', { name: 'Manage types' });
+  await expect(opener).toBeVisible();
+  await opener.click();
+  const manager = page.getByRole('dialog', { name: 'Pattern types' });
+  await expect(manager).toBeVisible();
+  await expect(manager.getByRole('button', { name: 'Close dialog' })).toBeFocused();
+  await expectWithinVisualViewport(page, manager);
+
+  await page.setViewportSize({ width: 430, height: 420 });
+  await expectWithinVisualViewport(page, manager);
+  await page.keyboard.press('Escape');
+  await expect(manager).toHaveCount(0);
+  await expect(opener).toBeFocused();
+});
+
 test('overdue due-list dialog stays in the short mobile viewport and returns focus', async ({ page }, testInfo) => {
   test.skip(!username || !password, 'requires an authenticated container with LOGIN_USER and LOGIN_PASS');
   const data = new OwnerFixtures(page.request, testInfo.testId);
