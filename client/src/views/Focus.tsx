@@ -1,7 +1,7 @@
 import { createSignal, createMemo, createResource, createEffect, Show, For, onCleanup } from 'solid-js';
 import { setActiveTask } from '../stores/selection.js';
 import { revealDetails } from '../stores/ui.js';
-import { ChevronDown, ChevronRight, Crosshair, Play, Check, RotateCcw, NotebookPen, SlidersHorizontal, CalendarDays } from 'lucide-solid';
+import { ChevronDown, ChevronRight, ChevronLeft, Crosshair, Play, Check, RotateCcw, NotebookPen, SlidersHorizontal, CalendarDays, X } from 'lucide-solid';
 import { FocusRitual } from '../components/FocusRitual.js';
 import { FocusLab } from '../components/FocusLab.js';
 import { FocusReminders } from '../components/FocusReminders.js';
@@ -22,6 +22,7 @@ import { SectionAddTask } from '../components/SectionAddTask.js';
 import { DayReflowBanner } from '../components/DayReflowBanner.js';
 import { blockColorVar } from '../lib/textures.js';
 import { categoryPrefs, conflictedBlockIds } from '../stores/index.js';
+import { ViewportOverlay } from '../components/ViewportOverlay.js';
 
 function taskNeedsApproval(task?: Task): boolean {
   return !!task?.auto_generated && !task.human_approved_at;
@@ -75,6 +76,19 @@ interface Entry {
 export function Focus() {
   const viewDay = () => selectedDay();
   const isToday = () => viewDay() === localISODate();
+  const [datePickerOpen, setDatePickerOpen] = createSignal(false);
+  const [pickerMonth, setPickerMonth] = createSignal(new Date(`${viewDay()}T12:00:00`));
+  const [pickerDay, setPickerDay] = createSignal(viewDay());
+  const monthLabel = () => pickerMonth().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const monthDays = () => {
+    const month = pickerMonth();
+    const first = new Date(month.getFullYear(), month.getMonth(), 1, 12);
+    const offset = first.getDay();
+    const count = new Date(month.getFullYear(), month.getMonth() + 1, 0, 12).getDate();
+    return [...Array(offset).fill(null), ...Array.from({ length: count }, (_, i) => i + 1)];
+  };
+  const dateKey = (day: number) => `${pickerMonth().getFullYear()}-${String(pickerMonth().getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  function openDatePicker() { setPickerDay(viewDay()); setPickerMonth(new Date(`${viewDay()}T12:00:00`)); setDatePickerOpen(true); }
 
   const [now, setNow] = createSignal(Date.now());
   const tick = setInterval(() => setNow(Date.now()), 30_000);
@@ -450,10 +464,9 @@ export function Focus() {
           </p>
         </div>
         <div class="view-actions">
-          <label class="btn-icon relative cursor-pointer flex-shrink-0" title="Choose Focus day" aria-label="Choose Focus day">
+          <button class="btn-icon flex-shrink-0" title="Choose Focus day" aria-label="Choose Focus day" onClick={openDatePicker}>
             <CalendarDays size={16} />
-            <input type="date" class="absolute inset-0 opacity-0 cursor-pointer w-full h-full" aria-label="Focus day" value={viewDay()} onInput={(event) => event.currentTarget.value && setSelectedDay(event.currentTarget.value)} />
-          </label>
+          </button>
           <Show when={!isToday()}><button class="btn-ghost text-xs" onClick={() => setSelectedDay(localISODate())}>Today</button></Show>
           <BriefMenu date={viewDay()} />
           <FocusMenu date={viewDay()} />
@@ -476,6 +489,31 @@ export function Focus() {
           </button>
         </div>
       </div>
+      <Show when={datePickerOpen()}>
+        <ViewportOverlay class="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 p-4" onClick={(e) => { if (e.target === e.currentTarget) setDatePickerOpen(false); }}>
+          <section class="w-full max-w-sm rounded-2xl border border-border bg-card p-4 shadow-2xl" role="dialog" aria-modal="true" aria-label="Choose Focus day">
+            <header class="mb-4 flex items-center justify-between gap-2">
+              <button class="btn-icon" aria-label="Previous month" onClick={() => setPickerMonth(new Date(pickerMonth().getFullYear(), pickerMonth().getMonth() - 1, 1, 12))}><ChevronLeft size={18}/></button>
+              <h2 class="flex-1 text-center text-lg font-semibold text-foreground">{monthLabel()}</h2>
+              <button class="btn-icon" aria-label="Next month" onClick={() => setPickerMonth(new Date(pickerMonth().getFullYear(), pickerMonth().getMonth() + 1, 1, 12))}><ChevronRight size={18}/></button>
+              <button class="btn-icon" aria-label="Close calendar" onClick={() => setDatePickerOpen(false)}><X size={16}/></button>
+            </header>
+            <div class="mb-1 grid grid-cols-7 text-center text-xs font-semibold uppercase text-muted-foreground">
+              <For each={['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']}>{(day) => <div class="py-2">{day}</div>}</For>
+            </div>
+            <div class="grid grid-cols-7 gap-1">
+              <For each={monthDays()}>{(day) => day === null
+                ? <div aria-hidden="true" />
+                : <button type="button" class={`aspect-square rounded-full text-sm transition-colors hover:bg-primary/15 ${pickerDay() === dateKey(day) ? 'bg-primary text-primary-foreground font-semibold' : 'text-foreground'}`} aria-label={new Date(`${dateKey(day)}T12:00:00`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} aria-pressed={pickerDay() === dateKey(day)} onClick={() => setPickerDay(dateKey(day))}>{day}</button>}
+              </For>
+            </div>
+            <footer class="mt-4 flex items-center justify-between border-t border-border pt-3">
+              <button class="btn-ghost" onClick={() => setPickerDay(localISODate())}>Today</button>
+              <div class="flex gap-2"><button class="btn-ghost" onClick={() => setDatePickerOpen(false)}>Cancel</button><button class="btn-primary" onClick={() => { setSelectedDay(pickerDay()); setDatePickerOpen(false); }}>Choose day</button></div>
+            </footer>
+          </section>
+        </ViewportOverlay>
+      </Show>
 
       {/* Inline day-note editor + display (the Today idiom — no modal). */}
       <Show when={editingNote()}>
