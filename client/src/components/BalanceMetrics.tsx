@@ -3,6 +3,7 @@ import { TrendingUp, TrendingDown, Minus, Star } from 'lucide-solid';
 import { A } from '@solidjs/router';
 import { addDays, localISODate, shortDate } from '../lib/dates.js';
 import { api, type AxisMetrics, type DayStar, type MetricsGroup, type ScoreDistribution } from '../lib/api.js';
+import { Card, EmptyState, Toolbar } from '../ui/index.js';
 import { TrialityMetricsTiles } from './TrialityMetricsTiles.js';
 import { Skeleton } from './Skeleton.js';
 
@@ -67,25 +68,25 @@ function DailyCompletion(props: { days: number }) {
         <A href="/settings" class="btn-ghost text-[11px]">Open learning settings</A>
       </div>
 
-      <Show when={stars()} fallback={<div role="status" class="card p-4 text-xs text-muted-foreground">Loading daily completion…</div>}>
+      <Show when={stars()} fallback={<Card class="p-4 text-xs text-muted-foreground" role="status">Loading daily completion…</Card>}>
         {(rows) => (
           <>
             <div class="grid grid-cols-3 gap-2">
-              <div class="card p-3">
+              <Card class="p-3">
                 <div class="text-[9px] uppercase tracking-wider text-muted-foreground">Average stars</div>
                 <div class="text-xl font-mono font-bold text-foreground">{average()}<span class="text-xs text-muted-foreground"> / 5</span></div>
-              </div>
-              <div class="card p-3">
+              </Card>
+              <Card class="p-3">
                 <div class="text-[9px] uppercase tracking-wider text-muted-foreground">Full days</div>
                 <div class="text-xl font-mono font-bold text-foreground">{perfectDays()}<span class="text-xs text-muted-foreground"> / {rows().length}</span></div>
-              </div>
-              <div class="card p-3">
+              </Card>
+              <Card class="p-3">
                 <div class="text-[9px] uppercase tracking-wider text-muted-foreground">Frozen</div>
                 <div class="text-xl font-mono font-bold text-foreground">{frozenDays()}<span class="text-xs text-muted-foreground"> / {rows().length}</span></div>
-              </div>
+              </Card>
             </div>
 
-            <div class="card p-3">
+            <Card class="p-3">
               <div class="grid grid-cols-7 sm:grid-cols-10 lg:grid-cols-[repeat(15,minmax(0,1fr))] gap-1.5">
                 <For each={rows()}>
                   {(day) => {
@@ -108,7 +109,7 @@ function DailyCompletion(props: { days: number }) {
               <div class="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[9px] text-muted-foreground">
                 <For each={STAR_PARTS}>{(part) => <span class="inline-flex items-center gap-1"><Star size={9} />{part.label}</span>}</For>
               </div>
-            </div>
+            </Card>
           </>
         )}
       </Show>
@@ -162,7 +163,7 @@ function AxisCard(props: { m: AxisMetrics }) {
   // we show nothing rather than a number the user would over-read.
   const bias = () => props.m.estimateBias;
   return (
-    <div class="card p-4 flex flex-col gap-3">
+    <Card class="p-4 flex flex-col gap-3">
       <div class="flex items-baseline justify-between gap-2">
         <h4 class="text-sm font-bold text-foreground capitalize truncate">{props.m.name}</h4>
         <span class="text-[10px] text-muted-foreground font-mono flex-shrink-0">
@@ -201,7 +202,7 @@ function AxisCard(props: { m: AxisMetrics }) {
       </div>
 
       <ScoreBar score={props.m.score} />
-    </div>
+    </Card>
   );
 }
 
@@ -218,30 +219,30 @@ function GroupSection(props: { group: MetricsGroup; label: string }) {
         {/* Totals — computed server-side from the unjoined task set, NOT by summing
             the axes below (a task can carry 0 or 3 categories). */}
         <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-          <div class="card p-4">
+          <Card class="p-4">
             <div class="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Completed</div>
             <div class="text-2xl font-mono font-extrabold text-foreground">{g().totals.completed}</div>
-          </div>
-          <div class="card p-4">
+          </Card>
+          <Card class="p-4">
             <div class="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Still open</div>
             <div class="text-2xl font-mono font-extrabold text-foreground">{g().totals.open}</div>
-          </div>
+          </Card>
           {/* Scheduled, then given up on. Kept out of both Completed and Still open —
               it is neither, and folding it into either would overstate that number. */}
-          <div class="card p-4">
+          <Card class="p-4">
             <div class="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Cancelled</div>
             <div class="text-2xl font-mono font-extrabold text-foreground">{g().totals.cancelled}</div>
             <div class="text-[10px] text-muted-foreground mt-1">scheduled, not done</div>
-          </div>
-          <div class="card p-4">
+          </Card>
+          <Card class="p-4">
             <div class="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Time tracked</div>
             <div class="text-2xl font-mono font-extrabold text-foreground">{fmtHours(g().totals.actualMinutes)}</div>
-          </div>
-          <div class="card p-4">
+          </Card>
+          <Card class="p-4">
             <div class="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Rated</div>
             <div class="text-2xl font-mono font-extrabold text-foreground">{g().totals.score.samples}</div>
             <div class="mt-1.5"><ScoreBar score={g().totals.score} /></div>
-          </div>
+          </Card>
         </div>
       </div>
 
@@ -249,7 +250,7 @@ function GroupSection(props: { group: MetricsGroup; label: string }) {
         <h4 class="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Work · Home · Community</h4>
         <Show
           when={g().directions.length > 0}
-          fallback={<div class="card p-5 text-xs text-muted-foreground">Nothing carries a direction yet — the Auto-tag button on Tasks fills these in.</div>}
+          fallback={<EmptyState title="No direction data yet" description="Nothing carries a direction yet — the Auto-tag button on Tasks fills these in." class="p-5" />}
         >
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <For each={g().directions}>{(d) => <AxisCard m={d} />}</For>
@@ -261,7 +262,7 @@ function GroupSection(props: { group: MetricsGroup; label: string }) {
         <h4 class="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Life priorities</h4>
         <Show
           when={g().categories.length > 0}
-          fallback={<div class="card p-5 text-xs text-muted-foreground">Nothing carries a category yet — set them in the Add/Edit wizard.</div>}
+          fallback={<EmptyState title="No category data yet" description="Nothing carries a category yet — set them in the Add/Edit wizard." class="p-5" />}
         >
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <For each={g().categories}>{(c) => <AxisCard m={c} />}</For>
@@ -299,11 +300,12 @@ export function BalanceMetrics() {
               which is what puts it in the same period as the completions beside it. */}
           Completions, cancellations and tracked time over the last {days()} days. Open counts are current, not windowed.
         </p>
-        <div class="inline-flex rounded-lg border border-border overflow-hidden text-[11px] flex-shrink-0">
+        <Toolbar label="Metrics date range" class="inline-flex rounded-lg border border-border overflow-hidden text-[11px] flex-shrink-0">
           <For each={WINDOWS}>
             {(w) => (
               <button
                 type="button"
+                aria-pressed={days() === w}
                 onClick={() => setDays(w)}
                 class="px-2.5 py-1 transition-colors"
                 classList={{
@@ -313,12 +315,12 @@ export function BalanceMetrics() {
               >{w}d</button>
             )}
           </For>
-        </div>
+        </Toolbar>
       </div>
 
       <DailyCompletion days={days()} />
 
-      <Show when={metrics()} fallback={<div role="status" class="card p-6 flex flex-col gap-3"><span class="sr-only">Loading metrics</span><Skeleton class="h-4 w-1/3" /><Skeleton class="h-20" /></div>}>
+      <Show when={metrics()} fallback={<Card role="status" class="p-6 flex flex-col gap-3"><span class="sr-only">Loading metrics</span><Skeleton class="h-4 w-1/3" /><Skeleton class="h-20" /></Card>}>
         {(m) => (
           <>
             <GroupSection group={m()} label="Tasks" />
@@ -341,12 +343,10 @@ export function BalanceMetrics() {
         <Show
           when={points().length >= 2}
           fallback={
-            <div class="card p-5 text-xs text-muted-foreground">
-              Not enough history yet. Each nightly calibration adds a reading; the trend appears once there are two.
-            </div>
+            <EmptyState title="Not enough estimate history yet" description="Each nightly calibration adds a reading; the trend appears once there are two." class="p-5" />
           }
         >
-          <div class="card p-5 flex flex-col gap-3">
+          <Card class="p-5 flex flex-col gap-3">
             <div class="flex items-baseline gap-3">
               <span class="text-2xl font-mono font-extrabold text-foreground">{last()!.toFixed(2)}×</span>
               <span class="text-xs text-muted-foreground">
@@ -379,7 +379,7 @@ export function BalanceMetrics() {
             <div class="text-[10px] text-muted-foreground">
               Median actual ÷ estimated per nightly reading. The dashed line is a perfect estimate; above it you run long.
             </div>
-          </div>
+          </Card>
         </Show>
       </div>
 

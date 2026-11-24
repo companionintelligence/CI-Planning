@@ -1,5 +1,5 @@
 import { For, Show, createSignal } from 'solid-js';
-import { ViewHeader } from '../components/ViewHeader.js';
+import { PageHeader } from '../ui/index.js';
 import { setActiveEntity } from '../stores/selection.js';
 import { revealDetails } from '../stores/ui.js';
 import { A } from '@solidjs/router';
@@ -71,12 +71,12 @@ export function Balance() {
 
   return (
     <div class="view-container page-enter">
-      <ViewHeader
+      <PageHeader
         title="Life Balance"
         sub="How your current satisfaction lines up with what you say matters most, and your target weekly focus."
       >
         <A href="/priorities" class="btn-secondary"><Edit class="w-4 h-4 mr-1.5" /> Priorities Wizard</A>
-      </ViewHeader>
+      </PageHeader>
 
       {/* Tabs — Balance is what you SAY matters (satisfaction vs importance); Metrics is
           what actually happened (completions, tracked time, mood, estimation drift). */}

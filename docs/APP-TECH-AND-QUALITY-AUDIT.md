@@ -78,6 +78,8 @@ Implementation sequence: (1) split the current container smoke suite into named 
 | Medium | Utility class strings encode component-specific spacing, typography, and states directly in JSX, so related controls can drift during iterative mobile fixes. | Adopt feature-level style recipes for recurring elements, e.g. Planner card actions and modal field grids. Document component contracts and responsive variants beside the shared primitive. |
 | Medium | Contrast and touch-target quality cannot be fully judged from one screenshot or source scan; the app has custom light/dark tokens, but per-state accessibility needs automated checks. | Add axe checks to representative browser flows and verify keyboard focus, reduced-motion, text scaling, 44px touch targets and contrast in both themes. |
 
+**Implementation status (2026-11-23):** `client/src/ui/` now provides shared PageHeader, Toolbar, Card, Modal/Sheet, FormField, EmptyState, ActionMenu and DataList primitives. Balance Metrics is the first migrated slice, using the shared header, control group, cards and empty states. Existing components in other features are intentionally left for later vertical-slice migrations; the primitives are a foundation, not a claim that all 144 components have already been migrated.
+
 ### Suggested web compartmentalization refactor
 
 1. Keep domain boundaries in `views/` and `components/`; do not split solely by file size.
