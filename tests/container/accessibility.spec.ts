@@ -82,6 +82,9 @@ test.describe('authenticated accessibility regressions', () => {
       }
 
       await page.goto(`${url}/focus`, { waitUntil: 'domcontentloaded' });
+      await expect(page.getByRole('heading', { name: 'Focus' })).toBeVisible();
+      await expect(page.getByRole('group', { name: 'Focus actions' })).toBeVisible();
+      await expectAxeClean(page, `Focus view (${theme})`);
       await page.getByRole('button', { name: 'Choose Focus day' }).click();
       const focusDateDialog = page.getByRole('dialog', { name: 'Choose Focus day' });
       await expect(focusDateDialog).toBeVisible();

@@ -4,7 +4,7 @@ import { ViewportOverlay } from '../components/ViewportOverlay.js';
 type SharedClass = { class?: string; children?: JSX.Element };
 
 /** Canonical page title, supporting copy and right-aligned actions for route views. */
-export function PageHeader(props: { title: string; sub?: JSX.Element | string; children?: JSX.Element }) {
+export function PageHeader(props: { title: JSX.Element | string; sub?: JSX.Element | string; children?: JSX.Element }) {
   return (
     <header class="view-head">
       <div class="min-w-0">

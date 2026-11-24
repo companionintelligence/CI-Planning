@@ -22,7 +22,7 @@ import { SectionAddTask } from '../components/SectionAddTask.js';
 import { DayReflowBanner } from '../components/DayReflowBanner.js';
 import { blockColorVar } from '../lib/textures.js';
 import { categoryPrefs, conflictedBlockIds } from '../stores/index.js';
-import { ModalSheet } from '../ui/index.js';
+import { ModalSheet, PageHeader, Toolbar } from '../ui/index.js';
 
 function taskNeedsApproval(task?: Task): boolean {
   return !!task?.auto_generated && !task.human_approved_at;
@@ -453,16 +453,11 @@ export function Focus() {
   return (
     <div class="view-container page-enter">
       {/* Date selection changes the tasks, blocks, and note in this view. */}
-      <div class="view-head">
-        <div class="min-w-0">
-          <h1 class="view-title flex items-center gap-2">
-            <Crosshair size={18} class="text-accent-hi" /> Focus
-          </h1>
-          <p class="view-sub">
-            {new Date(`${viewDay()}T12:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
-          </p>
-        </div>
-        <div class="view-actions">
+      <PageHeader
+        title={<><Crosshair size={18} class="text-accent-hi" /> Focus</>}
+        sub={new Date(`${viewDay()}T12:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+      >
+        <Toolbar label="Focus actions">
           <button class="btn-icon flex-shrink-0" title="Choose Focus day" aria-label="Choose Focus day" onClick={openDatePicker}>
             <CalendarDays size={16} />
           </button>
@@ -486,8 +481,8 @@ export function Focus() {
           >
             <NotebookPen size={16} fill={note() ? 'currentColor' : 'none'} />
           </button>
-        </div>
-      </div>
+        </Toolbar>
+      </PageHeader>
       <Show when={datePickerOpen()}>
         <ModalSheet
           open={datePickerOpen()}
