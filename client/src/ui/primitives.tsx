@@ -183,6 +183,7 @@ export interface ModalSheetProps {
   title: string;
   onClose: () => void;
   children?: JSX.Element;
+  footer?: JSX.Element;
   mode?: 'modal' | 'sheet';
   class?: string;
   closeLabel?: string;
@@ -198,7 +199,8 @@ export function ModalSheet(props: ModalSheetProps) {
       previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       queueMicrotask(() => {
         if (!dialog) return;
-        const first = dialog.querySelector<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])');
+        const first = dialog.querySelector<HTMLElement>('[autofocus]')
+          ?? dialog.querySelector<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])');
         (first ?? dialog).focus();
       });
     });
@@ -238,6 +240,9 @@ export function ModalSheet(props: ModalSheetProps) {
             <button type="button" class="btn-icon" aria-label={props.closeLabel ?? 'Close dialog'} onClick={props.onClose}>×</button>
           </header>
           <div class="min-h-0 flex-1 overflow-y-auto py-3">{props.children}</div>
+          <Show when={props.footer}>
+            <footer class="flex-shrink-0 border-t border-border pt-3">{props.footer}</footer>
+          </Show>
         </div>
       </ViewportOverlay>
     );

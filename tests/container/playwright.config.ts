@@ -31,6 +31,10 @@ export default defineConfig({
       testMatch: "planner-flow.spec.ts",
     },
     {
+      name: "objectives",
+      testMatch: "objectives-flow.spec.ts",
+    },
+    {
       name: "mobile",
       testMatch: "mobile-compartments.spec.ts",
     },

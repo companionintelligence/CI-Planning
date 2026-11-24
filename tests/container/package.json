@@ -8,6 +8,7 @@
     "test:auth:portal": "playwright test --project=auth-portal",
     "test:tasks": "playwright test --project=tasks",
     "test:planner": "playwright test --project=planner",
+    "test:objectives": "playwright test --project=objectives",
     "test:mobile": "playwright test --project=mobile",
     "test:accessibility": "playwright test --project=accessibility"
   },

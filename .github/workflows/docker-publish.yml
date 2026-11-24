@@ -199,6 +199,11 @@ jobs:
           cd tests/container
           LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL=http://localhost:8081 npx playwright test --project=planner --workers=1
 
+      - name: Objective parent reset and direct task creation
+        run: |
+          cd tests/container
+          LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL=http://localhost:8081 npx playwright test --project=objectives --workers=1
+
       - name: Mobile surface compartment regression (430x900)
         run: |
           cd tests/container

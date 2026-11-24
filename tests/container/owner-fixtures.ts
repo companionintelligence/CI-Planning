@@ -71,6 +71,10 @@ interface BlockResponse {
   block: { id: string; title: string; start_at: string; end_at: string };
 }
 
+interface ObjectiveResponse {
+  objective: { id: string; title: string; parent_id: string | null };
+}
+
 /**
  * Request-scoped test data for the currently authenticated owner. Every row is
  * created through the same REST APIs as the app, and only IDs created by this
@@ -80,6 +84,7 @@ export class OwnerFixtures {
   private readonly taskIds: string[] = [];
   private readonly blockIds: string[] = [];
   private readonly stagedTaskIds: string[] = [];
+  private readonly objectiveIds: string[] = [];
   private owner?: OwnerResponse;
   private taskNumber = 0;
   private blockNumber = 0;
@@ -108,8 +113,28 @@ export class OwnerFixtures {
     if (!response.ok()) throw new Error(`Could not seed task (${response.status()}): ${await response.text()}`);
     const task = (await response.json() as TaskResponse).task;
     if (!task?.id) throw new Error('POST /api/tasks did not return a task ID.');
-    this.taskIds.push(task.id);
+    this.trackTask(task.id);
     return task;
+  }
+
+  trackTask(id: string): void {
+    if (!this.taskIds.includes(id)) this.taskIds.push(id);
+  }
+
+  async createObjective(title: string, parentId: string | null = null): Promise<ObjectiveResponse['objective']> {
+    await this.currentOwner();
+    const response = await this.request.post(`${this.baseUrl}/api/objectives`, {
+      data: { title, parent_id: parentId, status: 'active', horizon: 'none', cadence: 'none' },
+    });
+    if (!response.ok()) throw new Error(`Could not seed objective (${response.status()}): ${await response.text()}`);
+    const objective = (await response.json() as ObjectiveResponse).objective;
+    if (!objective?.id) throw new Error('POST /api/objectives did not return an objective ID.');
+    this.trackObjective(objective.id);
+    return objective;
+  }
+
+  trackObjective(id: string): void {
+    if (!this.objectiveIds.includes(id)) this.objectiveIds.push(id);
   }
 
   async createBlock(input: Partial<SeedBlockInput> & Pick<SeedBlockInput, 'start_at' | 'end_at'>): Promise<BlockResponse['block']> {
@@ -155,6 +180,12 @@ export class OwnerFixtures {
       const response = await this.request.delete(`${this.baseUrl}/api/tasks/${encodeURIComponent(id)}`);
       if (!response.ok() && response.status() !== 404) {
         throw new Error(`Could not clean up seeded task ${id} (${response.status()}).`);
+      }
+    }
+    for (const id of [...this.objectiveIds].reverse()) {
+      const response = await this.request.delete(`${this.baseUrl}/api/objectives/${encodeURIComponent(id)}`);
+      if (!response.ok() && response.status() !== 404) {
+        throw new Error(`Could not archive seeded objective ${id} (${response.status()}).`);
       }
     }
   }

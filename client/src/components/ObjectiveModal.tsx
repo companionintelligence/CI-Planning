@@ -1,9 +1,8 @@
-import { createSignal, createResource, For } from 'solid-js';
-import { X } from 'lucide-solid';
+import { createSignal, createResource, createEffect, For } from 'solid-js';
 import { api, type Objective, type ObjectiveInput } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
+import { FormField, ModalSheet } from '../ui/index.js';
 import { ItemColorPicker } from './ItemColorPicker.js';
-import { ViewportOverlay } from './ViewportOverlay.js';
 
 /** Flatten the objectives tree into indented rows for the parent picker.
  *  AF-CU2: deliberately NOT the shared lib/objectives.ts `flattenObjectives`
@@ -77,6 +76,19 @@ export function ObjectiveModal(props: Props) {
   const [tree] = createResource(() => api.objectives.list().then((r) => r.objectives));
   const excluded = () => (props.objective ? subtreeIds(props.objective) : new Set<string>());
   const parentOptions = () => flattenForParentPicker(tree() ?? []).filter((o) => !excluded().has(o.id));
+  let parentSelect: HTMLSelectElement | undefined;
+
+  // The modal's objective tree loads asynchronously. A select value set before its
+  // matching option exists is discarded by the browser, so reapply the prefilled
+  // parent once the options arrive.
+  createEffect(() => {
+    const selectedParent = parentId();
+    const hasSelectedOption = parentOptions().some((option) => option.id === selectedParent);
+    const select = parentSelect;
+    if (selectedParent && hasSelectedOption && select && select.value !== selectedParent) {
+      select.value = selectedParent;
+    }
+  });
 
   function humanizeSaveError(msg: string): string { return msg; }
 
@@ -109,103 +121,69 @@ export function ObjectiveModal(props: Props) {
   }
 
   return (
-    <ViewportOverlay class="modal-backdrop" onClick={props.onClose}>
-      <div class="modal max-w-lg" onClick={(e) => e.stopPropagation()}>
-        {/* Header */}
-        <div class="px-4 py-3 border-b border-border flex items-center justify-between">
-          <span class="text-sm font-semibold text-foreground">
-            {isEdit() ? 'Edit Objective' : 'New Objective'}
-          </span>
-          <button class="btn-icon" onClick={props.onClose}><X size={15} /></button>
+    <ModalSheet
+      open
+      title={isEdit() ? 'Edit Objective' : 'New Objective'}
+      onClose={props.onClose}
+      mode="sheet"
+      class="!max-w-lg rounded-t-3xl sm:rounded-sm"
+      footer={
+        <div class="modal-form-footer px-4 pb-1">
+          <button type="button" class="btn-ghost text-sm px-3 py-1.5" onClick={props.onClose}>Cancel</button>
+          <button type="button" class="btn-primary text-sm px-4 py-1.5" onClick={save} disabled={saving()}>
+            {saving() ? 'Saving…' : isEdit() ? 'Save' : 'Create'}
+          </button>
         </div>
+      }
+    >
+      <div class="modal-form-fields px-4">
+        <FormField label="Title" required class="modal-form-field">
+          {(control) => <input {...control} autofocus class="input text-sm" placeholder="What do you want to achieve?" value={title()} onInput={(e) => setTitle(e.currentTarget.value)} onKeyDown={(e) => { if (e.key === 'Enter') save(); }} />}
+        </FormField>
 
-        {/* Body */}
-        <div class="modal-form-fields p-4">
-          <label class="modal-form-field">
-            <span class="text-[11px] text-muted-foreground">Title *</span>
-            <input
-              autofocus
-              class="input text-sm"
-              placeholder="What do you want to achieve?"
-              value={title()}
-              onInput={(e) => setTitle(e.currentTarget.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') save(); }}
-            />
-          </label>
+        <FormField label="Description" class="modal-form-field">
+          {(control) => <textarea {...control} class="input text-sm resize-none" rows={2} placeholder="Optional notes…" value={description()} onInput={(e) => setDescription(e.currentTarget.value)} />}
+        </FormField>
 
-          <label class="modal-form-field">
-            <span class="text-[11px] text-muted-foreground">Description</span>
-            <textarea
-              class="input text-sm resize-none"
-              rows={2}
-              placeholder="Optional notes…"
-              value={description()}
-              onInput={(e) => setDescription(e.currentTarget.value)}
-            />
-          </label>
-
-          {/* §N: nest under a project / goal (or leave top-level). Grouping happens here. */}
-          <label class="modal-form-field">
-            <span class="text-[11px] text-muted-foreground">Parent</span>
-            <select class="input text-sm" value={parentId()} onChange={(e) => setParentId(e.currentTarget.value)}>
+        {/* §N: nest under a project / goal (or leave top-level). Grouping happens here. */}
+        <FormField label="Parent" class="modal-form-field">
+          {(control) => (
+            <select ref={parentSelect} {...control} class="input text-sm" value={parentId()} onChange={(e) => setParentId(e.currentTarget.value)}>
               <option value="">None (top-level)</option>
               <For each={parentOptions()}>
                 {(o) => <option value={o.id} disabled={o.has_tasks}>{`${'  '.repeat(o.depth)}${o.title} · ${o.level}${o.has_tasks ? ' — has tasks' : ''}`}</option>}
               </For>
             </select>
-          </label>
+          )}
+        </FormField>
 
-          <div class="modal-form-grid">
-            <label class="modal-form-field">
-              <span class="text-[11px] text-muted-foreground">Horizon</span>
-              <select class="input text-sm" value={horizon()} onChange={(e) => setHorizon(e.currentTarget.value)}>
-                {HORIZONS.map((h) => <option value={h.value}>{h.label}</option>)}
-              </select>
-            </label>
+        <div class="modal-form-grid">
+          <FormField label="Horizon" class="modal-form-field">
+            {(control) => <select {...control} class="input text-sm" value={horizon()} onChange={(e) => setHorizon(e.currentTarget.value)}>{HORIZONS.map((h) => <option value={h.value}>{h.label}</option>)}</select>}
+          </FormField>
 
-            <label class="modal-form-field">
-              <span class="text-[11px] text-muted-foreground">Cadence push</span>
-              <select class="input text-sm" value={cadence()} onChange={(e) => setCadence(e.currentTarget.value)}>
-                {CADENCES.map((c) => <option value={c.value}>{c.label}</option>)}
-              </select>
-            </label>
-          </div>
-
-          <div class="modal-form-grid">
-            <label class="modal-form-field">
-              <span class="text-[11px] text-muted-foreground">Status</span>
-              <select class="input text-sm" value={status()} onChange={(e) => setStatus(e.currentTarget.value)}>
-                {STATUSES.map((s) => <option value={s.value}>{s.label}</option>)}
-              </select>
-            </label>
-
-            <label class="modal-form-field">
-              <span class="text-[11px] text-muted-foreground">Target date (soft)</span>
-              <input
-                type="date"
-                class="input text-sm"
-                value={targetDate()}
-                onInput={(e) => setTargetDate(e.currentTarget.value)}
-              />
-            </label>
-          </div>
-
-          {/* #391: the objective's identity colour — shown on the Objectives tab and
-              (once both land) the Planner accent. Inherit = the stable hash colour. */}
-          <div class="modal-form-field">
-            <span class="text-[11px] text-muted-foreground">Color</span>
-            <ItemColorPicker value={colorToken()} onChange={setColorToken} inheritLabel="Automatic (stable per-objective colour)" />
-          </div>
+          <FormField label="Cadence push" class="modal-form-field">
+            {(control) => <select {...control} class="input text-sm" value={cadence()} onChange={(e) => setCadence(e.currentTarget.value)}>{CADENCES.map((c) => <option value={c.value}>{c.label}</option>)}</select>}
+          </FormField>
         </div>
 
-        {/* Footer */}
-        <div class="modal-form-footer px-4 py-3 border-t border-border">
-          <button class="btn-ghost text-sm px-3 py-1.5" onClick={props.onClose}>Cancel</button>
-          <button class="btn-primary text-sm px-4 py-1.5" onClick={save} disabled={saving()}>
-            {saving() ? 'Saving…' : isEdit() ? 'Save' : 'Create'}
-          </button>
+        <div class="modal-form-grid">
+          <FormField label="Status" class="modal-form-field">
+            {(control) => <select {...control} class="input text-sm" value={status()} onChange={(e) => setStatus(e.currentTarget.value)}>{STATUSES.map((s) => <option value={s.value}>{s.label}</option>)}</select>}
+          </FormField>
+
+          <FormField label="Target date (soft)" class="modal-form-field">
+            {(control) => <input {...control} type="date" class="input text-sm" value={targetDate()} onInput={(e) => setTargetDate(e.currentTarget.value)} />}
+          </FormField>
+        </div>
+
+        {/* #391: the objective's identity colour — shown on the Objectives tab and
+            (once both land) the Planner accent. Inherit = the stable hash colour. */}
+        <div class="modal-form-field">
+          <span class="text-[11px] text-muted-foreground">Color</span>
+          <ItemColorPicker value={colorToken()} onChange={setColorToken} inheritLabel="Automatic (stable per-objective colour)" />
         </div>
       </div>
-    </ViewportOverlay>
+    </ModalSheet>
   );
 }
