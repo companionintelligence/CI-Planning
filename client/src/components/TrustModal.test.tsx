@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, fireEvent, screen } from '@solidjs/testing-library';
+import { render, fireEvent, screen, within, waitFor } from '@solidjs/testing-library';
 import { TrustTrigger, TrustModal, TRUST_OPTIONS, trustLabel } from './TrustModal.js';
 
 /**
@@ -66,13 +66,23 @@ describe('the modal', () => {
 
   it('closes on the backdrop and on the close button, but not on a click inside', () => {
     const props = setup();
-    fireEvent.click(screen.getByLabelText('Close'));
+    const dialog = screen.getByRole('dialog', { name: 'Automation' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close dialog' }));
     expect(props.onClose).toHaveBeenCalledTimes(1);
     // A click on the panel itself must not fall through to the backdrop handler.
     fireEvent.click(screen.getByText('Balanced').closest('button')!);
     expect(props.onClose).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByRole('dialog'));
+    fireEvent.click(dialog.parentElement!);
     expect(props.onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives focus to the dialog and closes it with Escape', async () => {
+    const props = setup();
+    const dialog = screen.getByRole('dialog', { name: 'Automation' });
+    const close = within(dialog).getByRole('button', { name: 'Close dialog' });
+    await waitFor(() => expect(document.activeElement).toBe(close));
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    expect(props.onClose).toHaveBeenCalledTimes(1);
   });
 
   it('disables the options while a save is in flight', () => {

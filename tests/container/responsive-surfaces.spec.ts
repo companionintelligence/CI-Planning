@@ -292,3 +292,31 @@ test('day reflow dialog stays within the short mobile viewport and restores focu
     await scenario.cleanup();
   }
 });
+
+test('Automation choices stay within the short mobile viewport and restore focus', async ({ page }) => {
+  test.skip(!username || !password, 'requires an authenticated container with LOGIN_USER and LOGIN_PASS');
+  await signInLocal(page, url);
+  await page.setViewportSize({ width: 430, height: 560 });
+  await page.goto(`${url}/`, { waitUntil: 'domcontentloaded' });
+
+  const opener = page.locator('button[aria-haspopup="dialog"][aria-label^="Automation level:"]');
+  await expect(opener).toBeVisible();
+  await opener.click();
+  const dialog = page.getByRole('dialog', { name: 'Automation' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Close dialog' })).toBeFocused();
+  await expect(dialog.getByRole('button', { name: /Cautious/ })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: /Balanced/ })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: /Hands-off/ })).toBeVisible();
+  await expectWithinVisualViewport(page, dialog);
+
+  await page.setViewportSize({ width: 430, height: 420 });
+  await expectWithinVisualViewport(page, dialog);
+  const handsOff = dialog.getByRole('button', { name: /Hands-off/ });
+  await handsOff.scrollIntoViewIfNeeded();
+  await expect(handsOff).toBeInViewport();
+  await expect(dialog.getByRole('button', { name: 'Close dialog' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(opener).toBeFocused();
+});
