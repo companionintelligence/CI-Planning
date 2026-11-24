@@ -152,6 +152,26 @@ export async function dayObstacles(
     .map((r) => ({ start: Date.parse(r.start_at), end: Date.parse(r.end_at) }));
 }
 
+/** Last-moment guard for an engine proposal; includes live tasks, meetings, locks and
+ * optionally Plan containers using the same obstacle rules as the gap builder. */
+export async function placementConflicts(
+  owner: string,
+  startMs: number,
+  endMs: number,
+  opts: { includePlans?: boolean; excludeBlockId?: string | null } = {},
+): Promise<boolean> {
+  const row = await store().prepare(
+    `SELECT 1 AS hit FROM time_blocks
+      WHERE owner_id = ? AND start_at < ? AND end_at > ?
+        AND id <> COALESCE(?, '')
+        AND (is_locked = 1 OR block_kind = 'meeting'
+          OR (block_kind = 'task' AND status NOT IN ('completed','skipped','cancelled'))
+          OR (? = 1 AND ${PLACED_TIMEBLOCK_SQL}))
+      LIMIT 1`,
+  ).get(owner, new Date(endMs).toISOString(), new Date(startMs).toISOString(), opts.excludeBlockId ?? null, opts.includePlans ? 1 : 0);
+  return !!row;
+}
+
 /** Carve the workday into free windows between fixed events, with a break after each. */
 export function buildGaps(
   dayStart: number,

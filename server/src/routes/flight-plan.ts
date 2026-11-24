@@ -6,6 +6,7 @@ import { localISODate } from '../lib/dates.js';
 import { writeAudit } from '../lib/audit.js'; // still used by the fill/priority/undo endpoints below
 import { listFlightPlan, stage, updateEntry, unstageEntry, resetFlightPlan } from '../services/flight-plan.js';
 import { autoRun } from '../services/engine-ops.js';
+import { withPlacementLock } from '../engine/placement-lock.js';
 
 /**
  * The flight-plan (Phase G, G4): a persisted, owner-scoped staging area + the
@@ -110,7 +111,9 @@ export function flightPlanRouter() {
   // highest-priority still-unplaced tasks. Never silent — always an explicit tap.
   router.post('/api/auto/priority', async (ctx) => {
     const body = (ctx.request.body ?? {}) as { date?: string };
-    const result = await fillByPriority(currentOwnerId(), { date: body.date });
+    const owner = currentOwnerId();
+    const date = body.date ?? localISODate();
+    const result = await withPlacementLock(owner, date, () => fillByPriority(owner, { date }));
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'run', entity: 'flight-plan:priority' });
     ctx.body = { result, flight_plan: await listFlightPlan(currentOwnerId()) };
   });
