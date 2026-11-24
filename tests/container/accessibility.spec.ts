@@ -52,6 +52,13 @@ test.describe('authenticated accessibility regressions', () => {
         await page.goto(`${url}${path}`, { waitUntil: 'domcontentloaded' });
         await expect(page.locator('[data-app-shell]')).toBeVisible();
         await expectAxeClean(page, `${label} (${theme})`);
+        if (label === 'Today / Planner') {
+          const detailsToggle = page.getByRole('button', { name: /details drawer/i }).first();
+          if (await detailsToggle.getAttribute('aria-expanded') !== 'true') await detailsToggle.click();
+          await page.getByRole('tab', { name: 'Flight Plan' }).click();
+          await expect(page.getByRole('region', { name: 'Flight Plan', exact: true })).toBeVisible();
+          await expectAxeClean(page, `Flight Plan drawer (${theme})`);
+        }
       }
     }
   });

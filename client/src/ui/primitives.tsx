@@ -19,13 +19,19 @@ export function PageHeader(props: { title: string; sub?: JSX.Element | string; c
 /** Shared bordered surface. Keep layout in the feature via `class`; the surface tokens live in `.card`. */
 export function Card(props: SharedClass & {
   title?: string;
+  label?: string;
   description?: JSX.Element | string;
   actions?: JSX.Element;
   role?: 'status' | 'alert';
 }) {
   const titleId = createUniqueId();
   return (
-    <section class={`card ${props.class ?? ''}`} role={props.role} aria-labelledby={props.title ? titleId : undefined}>
+    <section
+      class={`card ${props.class ?? ''}`}
+      role={props.role}
+      aria-labelledby={props.title ? titleId : undefined}
+      aria-label={!props.title ? props.label : undefined}
+    >
       <Show when={props.title || props.description || props.actions}>
         <header class="flex flex-wrap items-start justify-between gap-2">
           <div class="min-w-0">

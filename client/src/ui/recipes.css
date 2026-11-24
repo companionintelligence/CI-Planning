@@ -6,6 +6,8 @@
  *   Keep individual buttons semantic (primary, undo, danger) and use
  *   planner-actions-menu__action for shared hit area/alignment. The confirmation row is
  *   compact and inline at every width; the dismiss control is icon-only.
+ * - flight-plan-header-actions keeps the fill-order and staging actions grouped while
+ *   allowing them to wrap within the mobile sheet without squeezing the title.
  * - modal-form-fields owns vertical rhythm inside a modal body. modal-form-field aligns
  *   a label and control. modal-form-grid stacks fields on narrow screens and uses two
  *   equal columns once there is room. modal-form-footer keeps actions reachable and
@@ -49,6 +51,16 @@
   min-height: 2rem;
   align-items: center;
   justify-content: center;
+}
+
+.flight-plan-header-actions {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
 }
 
 .modal-form-fields {

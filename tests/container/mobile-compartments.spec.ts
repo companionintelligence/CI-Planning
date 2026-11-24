@@ -20,6 +20,9 @@ test('mobile details, Flight Plan, and assistant switch as viewport-bounded surf
   await expect(page.getByRole('tab', { name: 'Flight Plan' })).toBeVisible();
   await page.getByRole('tab', { name: 'Flight Plan' }).click();
   await expect(page.getByRole('tab', { name: 'Flight Plan' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('region', { name: 'Flight Plan', exact: true })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Flight Plan actions' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Flight Plan is empty' })).toBeVisible();
 
   const bounds = await details.boundingBox();
   expect(bounds).not.toBeNull();
