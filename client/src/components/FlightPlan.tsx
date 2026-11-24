@@ -401,17 +401,17 @@ export function FlightPlan() {
             <button
               onClick={() => setFillOrder('priority')}
               class="px-2 py-0.5 transition-colors"
-              classList={{ 'bg-primary text-primary-foreground': fillOrder() === 'priority', 'text-foreground': fillOrder() !== 'priority' }}
+              classList={{ 'bg-primary text-primary-foreground': fillOrder() === 'priority', 'text-primary': fillOrder() !== 'priority' }}
             >Priority</button>
             <button
               onClick={() => setFillOrder('overdue')}
               class="px-2 py-0.5 transition-colors"
-              classList={{ 'bg-primary text-primary-foreground': fillOrder() === 'overdue', 'text-foreground': fillOrder() !== 'overdue' }}
+              classList={{ 'bg-primary text-primary-foreground': fillOrder() === 'overdue', 'text-primary': fillOrder() !== 'overdue' }}
             >Due Date</button>
             <button
               onClick={() => setFillOrder('new_today')}
               class="px-2 py-0.5 transition-colors"
-              classList={{ 'bg-primary text-primary-foreground': fillOrder() === 'new_today', 'text-foreground': fillOrder() !== 'new_today' }}
+              classList={{ 'bg-primary text-primary-foreground': fillOrder() === 'new_today', 'text-primary': fillOrder() !== 'new_today' }}
             >New Today</button>
           </div>
 
@@ -423,7 +423,7 @@ export function FlightPlan() {
               <button
                 onClick={runFill}
                 disabled={running()}
-                class="flight-plan-action inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-sm border border-border text-foreground hover:border-foreground/40 transition-colors disabled:opacity-40 flex-shrink-0"
+                class="flight-plan-action inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-sm border border-border text-primary hover:border-foreground/40 transition-colors disabled:opacity-40 flex-shrink-0"
                 title="Propose open tasks into the flight-plan (never places anything)"
               >
                 <Zap size={11} classList={{ 'animate-pulse': running() }} /> Fill Plan
@@ -433,7 +433,7 @@ export function FlightPlan() {
             <button
               onClick={reset}
               disabled={running()}
-              class="flight-plan-action inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-sm border border-border text-foreground hover:border-destructive/50 hover:text-destructive transition-colors disabled:opacity-40 flex-shrink-0"
+              class="flight-plan-action inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-sm border border-border text-primary hover:border-destructive/50 hover:text-destructive transition-colors disabled:opacity-40 flex-shrink-0"
               title="Clear all tasks from the flight-plan"
             >
               <Trash2 size={11} /> Clear Plan
@@ -455,11 +455,11 @@ export function FlightPlan() {
         <div class="flex items-center px-3 py-1.5 border-b border-border">
           <div class="flex rounded-md border border-border overflow-hidden text-[11px]">
             <button
-              class={`px-2.5 py-1 ${tab() === 'plan' ? 'bg-primary text-primary-foreground' : 'text-foreground'}`}
+              class={`px-2.5 py-1 ${tab() === 'plan' ? 'bg-primary text-primary-foreground' : 'text-primary'}`}
               onClick={() => setTab('plan')}
             >Plan</button>
             <button
-              class={`px-2.5 py-1 ${tab() === 'saved' ? 'bg-primary text-primary-foreground' : 'text-foreground'}`}
+              class={`px-2.5 py-1 ${tab() === 'saved' ? 'bg-primary text-primary-foreground' : 'text-primary'}`}
               onClick={() => setTab('saved')}
             >Saved blocks</button>
           </div>
@@ -505,7 +505,7 @@ export function FlightPlan() {
                       <button
                         type="button"
                         onClick={() => stageSuggestion(suggestion)}
-                        class="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-sm border border-border text-foreground hover:border-foreground/40 transition-colors flex-shrink-0"
+                        class="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-sm border border-border text-primary hover:border-foreground/40 transition-colors flex-shrink-0"
                         title="Add this suggestion to the Flight Plan; scheduling remains a separate action"
                       ><Plus size={10} /> Add</button>
                     </li>
@@ -565,7 +565,7 @@ export function FlightPlan() {
                       <Show when={t.estimated_minutes}><span class="text-[11px] font-mono text-muted-foreground flex-shrink-0">{t.estimated_minutes}m</span></Show>
                       <button
                         onClick={() => stageFromBacklog(t)}
-                        class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-sm border border-border text-foreground hover:border-foreground/40 transition-colors flex-shrink-0"
+                        class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-sm border border-border text-primary hover:border-foreground/40 transition-colors flex-shrink-0"
                         title="Stage this task in the flight-plan"
                       ><Plus size={11} /> Add</button>
                     </li>
