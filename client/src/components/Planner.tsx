@@ -401,8 +401,8 @@ function ContainerOutline(props: { block: Block; day: string; state: () => AxisS
       {/* Resize handles live in the task region (right of the label) so they don't
           fight the label's move-drag. */}
       <Show when={!locked()}>
-        <div class="absolute top-0 z-10 cursor-ns-resize pointer-events-auto" style={{ left: `${CAT_WIDTH_PX}px`, right: '0', height: `${HANDLE_PX}px` }} onPointerDown={(ev) => startGesture('resize-top', ev)} />
-        <div class="absolute bottom-0 z-10 cursor-ns-resize pointer-events-auto" style={{ left: `${CAT_WIDTH_PX}px`, right: '0', height: `${HANDLE_PX}px` }} onPointerDown={(ev) => startGesture('resize-bottom', ev)} />
+        <div class="absolute top-0 right-0 z-10 cursor-ns-resize pointer-events-auto" style={{ left: `${CAT_WIDTH_PX}px`, height: `${HANDLE_PX}px` }} onPointerDown={(ev) => startGesture('resize-top', ev)} />
+        <div class="absolute bottom-0 right-0 z-10 cursor-ns-resize pointer-events-auto" style={{ left: `${CAT_WIDTH_PX}px`, height: `${HANDLE_PX}px` }} onPointerDown={(ev) => startGesture('resize-bottom', ev)} />
       </Show>
     </div>
       )}

@@ -27,8 +27,8 @@ export function ShapeIcon(props: { shape: string | null | undefined; size?: numb
        : shape() === 'diamond' ? <Diamond size={size()} strokeWidth={sw()} class={props.class} />
        : shape() === 'spiral' ? (
            <svg width={size()} height={size()} viewBox="0 0 24 24" fill="none"
-             style={{ stroke: 'currentColor', 'stroke-width': String(sw()), 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }}
-             class={props.class}>
+             style={{ 'stroke-width': String(sw()) }}
+             class={`icon-stroke-rounded ${props.class ?? ''}`}>
              <path d="M12 3 C19 3 21 8 21 12 C21 17 18 21 12 21 C7 21 4 18 4 12 C4 9 5 7 7 6 C9 5 11 5 12 6 C13 7 13 9 12 9 C11 9 11 10 12 12" />
            </svg>
          )

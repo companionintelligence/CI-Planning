@@ -323,9 +323,8 @@ export function ObjectivesBoard(props: {
                           class="group rounded-lg border border-border bg-background/70 p-2.5 cursor-grab active:cursor-grabbing transition-colors"
                           classList={{
                             'opacity-40': draggedId() === card.id,
-                            'border-dotted bg-warning/5': !!card.auto_generated && !card.human_approved_at,
+                            'auto-generated-card': !!card.auto_generated && !card.human_approved_at,
                           }}
-                          style={!!card.auto_generated && !card.human_approved_at ? { 'border-color': 'var(--auto-generated-outline)' } : undefined}
                           title="Drag to move between columns; select the title for task details"
                         >
                           <div class="flex items-start gap-2">

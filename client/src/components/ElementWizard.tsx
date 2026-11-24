@@ -1949,8 +1949,8 @@ export function ElementWizard() {
                 <Show when={blockAllDayView()}>
                   <div class="flex flex-col gap-1.5">
                     <div class={sectionLabel}>All day</div>
-                    <div class="h-14 rounded-xl flex items-center px-3.5 text-sm font-semibold"
-                      style={{ background: barGradient, color: '#041620' }}>
+                    <div class="on-accent-contrast h-14 rounded-xl flex items-center px-3.5 text-sm font-semibold"
+                      style={{ background: barGradient }}>
                       {title() || 'Time block'}
                     </div>
                   </div>
@@ -2007,7 +2007,7 @@ export function ElementWizard() {
                         a stack of grey static. Pin a legible floor instead. */}
                     <For each={ghostBlocks()}>
                       {(g) => (
-                        <div class="absolute left-8 right-2 rounded-none text-[10px] leading-[1.15] px-1.5 py-0.5 overflow-hidden whitespace-nowrap text-ellipsis border pointer-events-none"
+                        <div class="absolute left-8 right-2 min-h-4 rounded-none text-[10px] leading-[1.15] px-1.5 py-0.5 overflow-hidden whitespace-nowrap text-ellipsis border pointer-events-none"
                           classList={{
                             'bg-destructive/15 border-dashed border-destructive/60 text-destructive': dragging() && barConflicts(g),
                             'bg-muted-foreground/10 border-muted-foreground/25 text-muted-foreground': !(dragging() && barConflicts(g)),
@@ -2015,7 +2015,6 @@ export function ElementWizard() {
                           style={{
                             top: `${minutesToFrac(g.startMin) * 100}%`,
                             height: `${Math.max((minutesToFrac(g.endMin) - minutesToFrac(g.startMin)) * 100, 3)}%`,
-                            'min-height': '16px',
                           }}>
                           {g.title}
                         </div>
@@ -2028,17 +2027,12 @@ export function ElementWizard() {
                       </div>
                     }>
                       <div onPointerDown={onBarPointerDown}
-                        class="absolute left-8 right-2 rounded-none px-2 py-0.5 text-[11px] font-semibold overflow-hidden z-[5]"
-                        classList={{ 'cursor-grabbing': dragging(), 'cursor-grab': !dragging() }}
+                        class="wizard-time-bar absolute left-8 right-2 min-h-8 rounded-none px-2 py-0.5 text-[11px] font-semibold overflow-hidden z-[5]"
+                        classList={{ 'cursor-grabbing': dragging(), 'cursor-grab': !dragging(), 'wizard-time-bar-dragging': dragging() }}
                         style={{
                           top: `${minutesToFrac(barStartMin()!) * 100}%`,
                           height: `${Math.max((minutesToFrac(barStartMin()! + barDurMin()) - minutesToFrac(barStartMin()!)) * 100, 5)}%`,
-                          // Two lines of type (title + time range) need ~30px; the 5%
-                          // geometric floor is 11-15px, so a short block clipped its own
-                          // time range away. Same failure as the ghosts above.
-                          'min-height': '32px',
-                          background: barGradient, color: '#041620',
-                          'box-shadow': dragging() ? '0 6px 20px rgba(171,212,216,.35)' : undefined,
+                          background: barGradient,
                         }}>
                         <div class="truncate">{title() || (tab() === 'timeblock' ? 'Time block' : 'Task')}</div>
                         <div class="truncate text-[10px] font-medium opacity-80">

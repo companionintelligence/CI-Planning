@@ -99,7 +99,7 @@ export function Signup() {
         <div class="flex flex-col items-center gap-3 mb-8">
           <BrandMark size={48} />
           <div class="text-center">
-            <div class="text-[10px] font-medium tracking-[0.2em] uppercase" style={{ color: '#409b9b' }}>
+            <div class="brand-kicker text-[10px] font-medium tracking-[0.2em] uppercase">
               Companion
             </div>
             <div class="font-heading text-xl text-slate-100 tracking-wide">Planning</div>

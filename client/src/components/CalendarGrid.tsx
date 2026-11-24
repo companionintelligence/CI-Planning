@@ -730,7 +730,7 @@ export function CalendarGrid(props: Props) {
           )}
         </For>
       </div>
-      <div class="grid grid-cols-7" style={{ 'grid-auto-rows': '1fr' }}>
+      <div class="calendar-month-grid grid grid-cols-7">
         <For each={props.days}>
           {(day, i) => {
             const dayBlocks = () =>
@@ -748,12 +748,9 @@ export function CalendarGrid(props: Props) {
                   'border-t-0': i() < 7,
                   'cursor-pointer': !!props.onCreateAt,
                   'ring-1 ring-inset ring-accent': props.selectedDate?.() === day,
+                  'calendar-perfect-day': perfect(),
                 }}
                 // Perfect day (5/5): tint the whole cell gold — the heatmap payoff.
-                style={perfect() ? {
-                  'background-color': 'color-mix(in srgb, var(--star-gold) 10%, transparent)',
-                  'border-color': 'color-mix(in srgb, var(--star-gold) 40%, transparent)',
-                } : undefined}
                 title={props.onCreateAt ? 'Click to add' : undefined}
                 onClick={() => props.onCreateAt?.(day, '09:00')}
               >
@@ -794,7 +791,7 @@ export function CalendarGrid(props: Props) {
                         fallback={
                           <span class="flex items-center gap-[1px]" title={`${stars()!.total} of 5 stars`}>
                             <For each={Array.from({ length: pipCount(stars()!.total) })}>
-                              {() => <span class="w-1 h-1 rounded-circle" style={{ 'background-color': 'var(--star-gold)' }} />}
+                              {() => <span class="calendar-star-marker w-1 h-1 rounded-circle" />}
                             </For>
                           </span>
                         }
@@ -823,11 +820,8 @@ export function CalendarGrid(props: Props) {
                     {(b) => (
                       <div
                         class="text-[10px] leading-tight truncate rounded-none px-1 py-0.5 bg-card"
-                        classList={{ 'border border-dotted border-orange-400': taskNeedsApproval(b) }}
-                        style={{
-                          'border-left': taskNeedsApproval(b) ? '1px dotted #f97316' : `2px solid ${blockColorVar(b, categoryPrefs()?.prefs)}`,
-                          ...(taskNeedsApproval(b) ? { border: '1px dotted #f97316' } : {}),
-                        }}
+                        classList={{ 'calendar-block-chip-approval': taskNeedsApproval(b) }}
+                        style={taskNeedsApproval(b) ? undefined : { 'border-left': `2px solid ${blockColorVar(b, categoryPrefs()?.prefs)}` }}
                         title={`${b.title} · ${fmtTime(b.start_at)}`}
                       >
                         <span class="text-slate-300">{b.title}</span>

@@ -1637,3 +1637,41 @@ html[data-text-size="larger"] [class~="text-[10px]"] { font-size: 12.5px !import
 html[data-text-size="larger"] [class~="text-[11px]"] { font-size: 13.75px !important; }
 html[data-text-size="larger"] [class~="text-[11.5px]"] { font-size: 14.375px !important; }
 html[data-text-size="larger"] [class~="text-[13px]"] { font-size: 16.25px !important; }
+
+/* Shared presentation recipes for fixed treatments formerly repeated in JSX styles. */
+.brand-kicker { color: var(--brand-accent); }
+.safe-area-bottom { padding-bottom: env(safe-area-inset-bottom); }
+.icon-stroke-rounded { stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
+.icon-stroke-joined { stroke: currentColor; stroke-linejoin: round; }
+.onboarding-backdrop { background: rgb(0 0 0 / 70%); backdrop-filter: blur(6px); }
+.calendar-month-grid { grid-auto-rows: 1fr; }
+.calendar-perfect-day {
+  background-color: color-mix(in srgb, var(--star-gold) 10%, transparent);
+  border-color: color-mix(in srgb, var(--star-gold) 40%, transparent);
+}
+.calendar-star-marker { background-color: var(--star-gold); }
+.objective-complete-fill { background-color: var(--star-gold); }
+.calendar-block-chip-approval {
+  border: 1px dotted var(--auto-generated-outline);
+  border-left: 1px dotted var(--auto-generated-outline);
+}
+.task-approval-outline {
+  border-style: dotted !important;
+  border-color: var(--auto-generated-outline) !important;
+}
+.task-card { border-left: 3px solid var(--task-direction-color, var(--border)); }
+.task-card-past-scheduled { outline: 2px solid var(--destructive); outline-offset: -2px; }
+.task-card-awaiting-approval {
+  border: 2px dotted var(--auto-generated-outline);
+  border-left: 2px dotted var(--auto-generated-outline);
+}
+.fx-halo-delay-short { animation-delay: -1.6s; }
+.fx-halo-delay-long { animation-delay: -3.2s; }
+.on-accent-contrast { color: var(--teal-950); }
+.chart-hollow-dot { fill: var(--card); }
+.auto-generated-card {
+  border-style: dotted;
+  border-color: var(--auto-generated-outline);
+  background-color: color-mix(in srgb, var(--warning) 5%, transparent);
+}
+.wizard-time-bar-dragging { box-shadow: 0 6px 20px color-mix(in srgb, var(--teal-200) 35%, transparent); }

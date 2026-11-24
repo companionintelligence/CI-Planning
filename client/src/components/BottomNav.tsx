@@ -76,8 +76,7 @@ export function BottomNav() {
       </Show>
 
       <nav
-        class="md:hidden fixed bottom-0 inset-x-0 z-30 h-14 bg-sidebar border-t border-border flex items-stretch"
-        style={{ 'padding-bottom': 'env(safe-area-inset-bottom)' }}
+        class="safe-area-bottom md:hidden fixed bottom-0 inset-x-0 z-30 h-14 bg-sidebar border-t border-border flex items-stretch"
       >
         <For each={primary}>
           {(l) => (

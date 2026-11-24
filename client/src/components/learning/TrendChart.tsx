@@ -155,7 +155,7 @@ export function TrendChart(props: TrendChartProps) {
               r="3.5"
               stroke="currentColor"
               stroke-width="1.5"
-              style={d.hollow ? { fill: 'var(--card)' } : undefined}
+              classList={{ 'chart-hollow-dot': d.hollow }}
               fill={d.hollow ? undefined : 'currentColor'}
               data-hollow={d.hollow ? '' : undefined}
             >

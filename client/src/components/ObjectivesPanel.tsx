@@ -575,7 +575,7 @@ function ObjectiveNode(props: {
         <div class="objective-progress relative flex-shrink-0 w-8 sm:w-16 h-1.5 rounded-sm bg-background border border-border overflow-hidden"
              title={obj().status === 'done' ? 'Complete' : (progressPct() ?? 'No plan yet')}>
           <Show when={obj().status === 'done'}>
-            <div class="absolute inset-0 rounded-sm" style={{ 'background-color': 'var(--star-gold)' }} />
+            <div class="objective-complete-fill absolute inset-0 rounded-sm" />
           </Show>
           <Show when={obj().status !== 'done' && obj().progress_cache != null}>
             <div
@@ -698,11 +698,10 @@ function ObjectiveNode(props: {
                 onDragEnd={props.onTaskDragEnd}
                 class="flex items-center gap-2 pl-2 sm:pl-6 py-1 min-w-0 border border-transparent"
                 classList={{
-                  'border-dotted bg-warning/5': !!t.auto_generated && !t.human_approved_at,
+                  'auto-generated-card': !!t.auto_generated && !t.human_approved_at,
                   'cursor-grab': true,
                   'opacity-50': props.draggedTask()?.taskId === t.id,
                 }}
-                style={!!t.auto_generated && !t.human_approved_at ? { 'border-color': 'var(--auto-generated-outline)' } : undefined}
                 title="Drag to another objective in this group"
               >
                 <button

@@ -360,8 +360,8 @@ export function PlannerEntityCard(props: {
         onClick={(e) => { if (e.target === e.currentTarget) clearActiveEntity(); }}
       >
       <div
-        class="relative w-full max-w-md max-h-[calc(100dvh-24px)] overflow-y-auto overscroll-contain rounded-xl border border-border bg-popover shadow-2xl"
-        style={{ 'border-left': `4px solid ${accent()}`, 'padding-bottom': 'env(safe-area-inset-bottom)' }}
+        class="safe-area-bottom relative w-full max-w-md max-h-[calc(100dvh-24px)] overflow-y-auto overscroll-contain rounded-xl border border-border bg-popover shadow-2xl"
+        style={{ 'border-left': `4px solid ${accent()}` }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header: type + title + close */}

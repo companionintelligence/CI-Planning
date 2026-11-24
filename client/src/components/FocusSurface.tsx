@@ -151,8 +151,8 @@ function BreathLayout(props: FocusSurfaceProps) {
             the ring arc below is the clock and stays whatever the pref says. */}
         <Show when={props.ambient !== false}>
           <div class="fx-halo w-full h-full" />
-          <div class="fx-halo w-[76%] h-[76%]" style={{ 'animation-delay': '-1.6s' }} />
-          <div class="fx-halo w-[52%] h-[52%]" style={{ 'animation-delay': '-3.2s' }} />
+          <div class="fx-halo fx-halo-delay-short w-[76%] h-[76%]" />
+          <div class="fx-halo fx-halo-delay-long w-[52%] h-[52%]" />
         </Show>
         <svg class="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 100 100" aria-hidden="true">
           <circle class="fx-ring-track" cx="50" cy="50" r="46" fill="none" stroke-width="0.6" />

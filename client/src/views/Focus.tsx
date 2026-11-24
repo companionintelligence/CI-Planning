@@ -408,12 +408,11 @@ export function Focus() {
       class="flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-colors"
       classList={{
         'opacity-50': !!props.dim,
-        'border-dotted border-orange-400': taskNeedsApproval(props.entry.task),
+        'task-approval-outline': taskNeedsApproval(props.entry.task),
         'border-accent-hi/50 bg-accent-hi/5': isNow(props.entry) && !strandedRow(props.entry),
         'border-destructive bg-destructive/5': strandedRow(props.entry),
         'border-border/60': !isNow(props.entry) && !strandedRow(props.entry),
       }}
-      style={taskNeedsApproval(props.entry.task) ? { 'border-style': 'dotted', 'border-color': '#f97316' } : {}}
     >
       <span class="w-16 flex-shrink-0 text-[11px] font-mono tabular-nums text-muted-foreground">
         {props.entry.timeLabel ?? 'Anytime'}
@@ -543,9 +542,8 @@ export function Focus() {
           <div
             class="mb-5 rounded-2xl border border-accent-hi/40 bg-accent-hi/5 p-4"
             classList={{
-              'border-dotted border-orange-400': taskNeedsApproval(b().task_id ? taskOf(b().task_id!) : undefined),
+              'task-approval-outline': taskNeedsApproval(b().task_id ? taskOf(b().task_id!) : undefined),
             }}
-            style={taskNeedsApproval(b().task_id ? taskOf(b().task_id!) : undefined) ? { 'border-style': 'dotted', 'border-color': '#f97316' } : {}}
           >
             <div class="text-[10px] font-semibold uppercase tracking-[0.15em] text-accent-hi mb-1.5">Focus now</div>
             <div class="flex items-center gap-3">
