@@ -95,6 +95,8 @@ Implementation sequence: (1) **complete:** split the existing container checks i
 
 **Routines overlay status (2026-11-24):** PatternTypeManager now uses ModalSheet, with a named dialog, focus trap and return, Escape/backdrop closing, and a scrollable list area with a persistent close action. The Routines tab opens the dialog at 430 × 560 and 430 × 420; both bounds and focus return pass in the responsive gate, and axe passes on the dialog in both themes.
 
+**Recurring-scope overlay status (2026-11-24):** The global recurring-item decision now uses ModalSheet with the item and operation in its accessible name, safe single-instance action focused first, and Cancel/close/Escape resolving without changing the series. The component unit tests cover the dialog name, cancellation and default focus; its browser viewport check remains to add when a recurring occurrence is seeded in the app flow.
+
 **Plan my week overlay status (2026-11-24):** The assistant shell now uses ModalSheet with a named dialog, focus management, Escape/backdrop abandonment and a fixed Done action; its branch content scrolls inside the viewport. The browser flow checks both short mobile heights, reachable Done and focus return, and axe scans the dialog in both themes.
 
 **Bulk task overlay status (2026-11-24):** BulkTaskAdd now uses ModalSheet so input and draft review scroll within the visual viewport while the close control remains available. The short-height browser flow creates local drafts, scrolls the confirm action into view and checks close/focus restoration; axe covers both initial input and review states in both themes.
