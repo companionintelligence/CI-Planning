@@ -1108,13 +1108,13 @@ export function Planner(props: { taskLookup?: (id: string) => Task | undefined }
         <div class="relative flex items-center">
           <button type="button" class="btn-icon" aria-label="Planner quick actions" title="Planner quick actions" aria-expanded={quickActionsOpen()} onClick={() => setQuickActionsOpen((open) => !open)}><Zap size={15} /></button>
           <Show when={quickActionsOpen()}>
-          <div class="absolute right-0 top-full z-50 mt-1 flex min-w-40 flex-col gap-1 rounded-lg border border-border bg-card p-2 shadow-xl">
+          <div class="planner-actions-menu absolute right-0 top-full z-50 mt-1">
           {/* Multi-select → Routine: a one-click entry point for the Shift++ chord,
               shown once ≥2 task chips are selected (opens the same Create-Routine modal). */}
           <Show when={selection().size >= 2}>
             <button
               onClick={() => setRoutineModal({ open: true, name: '' })}
-              class="inline-flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors font-medium"
+              class="planner-actions-menu__action text-xs text-primary font-medium"
               title={`Create a routine from the ${selection().size} selected tasks`}
             >
               <Repeat size={12} /> + Routine
@@ -1124,7 +1124,7 @@ export function Planner(props: { taskLookup?: (id: string) => Task | undefined }
           <button
             onClick={runSchedule}
             disabled={scheduling()}
-            class="btn-primary !rounded-sm !py-1 !px-2.5 text-[11px] flex items-center gap-1 flex-shrink-0 disabled:opacity-40"
+            class="planner-actions-menu__action btn-primary !rounded-sm !py-1 !px-2.5 text-[11px] flex-shrink-0 disabled:opacity-40"
             title="Place the included flight-plan tasks into this day"
           >
             <CalendarCheck size={12} classList={{ 'animate-pulse': scheduling() }} /> Schedule
@@ -1134,22 +1134,22 @@ export function Planner(props: { taskLookup?: (id: string) => Task | undefined }
             <Show when={undoConfirm()} fallback={
               <button
                 onClick={() => setUndoConfirm(true)}
-            class="planner-undo inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-sm border transition-colors flex-shrink-0"
+                class="planner-actions-menu__action planner-undo text-[11px] border transition-colors flex-shrink-0"
                 title="Undo the last Schedule run"
               >
                 <Undo2 size={11} /> Undo
               </button>
             }>
-              <div class="inline-flex items-center gap-1 flex-shrink-0">
+              <div class="planner-actions-menu__confirm">
                 <span class="text-[11px] text-foreground">Undo?</span>
                 <button
                   onClick={undo}
-                  class="planner-undo text-[11px] px-1.5 py-0.5 rounded border transition-colors"
+                  class="planner-actions-menu__action planner-undo text-[11px] border transition-colors"
                   title="Confirm undo"
                 >Yes</button>
                 <button
                   onClick={() => { setUndoConfirm(false); setCanUndo(false); }}
-                  class="inline-flex items-center text-muted-foreground hover:text-foreground transition-colors"
+                  class="planner-actions-menu__dismiss text-muted-foreground hover:text-foreground transition-colors"
                   title="Dismiss"
                 ><X size={11} /></button>
               </div>
@@ -1158,7 +1158,7 @@ export function Planner(props: { taskLookup?: (id: string) => Task | undefined }
           {/* T-PLAN-1: clear this day's auto-placed blocks (keeps locked/calendar/habit). */}
           <button
             onClick={clearDay}
-            class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors"
+            class="planner-actions-menu__action text-xs text-muted-foreground hover:text-destructive transition-colors"
             title="Clear auto-placed blocks for this day (keeps locked, calendar, and habit blocks)"
           >
             <Eraser size={12} /> Clear
@@ -1166,7 +1166,7 @@ export function Planner(props: { taskLookup?: (id: string) => Task | undefined }
           {/* Update mode — tap a task to mark it done (no need to have started it). */}
           <button
             onClick={() => setUpdateMode((v) => !v)}
-            class="inline-flex items-center gap-1 text-xs transition-colors"
+            class="planner-actions-menu__action text-xs transition-colors"
             classList={{ 'text-primary font-medium': updateMode(), 'text-muted-foreground hover:text-foreground': !updateMode() }}
             title={updateMode() ? 'Done updating' : 'Update — tap tasks to mark them done'}
           >

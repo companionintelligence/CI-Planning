@@ -120,8 +120,8 @@ export function ObjectiveModal(props: Props) {
         </div>
 
         {/* Body */}
-        <div class="p-4 flex flex-col gap-3">
-          <label class="flex flex-col gap-1">
+        <div class="modal-form-fields p-4">
+          <label class="modal-form-field">
             <span class="text-[11px] text-muted-foreground">Title *</span>
             <input
               autofocus
@@ -133,7 +133,7 @@ export function ObjectiveModal(props: Props) {
             />
           </label>
 
-          <label class="flex flex-col gap-1">
+          <label class="modal-form-field">
             <span class="text-[11px] text-muted-foreground">Description</span>
             <textarea
               class="input text-sm resize-none"
@@ -145,7 +145,7 @@ export function ObjectiveModal(props: Props) {
           </label>
 
           {/* §N: nest under a project / goal (or leave top-level). Grouping happens here. */}
-          <label class="flex flex-col gap-1">
+          <label class="modal-form-field">
             <span class="text-[11px] text-muted-foreground">Parent</span>
             <select class="input text-sm" value={parentId()} onChange={(e) => setParentId(e.currentTarget.value)}>
               <option value="">None (top-level)</option>
@@ -155,15 +155,15 @@ export function ObjectiveModal(props: Props) {
             </select>
           </label>
 
-          <div class="grid grid-cols-2 gap-3">
-            <label class="flex flex-col gap-1">
+          <div class="modal-form-grid">
+            <label class="modal-form-field">
               <span class="text-[11px] text-muted-foreground">Horizon</span>
               <select class="input text-sm" value={horizon()} onChange={(e) => setHorizon(e.currentTarget.value)}>
                 {HORIZONS.map((h) => <option value={h.value}>{h.label}</option>)}
               </select>
             </label>
 
-            <label class="flex flex-col gap-1">
+            <label class="modal-form-field">
               <span class="text-[11px] text-muted-foreground">Cadence push</span>
               <select class="input text-sm" value={cadence()} onChange={(e) => setCadence(e.currentTarget.value)}>
                 {CADENCES.map((c) => <option value={c.value}>{c.label}</option>)}
@@ -171,15 +171,15 @@ export function ObjectiveModal(props: Props) {
             </label>
           </div>
 
-          <div class="grid grid-cols-2 gap-3">
-            <label class="flex flex-col gap-1">
+          <div class="modal-form-grid">
+            <label class="modal-form-field">
               <span class="text-[11px] text-muted-foreground">Status</span>
               <select class="input text-sm" value={status()} onChange={(e) => setStatus(e.currentTarget.value)}>
                 {STATUSES.map((s) => <option value={s.value}>{s.label}</option>)}
               </select>
             </label>
 
-            <label class="flex flex-col gap-1">
+            <label class="modal-form-field">
               <span class="text-[11px] text-muted-foreground">Target date (soft)</span>
               <input
                 type="date"
@@ -192,14 +192,14 @@ export function ObjectiveModal(props: Props) {
 
           {/* #391: the objective's identity colour — shown on the Objectives tab and
               (once both land) the Planner accent. Inherit = the stable hash colour. */}
-          <div class="flex flex-col gap-1">
+          <div class="modal-form-field">
             <span class="text-[11px] text-muted-foreground">Color</span>
             <ItemColorPicker value={colorToken()} onChange={setColorToken} inheritLabel="Automatic (stable per-objective colour)" />
           </div>
         </div>
 
         {/* Footer */}
-        <div class="px-4 py-3 border-t border-border flex justify-end gap-2">
+        <div class="modal-form-footer px-4 py-3 border-t border-border">
           <button class="btn-ghost text-sm px-3 py-1.5" onClick={props.onClose}>Cancel</button>
           <button class="btn-primary text-sm px-4 py-1.5" onClick={save} disabled={saving()}>
             {saving() ? 'Saving…' : isEdit() ? 'Save' : 'Create'}

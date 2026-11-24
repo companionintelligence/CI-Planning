@@ -84,6 +84,8 @@ Implementation sequence: (1) split the current container smoke suite into named 
 
 **Inline style status (2026-11-23):** Repeated/static treatments for brand labels, approval outlines, onboarding backdrops, safe-area padding, icon strokes, star/day fills, chart markers, card outlines, animation delays, and wizard drag feedback now use shared CSS recipes backed by semantic tokens. Planner coordinates, progress widths, user-selected colors, and other data-driven values remain inline. The scan dropped from 122 to 106 occurrences; this is a targeted cleanup, not a claim that all feature styling has been centralized.
 
+**Feature recipe status (2026-11-23):** `client/src/ui/recipes.css` documents the contracts and narrow-screen behavior for Planner action menus and modal form layouts. The Planner quick-action menu and Objective modal use those recipes: actions share alignment and hit-area rules, objective field pairs stack on mobile and form two columns at 40rem, and footer actions can share the available width on very narrow screens. Extend recipes by feature slice when adjacent controls are updated; keep content-specific visual states semantic on the control.
+
 ### Suggested web compartmentalization refactor
 
 1. Keep domain boundaries in `views/` and `components/`; do not split solely by file size.

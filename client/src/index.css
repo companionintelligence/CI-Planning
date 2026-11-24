@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./ui/recipes.css";
 /* The canon token layer is imported before app-specific overrides below so every token
    the app does not set falls back to CI-Common. */
 @import "@companionintelligence/tokens/tokens.css";

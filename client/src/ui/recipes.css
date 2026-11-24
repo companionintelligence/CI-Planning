@@ -1,0 +1,88 @@
+/*
+ * Feature-level layout recipes.
+ *
+ * Contracts:
+ * - planner-actions-menu owns the responsive menu surface and its vertical action list.
+ *   Keep individual buttons semantic (primary, undo, danger) and use
+ *   planner-actions-menu__action for shared hit area/alignment. The confirmation row is
+ *   compact and inline at every width; the dismiss control is icon-only.
+ * - modal-form-fields owns vertical rhythm inside a modal body. modal-form-field aligns
+ *   a label and control. modal-form-grid stacks fields on narrow screens and uses two
+ *   equal columns once there is room. modal-form-footer keeps actions reachable and
+ *   allows buttons to share width on very narrow screens.
+ */
+.planner-actions-menu {
+  display: flex;
+  min-width: 10rem;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-8);
+  background: var(--card);
+  box-shadow: 0 12px 28px color-mix(in srgb, var(--foreground) 16%, transparent);
+}
+.planner-actions-menu__action {
+  display: inline-flex;
+  width: 100%;
+  min-height: 2.25rem;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.375rem;
+  padding: 0.375rem 0.625rem;
+  border-radius: var(--radius-3);
+  text-align: left;
+}
+.planner-actions-menu__action:hover,
+.planner-actions-menu__action:focus-visible {
+  background: color-mix(in srgb, var(--primary) 9%, var(--card));
+}
+.planner-actions-menu__confirm {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.25rem;
+}
+.planner-actions-menu__dismiss {
+  display: inline-flex;
+  min-width: 2rem;
+  min-height: 2rem;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-form-fields {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.modal-form-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.modal-form-field > span {
+  color: var(--muted-foreground);
+  font-size: 0.6875rem;
+}
+.modal-form-grid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+}
+.modal-form-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+@media (min-width: 40rem) {
+  .modal-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 26rem) {
+  .modal-form-footer > button { flex: 1 1 0; }
+}
