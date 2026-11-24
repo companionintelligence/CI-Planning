@@ -2028,7 +2028,7 @@ export function Settings() {
               <label class="flex items-center justify-between gap-3">
                 <span class="text-xs text-muted-foreground">
                   Look back
-                  <span class="block text-[11px] opacity-70">
+                  <span class="block text-[11px] text-foreground">
                     How far back to read a connected mailbox. Applies when email is first connected
                     (or after an outage) — routine checks only pick up what has arrived since the last one.
                   </span>

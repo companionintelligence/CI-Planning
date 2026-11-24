@@ -71,6 +71,9 @@ test.describe('authenticated accessibility regressions', () => {
       await page.getByRole('tab', { name: 'Learning', exact: true }).click();
       await expect(page.getByTestId('learning-panel')).toBeVisible();
       await expectAxeClean(page, `Learning settings (${theme})`, '[data-testid="learning-panel"]');
+      await page.getByRole('tab', { name: 'Connections', exact: true }).click();
+      await expect(page.getByRole('button', { name: 'Re-check', exact: true })).toBeEnabled();
+      await expectAxeClean(page, `Connections settings (${theme})`);
 
       for (const [path, label] of [
         ['/', 'Today / Planner'],
