@@ -95,6 +95,17 @@ test.describe('authenticated accessibility regressions', () => {
       await expectAxeClean(page, `Plan my week dialog (${theme})`, '[role="dialog"]');
       await page.keyboard.press('Escape');
       await expect(planWeekDialog).toHaveCount(0);
+      await page.goto(`${url}/tasks`, { waitUntil: 'domcontentloaded' });
+      await page.getByRole('button', { name: 'Bulk add' }).click();
+      const bulkDialog = page.getByRole('dialog', { name: 'Add tasks in bulk' });
+      await expect(bulkDialog).toBeVisible();
+      await waitForFiniteAnimations(bulkDialog);
+      await expectAxeClean(page, `Bulk task input dialog (${theme})`, '[role="dialog"]');
+      await bulkDialog.getByRole('textbox', { name: 'Task list' }).fill('First draft\nSecond draft');
+      await bulkDialog.getByRole('button', { name: 'Create drafts' }).click();
+      await expectAxeClean(page, `Bulk task review dialog (${theme})`, '[role="dialog"]');
+      await page.keyboard.press('Escape');
+      await expect(bulkDialog).toHaveCount(0);
       await page.goto(`${url}/tasks?tab=routines`, { waitUntil: 'domcontentloaded' });
       await page.getByRole('button', { name: 'Manage types' }).click();
       const patternTypesDialog = page.getByRole('dialog', { name: 'Pattern types' });

@@ -58,7 +58,7 @@ wait_http() { # url
 echo "▶ booting (ports $P_STANDALONE standalone · $P_LOCAL local · $P_PORTAL portal · $P_FIXTURE fixture) — data in $TMP"
 start_app standalone "$P_STANDALONE" AUTH_MODE=standalone
 start_app local "$P_LOCAL" AUTH_MODE=sso DISABLE_OIDC=true SESSION_SECRET=smoke-session-secret \
-  AUTH_DEFAULT_USERNAME=smoke-admin AUTH_DEFAULT_PASSWORD=smoke-password-123 AUTH_RATE_ISSUE_MAX=20
+  AUTH_DEFAULT_USERNAME=smoke-admin AUTH_DEFAULT_PASSWORD=smoke-password-123 AUTH_RATE_ISSUE_MAX=100
 (cd "$SERVER" && FIXTURE_PORTAL_PORT="$P_FIXTURE" FIXTURE_PORTAL_ISSUER="http://localhost:$P_FIXTURE" \
    node_modules/.bin/tsx src/scripts/fixture-portal.ts > "$TMP/fixture.log" 2>&1 & echo $! > "$TMP/fixture.pid")
 PIDS+=("$(cat "$TMP/fixture.pid")")

@@ -154,6 +154,33 @@ test('Plan my week stays in the short mobile viewport with a reachable Done acti
   await expect(opener).toBeFocused();
 });
 
+test('Bulk task review stays in the short mobile viewport and restores focus', async ({ page }) => {
+  test.skip(!username || !password, 'requires an authenticated container with LOGIN_USER and LOGIN_PASS');
+  await signInLocal(page, url);
+  await page.setViewportSize({ width: 430, height: 560 });
+  await page.goto(`${url}/tasks`, { waitUntil: 'domcontentloaded' });
+
+  const opener = page.getByRole('button', { name: 'Bulk add' });
+  await expect(opener).toBeVisible();
+  await opener.click();
+  const dialog = page.getByRole('dialog', { name: 'Add tasks in bulk' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Close' })).toBeFocused();
+  await expectWithinVisualViewport(page, dialog);
+  await dialog.getByRole('textbox', { name: 'Task list' }).fill('First draft\nSecond draft');
+  await dialog.getByRole('button', { name: 'Create drafts' }).click();
+  const confirm = dialog.getByRole('button', { name: 'Confirm selected tasks' });
+  await expect(confirm).toBeVisible();
+
+  await page.setViewportSize({ width: 430, height: 420 });
+  await expectWithinVisualViewport(page, dialog);
+  await confirm.scrollIntoViewIfNeeded();
+  await expect(confirm).toBeInViewport();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(opener).toBeFocused();
+});
+
 test('overdue due-list dialog stays in the short mobile viewport and returns focus', async ({ page }, testInfo) => {
   test.skip(!username || !password, 'requires an authenticated container with LOGIN_USER and LOGIN_PASS');
   const data = new OwnerFixtures(page.request, testInfo.testId);

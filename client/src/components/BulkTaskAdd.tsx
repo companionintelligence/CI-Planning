@@ -1,6 +1,6 @@
 import { createSignal, For, Show } from 'solid-js';
 import { MicButton } from './MicButton.js';
-import { ViewportOverlay } from './ViewportOverlay.js';
+import { ModalSheet } from '../ui/index.js';
 import { api } from '../lib/api.js';
 import { refetchTasks, showToast } from '../stores/index.js';
 
@@ -48,9 +48,20 @@ export function BulkTaskAdd(props: { onClose: () => void }) {
     } finally { setBusy(false); }
   };
 
-  return <ViewportOverlay class="z-[100] bg-black/70 flex items-center justify-center p-3" role="presentation">
-    <div role="dialog" aria-modal="true" aria-label="Add tasks in bulk" class="card w-full max-w-xl max-h-full overflow-y-auto flex flex-col gap-3">
-      <div class="flex items-center justify-between gap-3"><h2 class="text-lg font-semibold">Add tasks in bulk</h2><button class="btn-ghost" onClick={props.onClose} disabled={busy()}>Close</button></div>
+  return <ModalSheet
+    open={true}
+    title="Add tasks in bulk"
+    ariaLabel="Add tasks in bulk"
+    onClose={props.onClose}
+    class="max-w-xl"
+    header={
+      <header class="flex flex-shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
+        <h2 class="text-lg font-semibold text-foreground">Add tasks in bulk</h2>
+        <button type="button" class="btn-ghost" onClick={props.onClose} disabled={busy()}>Close</button>
+      </header>
+    }
+  >
+    <div class="px-4 flex flex-col gap-3">
       <p class="text-sm text-muted-foreground">Type or dictate a list. Use a new line, comma, or sentence for each task. Review them before saving.</p>
       <div class="flex items-start gap-2">
         <textarea class="input min-h-28 flex-1 min-w-0" aria-label="Task list" placeholder={'Buy groceries\nCall Alex\nPlan weekend'} value={input()} onInput={(event) => setInput(event.currentTarget.value)} />
@@ -70,5 +81,5 @@ export function BulkTaskAdd(props: { onClose: () => void }) {
       </Show>
       <Show when={error()}><p role="alert" class="text-sm text-destructive">{error()}</p></Show>
     </div>
-  </ViewportOverlay>;
+  </ModalSheet>;
 }
