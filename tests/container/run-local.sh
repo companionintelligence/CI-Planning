@@ -94,6 +94,9 @@ LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL="http://localhost:$
 echo "▶ phase 2a — Metrics write-to-recap flow"
 LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL="http://localhost:$P_LOCAL" \
   node_modules/.bin/playwright test --project=metrics --workers=1 --reporter=line || status=1
+echo "▶ phase 2a — Responsive task and objective sheets"
+LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL="http://localhost:$P_LOCAL" \
+  node_modules/.bin/playwright test --project=responsive --workers=1 --reporter=line || status=1
 echo "▶ phase 2a — mobile compartment regressions"
 LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL="http://localhost:$P_LOCAL" \
   node_modules/.bin/playwright test --project=mobile --workers=1 --reporter=line || status=1

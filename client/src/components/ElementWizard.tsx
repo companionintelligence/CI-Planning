@@ -99,6 +99,39 @@ export function ElementWizard() {
   const kind = (): ElementKind => m().kind ?? 'task';
   const tab = (): 'task' | 'timeblock' | 'routine' => (kind() === 'habit' ? 'task' : (kind() as 'task' | 'timeblock' | 'routine'));
   const isEdit = () => m().mode === 'edit';
+  const dialogName = () => `${isEdit() ? 'Edit' : 'Add'} ${tab() === 'timeblock' ? 'time block' : tab()}`;
+  let modalRoot: HTMLDivElement | undefined;
+  let modalOpener: HTMLElement | null = null;
+  let wizardWasOpen = false;
+
+  createEffect(() => {
+    const visible = open();
+    if (visible && !wizardWasOpen) {
+      modalOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      queueMicrotask(() => {
+        const first = modalRoot?.querySelector<HTMLElement>('[autofocus]')
+          ?? modalRoot?.querySelector<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])');
+        (first ?? modalRoot)?.focus();
+      });
+    } else if (!visible && wizardWasOpen) {
+      const restore = modalOpener;
+      modalOpener = null;
+      queueMicrotask(() => restore?.isConnected && restore.focus());
+    }
+    wizardWasOpen = visible;
+  });
+
+  function containDialogTab(event: KeyboardEvent & { currentTarget: HTMLDivElement }) {
+    if (event.key !== 'Tab' || !modalRoot) return;
+    const focusable = Array.from(modalRoot.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ));
+    if (!focusable.length) { event.preventDefault(); modalRoot.focus(); return; }
+    const first = focusable[0]!, last = focusable[focusable.length - 1]!;
+    const outside = !modalRoot.contains(document.activeElement);
+    if (event.shiftKey && (document.activeElement === first || outside)) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && (document.activeElement === last || outside)) { event.preventDefault(); first.focus(); }
+  }
 
   // ── Shared form state ──────────────────────────────────────────────────────
   const [title, setTitle] = createSignal('');
@@ -1250,7 +1283,7 @@ export function ElementWizard() {
   return (
     <Show when={open()}>
       <ViewportOverlay class="modal-backdrop" onClick={(e) => e.target === e.currentTarget && close()}>
-        <div class="modal md:max-w-[680px]">
+        <div ref={modalRoot} class="modal md:max-w-[680px]" role="dialog" aria-modal="true" aria-label={dialogName()} tabindex="-1" onKeyDown={containDialogTab}>
           {/* ── Header: segmented tabs + close, then the borderless title ── */}
           <div class="px-5 pt-4 pb-3 border-b border-border">
             <div class="flex items-center gap-2 mb-3">
@@ -1291,7 +1324,7 @@ export function ElementWizard() {
                 </button>
               </Show>
               <span class="text-[11px] text-muted-foreground ml-1">{isEdit() ? 'Editing' : ''}</span>
-              <button onClick={close} class="btn-icon ml-auto"><X size={16} /></button>
+              <button type="button" onClick={close} class="btn-icon ml-auto" aria-label={`Close ${tab() === 'timeblock' ? 'time block' : tab()} form`}><X size={16} /></button>
             </div>
 
             {/* T14 (#350) — NL quick line: describe the task/block (typed or spoken) and

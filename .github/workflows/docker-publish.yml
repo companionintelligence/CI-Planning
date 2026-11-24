@@ -214,6 +214,11 @@ jobs:
           cd tests/container
           LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL=http://localhost:8081 npx playwright test --project=metrics --workers=1
 
+      - name: Mobile task and objective sheets (430x560)
+        run: |
+          cd tests/container
+          LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL=http://localhost:8081 npx playwright test --project=responsive --workers=1
+
       - name: Mobile surface compartment regression (430x900)
         run: |
           cd tests/container

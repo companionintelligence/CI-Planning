@@ -43,6 +43,10 @@ export default defineConfig({
       testMatch: "metrics-flow.spec.ts",
     },
     {
+      name: "responsive",
+      testMatch: "responsive-surfaces.spec.ts",
+    },
+    {
       name: "mobile",
       testMatch: "mobile-compartments.spec.ts",
     },
