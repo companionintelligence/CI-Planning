@@ -41,6 +41,15 @@ async function expectAxeClean(page: Page, surface: string, rootSelector = 'body'
   expect(result, `axe WCAG violations on ${surface}`).toEqual([]);
 }
 
+async function waitForFiniteAnimations(surface: ReturnType<Page['locator']>) {
+  await surface.evaluate(async (element) => {
+    const animations = element.getAnimations({ subtree: true }).filter((animation) =>
+      Number.isFinite(animation.effect?.getComputedTiming().iterations ?? 1),
+    );
+    await Promise.all(animations.map((animation) => animation.finished.catch(() => undefined)));
+  });
+}
+
 test.describe('authenticated accessibility regressions', () => {
   test.skip(!username || !password, 'requires a local-login container with LOGIN_USER and LOGIN_PASS');
 
@@ -63,6 +72,26 @@ test.describe('authenticated accessibility regressions', () => {
         await page.goto(`${url}${path}`, { waitUntil: 'domcontentloaded' });
         await expect(page.locator('[data-app-shell]')).toBeVisible();
         await expectAxeClean(page, `${label} (${theme})`);
+        if (label === 'Tasks') {
+          const addTask = page.locator('button[title="Add to calendar"]');
+          await addTask.click();
+          const taskDialog = page.getByRole('dialog', { name: 'Add task' });
+          await expect(taskDialog).toBeVisible();
+          await waitForFiniteAnimations(taskDialog);
+          await expectAxeClean(page, `Task editor dialog (${theme})`, '[role="dialog"]');
+          await taskDialog.getByRole('button', { name: 'Close task form' }).click();
+          await expect(taskDialog).toHaveCount(0);
+
+          await page.goto(`${url}/tasks?tab=objectives`, { waitUntil: 'domcontentloaded' });
+          const addObjective = page.getByRole('button', { name: 'New Objective', exact: true });
+          await addObjective.click();
+          const objectiveDialog = page.getByRole('dialog', { name: 'New Objective' });
+          await expect(objectiveDialog).toBeVisible();
+          await waitForFiniteAnimations(objectiveDialog);
+          await expectAxeClean(page, `Objective editor dialog (${theme})`, '[role="dialog"]');
+          await objectiveDialog.getByRole('button', { name: 'Close dialog' }).click();
+          await expect(objectiveDialog).toHaveCount(0);
+        }
         if (label === 'Today / Planner') {
           const detailsToggle = page.getByRole('button', { name: /details drawer/i }).first();
           if (await detailsToggle.getAttribute('aria-expanded') !== 'true') await detailsToggle.click();

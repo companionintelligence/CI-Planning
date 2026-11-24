@@ -1475,7 +1475,12 @@ export function ElementWizard() {
           </div>
 
           {/* ── Body — identity left, time right (stacked on mobile) ── */}
-          <div class="flex flex-col md:flex-row max-h-[68vh] overflow-y-auto">
+          <div
+            class="flex flex-col md:flex-row max-h-[68vh] overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            role="region"
+            aria-label={`${tab() === 'timeblock' ? 'Time block' : 'Task'} settings`}
+            tabindex="0"
+          >
 
             {/* Routine — simple shell, no panes */}
             <Show when={tab() === 'routine'}>
