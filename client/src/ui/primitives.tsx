@@ -18,7 +18,7 @@ export function PageHeader(props: { title: JSX.Element | string; sub?: JSX.Eleme
 
 /** Shared bordered surface. Keep layout in the feature via `class`; the surface tokens live in `.card`. */
 export function Card(props: SharedClass & {
-  title?: string;
+  title?: JSX.Element | string;
   label?: string;
   description?: JSX.Element | string;
   actions?: JSX.Element;

@@ -24,6 +24,12 @@ async function expectWithinVisualViewport(page: Page, surface: Locator): Promise
   // Sheet entrance uses a spring-like transform, so wait for its brief overshoot
   // to settle before asserting the final viewport geometry.
   await expect.poll(withinViewport, { timeout: 5_000 }).toBe(true);
+  await surface.evaluate(async (element) => {
+    const finite = element.getAnimations({ subtree: true }).filter((animation) =>
+      Number.isFinite(animation.effect?.getComputedTiming().iterations ?? 1),
+    );
+    await Promise.all(finite.map((animation) => animation.finished.catch(() => undefined)));
+  });
   const bounds = await surface.boundingBox();
   const viewport = await page.evaluate(() => ({ width: window.visualViewport?.width ?? window.innerWidth, height: window.visualViewport?.height ?? window.innerHeight }));
   expect(bounds!.x).toBeGreaterThanOrEqual(0);
@@ -69,6 +75,36 @@ test('task and objective sheets stay in the mobile viewport and return focus to 
   await expect(addObjective).toBeFocused();
 });
 
+test('task editor and assistant remain inside phone, tablet, and desktop viewports', async ({ page }) => {
+  test.skip(!username || !password, 'requires an authenticated container with LOGIN_USER and LOGIN_PASS');
+  await signInLocal(page, url);
+
+  for (const viewport of [
+    { width: 430, height: 560 },
+    { width: 768, height: 1024 },
+    { width: 1280, height: 800 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto(`${url}/tasks`, { waitUntil: 'domcontentloaded' });
+    const addTask = page.locator('button[title="Add to calendar"]');
+    await expect(addTask).toBeVisible();
+    await addTask.click();
+    const taskDialog = page.getByRole('dialog', { name: 'Add task' });
+    await expect(taskDialog).toBeVisible();
+    await expectWithinVisualViewport(page, taskDialog);
+    await taskDialog.getByRole('button', { name: 'Close task form' }).click();
+    await expect(taskDialog).toHaveCount(0);
+
+    const assistantOpener = page.getByRole('button', { name: 'Talk to task assistant' });
+    await assistantOpener.click();
+    const assistant = page.getByRole('dialog', { name: 'Task assistant' });
+    await expect(assistant).toBeVisible();
+    await expectWithinVisualViewport(page, assistant);
+    await assistant.getByRole('button', { name: 'Close assistant' }).click();
+    await expect(assistant).toHaveCount(0);
+  }
+});
+
 test('Focus day picker stays in the short mobile viewport and restores focus', async ({ page }) => {
   test.skip(!username || !password, 'requires an authenticated container with LOGIN_USER and LOGIN_PASS');
   await signInLocal(page, url);
@@ -112,7 +148,7 @@ test('Focus Lab stays in the short mobile viewport and keeps its close action re
   await expect(opener).toBeFocused();
 });
 
-test('Pattern type manager stays in the short mobile viewport and restores its opener', async ({ page }) => {
+test('Pattern type manager stays within phone, tablet, and desktop viewports and restores its opener', async ({ page }) => {
   test.skip(!username || !password, 'requires an authenticated container with LOGIN_USER and LOGIN_PASS');
   await signInLocal(page, url);
   await page.setViewportSize({ width: 430, height: 560 });
@@ -128,6 +164,13 @@ test('Pattern type manager stays in the short mobile viewport and restores its o
 
   await page.setViewportSize({ width: 430, height: 420 });
   await expectWithinVisualViewport(page, manager);
+  for (const viewport of [
+    { width: 768, height: 1024 },
+    { width: 1280, height: 800 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectWithinVisualViewport(page, manager);
+  }
   await page.keyboard.press('Escape');
   await expect(manager).toHaveCount(0);
   await expect(opener).toBeFocused();

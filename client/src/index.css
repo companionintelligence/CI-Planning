@@ -548,6 +548,9 @@ html[data-colorway="void"]:not(.dark) {
   .input-lg { @apply py-2.5 text-base; }
   .textarea  { @apply resize-none; }
 
+  /* Fixed Planner lane proportions; per-day geometry stays data-driven inline. */
+  .planner-grid { grid-template-columns: 3.5rem 1.75rem minmax(0, 1fr); }
+
   /* <select> is the one control the canon classes did not actually reach. `.input` gives
      it the right border, radius and text colour, but the BROWSER still draws the dropdown
      arrow itself — its own glyph, its own colour, its own box — so a select sat visibly

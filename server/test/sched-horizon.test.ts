@@ -8,9 +8,9 @@ import { resetDb, startTestServer, api, type TestServer, seedFallbackFillWindow 
  * single-day placement across N days (Schedule mode → planning_horizon_days; Suggest
  * mode → 1; explicit horizon_days overrides). TZ=UTC pinned (helpers force timezone=UTC).
  *
- * Three consecutive weekdays; the workday window is shrunk to 09:00–10:00 (60 min), which
- * holds exactly one 45-min undirected task (a second needs 45+10-break+45 > 60). So a
- * staged set of 3 fans one task onto each day via the Pass-2b workday fill in /auto/run.
+ * Three consecutive weekdays; the workday window is shrunk to 09:00–09:59. It fits one
+ * 45-minute task but leaves less than the 15-minute minimum session for another task, so
+ * a staged set of 3 fans one task onto each day via the Pass-2b workday fill in /auto/run.
  */
 const OWNER = SYSTEM_OWNER;
 const D0 = '2026-06-22'; // Mon
@@ -44,7 +44,7 @@ function setMode(mode: 'suggest' | 'schedule', horizon: number): void {
   sqlite
     .prepare(
       `INSERT INTO pattern_blocks (id, owner_id, direction_tag_id, day_type, start_time, end_time)
-       VALUES (uuid7(), ?, ?, 'workday', '09:00', '10:00')`,
+       VALUES (uuid7(), ?, ?, 'workday', '09:00', '09:59')`,
     )
     .run(OWNER, workId);
 }

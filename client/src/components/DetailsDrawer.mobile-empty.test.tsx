@@ -23,7 +23,10 @@ vi.mock('../lib/lock.js', () => ({ lockAffordance: () => ({}) }));
 vi.mock('../lib/recurrence.js', () => ({ describeRule: () => '' }));
 vi.mock('../lib/tag-tax.js', () => ({ displayTag: (n: string) => n }));
 vi.mock('../lib/objectives.js', () => ({ flattenObjectives: () => [] }));
-vi.mock('../lib/api.js', () => ({ api: { priorities: { list: async () => ({ priorities: [] }), history: async () => null } } }));
+vi.mock('../lib/api.js', () => ({ api: {
+  priorities: { list: async () => ({ priorities: [] }), history: async () => null },
+  taskAgent: { notes: async () => ({ notes: [] }), addNote: vi.fn() },
+} }));
 
 const [activeTaskId, setActiveTaskId] = createSignal<string | null>(null);
 const [entity, setEntity] = createSignal<{ kind: string; id: string } | null>(null);
@@ -37,6 +40,7 @@ vi.mock('../stores/selection.js', () => ({
 const [drawerTab, setDrawerTabSignal] = createSignal<'details' | 'flightplan'>('details');
 vi.mock('../stores/ui.js', () => ({
   detailsOpen: () => true, detailsWidth: () => 360, setDetailsOpen: vi.fn(), setDetailsWidth: vi.fn(),
+  requestTaskAssistant: vi.fn(),
   drawerTab: () => drawerTab(), setDrawerTab: (t: 'details' | 'flightplan') => setDrawerTabSignal(t),
   DETAILS_MIN_W: 280, DETAILS_MAX_W: 640, DETAILS_DEFAULT_W: 360,
 }));

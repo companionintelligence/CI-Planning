@@ -87,3 +87,53 @@ test('Metrics shows daily completion and task writes, and the assistant recaps t
     await data.cleanup();
   }
 });
+
+test('suggestion outcomes flow into Triality Metrics and the Balance Metrics page', async ({ page }, testInfo) => {
+  test.skip(!username || !password, 'requires a local-login container with LOGIN_USER and LOGIN_PASS');
+  test.setTimeout(90_000);
+  const data = new OwnerFixtures(page.request, testInfo.testId);
+
+  try {
+    await signInLocal(page, url);
+    const prefResponse = await page.request.patch(`${url}/api/prefs`, { data: { triality_enabled: true } });
+    expect(prefResponse.ok()).toBe(true);
+
+    // Triality intentionally refuses to rank until it has ten confirmed completions.
+    for (let i = 0; i < 10; i++) {
+      const task = await data.createTask({ title: `E2E suggestion history ${i} ${testInfo.testId}`, estimated_minutes: 5 });
+      const close = await page.request.post(`${url}/api/tasks/${task.id}/close`, { data: { score: 4 } });
+      expect(close.status()).toBe(200);
+    }
+    await Promise.all(Array.from({ length: 3 }, (_, i) => data.createTask({
+      title: `E2E suggestion candidate ${i} ${testInfo.testId}`,
+      estimated_minutes: 5,
+    })));
+
+    const nextResponse = await page.request.get(`${url}/api/triality/next`);
+    expect(nextResponse.ok()).toBe(true);
+    const next = await nextResponse.json() as { refused?: string; picks?: Array<{ slot: string; log_id: string | null } | null> };
+    expect(next.refused).toBeUndefined();
+    const picked = next.picks?.find((pick) => pick?.log_id);
+    expect(picked?.log_id).toBeTruthy();
+    const feedbackResponse = await page.request.post(`${url}/api/triality/feedback`, {
+      data: { log_id: picked!.log_id, outcome: 'opened' },
+    });
+    expect(feedbackResponse.ok()).toBe(true);
+
+    const metricsResponse = await page.request.get(`${url}/api/metrics/triality?days=30`);
+    expect(metricsResponse.ok()).toBe(true);
+    const metrics = await metricsResponse.json() as {
+      acceptance: Record<string, { shown: number; taken: number; rate: number | null }>;
+    };
+    expect(metrics.acceptance[picked!.slot]).toMatchObject({ shown: 1, taken: 1, rate: 1 });
+
+    await page.goto(`${url}/balance`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('tab', { name: 'Metrics' }).click();
+    const suggestionTiles = page.getByTestId('triality-metrics');
+    await expect(suggestionTiles).toBeVisible();
+    await expect(suggestionTiles.getByText(new RegExp(`TAKEN · ${picked!.slot.toUpperCase()}`))).toBeVisible();
+    await expect(suggestionTiles.getByText('100%', { exact: true }).first()).toBeVisible();
+  } finally {
+    await data.cleanup();
+  }
+});

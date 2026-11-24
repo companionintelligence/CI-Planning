@@ -8,13 +8,13 @@ const password = process.env.LOGIN_PASS;
 test('Task assistant carries a clarification into editable drafts and creates them only on confirm', async ({ page }, testInfo) => {
   test.skip(!username || !password, 'requires a local-login container with LOGIN_USER and LOGIN_PASS');
   test.setTimeout(60_000);
+  await signInLocal(page, url);
   const data = new OwnerFixtures(page.request, testInfo.testId);
   const runKey = `${testInfo.testId}-${Date.now()}`;
   const planRequests: Array<{ text: string; history: Array<{ role: string; text: string }> }> = [];
   const createResponses: Response[] = [];
 
   try {
-    await signInLocal(page, url);
     await page.route('**/api/task-agent/plan', async (route) => {
       const request = route.request().postDataJSON() as { text: string; history: Array<{ role: string; text: string }> };
       planRequests.push(request);
@@ -88,6 +88,64 @@ test('Task assistant carries a clarification into editable drafts and creates th
       [`Feed cats ${runKey}`, 20],
     ]);
     await expect(dialog.getByText('1 change saved.')).toBeVisible();
+  } finally {
+    await data.cleanup();
+  }
+});
+
+test('Task assistant continues a bulk update after one task fails and reports the partial result', async ({ page }, testInfo) => {
+  test.skip(!username || !password, 'requires a local-login container with LOGIN_USER and LOGIN_PASS');
+  test.setTimeout(60_000);
+  await signInLocal(page, url);
+  const data = new OwnerFixtures(page.request, testInfo.testId);
+  const runKey = `${testInfo.testId}-${Date.now()}`;
+  const tasks = await Promise.all([
+    data.createTask({ title: `E2E bulk first ${runKey}`, scheduled_for: '2026-11-26', task_time: '09:00' }),
+    data.createTask({ title: `E2E bulk second ${runKey}`, scheduled_for: '2026-11-26', task_time: '10:00' }),
+    data.createTask({ title: `E2E bulk third ${runKey}`, scheduled_for: '2026-11-26', task_time: '11:00' }),
+  ]);
+  const failedTask = tasks[1]!;
+
+  try {
+    await page.route('**/api/task-agent/plan', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        reply: 'I found three scheduled open tasks. Review before unscheduling them.',
+        actions: [{ kind: 'bulk_unschedule_tasks', tasks: tasks.map((task) => ({
+          task_id: task.id, title: task.title, scheduled_for: '2026-11-26', task_time: '09:00',
+        })) }],
+        tasks: [], objectives: [],
+      }) });
+    });
+    await page.route(`**/api/tasks/${failedTask.id}`, async (route) => {
+      if (route.request().method() === 'PATCH') {
+        await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'fixture update failure' }) });
+      } else await route.continue();
+    });
+
+    await page.goto(`${url}/`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: 'Talk to task assistant' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Task assistant' });
+    const muteReplies = dialog.getByRole('button', { name: 'Mute replies' });
+    if (await muteReplies.isVisible().catch(() => false)) await muteReplies.click();
+    await dialog.getByRole('textbox', { name: 'Message the task assistant' }).fill('Unschedule all open tasks');
+    await dialog.getByRole('button', { name: 'Send', exact: true }).click();
+    await expect(dialog.getByText('Unschedule 3 unfinished tasks')).toBeVisible();
+    await dialog.getByRole('button', { name: 'Confirm', exact: true }).click();
+
+    await expect(dialog.getByRole('alert')).toContainText('2 tasks updated; 1 failed.');
+    await expect(dialog.getByRole('alert')).toContainText(failedTask.title);
+    const response = await page.request.get(`${url}/api/tasks`);
+    expect(response.ok()).toBe(true);
+    const rows = ((await response.json()).tasks as Array<{ id: string; status: string; scheduled_for: string | null; task_time: string | null }>);
+    for (const task of [tasks[0]!, tasks[2]!]) {
+      const row = rows.find((item) => item.id === task.id)!;
+      expect(row.status).toBe('open');
+      expect(row.scheduled_for).toBeNull();
+      expect(row.task_time).toBeNull();
+    }
+    const failedRow = rows.find((item) => item.id === failedTask.id)!;
+    expect(failedRow.scheduled_for).toBe('2026-11-26');
+    expect(failedRow.task_time).toBe('10:00');
   } finally {
     await data.cleanup();
   }

@@ -14,6 +14,9 @@
  *   a label and control. modal-form-grid stacks fields on narrow screens and uses two
  *   equal columns once there is room. modal-form-footer keeps actions reachable and
  *   allows buttons to share width on very narrow screens.
+ * - settings-preference-card uses the shared Card title/actions slots for settings
+ *   groups. Its header wraps without squeezing the section title or Save action;
+ *   settings content remains feature-owned and keeps the existing responsive field rows.
  */
 .planner-actions-menu {
   display: flex;
@@ -118,6 +121,16 @@
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
+}
+
+.settings-preference-card {
+  min-width: 0;
+}
+.settings-preference-card > header {
+  align-items: center;
+}
+.settings-preference-card > header > div:first-child {
+  min-width: 0;
 }
 
 @media (min-width: 40rem) {

@@ -44,10 +44,14 @@ async function expectAxeClean(page: Page, surface: string, rootSelector = 'body'
 
 async function waitForFiniteAnimations(surface: ReturnType<Page['locator']>) {
   await surface.evaluate(async (element) => {
-    const animations = element.getAnimations({ subtree: true }).filter((animation) =>
+    const animations = new Set<Animation>();
+    for (let node: Element | null = element; node; node = node.parentElement) {
+      for (const animation of node.getAnimations({ subtree: node === element })) animations.add(animation);
+    }
+    const finite = [...animations].filter((animation) =>
       Number.isFinite(animation.effect?.getComputedTiming().iterations ?? 1),
     );
-    await Promise.all(animations.map((animation) => animation.finished.catch(() => undefined)));
+    await Promise.all(finite.map((animation) => animation.finished.catch(() => undefined)));
   });
 }
 
@@ -200,6 +204,87 @@ test.describe('authenticated accessibility regressions', () => {
     });
     expect(motion.preference).toBe(true);
     expect(motion.animation).toBe('none');
+  });
+
+  test('conditional reminder and Time-Sense Settings states pass axe in both themes', async ({ page }) => {
+    await signInLocal(page, url);
+    await page.addInitScript({ content: axe.source });
+    await page.setViewportSize({ width: 430, height: 560 });
+
+    for (const theme of ['light', 'dark'] as const) {
+      await page.goto(`${url}/settings?tab=preferences`, { waitUntil: 'domcontentloaded' });
+      await expect(page.locator('[data-app-shell]')).toBeVisible();
+      await page.getByLabel('Theme mode').selectOption(theme);
+      await expect.poll(async () => /\bdark\b/.test((await page.locator('html').getAttribute('class')) ?? ''))
+        .toBe(theme === 'dark');
+
+      const advanceReminder = page.getByRole('switch', { name: 'Advance reminder' });
+      await advanceReminder.click();
+      await expect(page.getByText('minutes before start')).toBeVisible();
+      await expectAxeClean(page, `Conditional reminder Settings (${theme})`);
+
+      const timeSense = page.getByRole('switch', { name: 'Time-Sense' });
+      await timeSense.click();
+      await expect(page.getByRole('switch', { name: 'Focus screen' })).toBeVisible();
+      await expect(page.getByRole('switch', { name: 'Haptic cues' })).toBeVisible();
+      await expect(page.getByRole('switch', { name: 'Calibration nudge' })).toBeVisible();
+      await expectAxeClean(page, `Time-Sense conditional Settings (${theme})`);
+    }
+  });
+
+  test('Create Routine sheet passes axe in both themes', async ({ page }, testInfo) => {
+    const data = new OwnerFixtures(page.request, testInfo.testId);
+
+    try {
+      await signInLocal(page, url);
+      const day = await page.evaluate(() => {
+        const target = new Date();
+        target.setDate(target.getDate() + 1);
+        const date = `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, '0')}-${String(target.getDate()).padStart(2, '0')}`;
+        const start = new Date(target.getFullYear(), target.getMonth(), target.getDate(), 10, 0);
+        return { date, first: start.toISOString(), second: new Date(start.getTime() + 60 * 60_000).toISOString() };
+      });
+      for (let i = 0; i < 2; i++) {
+        const task = await data.createTask({ title: `E2E routine axe ${i} ${testInfo.testId}` });
+        const start = i === 0 ? day.first : day.second;
+        await data.createBlock({
+          title: task.title, task_id: task.id, block_kind: 'task', start_at: start,
+          end_at: new Date(Date.parse(start) + 30 * 60_000).toISOString(),
+        });
+      }
+      await page.addInitScript({ content: axe.source });
+      await page.setViewportSize({ width: 430, height: 560 });
+
+      for (const theme of ['light', 'dark'] as const) {
+        await page.goto(`${url}/settings?tab=preferences`, { waitUntil: 'domcontentloaded' });
+        await expect(page.locator('[data-app-shell]')).toBeVisible();
+        await page.getByLabel('Theme mode').selectOption(theme);
+        await expect.poll(async () => /\bdark\b/.test((await page.locator('html').getAttribute('class')) ?? ''))
+          .toBe(theme === 'dark');
+
+        await page.goto(`${url}/`, { waitUntil: 'domcontentloaded' });
+        await page.getByTitle('Pick a day').locator('input[type="date"]').fill(day.date);
+        for (let i = 0; i < 2; i++) {
+          const title = `E2E routine axe ${i} ${testInfo.testId}`;
+          const chip = page.getByTitle(new RegExp(`^${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} ·`));
+          await expect(chip).toBeVisible();
+          await chip.click({ modifiers: ['Control'] });
+        }
+        const quickActions = page.getByRole('button', { name: 'Planner quick actions' });
+        await quickActions.click();
+        await page.getByRole('button', { name: /\+ Routine/ }).click();
+        const dialog = page.getByRole('dialog', { name: 'Create Routine from 2 items' });
+        await expect(dialog).toBeVisible();
+        await expect(dialog.getByRole('textbox', { name: 'Routine name' })).toBeFocused();
+        await waitForFiniteAnimations(dialog);
+        await expectAxeClean(page, `Create Routine dialog (${theme})`, '[role="dialog"]');
+        await page.keyboard.press('Escape');
+        await expect(dialog).toHaveCount(0);
+        await page.keyboard.press('Escape'); // Clear the multi-select after closing its sheet.
+      }
+    } finally {
+      await data.cleanup();
+    }
   });
 
   test('overdue due-list dialog passes axe in both themes', async ({ page }, testInfo) => {

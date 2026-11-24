@@ -150,7 +150,7 @@ export function resetDb(): void {
       fill_order = 'priority',
       enable_rituals = 0,
       max_focus_block_minutes = 90,
-      min_break_minutes = 10,
+      min_break_minutes = 3,
       planning_horizon_days = 7,
       recurrence_horizon_days = 7,
       recall_keeps_pattern = 0,

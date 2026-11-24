@@ -133,20 +133,29 @@ export function TaskAgent(props: { open: boolean; onClose: () => void; screenCon
     let completed = 0;
     let multiTaskSummary = '';
     const saved: Result[] = [];
+    const failedTasks: string[] = [];
     const place = async (taskId: string) =>
       (await api.taskAgent.place(taskId).catch(() => ({ placement: { placed: false, reason: 'placement unavailable' } }))).placement;
     try {
       for (const action of current.actions) {
         if (action.kind === 'bulk_unschedule_tasks') {
           for (const task of action.tasks) {
-            await api.tasks.update(task.task_id, { scheduled_for: null, task_time: null, status: 'open' });
-            saved.push({ text: `Unscheduled “${task.title}”`, taskId: task.task_id });
+            try {
+              await api.tasks.update(task.task_id, { scheduled_for: null, task_time: null, status: 'open' });
+              saved.push({ text: `Unscheduled “${task.title}”`, taskId: task.task_id });
+            } catch (err) {
+              failedTasks.push(`${task.title}: ${(err as Error).message}`);
+            }
           }
         } else if (action.kind === 'bulk_reschedule_tasks') {
           for (const task of action.tasks) {
-            await api.tasks.update(task.task_id, { scheduled_for: action.scheduled_for, task_time: action.task_time ?? null, status: 'open' });
-            const placement = await place(task.task_id);
-            saved.push({ text: `Rescheduled “${task.title}” for ${action.scheduled_for}${placement.placed ? '' : `; no slot placed (${placement.reason ?? 'unavailable'})`}`, taskId: task.task_id });
+            try {
+              await api.tasks.update(task.task_id, { scheduled_for: action.scheduled_for, task_time: action.task_time ?? null, status: 'open' });
+              const placement = await place(task.task_id);
+              saved.push({ text: `Rescheduled “${task.title}” for ${action.scheduled_for}${placement.placed ? '' : `; no slot placed (${placement.reason ?? 'unavailable'})`}`, taskId: task.task_id });
+            } catch (err) {
+              failedTasks.push(`${task.title}: ${(err as Error).message}`);
+            }
           }
         } else if (action.kind === 'create_tasks') {
           if (action.target_block_id && action.block_end_at) await api.blocks.update(action.target_block_id, { end_at: action.block_end_at });
@@ -189,8 +198,13 @@ export function TaskAgent(props: { open: boolean; onClose: () => void; screenCon
       }
       setPlan(null);
       setResults((previous) => [...previous, ...saved]);
-      const summary = current.actions.some((action) => action.kind === 'draft_task') ? 'Draft fields are ready to review in the task form.' : multiTaskSummary || `${completed} change${completed === 1 ? '' : 's'} saved.`;
+      const bulkCount = current.actions.reduce((count, action) =>
+        count + (action.kind === 'bulk_unschedule_tasks' || action.kind === 'bulk_reschedule_tasks' ? action.tasks.length : 0), 0);
+      const summary = failedTasks.length
+        ? `${bulkCount - failedTasks.length} task${bulkCount - failedTasks.length === 1 ? '' : 's'} updated; ${failedTasks.length} failed. ${failedTasks.join('; ')}`
+        : current.actions.some((action) => action.kind === 'draft_task') ? 'Draft fields are ready to review in the task form.' : multiTaskSummary || `${completed} change${completed === 1 ? '' : 's'} saved.`;
       setMessages((previous) => [...previous, { role: 'assistant', text: summary }]);
+      if (failedTasks.length) setError(summary);
       say(summary);
     } catch (err) {
       setPlan(null); // A retry must replan against current data after partial success.

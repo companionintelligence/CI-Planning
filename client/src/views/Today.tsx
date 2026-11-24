@@ -16,7 +16,6 @@ import { OpenTimeSummary } from '../components/OpenTimeSummary.js';
 import { DayStarsRow } from '../components/DayStarsRow.js';
 import { ReplanBanner } from '../components/ReplanBanner.js';
 import { FocusMenu, BriefMenu } from '../components/DayGoals.js';
-import { ViewportOverlay } from '../components/ViewportOverlay.js';
 import { ModalSheet } from '../ui/index.js';
 
 /**
@@ -381,38 +380,38 @@ export function Today() {
       </Show>
 
       {/* Create-Routine-from-selection modal (Phase F). */}
-      <Show when={routineModal().open}>
-        <ViewportOverlay class="modal-backdrop" onClick={() => setRoutineModal({ open: false, name: '' })}>
-          <div class="modal max-w-md" onClick={(e) => e.stopPropagation()}>
-            <div class="px-4 py-3 border-b border-border flex items-center gap-2">
-              <Repeat size={14} class="text-primary" />
-              <span class="text-sm font-semibold text-foreground">Create Routine from {selection().size} item{selection().size === 1 ? '' : 's'}</span>
-            </div>
-            <div class="p-4 flex flex-col gap-3">
-              <label class="flex flex-col gap-1">
-                <span class="text-[11px] text-muted-foreground">Name</span>
-                <input
-                  class="input"
-                  placeholder="e.g. Morning routine"
-                  autofocus
-                  value={routineModal().name}
-                  onInput={(e) => setRoutineModal({ open: true, name: e.currentTarget.value })}
-                  onKeyDown={(e) => { if (e.key === 'Enter') createRoutineFromSelection(); }}
-                />
-              </label>
-              <div class="rounded-md border border-border bg-background/40 p-2 max-h-40 overflow-auto">
-                <For each={selectedTitles(blocks() ?? [], tasks() ?? [])}>
-                  {(t) => <div class="text-xs text-foreground truncate py-0.5">· {t}</div>}
-                </For>
-              </div>
-              <div class="flex justify-end gap-2 pt-1">
-                <button onClick={() => setRoutineModal({ open: false, name: '' })} class="btn-ghost text-sm px-3 py-1.5">Cancel</button>
-                <button onClick={createRoutineFromSelection} class="btn-primary text-sm px-4 py-1.5"><Repeat size={13} /> Create</button>
-              </div>
-            </div>
+      <ModalSheet
+        open={routineModal().open}
+        title={`Create Routine from ${selection().size} item${selection().size === 1 ? '' : 's'}`}
+        onClose={() => setRoutineModal({ open: false, name: '' })}
+        mode="modal"
+        backdropClass="modal-backdrop"
+        class="max-w-md"
+        footer={<div class="flex justify-end gap-2">
+          <button type="button" onClick={() => setRoutineModal({ open: false, name: '' })} class="btn-ghost text-sm px-3 py-1.5">Cancel</button>
+          <button type="button" onClick={createRoutineFromSelection} class="btn-primary text-sm px-4 py-1.5"><Repeat size={13} /> Create</button>
+        </div>}
+      >
+        <div class="flex flex-col gap-3">
+          <label class="flex flex-col gap-1">
+            <span class="text-[11px] text-muted-foreground">Name</span>
+            <input
+              class="input"
+              aria-label="Routine name"
+              placeholder="e.g. Morning routine"
+              autofocus
+              value={routineModal().name}
+              onInput={(e) => setRoutineModal({ open: true, name: e.currentTarget.value })}
+              onKeyDown={(e) => { if (e.key === 'Enter') createRoutineFromSelection(); }}
+            />
+          </label>
+          <div class="rounded-md border border-border bg-background/40 p-2 max-h-40 overflow-auto" aria-label="Selected tasks">
+            <For each={selectedTitles(blocks() ?? [], tasks() ?? [])}>
+              {(t) => <div class="text-xs text-foreground truncate py-0.5">· {t}</div>}
+            </For>
           </div>
-        </ViewportOverlay>
-      </Show>
+        </div>
+      </ModalSheet>
     </div>
   );
 }

@@ -244,6 +244,7 @@ export function PlanWeekAssistant() {
       open={open()}
       title="Plan my week"
       onClose={() => void close('abandoned')}
+      backdropClass="modal-backdrop"
       class="max-w-lg"
       footer={
         <div class="flex justify-end px-4 pb-1">

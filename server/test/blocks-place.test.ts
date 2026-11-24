@@ -92,7 +92,7 @@ describe('placeTasksInBlock', () => {
     expect(row.task_time).toBeNull();
   });
 
-  it('treats an existing child as an obstacle (new task lands after it, with a break)', async () => {
+  it('treats an existing child as an obstacle (new task lands at the next available time)', async () => {
     const c = insertContainer(at('09:00'), at('12:00'));
     const pre = insertTask('Existing', 60);
     insertChild(c, pre, at('09:00'), at('10:00')); // occupies 09:00–10:00
@@ -101,9 +101,9 @@ describe('placeTasksInBlock', () => {
     await placeTasksInBlock(OWNER, c, [t]);
 
     const placed = childrenOf(c).find((k) => k.task_id === t)!;
-    // min_break_minutes = 10 → first free slot starts at 10:10.
-    expect(placed.start_at).toBe(at('10:10'));
-    expect(placed.end_at).toBe(at('10:40'));
+    // Auto placement ignores configured breaks and starts at the first free minute.
+    expect(placed.start_at).toBe(at('10:00'));
+    expect(placed.end_at).toBe(at('10:30'));
   });
 
   it('skips ids already attached, duplicates, and an empty list (idempotent re-add)', async () => {

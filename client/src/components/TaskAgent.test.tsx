@@ -81,8 +81,8 @@ describe('task assistant review', () => {
     fireEvent.click(screen.getByText('Send'));
     await waitFor(() => expect(screen.getByLabelText('Draft task 1')).toBeTruthy());
     expect(create).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByLabelText('Draft task 2'), { target: { value: 'Feed the cats' } });
-    fireEvent.click(screen.getByText('Apply changes'));
+    fireEvent.input(screen.getByLabelText('Draft task 2'), { target: { value: 'Feed the cats' } });
+    fireEvent.click(screen.getByText('Confirm'));
     await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
     expect(create).toHaveBeenNthCalledWith(2, { title: 'Feed the cats', estimated_minutes: 15 });
     await waitFor(() => expect(addTasks).toHaveBeenCalledWith('b1', ['new-1', 'new-2']));
@@ -95,7 +95,7 @@ describe('task assistant review', () => {
     fireEvent.click(screen.getByText('Send'));
     const duration = await screen.findByLabelText('Minutes for draft task 1');
     expect(duration.closest('.overflow-y-auto')).toBeTruthy();
-    expect(screen.queryByLabelText('Message the task assistant')).toBeNull();
+    expect(screen.getByLabelText('Message the task assistant')).toBeTruthy();
     const scroll = vi.fn();
     duration.scrollIntoView = scroll;
     fireEvent.focus(duration);
@@ -109,7 +109,7 @@ describe('task assistant review', () => {
     fireEvent.click(screen.getByText('Send'));
     await waitFor(() => expect(screen.getByText('Extend to fit estimate')).toBeTruthy());
     fireEvent.click(screen.getByText('Extend to fit estimate'));
-    fireEvent.click(screen.getByText('Apply changes'));
+    fireEvent.click(screen.getByText('Confirm'));
     await waitFor(() => expect(updateBlock).toHaveBeenCalledWith('b1', { end_at: '2026-11-23T17:10:00.000Z' }));
     expect(updateBlock.mock.invocationCallOrder[0]).toBeLessThan(create.mock.invocationCallOrder[0]);
   });
@@ -122,7 +122,7 @@ describe('task assistant review', () => {
     await waitFor(() => expect(screen.getByText(/Review changes/)).toBeTruthy());
     expect(plan).toHaveBeenCalledWith('Move Call Sam to Friday', [], screenContext());
     expect(update).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByText('Apply changes'));
+    fireEvent.click(screen.getByText('Confirm'));
     await waitFor(() => expect(update).toHaveBeenCalledWith('t1', { scheduled_for: '2026-11-27' }));
     await waitFor(() => expect(refetchTasks).toHaveBeenCalled());
   });

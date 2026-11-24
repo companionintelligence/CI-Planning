@@ -217,3 +217,82 @@ test('Planner time blocks can be edited and an overlap warning clears after movi
     await data.cleanup();
   }
 });
+
+test('Planner pointer gestures persist task movement and resize', async ({ page }, testInfo) => {
+  test.skip(!username || !password, 'requires a local-login container with LOGIN_USER and LOGIN_PASS');
+  test.setTimeout(60_000);
+  page.setDefaultTimeout(10_000);
+  const data = new OwnerFixtures(page.request, testInfo.testId);
+
+  try {
+    await signInLocal(page, url);
+    const day = await page.evaluate(() => {
+      const target = new Date();
+      target.setDate(target.getDate() + 2);
+      const date = `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, '0')}-${String(target.getDate()).padStart(2, '0')}`;
+      const start = new Date(target.getFullYear(), target.getMonth(), target.getDate(), 10, 0);
+      const nextDay = new Date(target.getFullYear(), target.getMonth(), target.getDate() + 1);
+      return { date, start: start.toISOString(), from: new Date(target.getFullYear(), target.getMonth(), target.getDate()).toISOString(), to: nextDay.toISOString() };
+    });
+    const task = await data.createTask({ title: `E2E drag resize ${testInfo.testId}`, estimated_minutes: 60 });
+    const block = await data.createBlock({
+      title: task.title,
+      task_id: task.id,
+      block_kind: 'task',
+      start_at: day.start,
+      end_at: new Date(Date.parse(day.start) + 60 * 60_000).toISOString(),
+    });
+
+    await page.goto(`${url}/`, { waitUntil: 'domcontentloaded' });
+    const dayPicker = page.getByTitle('Pick a day').locator('input[type="date"]');
+    await dayPicker.fill(day.date);
+    const detailsToggle = page.getByRole('button', { name: /details drawer/i }).first();
+    if (await detailsToggle.getAttribute('aria-expanded') === 'true') await detailsToggle.click();
+    const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const chip = page.getByTitle(new RegExp(`^${escapeRegExp(task.title)} ·`));
+    await expect(chip).toBeVisible();
+
+    const bounds = await chip.boundingBox();
+    expect(bounds).not.toBeNull();
+    const centerX = bounds!.x + bounds!.width / 2;
+    const centerY = bounds!.y + bounds!.height / 2;
+    const movedResponse = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/blocks/${block.id}`) && response.request().method() === 'PATCH');
+    await page.mouse.move(centerX, centerY);
+    await page.mouse.down();
+    await page.mouse.move(centerX, centerY + 38, { steps: 4 });
+    await page.mouse.up();
+    expect((await movedResponse).ok()).toBe(true);
+
+    const movedBlock = async () => {
+      const response = await page.request.get(`${url}/api/blocks?${new URLSearchParams({ from: day.from, to: day.to })}`);
+      expect(response.ok()).toBe(true);
+      const rows = (await response.json()).blocks as Array<{ id: string; start_at: string; end_at: string }>;
+      return rows.find((row) => row.id === block.id)!;
+    };
+    const afterMove = await movedBlock();
+    expect(Date.parse(afterMove.start_at)).toBe(Date.parse(day.start) + 30 * 60_000);
+    expect(Date.parse(afterMove.end_at) - Date.parse(afterMove.start_at)).toBe(60 * 60_000);
+
+    const resizedChip = page.getByTitle(new RegExp(`^${escapeRegExp(task.title)} ·`));
+    await expect(resizedChip).toBeVisible();
+    const resizeHandles = resizedChip.locator('[class*="cursor-ns-resize"]');
+    await expect(resizeHandles).toHaveCount(2);
+    const handleBounds = await resizeHandles.nth(1).boundingBox();
+    expect(handleBounds).not.toBeNull();
+    const resizeX = handleBounds!.x + handleBounds!.width / 2;
+    const resizeY = handleBounds!.y + handleBounds!.height / 2;
+    const resizeResponse = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/blocks/${block.id}`) && response.request().method() === 'PATCH');
+    await page.mouse.move(resizeX, resizeY);
+    await page.mouse.down();
+    await page.mouse.move(resizeX, resizeY + 19, { steps: 3 });
+    await page.mouse.up();
+    expect((await resizeResponse).ok()).toBe(true);
+    const afterResize = await movedBlock();
+    expect(Date.parse(afterResize.start_at)).toBe(Date.parse(afterMove.start_at));
+    expect(Date.parse(afterResize.end_at) - Date.parse(afterResize.start_at)).toBe(75 * 60_000);
+  } finally {
+    await data.cleanup();
+  }
+});

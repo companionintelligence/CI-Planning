@@ -1199,7 +1199,7 @@ export function Planner(props: { taskLookup?: (id: string) => Task | undefined }
       {/* The full-day segmented grid: natural height (day minus collapsed regions),
           no inner scroll. The page scrolls for everything else. */}
       <div class="relative">
-        <div class="grid" style={{ 'grid-template-columns': '3.5rem 1.75rem 1fr' }}>
+        <div class="planner-grid grid">
           <TimeGutter state={axisState} />
           {/* Direction column — colored letter bugs at each window transition. */}
           <div class="border-l border-border/60"><DirectionColumn bands={axisBands} state={axisState} currentMinute={currentMinute} /></div>

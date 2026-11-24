@@ -194,7 +194,7 @@ export function TrialityBanner() {
     <Show when={enabled() && !collapsed() && next()}>
       <div class="mb-5 rounded-2xl border border-border border-l-2 border-l-accent-hi bg-card p-3.5" data-testid="triality-banner">
         <div class="flex items-center justify-between mb-2">
-          <span class="text-[10px] font-semibold uppercase tracking-[0.15em] text-accent-hi">What's next</span>
+          <span class="text-[10px] font-semibold uppercase tracking-[0.15em] text-foreground">What's next</span>
           <button class="btn-icon" title="Dismiss for today" aria-label="Dismiss suggestions for today" onClick={dismissBanner}>
             <X size={13} />
           </button>

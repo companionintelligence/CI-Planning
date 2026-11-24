@@ -14,21 +14,21 @@ exports[`behavior baseline — Auto placement engine > places Plans-first (tap 2
   },
   {
     "block_kind": "task",
-    "end_at": "2026-06-22T12:40:00.000Z",
+    "end_at": "2026-06-22T12:30:00.000Z",
     "is_auto": 1,
     "parent_block_id": null,
     "source_kind": "agent",
-    "start_at": "2026-06-22T12:10:00.000Z",
+    "start_at": "2026-06-22T12:00:00.000Z",
     "status": "planned",
     "title": "Buy milk",
   },
   {
     "block_kind": "task",
-    "end_at": "2026-06-22T13:35:00.000Z",
+    "end_at": "2026-06-22T13:15:00.000Z",
     "is_auto": 1,
     "parent_block_id": null,
     "source_kind": "agent",
-    "start_at": "2026-06-22T12:50:00.000Z",
+    "start_at": "2026-06-22T12:30:00.000Z",
     "status": "planned",
     "title": "Loose end",
   },
@@ -1785,6 +1785,16 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "task_id",
     ],
     "table": "task_dependencies",
+  },
+  {
+    "columns": [
+      "body",
+      "created_at",
+      "id",
+      "owner_id",
+      "task_id",
+    ],
+    "table": "task_notes",
   },
   {
     "columns": [
