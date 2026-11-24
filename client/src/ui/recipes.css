@@ -8,6 +8,8 @@
  *   compact and inline at every width; the dismiss control is icon-only.
  * - flight-plan-header-actions keeps the fill-order and staging actions grouped while
  *   allowing them to wrap within the mobile sheet without squeezing the title.
+ * - task-notes-card keeps timestamped task notes readable at drawer width; feed entries
+ *   preserve long text and timestamps without creating horizontal overflow.
  * - modal-form-fields owns vertical rhythm inside a modal body. modal-form-field aligns
  *   a label and control. modal-form-grid stacks fields on narrow screens and uses two
  *   equal columns once there is room. modal-form-footer keeps actions reachable and
@@ -61,6 +63,33 @@
   align-items: center;
   justify-content: flex-end;
   gap: 0.5rem;
+}
+
+.task-notes-card {
+  min-width: 0;
+  padding: 0.75rem;
+}
+.task-note-feed {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.task-note-entry {
+  min-width: 0;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-8);
+  font-size: 0.875rem;
+}
+.task-note-entry time {
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+.task-note-entry p {
+  margin-top: 0.25rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .modal-form-fields {

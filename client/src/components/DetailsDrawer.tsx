@@ -28,6 +28,7 @@ import { describeRule } from '../lib/recurrence.js';
 import { addDays, rangeUTC } from '../lib/dates.js';
 import { ViewportOverlay } from './ViewportOverlay.js';
 import { minutesIntoDay } from '../lib/grid.js';
+import { Card, Toolbar } from '../ui/index.js';
 import { OpenTimeSummary } from './OpenTimeSummary.js';
 import {
   windowFor, inWindow, targetForWindow, groupByTitle, minutesBetween, hoursLabel,
@@ -232,24 +233,29 @@ function TaskPanel(props: { task: () => Task }) {
           />
         </Show>
 
-        <Group label="Notes">
-          <div class="space-y-2">
-            <div class="flex items-center justify-between gap-2">
-              <span class="text-xs text-muted-foreground">Updates and context</span>
+        <Card
+          title="Notes"
+          description="Updates and context"
+          actions={
+            <Toolbar label="Task note actions">
               <button type="button" class="btn-ghost text-xs" onClick={() => setAddingNote(true)}>+ Add note</button>
-            </div>
+            </Toolbar>
+          }
+          class="task-notes-card"
+        >
+          <div class="task-note-feed">
             <Show when={addingNote()}>
               <div class="space-y-1">
                 <textarea class="textarea w-full text-sm" rows="3" aria-label="New task note" placeholder="Add a note…" value={newNote()} onInput={(e) => setNewNote(e.currentTarget.value)} />
                 <div class="flex gap-2 justify-end"><button class="btn-ghost text-xs" onClick={() => { setAddingNote(false); setNewNote(''); }}>Cancel</button><button class="btn-primary text-xs" disabled={!newNote().trim() || savingNote()} onClick={() => void addNote()}>Save note</button></div>
               </div>
             </Show>
-            <For each={noteHistory()?.notes ?? []}>{(entry) => <article class="rounded-md border border-border p-2 text-sm min-w-0"><time class="text-xs text-muted-foreground" dateTime={entry.created_at}>{new Date(entry.created_at).toLocaleString()}</time><p class="whitespace-pre-wrap break-words mt-1">{entry.body}</p></article>}</For>
+            <For each={noteHistory()?.notes ?? []}>{(entry) => <article class="task-note-entry"><time dateTime={entry.created_at}>{new Date(entry.created_at).toLocaleString()}</time><p>{entry.body}</p></article>}</For>
             <Show when={t().notes || t().description}><div class="text-xs text-muted-foreground">Task description</div><p class="drawer-note whitespace-pre-wrap break-words">{t().notes ?? t().description}</p></Show>
             <button type="button" class="text-xs text-muted-foreground hover:text-primary" onClick={startNotes}>Edit task description</button>
             <Show when={editingNotes()}><textarea class="textarea w-full text-sm" rows="3" aria-label="Task description" value={notesDraft()} onInput={(e) => setNotesDraft(e.currentTarget.value)} onBlur={commitNotes} /></Show>
           </div>
-        </Group>
+        </Card>
 
         <Group label="Planning">
           <dl class="drawer-grid">

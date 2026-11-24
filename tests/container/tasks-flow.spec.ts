@@ -27,6 +27,8 @@ test('task details save a timestamped note and completion', async ({ page }, tes
 
     const drawer = page.locator('.details-drawer');
     await expect(drawer).toContainText(task.title);
+    await expect(drawer.getByRole('heading', { name: 'Notes' })).toBeVisible();
+    await expect(drawer.getByRole('group', { name: 'Task note actions' })).toBeVisible();
     await drawer.getByRole('button', { name: /Add note/i }).click();
     await drawer.getByRole('textbox', { name: 'New task note' }).fill(noteBody);
     const noteSaved = page.waitForResponse((response) =>
