@@ -4,7 +4,7 @@ import { Plus, RefreshCw, PanelLeft, LockKeyhole, Loader2, MessageCircle } from 
 import { BootScreen } from './components/BootScreen.js';
 import { BrandMark } from './components/BrandMark.js';
 import { DetailsDrawer, DetailsToggle } from './components/DetailsDrawer.js';
-import { navCollapsed, toggleNav, detailsOpen } from './stores/ui.js';
+import { navCollapsed, toggleNav, detailsOpen, setDetailsOpen, taskAssistantRequest } from './stores/ui.js';
 import { activeTask, activeBlock, activeEntity } from './stores/selection.js';
 import { Nav }      from './components/Nav.js';
 import { CloseRitual } from './components/CloseRitual.js';
@@ -116,6 +116,8 @@ const FAB_ROUTES = ['/', '/tasks', '/calendar', '/tags', '/focus', '/jobs'];
 
 function Shell(props: { children?: any }) {
   const [agentOpen, setAgentOpen] = createSignal(false);
+  const [agentMounted, setAgentMounted] = createSignal(false);
+  const [restoreDetailsAfterAgent, setRestoreDetailsAfterAgent] = createSignal(false);
   const location = useLocation();
   const [searchParams] = useSearchParams();
   useTaskReminders();
@@ -131,6 +133,30 @@ function Shell(props: { children?: any }) {
     headings: [...document.querySelectorAll('main h1, main h2, main [role="tab"][aria-selected="true"]')]
       .filter((element) => (element as HTMLElement).getClientRects().length > 0)
       .slice(0, 8).map((element) => element.textContent?.trim().slice(0, 80) ?? ''),
+  });
+
+  function isPhoneLayout() {
+    return typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches;
+  }
+  function openAgent() {
+    const phone = isPhoneLayout();
+    setRestoreDetailsAfterAgent(phone && detailsOpen());
+    if (phone) setDetailsOpen(false);
+    setAgentMounted(true);
+    setAgentOpen(true);
+  }
+  function closeAgent() {
+    setAgentOpen(false);
+    if (restoreDetailsAfterAgent() && isPhoneLayout()) setDetailsOpen(true);
+    setRestoreDetailsAfterAgent(false);
+  }
+  let handledAssistantRequest = taskAssistantRequest();
+  createEffect(() => {
+    const request = taskAssistantRequest();
+    if (request > handledAssistantRequest) {
+      handledAssistantRequest = request;
+      openAgent();
+    }
   });
 
   // The trust dial (scheduling_prefs.trust_mode, 0070) — all three positions, via a
@@ -258,7 +284,7 @@ function Shell(props: { children?: any }) {
       <DetailsDrawer />
 
       {/* One shared mobile/desktop Create button across the planner's primary views. */}
-      <button class={`fab ${hasFab() ? 'bottom-36 md:bottom-20' : 'bottom-20 md:bottom-6'}`} onClick={() => setAgentOpen(true)} title="Talk to task assistant" aria-label="Talk to task assistant"><MessageCircle size={18} /></button>
+      <button class={`fab ${hasFab() ? 'bottom-36 md:bottom-20' : 'bottom-20 md:bottom-6'}`} onClick={openAgent} title="Talk to task assistant" aria-label="Talk to task assistant"><MessageCircle size={18} /></button>
       <Show when={hasFab()}>
         <button
           class="fab bottom-20 md:bottom-6"
@@ -268,7 +294,7 @@ function Shell(props: { children?: any }) {
           <Plus size={18} />
         </button>
       </Show>
-      <Show when={agentOpen()}><TaskAgent screenContext={screenContext} onClose={() => setAgentOpen(false)} /></Show>
+      <Show when={agentMounted()}><TaskAgent open={agentOpen()} screenContext={screenContext} onClose={closeAgent} /></Show>
 
       {/* Unified Add/Edit Element wizard — self-driven by the elementModal signal. */}
       <ElementWizard />

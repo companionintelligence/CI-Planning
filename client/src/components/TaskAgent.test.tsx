@@ -52,7 +52,7 @@ describe('task assistant review', () => {
       stop() {}
     }
     vi.stubGlobal('SpeechRecognition', Recognition);
-    render(() => <TaskAgent onClose={vi.fn()} />);
+    render(() => <TaskAgent open onClose={vi.fn()} />);
     fireEvent.click(screen.getByTitle('Dictate your request'));
     Recognition.latest.onresult!({ results: [[{ transcript: 'Add a note to Call Sam' }]] });
     Recognition.latest.onend?.();
@@ -65,7 +65,7 @@ describe('task assistant review', () => {
 
   it('opens iPhone keyboard dictation and keeps text editable until Send', () => {
     vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15');
-    render(() => <TaskAgent onClose={vi.fn()} />);
+    render(() => <TaskAgent open onClose={vi.fn()} />);
     fireEvent.click(screen.getByLabelText('Open keyboard for voice dictation'));
     const input = screen.getByLabelText('Message the task assistant') as HTMLTextAreaElement;
     expect(document.activeElement).toBe(input);
@@ -76,7 +76,7 @@ describe('task assistant review', () => {
 
   it('reviews and edits new task drafts before placing them in a time block', async () => {
     plan.mockResolvedValueOnce({ reply: 'I can add these to Morning.', actions: [{ kind: 'create_tasks', tasks: [{ title: 'Breakfast', estimated_minutes: 15 }, { title: 'Feed cats', estimated_minutes: 15 }], target_block_id: 'b1' }], tasks: [], objectives: [], blocks: [{ id: 'b1', title: 'Morning', start_at: '2026-11-23T16:00:00Z', end_at: '2026-11-23T17:00:00Z' }] });
-    render(() => <TaskAgent onClose={vi.fn()} />);
+    render(() => <TaskAgent open onClose={vi.fn()} />);
     fireEvent.input(screen.getByLabelText('Message the task assistant'), { target: { value: 'Add breakfast and feed cats to Morning' } });
     fireEvent.click(screen.getByText('Send'));
     await waitFor(() => expect(screen.getByLabelText('Draft task 1')).toBeTruthy());
@@ -90,7 +90,7 @@ describe('task assistant review', () => {
 
   it('keeps the focused duration field inside a scrollable review when the keyboard opens', async () => {
     plan.mockResolvedValueOnce({ reply: 'Drafts ready.', actions: [{ kind: 'create_tasks', tasks: [{ title: 'Breakfast', estimated_minutes: 15 }], target_block_id: 'b1' }], tasks: [], objectives: [], blocks: [{ id: 'b1', title: 'Morning', start_at: '2026-11-23T16:00:00Z', end_at: '2026-11-23T17:00:00Z' }] });
-    render(() => <TaskAgent onClose={vi.fn()} />);
+    render(() => <TaskAgent open onClose={vi.fn()} />);
     fireEvent.input(screen.getByLabelText('Message the task assistant'), { target: { value: 'Add breakfast to Morning' } });
     fireEvent.click(screen.getByText('Send'));
     const duration = await screen.findByLabelText('Minutes for draft task 1');
@@ -104,7 +104,7 @@ describe('task assistant review', () => {
 
   it('can extend a short block before creating and placing approved drafts', async () => {
     plan.mockResolvedValueOnce({ reply: 'Drafts ready.', actions: [{ kind: 'create_tasks', tasks: [{ title: 'Breakfast', estimated_minutes: 30 }, { title: 'Feed cats', estimated_minutes: 30 }], target_block_id: 'b1' }], tasks: [], objectives: [], blocks: [{ id: 'b1', title: 'Morning', start_at: '2026-11-23T16:00:00Z', end_at: '2026-11-23T17:00:00Z' }] });
-    render(() => <TaskAgent onClose={vi.fn()} />);
+    render(() => <TaskAgent open onClose={vi.fn()} />);
     fireEvent.input(screen.getByLabelText('Message the task assistant'), { target: { value: 'Add breakfast and feed cats to Morning' } });
     fireEvent.click(screen.getByText('Send'));
     await waitFor(() => expect(screen.getByText('Extend to fit estimate')).toBeTruthy());
@@ -116,7 +116,7 @@ describe('task assistant review', () => {
 
   it('shows a proposed task edit before saving and applies only on confirmation', async () => {
     const screenContext = () => ({ path: '/balance', tab: 'metrics', selectedTaskId: 't1', selectedBlockId: null, selectedEntity: null, headings: ['Life Balance', 'Metrics'] });
-    render(() => <TaskAgent onClose={vi.fn()} screenContext={screenContext} />);
+    render(() => <TaskAgent open onClose={vi.fn()} screenContext={screenContext} />);
     fireEvent.input(screen.getByLabelText('Message the task assistant'), { target: { value: 'Move Call Sam to Friday' } });
     fireEvent.click(screen.getByText('Send'));
     await waitFor(() => expect(screen.getByText(/Review changes/)).toBeTruthy());

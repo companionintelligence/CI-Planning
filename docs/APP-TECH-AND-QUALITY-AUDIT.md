@@ -80,6 +80,8 @@ Implementation sequence: (1) split the current container smoke suite into named 
 
 **Implementation status (2026-11-23):** `client/src/ui/` now provides shared PageHeader, Toolbar, Card, Modal/Sheet, FormField, EmptyState, ActionMenu and DataList primitives. Balance Metrics is the first migrated slice, using the shared header, control group, cards and empty states. Existing components in other features are intentionally left for later vertical-slice migrations; the primitives are a foundation, not a claim that all 144 components have already been migrated.
 
+**Mobile compartment status (2026-11-23):** Details and Flight Plan now use one visual-viewport-bounded mobile sheet with a dimmed, non-interactive canvas, a preserving Back action, an explicit close-and-clear action, and a direct assistant switch. The sheet tracks `visualViewport`; the assistant is also viewport-anchored and remains mounted while closed so its draft conversation survives a surface switch. A 430 × 900 authenticated Playwright check is wired into the local-login container job. Broader route-specific screenshots and physical keyboard-device coverage remain future work.
+
 ### Suggested web compartmentalization refactor
 
 1. Keep domain boundaries in `views/` and `components/`; do not split solely by file size.

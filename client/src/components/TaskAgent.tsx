@@ -1,4 +1,4 @@
-import { createSignal, For, Show, onCleanup, onMount } from 'solid-js';
+import { createEffect, createSignal, For, Show, onCleanup, onMount, on } from 'solid-js';
 import { MessageCircle, Mic, Volume2, VolumeX, X } from 'lucide-solid';
 import { ViewportOverlay } from './ViewportOverlay.js';
 import { MicButton } from './MicButton.js';
@@ -10,7 +10,7 @@ import { revealDetails } from '../stores/ui.js';
 type Message = { role: 'user' | 'assistant'; text: string };
 type Result = { text: string; taskId?: string };
 
-export function TaskAgent(props: { onClose: () => void; screenContext?: () => TaskAgentScreenContext }) {
+export function TaskAgent(props: { open: boolean; onClose: () => void; screenContext?: () => TaskAgentScreenContext }) {
   let panel!: HTMLElement;
   let messageInput!: HTMLTextAreaElement;
   let previousFocus: HTMLElement | null = null;
@@ -26,20 +26,34 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
   // Their keyboard dictation writes directly into the focused textarea instead.
   const ios = typeof navigator !== 'undefined' && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
   onMount(() => {
-    previousFocus = document.activeElement as HTMLElement | null;
-    panel.querySelector<HTMLElement>('button')?.focus();
     const onViewportResize = () => {
       const focused = document.activeElement;
-      if (focused instanceof HTMLInputElement && panel.contains(focused)) {
+      if (focused instanceof HTMLInputElement && panel?.contains(focused)) {
         window.requestAnimationFrame(() => focused.scrollIntoView({ block: 'center', behavior: 'smooth' }));
       }
     };
     window.visualViewport?.addEventListener('resize', onViewportResize);
     onCleanup(() => window.visualViewport?.removeEventListener('resize', onViewportResize));
   });
+  createEffect(on(() => props.open, (open, wasOpen) => {
+    if (open) {
+      previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      queueMicrotask(() => panel?.querySelector<HTMLElement>('button')?.focus());
+    } else if (wasOpen) {
+      if (canSpeak) window.speechSynthesis.cancel();
+      const restore = previousFocus;
+      previousFocus = null;
+      queueMicrotask(() => {
+        // When the mobile details sheet is restored along with the assistant closing,
+        // let its own opening focus move into that surface instead of behind it.
+        if (window.matchMedia('(max-width: 767px)').matches && document.querySelector('.details-drawer')) return;
+        if (restore?.isConnected) restore.focus();
+      });
+    }
+  }));
   onCleanup(() => {
     if (canSpeak) window.speechSynthesis.cancel();
-    previousFocus?.focus();
+    if (previousFocus?.isConnected) previousFocus.focus();
   });
   const dialogKeys = (event: KeyboardEvent) => {
     if (event.key === 'Escape' && !busy()) { event.preventDefault(); props.onClose(); return; }
@@ -196,7 +210,7 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
     queueMicrotask(() => messageInput?.focus());
   };
 
-  return <ViewportOverlay class="z-[100] bg-black/70 flex items-end md:items-center md:justify-end p-2 md:p-5" role="presentation">
+  return <Show when={props.open}><ViewportOverlay class="z-[100] bg-black/70 flex items-end md:items-center md:justify-end p-2 md:p-5" role="presentation">
     <section ref={panel} role="dialog" aria-modal="true" aria-label="Task assistant" onKeyDown={dialogKeys} class="card w-full md:w-[26rem] h-full md:h-auto min-h-0 max-h-full md:max-h-[85vh] flex flex-col gap-3 overflow-hidden">
       <div class="flex items-center justify-between gap-2"><h2 class="font-semibold flex items-center gap-2"><MessageCircle size={18} /> Task assistant</h2><div class="flex items-center gap-1">
         <Show when={canSpeak}><button class="btn-icon" aria-label={voice() ? 'Mute replies' : 'Speak replies'} aria-pressed={voice()} onClick={() => { const next = !voice(); setVoice(next); localStorage.setItem('task-agent-speech', next ? 'on' : 'off'); if (!next) window.speechSynthesis.cancel(); }}><Show when={voice()} fallback={<VolumeX size={17} />}><Volume2 size={17} /></Show></button></Show>
@@ -246,5 +260,5 @@ export function TaskAgent(props: { onClose: () => void; screenContext?: () => Ta
       <div class="flex items-end gap-2"><textarea ref={messageInput} class="input flex-1 min-w-0 min-h-12 max-h-32" aria-label="Message the task assistant" placeholder={plan() ? 'What should I change?' : 'What would you like done?'} value={input()} disabled={busy()} onInput={(event) => setInput(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} /><Show when={ios} fallback={<MicButton title="Dictate your request" disabled={busy()} onTranscript={(text) => { setInput((value) => value ? `${value} ${text}` : text); setError(''); }} onError={setError} />}><button type="button" class="btn-icon" aria-label="Open keyboard for voice dictation" title="Use keyboard microphone" disabled={busy()} onClick={() => { messageInput.focus(); setError('Tap the microphone on your keyboard to dictate, then review the text and tap Send.'); }}><Mic size={17} /></button></Show><button class="btn-primary" disabled={!input().trim() || busy()} onClick={() => void send()}>Send</button></div>
       <p class="text-[11px] text-muted-foreground">{ios ? 'On iPhone, tap the mic above to open the keyboard. Review the text here before Send.' : 'Tap the mic to dictate. Review the text here before Send. Your browser’s speech service may send audio to its provider.'}</p>
     </section>
-  </ViewportOverlay>;
+  </ViewportOverlay></Show>;
 }
