@@ -177,6 +177,33 @@ export function PlannerEntityCard(props: {
   // D4 — same on-demand memory enrichment as TaskCard; only fills blanks server-side,
   // never rewrites a description or direction the user already chose.
   const [enriching, setEnriching] = createSignal(false);
+  const [scheduleDraft, setScheduleDraft] = createSignal<{ day: string; start: string; duration: number } | null>(null);
+  function editSchedule() {
+    const b = block();
+    if (!b) return;
+    const start = new Date(b.start_at);
+    setScheduleDraft({
+      day: `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`,
+      start: `${String(start.getHours()).padStart(2, '0')}:${String(start.getMinutes()).padStart(2, '0')}`,
+      duration: Math.max(1, Math.round((Date.parse(b.end_at) - Date.parse(b.start_at)) / 60000)),
+    });
+  }
+  async function saveSchedule() {
+    const b = block();
+    const draft = scheduleDraft();
+    if (!b || !draft) return;
+    const startAt = new Date(`${draft.day}T${draft.start}:00`);
+    if (!Number.isFinite(startAt.getTime()) || draft.duration < 1) {
+      showToast('Enter a valid date, start time, and duration', 'error');
+      return;
+    }
+    try {
+      await api.blocks.update(b.id, { start_at: startAt.toISOString(), end_at: new Date(startAt.getTime() + draft.duration * 60_000).toISOString() });
+      refetchBlocks(); refetchTasks();
+      setScheduleDraft(null);
+      showToast('Time block updated', 'success');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
   async function enrich() {
     const t = task(); if (!t) return;
     setEnriching(true);
@@ -438,9 +465,21 @@ export function PlannerEntityCard(props: {
           </div>
         </Show>
 
+        <Show when={scheduleDraft()}>
+          {(draft) => <div class="rounded-lg border border-border bg-card/60 p-2.5 flex flex-wrap items-end gap-2">
+            <label class="flex min-w-[130px] flex-1 flex-col gap-1"><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Date</span><input class="input py-1 text-xs" type="date" value={draft().day} onInput={(e) => setScheduleDraft((v) => v && ({ ...v, day: e.currentTarget.value }))}/></label>
+            <label class="flex min-w-[95px] flex-1 flex-col gap-1"><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Start</span><input class="input py-1 text-xs" type="time" value={draft().start} onInput={(e) => setScheduleDraft((v) => v && ({ ...v, start: e.currentTarget.value }))}/></label>
+            <label class="flex w-24 flex-col gap-1"><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Minutes</span><input class="input py-1 text-xs" type="number" min="1" value={draft().duration} onInput={(e) => setScheduleDraft((v) => v && ({ ...v, duration: Number(e.currentTarget.value) }))}/></label>
+            <div class="ml-auto flex gap-1"><button type="button" class="btn-ghost text-xs" onClick={() => setScheduleDraft(null)}>Cancel</button><button type="button" class="btn-primary text-xs" onClick={() => void saveSchedule()}>Save time</button></div>
+          </div>}
+        </Show>
+
         {/* Actions */}
         <div class="flex flex-wrap items-center gap-1 px-2.5 py-2 border-t border-border bg-card/40">
           <button onClick={edit} class="btn-ghost text-xs px-2 py-1"><Pencil size={13} /> Edit</button>
+          <Show when={block() && ['task', 'timeblock'].includes(block()!.block_kind)}>
+            <button type="button" onClick={editSchedule} class="btn-ghost text-xs px-2 py-1"><Pencil size={13} /> Edit time</button>
+          </Show>
           <Show when={task() && !isContainer()}>
             <button onClick={enrich} disabled={enriching()} class="btn-ghost text-xs px-2 py-1" title="Fill in details from memory">
               <Sparkles size={13} classList={{ 'animate-pulse': enriching() }} /> Enrich
