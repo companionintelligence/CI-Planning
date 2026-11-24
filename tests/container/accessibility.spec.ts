@@ -370,6 +370,46 @@ test.describe('authenticated accessibility regressions', () => {
     }
   });
 
+  test('Recurring scope dialog passes axe in both themes', async ({ page }, testInfo) => {
+    const data = new OwnerFixtures(page.request, testInfo.testId);
+
+    try {
+      await signInLocal(page, url);
+      const title = `E2E recurring block axe ${testInfo.testId} ${Date.now()}`;
+      const { start_at, end_at } = await page.evaluate(() => {
+        const start = new Date();
+        start.setHours(10, 0, 0, 0);
+        return { start_at: start.toISOString(), end_at: new Date(start.getTime() + 30 * 60_000).toISOString() };
+      });
+      await data.createRecurringBlock({ title, start_at, end_at, block_kind: 'timeblock', recurrence_rule: 'FREQ=DAILY;COUNT=3' });
+      await page.addInitScript({ content: axe.source });
+      await page.setViewportSize({ width: 430, height: 560 });
+
+      for (const theme of ['light', 'dark'] as const) {
+        await page.goto(`${url}/settings?tab=preferences`, { waitUntil: 'domcontentloaded' });
+        await expect(page.locator('[data-app-shell]')).toBeVisible();
+        await page.getByLabel('Theme mode').selectOption(theme);
+        await expect.poll(async () => /\bdark\b/.test((await page.locator('html').getAttribute('class')) ?? ''))
+          .toBe(theme === 'dark');
+
+        await page.goto(`${url}/`, { waitUntil: 'domcontentloaded' });
+        const block = page.locator(`div[title^="${title} · Time Block"]`);
+        const opener = block.getByTitle('Remove Time Block');
+        await expect(opener).toBeVisible();
+        await opener.click();
+        const dialog = page.getByRole('dialog', { name: `Delete repeating item: ${title}` });
+        await expect(dialog).toBeVisible();
+        await waitForFiniteAnimations(dialog);
+        await expectAxeClean(page, `Recurring scope dialog (${theme})`, '[role="dialog"][aria-label^="Delete repeating item:"]');
+        await page.keyboard.press('Escape');
+        await expect(dialog).toHaveCount(0);
+        await expect(opener).toBeFocused();
+      }
+    } finally {
+      await data.cleanup();
+    }
+  });
+
   test('mobile primary navigation and assistant button meet 44px touch targets', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await signInLocal(page, url);

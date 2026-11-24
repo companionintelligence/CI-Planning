@@ -350,3 +350,52 @@ test('Texture settings stay within the short mobile viewport and restore focus',
   await expect(dialog).toHaveCount(0);
   await expect(opener).toBeFocused();
 });
+
+test('recurring scope dialog stays in the short mobile viewport and cancels safely', async ({ page }, testInfo) => {
+  test.skip(!username || !password, 'requires an authenticated container with LOGIN_USER and LOGIN_PASS');
+  const data = new OwnerFixtures(page.request, testInfo.testId);
+
+  try {
+    await signInLocal(page, url);
+    const title = `E2E recurring block ${testInfo.testId} ${Date.now()}`;
+    const { start_at, end_at } = await page.evaluate(() => {
+      const start = new Date();
+      start.setHours(10, 0, 0, 0);
+      return { start_at: start.toISOString(), end_at: new Date(start.getTime() + 30 * 60_000).toISOString() };
+    });
+    const { occurrences } = await data.createRecurringBlock({
+      title,
+      start_at,
+      end_at,
+      block_kind: 'timeblock',
+      recurrence_rule: 'FREQ=DAILY;COUNT=3',
+    });
+    await page.setViewportSize({ width: 430, height: 560 });
+    await page.goto(`${url}/`, { waitUntil: 'domcontentloaded' });
+
+    const block = page.locator(`div[title^="${title} · Time Block"]`);
+    const opener = block.getByTitle('Remove Time Block');
+    await expect(opener).toBeVisible();
+    await opener.click();
+
+    const dialog = page.getByRole('dialog', { name: `Delete repeating item: ${title}` });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Delete this one only' })).toBeFocused();
+    await expect(dialog.getByRole('button', { name: 'This and all following' })).toBeVisible();
+    await expectWithinVisualViewport(page, dialog);
+
+    await page.setViewportSize({ width: 430, height: 420 });
+    await expectWithinVisualViewport(page, dialog);
+    await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(opener).toBeFocused();
+
+    const query = new URLSearchParams({ from: new Date(new Date(start_at).setUTCHours(0, 0, 0, 0)).toISOString(), to: new Date(new Date(start_at).setUTCHours(0, 0, 0, 0) + 4 * 86_400_000).toISOString() });
+    const response = await page.request.get(`${url}/api/blocks?${query}`);
+    const rows = (await response.json() as { blocks: Array<{ id: string }> }).blocks;
+    expect(rows.some((block) => occurrences.some((occurrence) => occurrence.id === block.id))).toBe(true);
+  } finally {
+    await data.cleanup();
+  }
+});

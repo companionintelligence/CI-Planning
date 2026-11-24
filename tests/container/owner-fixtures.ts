@@ -55,6 +55,7 @@ export interface SeedBlockInput {
   block_kind?: 'task' | 'timeblock' | 'meeting';
   tag?: string;
   duration_minutes?: number;
+  recurrence_rule?: string;
 }
 
 interface OwnerResponse {
@@ -152,6 +153,25 @@ export class OwnerFixtures {
     if (!block?.id) throw new Error('POST /api/blocks did not return a block ID.');
     this.blockIds.push(block.id);
     return block;
+  }
+
+  async createRecurringBlock(input: Partial<SeedBlockInput> & Pick<SeedBlockInput, 'start_at' | 'end_at'>): Promise<{
+    template: BlockResponse['block'];
+    occurrences: Array<{ id: string; title: string; recurrence_parent_id: string }>;
+  }> {
+    const template = await this.createBlock(input);
+    const rangeStart = new Date(input.start_at);
+    rangeStart.setUTCHours(0, 0, 0, 0);
+    const rangeEnd = new Date(rangeStart);
+    rangeEnd.setUTCDate(rangeEnd.getUTCDate() + 4);
+    const query = new URLSearchParams({ from: rangeStart.toISOString(), to: rangeEnd.toISOString() });
+    const response = await this.request.get(`${this.baseUrl}/api/blocks?${query}`);
+    if (!response.ok()) throw new Error(`Could not list generated Time Block occurrences (${response.status()}).`);
+    const rows = (await response.json() as { blocks: Array<{ id: string; title: string; recurrence_parent_id?: string | null }> }).blocks;
+    const occurrences = rows.filter((block) => block.recurrence_parent_id === template.id);
+    if (occurrences.length === 0) throw new Error(`Recurring Time Block ${template.id} did not generate an occurrence.`);
+    occurrences.forEach((block) => this.blockIds.push(block.id));
+    return { template, occurrences: occurrences as Array<{ id: string; title: string; recurrence_parent_id: string }> };
   }
 
   async stageTask(taskId: string): Promise<void> {
