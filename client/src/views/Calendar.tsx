@@ -35,6 +35,7 @@ import { DayTypeControl } from '../components/DayTypeControl.js';
 import { ViewHeader } from '../components/ViewHeader.js';
 import { CalendarReview } from '../components/CalendarReview.js';
 import type { Block, DayStar } from '../lib/api.js';
+import { Toolbar } from '../ui/index.js';
 
 type ViewMode = 'day' | 'week' | 'month';
 
@@ -328,22 +329,24 @@ export function Calendar() {
   return (
     <div class="flex-1 overflow-hidden flex flex-col p-3 md:p-6 page-enter w-full">
       <ViewHeader title="Calendar">
-        <button
-          onClick={() => setPlanWeekModal({ open: true })}
-          class="btn-secondary gap-2 whitespace-nowrap"
-          title="Plan your week with the assistant"
-        >
-          <CalendarRange size={14} /> Plan my week
-        </button>
-        <button
-          onClick={runSchedule}
-          disabled={runningSchedule()}
-          class="btn-primary gap-2 whitespace-nowrap"
-          aria-label="Today: schedule the selected day"
-          title="Schedule the selected day"
-        >
-          <Zap size={14} /> {runningSchedule() ? 'Scheduling…' : 'Today'}
-        </button>
+        <Toolbar label="Calendar quick actions">
+          <button
+            onClick={() => setPlanWeekModal({ open: true })}
+            class="btn-secondary gap-2 whitespace-nowrap"
+            title="Plan your week with the assistant"
+          >
+            <CalendarRange size={14} /> Plan my week
+          </button>
+          <button
+            onClick={runSchedule}
+            disabled={runningSchedule()}
+            class="btn-primary gap-2 whitespace-nowrap"
+            aria-label="Today: schedule the selected day"
+            title="Schedule the selected day"
+          >
+            <Zap size={14} /> {runningSchedule() ? 'Scheduling…' : 'Today'}
+          </button>
+        </Toolbar>
       </ViewHeader>
 
       <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
@@ -356,8 +359,8 @@ export function Calendar() {
                   onClick={() => setView(v)}
                   class="px-3 py-1 rounded-md text-xs font-medium capitalize transition-colors"
                   classList={{
-                    'bg-accent text-white': view() === v,
-                    'text-slate-400 hover:text-slate-200': view() !== v,
+                    'bg-primary text-primary-foreground': view() === v,
+                    'text-muted-foreground hover:text-foreground': view() !== v,
                   }}
                 >
                   {v}
@@ -409,8 +412,8 @@ export function Calendar() {
       {/* flex-wrap + a non-breaking range label: at 360px this row wanted ~430px, so
           "Jun 1 – 7, 2026" broke over three lines and pushed the grid off the screen. */}
       <div class="flex items-center gap-x-3 gap-y-2 mb-4 flex-wrap">
-        <button onClick={() => shift(-1)} class="btn-icon"><ChevronLeft size={15} /></button>
-        <button onClick={() => shift(1)} class="btn-icon"><ChevronRight size={15} /></button>
+        <button type="button" onClick={() => shift(-1)} class="btn-icon" aria-label="Previous date range"><ChevronLeft size={15} /></button>
+        <button type="button" onClick={() => shift(1)} class="btn-icon" aria-label="Next date range"><ChevronRight size={15} /></button>
         <button onClick={goToday} class="btn-ghost text-xs" title="Jump to today's date">Go to today</button>
         <span class="text-sm font-medium text-slate-300 whitespace-nowrap">{rangeLabel()}</span>
         {/* Events-only ("free time") mode. Hides movable task blocks so what's left is
@@ -437,7 +440,7 @@ export function Calendar() {
           onClick={() => setShowFilters((s) => !s)}
           class="btn-ghost text-xs gap-1"
           classList={{ 'text-accent-light': activeFilters() > 0 }}
-          aria-label="Toggle the overlay filters"
+          aria-label="Overlays"
           title="Toggle the overlay filters"
         >
           <Filter size={13} />

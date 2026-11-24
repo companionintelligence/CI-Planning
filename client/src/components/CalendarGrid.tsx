@@ -582,7 +582,7 @@ export function CalendarGrid(props: Props) {
           {(day) => (
             <div
               class="py-2 text-center border-l border-surface-700/60"
-              classList={{ 'text-accent-light': day === today() }}
+              classList={{ 'text-primary': day === today() }}
             >
               {/* Wave-3 item 5: the day name+number is a button — click to select this
                   date and set its day type. It lives in the header lane, not the time

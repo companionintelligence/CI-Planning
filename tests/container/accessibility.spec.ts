@@ -85,6 +85,10 @@ test.describe('authenticated accessibility regressions', () => {
       await expect(page.getByRole('heading', { name: 'Focus' })).toBeVisible();
       await expect(page.getByRole('group', { name: 'Focus actions' })).toBeVisible();
       await expectAxeClean(page, `Focus view (${theme})`);
+      await page.goto(`${url}/calendar`, { waitUntil: 'domcontentloaded' });
+      await expect(page.getByRole('group', { name: 'Calendar quick actions' })).toBeVisible();
+      await expectAxeClean(page, `Calendar view (${theme})`);
+      await page.goto(`${url}/focus`, { waitUntil: 'domcontentloaded' });
       await page.getByRole('button', { name: 'Choose Focus day' }).click();
       const focusDateDialog = page.getByRole('dialog', { name: 'Choose Focus day' });
       await expect(focusDateDialog).toBeVisible();
