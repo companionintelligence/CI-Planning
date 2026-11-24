@@ -74,6 +74,12 @@ test.describe('authenticated accessibility regressions', () => {
       await page.getByRole('tab', { name: 'Connections', exact: true }).click();
       await expect(page.getByRole('button', { name: 'Re-check', exact: true })).toBeEnabled();
       await expectAxeClean(page, `Connections settings (${theme})`);
+      for (const section of ['People', 'Logs', 'Privacy'] as const) {
+        const sectionTab = page.getByRole('tab', { name: section, exact: true });
+        await sectionTab.click();
+        await expect(sectionTab).toHaveAttribute('aria-selected', 'true');
+        await expectAxeClean(page, `${section} settings (${theme})`);
+      }
 
       for (const [path, label] of [
         ['/', 'Today / Planner'],

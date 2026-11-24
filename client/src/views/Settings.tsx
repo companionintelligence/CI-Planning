@@ -943,7 +943,7 @@ export function Settings() {
         <div class="flex flex-col gap-5">
           <section class="card flex flex-col gap-4">
             <div>
-              <div class="section-label flex items-center gap-1.5 mb-1"><ShieldCheck size={13} /> Companion Planning privacy</div>
+              <h2 class="section-label flex items-center gap-1.5 mb-1"><ShieldCheck size={13} /> Companion Planning privacy</h2>
               <p class="text-sm text-muted-foreground">
                 Companion Planning sends its requests to the server address you choose. It does not send your plans, calendar, or reflections to Companion Intelligence by default; your selected server operator can see the information processed by that server.
               </p>
@@ -2334,7 +2334,7 @@ export function Settings() {
                     <For each={list()}>
                       {(session) => (
                         <div class="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
-                          <div class="flex items-center gap-2 min-w-0">
+                          <label class="flex items-center gap-2 min-w-0 cursor-pointer">
                             <input
                               type="checkbox"
                               class="accent-primary w-4 h-4 flex-shrink-0"
@@ -2349,7 +2349,7 @@ export function Settings() {
                                 {session.status} · {new Date(session.started_at).toLocaleString()}
                               </div>
                             </div>
-                          </div>
+                          </label>
                           <div class="flex items-center gap-1 flex-shrink-0">
                             <button type="button" class="btn-ghost text-xs px-2 py-1" title="Review" onClick={() => reviewSession(session.id)}>
                               <Eye size={13} />
@@ -2479,6 +2479,7 @@ export function Settings() {
                         <div class="flex items-center gap-1.5 shrink-0">
                           <select
                             class="input py-0.5 text-xs w-auto"
+                            aria-label={`Role for ${a.name}`}
                             value={a.role}
                             disabled={a.id === me()!.ownerId}
                             title={a.id === me()!.ownerId ? 'Another operator must change your role' : 'Set this account\'s role'}
