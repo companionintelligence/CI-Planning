@@ -2,7 +2,7 @@ import { Show, For, createSignal, createResource } from 'solid-js';
 import { AlertTriangle, ArrowRight, Lock, Inbox } from 'lucide-solid';
 import { api, type ReflowProposal } from '../lib/api.js';
 import { selectedDay, dayConflicts, refetchDayConflicts, refetchBlocks, refetchTasks, showToast } from '../stores/index.js';
-import { ViewportOverlay } from './ViewportOverlay.js';
+import { ModalSheet } from '../ui/index.js';
 
 /**
  * Phase 7 — the day-type conflict banner and its confirmation.
@@ -72,104 +72,102 @@ export function DayReflowBanner(props: { date?: string } = {}) {
         </button>
       </div>
 
-      <Show when={open()}>
-        <ViewportOverlay
-          class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
-          onClick={() => !applying() && setOpen(false)}
-        >
-          <div
-            class="w-full max-w-lg max-h-[80vh] overflow-auto rounded-xl border border-border bg-card p-4 shadow-xl"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Reschedule conflicting tasks"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 class="text-base font-semibold text-foreground mb-1">Reschedule conflicting tasks?</h2>
-            <p class="text-xs text-muted-foreground mb-3">
-              Nothing changes until you confirm.
-            </p>
-
-            <Show when={proposal()} fallback={<p class="text-sm text-muted-foreground py-4">Working out what fits…</p>}>
-              {(p) => (
-                <>
-                  <Show when={p().moves.length > 0}>
-                    <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
-                      Moving {p().moves.length}
-                    </div>
-                    <div class="flex flex-col gap-1 mb-3">
-                      <For each={p().moves}>
-                        {(m) => (
-                          <div class="flex items-center gap-2 text-sm px-2 py-1 rounded bg-muted/40">
-                            <span class="flex-1 min-w-0 truncate">{m.title}</span>
-                            <span class="text-xs font-mono tabular-nums text-muted-foreground flex-shrink-0">
-                              {clock(m.from.start_at)}
-                            </span>
-                            <ArrowRight size={12} class="text-muted-foreground flex-shrink-0" />
-                            <span class="text-xs font-mono tabular-nums text-foreground flex-shrink-0">
-                              {clock(m.to.start_at)}
-                            </span>
-                          </div>
-                        )}
-                      </For>
-                    </div>
-                  </Show>
-
-                  <Show when={p().unschedule.length > 0}>
-                    <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
-                      Back to the flight plan — {p().unschedule.length} won't fit
-                    </div>
-                    <div class="flex flex-col gap-1 mb-3">
-                      <For each={p().unschedule}>
-                        {(u) => (
-                          <div class="flex items-center gap-2 text-sm px-2 py-1 rounded bg-muted/40">
-                            <Inbox size={12} class="text-muted-foreground flex-shrink-0" />
-                            <span class="flex-1 min-w-0 truncate">{u.title}</span>
-                          </div>
-                        )}
-                      </For>
-                    </div>
-                  </Show>
-
-                  <Show when={p().kept_locked.length > 0}>
-                    <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
-                      Staying put — you locked {p().kept_locked.length}
-                    </div>
-                    <div class="flex flex-col gap-1 mb-3">
-                      <For each={p().kept_locked}>
-                        {(c) => (
-                          <div class="flex items-center gap-2 text-sm px-2 py-1 rounded bg-muted/30 opacity-70">
-                            <Lock size={12} class="flex-shrink-0" />
-                            <span class="flex-1 min-w-0 truncate">{c.title}</span>
-                          </div>
-                        )}
-                      </For>
-                    </div>
-                  </Show>
-
-                  <Show when={nothingToDo(p())}>
-                    <p class="text-sm text-muted-foreground mb-3">
-                      Nothing can be moved — every stranded task is locked, so this day stays as it is.
-                    </p>
-                  </Show>
-
-                  <div class="flex gap-2 justify-end">
-                    <button class="btn-ghost text-sm px-3 py-1.5" disabled={applying()} onClick={() => setOpen(false)}>
-                      Cancel
-                    </button>
-                    <button
-                      class="btn-primary text-sm px-3 py-1.5 disabled:opacity-50"
-                      disabled={applying() || nothingToDo(p())}
-                      onClick={() => void confirm()}
-                    >
-                      {applying() ? 'Rescheduling…' : 'Reschedule all'}
-                    </button>
-                  </div>
-                </>
-              )}
+      <ModalSheet
+        open={open()}
+        title="Reschedule conflicting tasks"
+        ariaLabel="Reschedule conflicting tasks"
+        onClose={() => { if (!applying()) setOpen(false); }}
+        class="max-w-lg"
+        footer={
+          <div class="flex flex-wrap justify-end gap-2">
+            <button type="button" class="btn-ghost text-sm px-3 py-1.5" disabled={applying()} onClick={() => setOpen(false)}>
+              Cancel
+            </button>
+            <Show when={proposal()}>
+              {(p) => <button
+                type="button"
+                class="btn-primary text-sm px-3 py-1.5 disabled:opacity-50"
+                disabled={applying() || nothingToDo(p())}
+                onClick={() => void confirm()}
+              >
+                {applying() ? 'Rescheduling…' : 'Reschedule all'}
+              </button>}
             </Show>
           </div>
-        </ViewportOverlay>
-      </Show>
+        }
+      >
+        <div class="px-4">
+          <p class="text-xs text-muted-foreground mb-3">
+            Nothing changes until you confirm.
+          </p>
+
+          <Show when={proposal()} fallback={<p class="text-sm text-muted-foreground py-4">Working out what fits…</p>}>
+            {(p) => (
+              <>
+                <Show when={p().moves.length > 0}>
+                  <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
+                    Moving {p().moves.length}
+                  </div>
+                  <div class="flex flex-col gap-1 mb-3">
+                    <For each={p().moves}>
+                      {(m) => (
+                        <div class="flex items-center gap-2 text-sm px-2 py-1 rounded bg-muted/40">
+                          <span class="flex-1 min-w-0 truncate">{m.title}</span>
+                          <span class="text-xs font-mono tabular-nums text-muted-foreground flex-shrink-0">
+                            {clock(m.from.start_at)}
+                          </span>
+                          <ArrowRight size={12} class="text-muted-foreground flex-shrink-0" />
+                          <span class="text-xs font-mono tabular-nums text-foreground flex-shrink-0">
+                            {clock(m.to.start_at)}
+                          </span>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+
+                <Show when={p().unschedule.length > 0}>
+                  <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
+                    Back to the flight plan — {p().unschedule.length} won't fit
+                  </div>
+                  <div class="flex flex-col gap-1 mb-3">
+                    <For each={p().unschedule}>
+                      {(u) => (
+                        <div class="flex items-center gap-2 text-sm px-2 py-1 rounded bg-muted/40">
+                          <Inbox size={12} class="text-muted-foreground flex-shrink-0" />
+                          <span class="flex-1 min-w-0 truncate">{u.title}</span>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+
+                <Show when={p().kept_locked.length > 0}>
+                  <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
+                    Staying put — you locked {p().kept_locked.length}
+                  </div>
+                  <div class="flex flex-col gap-1 mb-3">
+                    <For each={p().kept_locked}>
+                      {(c) => (
+                        <div class="flex items-center gap-2 text-sm px-2 py-1 rounded bg-muted/30 opacity-70">
+                          <Lock size={12} class="flex-shrink-0" />
+                          <span class="flex-1 min-w-0 truncate">{c.title}</span>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+
+                <Show when={nothingToDo(p())}>
+                  <p class="text-sm text-muted-foreground mb-3">
+                    Nothing can be moved — every stranded task is locked, so this day stays as it is.
+                  </p>
+                </Show>
+              </>
+            )}
+          </Show>
+        </div>
+      </ModalSheet>
     </Show>
   );
 }

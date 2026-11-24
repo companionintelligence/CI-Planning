@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import axe from 'axe-core';
 import { OwnerFixtures, signInLocal } from './owner-fixtures.js';
+import { createDayReflowFixture, selectFocusDate } from './day-reflow-fixture.js';
 
 const url = process.env.APP_URL || 'http://localhost:8080';
 const username = process.env.LOGIN_USER;
@@ -281,6 +282,37 @@ test.describe('authenticated accessibility regressions', () => {
       }
     } finally {
       await data.cleanup();
+    }
+  });
+
+  test('day reflow dialog passes axe in both themes', async ({ page }, testInfo) => {
+    test.skip(!username || !password, 'requires a local-login container with LOGIN_USER and LOGIN_PASS');
+    await signInLocal(page, url);
+    const scenario = await createDayReflowFixture(page, testInfo);
+
+    try {
+      await page.addInitScript({ content: axe.source });
+      await page.setViewportSize({ width: 430, height: 560 });
+
+      for (const theme of ['light', 'dark'] as const) {
+        await page.goto(`${url}/settings?tab=preferences`, { waitUntil: 'domcontentloaded' });
+        await expect(page.locator('[data-app-shell]')).toBeVisible();
+        await page.getByLabel('Theme mode').selectOption(theme);
+        await expect.poll(async () => /\bdark\b/.test((await page.locator('html').getAttribute('class')) ?? ''))
+          .toBe(theme === 'dark');
+
+        await selectFocusDate(page, scenario.date);
+        const opener = page.getByRole('button', { name: 'Reschedule all' });
+        await opener.click();
+        const dialog = page.getByRole('dialog', { name: 'Reschedule conflicting tasks' });
+        await expect(dialog).toBeVisible();
+        await waitForFiniteAnimations(dialog);
+        await expectAxeClean(page, `Day reflow dialog (${theme})`, '[role="dialog"]');
+        await page.keyboard.press('Escape');
+        await expect(dialog).toHaveCount(0);
+      }
+    } finally {
+      await scenario.cleanup();
     }
   });
 

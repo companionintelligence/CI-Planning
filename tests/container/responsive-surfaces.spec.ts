@@ -1,5 +1,6 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { OwnerFixtures, signInLocal } from './owner-fixtures.js';
+import { createDayReflowFixture, selectFocusDate } from './day-reflow-fixture.js';
 
 const url = process.env.APP_URL || 'http://localhost:8080';
 const username = process.env.LOGIN_USER;
@@ -260,5 +261,34 @@ test('Planner task details stay above the grid and return focus to the task', as
     await expect(taskBlock).toBeFocused();
   } finally {
     await data.cleanup();
+  }
+});
+
+test('day reflow dialog stays within the short mobile viewport and restores focus', async ({ page }, testInfo) => {
+  test.skip(!username || !password, 'requires an authenticated container with LOGIN_USER and LOGIN_PASS');
+  await signInLocal(page, url);
+  const scenario = await createDayReflowFixture(page, testInfo);
+
+  try {
+    await page.setViewportSize({ width: 430, height: 560 });
+    await selectFocusDate(page, scenario.date);
+    const opener = page.getByRole('button', { name: 'Reschedule all' });
+    await expect(opener).toBeVisible();
+    await opener.click();
+
+    const dialog = page.getByRole('dialog', { name: 'Reschedule conflicting tasks' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Close dialog' })).toBeFocused();
+    await expect(dialog.getByText(scenario.taskTitle, { exact: true })).toBeVisible();
+    await expectWithinVisualViewport(page, dialog);
+
+    await page.setViewportSize({ width: 430, height: 420 });
+    await expectWithinVisualViewport(page, dialog);
+    await expect(dialog.getByRole('button', { name: 'Reschedule all', exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(opener).toBeFocused();
+  } finally {
+    await scenario.cleanup();
   }
 });

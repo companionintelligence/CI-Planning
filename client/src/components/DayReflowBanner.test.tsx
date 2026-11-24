@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, fireEvent, waitFor, screen } from '@solidjs/testing-library';
+import { render, fireEvent, waitFor, screen, within } from '@solidjs/testing-library';
 
 /**
  * Phase 7 — the conflict banner and its confirmation.
@@ -94,33 +94,35 @@ describe('DayReflowBanner — the preview', () => {
       }],
       unschedule: [{ block_id: 'b2', task_id: 't2', title: 'Review notes', reason: 'no_room' }],
     }));
-    const { getByText, container } = render(() => <DayReflowBanner />);
-    fireEvent.click(getByText('Reschedule all'));
-    await waitFor(() => expect(container.textContent).toContain('Write spec'));
-    expect(container.textContent).toContain('Review notes');
-    expect(container.textContent).toMatch(/won't fit/i);
+    render(() => <DayReflowBanner />);
+    fireEvent.click(screen.getByText('Reschedule all'));
+    const dialog = await screen.findByRole('dialog', { name: 'Reschedule conflicting tasks' });
+    await waitFor(() => expect(dialog.textContent).toContain('Write spec'));
+    expect(dialog.textContent).toContain('Review notes');
+    expect(dialog.textContent).toMatch(/won't fit/i);
   });
 
   it('names the locked blocks it is leaving alone', async () => {
     previewFn.mockResolvedValue(proposal({ kept_locked: [conflict('b9', 'Pinned thing')] }));
-    const { getByText, container } = render(() => <DayReflowBanner />);
-    fireEvent.click(getByText('Reschedule all'));
-    await waitFor(() => expect(container.textContent).toContain('Pinned thing'));
-    expect(container.textContent).toMatch(/staying put/i);
+    render(() => <DayReflowBanner />);
+    fireEvent.click(screen.getByText('Reschedule all'));
+    const dialog = await screen.findByRole('dialog', { name: 'Reschedule conflicting tasks' });
+    await waitFor(() => expect(dialog.textContent).toContain('Pinned thing'));
+    expect(dialog.textContent).toMatch(/staying put/i);
   });
 
   it('opening the preview mutates NOTHING', async () => {
-    const { getByText } = render(() => <DayReflowBanner />);
-    fireEvent.click(getByText('Reschedule all'));
+    render(() => <DayReflowBanner />);
+    fireEvent.click(screen.getByText('Reschedule all'));
     await waitFor(() => expect(previewFn).toHaveBeenCalledWith('2026-06-22'));
     expect(applyFn).not.toHaveBeenCalled();
   });
 
   it('cancelling leaves the day untouched', async () => {
-    const { getByText } = render(() => <DayReflowBanner />);
-    fireEvent.click(getByText('Reschedule all'));
-    await waitFor(() => getByText('Cancel'));
-    fireEvent.click(getByText('Cancel'));
+    render(() => <DayReflowBanner />);
+    fireEvent.click(screen.getByText('Reschedule all'));
+    const dialog = await screen.findByRole('dialog', { name: 'Reschedule conflicting tasks' });
+    fireEvent.click(within(dialog).getByText('Cancel'));
     expect(applyFn).not.toHaveBeenCalled();
     expect(refetchBlocks).not.toHaveBeenCalled();
   });
@@ -133,6 +135,16 @@ describe('DayReflowBanner — the preview', () => {
     const confirm = Array.from(dialog.querySelectorAll('button')).find((button) => button.textContent?.trim() === 'Reschedule all');
     expect(confirm).toBeDefined();
     expect((confirm as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('uses a named dialog and Escape closes without applying the preview', async () => {
+    const { getByText } = render(() => <DayReflowBanner />);
+    const opener = getByText('Reschedule all');
+    fireEvent.click(opener);
+    const dialog = await screen.findByRole('dialog', { name: 'Reschedule conflicting tasks' });
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Reschedule conflicting tasks' })).toBeNull());
+    expect(applyFn).not.toHaveBeenCalled();
   });
 });
 
