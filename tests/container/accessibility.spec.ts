@@ -31,18 +31,26 @@ async function signIn(page: Page) {
   await expect(page.locator('.onboarding-backdrop')).toHaveCount(0);
 }
 
-async function expectAxeClean(page: Page, surface: string) {
+async function expectAxeClean(page: Page, surface: string, rootSelector = 'body') {
+  // The route shell animates in from reduced opacity. Wait for that animation to finish
+  // so color contrast is measured at the stable visual state users actually see.
+  await page.locator('.page-enter').first().evaluate((element) =>
+    Promise.all(element.getAnimations().map((animation) => animation.finished.catch(() => undefined))),
+  );
   const result = await page.evaluate(async (tags) => {
+    const { tags: rules, selector } = tags as { tags: string[]; selector: string };
     const axe = (window as any).axe as typeof import('axe-core') | undefined;
     if (!axe) throw new Error('axe-core was not injected into this page');
-    const { violations } = await axe.run(document.body, { runOnly: { type: 'tag', values: tags } });
+    const root = document.querySelector(selector);
+    if (!root) throw new Error(`axe scan root not found: ${selector}`);
+    const { violations } = await axe.run(root, { runOnly: { type: 'tag', values: rules } });
     return violations.map((violation) => ({
       id: violation.id,
       impact: violation.impact,
       help: violation.help,
       nodes: violation.nodes.map((node) => ({ target: node.target, summary: node.failureSummary })),
     }));
-  }, WCAG_TAGS);
+  }, { tags: WCAG_TAGS, selector: rootSelector });
   expect(result, `axe WCAG violations on ${surface}`).toEqual([]);
 }
 
@@ -59,6 +67,7 @@ test.describe('authenticated accessibility regressions', () => {
       await page.getByLabel('Theme mode').selectOption(theme);
       await expect.poll(async () => /\bdark\b/.test((await page.locator('html').getAttribute('class')) ?? ''))
         .toBe(theme === 'dark');
+      await expectAxeClean(page, `Appearance settings (${theme})`, '[data-testid="appearance-accessibility-settings"]');
 
       for (const [path, label] of [
         ['/', 'Today / Planner'],

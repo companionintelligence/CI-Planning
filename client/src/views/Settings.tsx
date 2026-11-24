@@ -1177,7 +1177,7 @@ export function Settings() {
         {/* ── PREFERENCES TAB ─────────────────────────────────────────────────── */}
         <Show when={activeTab() === 'preferences'}>
 
-          <section class="card flex flex-col gap-4">
+          <section class="appearance-accessibility-settings card flex flex-col gap-4" data-testid="appearance-accessibility-settings">
             <div>
               <div class="section-label mb-1">Appearance and accessibility</div>
               <p class="text-xs text-muted-foreground">Choose the app color theme and a comfortable reading size. These choices are saved on this device.</p>
