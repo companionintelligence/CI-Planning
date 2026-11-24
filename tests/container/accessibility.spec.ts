@@ -88,6 +88,13 @@ test.describe('authenticated accessibility regressions', () => {
       await page.goto(`${url}/calendar`, { waitUntil: 'domcontentloaded' });
       await expect(page.getByRole('group', { name: 'Calendar quick actions' })).toBeVisible();
       await expectAxeClean(page, `Calendar view (${theme})`);
+      await page.getByRole('button', { name: 'Plan my week' }).click();
+      const planWeekDialog = page.getByRole('dialog', { name: 'Plan my week' });
+      await expect(planWeekDialog).toBeVisible();
+      await waitForFiniteAnimations(planWeekDialog);
+      await expectAxeClean(page, `Plan my week dialog (${theme})`, '[role="dialog"]');
+      await page.keyboard.press('Escape');
+      await expect(planWeekDialog).toHaveCount(0);
       await page.goto(`${url}/tasks?tab=routines`, { waitUntil: 'domcontentloaded' });
       await page.getByRole('button', { name: 'Manage types' }).click();
       const patternTypesDialog = page.getByRole('dialog', { name: 'Pattern types' });

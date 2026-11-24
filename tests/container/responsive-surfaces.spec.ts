@@ -132,6 +132,28 @@ test('Pattern type manager stays in the short mobile viewport and restores its o
   await expect(opener).toBeFocused();
 });
 
+test('Plan my week stays in the short mobile viewport with a reachable Done action', async ({ page }) => {
+  test.skip(!username || !password, 'requires an authenticated container with LOGIN_USER and LOGIN_PASS');
+  await signInLocal(page, url);
+  await page.setViewportSize({ width: 430, height: 560 });
+  await page.goto(`${url}/calendar`, { waitUntil: 'domcontentloaded' });
+
+  const opener = page.getByRole('button', { name: 'Plan my week' });
+  await expect(opener).toBeVisible();
+  await opener.click();
+  const dialog = page.getByRole('dialog', { name: 'Plan my week' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Close dialog' })).toBeFocused();
+  await expectWithinVisualViewport(page, dialog);
+
+  await page.setViewportSize({ width: 430, height: 420 });
+  await expectWithinVisualViewport(page, dialog);
+  await expect(dialog.getByRole('button', { name: 'Done' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(opener).toBeFocused();
+});
+
 test('overdue due-list dialog stays in the short mobile viewport and returns focus', async ({ page }, testInfo) => {
   test.skip(!username || !password, 'requires an authenticated container with LOGIN_USER and LOGIN_PASS');
   const data = new OwnerFixtures(page.request, testInfo.testId);
