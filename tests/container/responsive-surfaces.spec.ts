@@ -105,3 +105,47 @@ test('overdue due-list dialog stays in the short mobile viewport and returns foc
     await data.cleanup();
   }
 });
+
+test('Planner task details stay above the grid and return focus to the task', async ({ page }, testInfo) => {
+  test.skip(!username || !password, 'requires an authenticated container with LOGIN_USER and LOGIN_PASS');
+  const data = new OwnerFixtures(page.request, testInfo.testId);
+
+  try {
+    await signInLocal(page, url);
+    const day = await page.evaluate(() => {
+      const target = new Date();
+      target.setDate(target.getDate() + 1);
+      const year = target.getFullYear();
+      const month = target.getMonth();
+      const date = `${year}-${String(month + 1).padStart(2, '0')}-${String(target.getDate()).padStart(2, '0')}`;
+      const start = new Date(year, month, target.getDate(), 10, 0);
+      const end = new Date(start.getTime() + 45 * 60_000);
+      return { date, startAt: start.toISOString(), endAt: end.toISOString() };
+    });
+    const task = await data.createTask({ title: `E2E Planner popup ${testInfo.testId}`, estimated_minutes: 45 });
+    await data.createBlock({ title: task.title, task_id: task.id, block_kind: 'task', start_at: day.startAt, end_at: day.endAt });
+
+    await page.setViewportSize({ width: 430, height: 420 });
+    await page.goto(`${url}/`, { waitUntil: 'domcontentloaded' });
+    const dayPicker = page.locator('label[title="Pick a day"] input[type="date"]');
+    await dayPicker.fill(day.date);
+    await expect(dayPicker).toHaveValue(day.date);
+
+    const taskBlock = page.locator('div.absolute.z-10').filter({ hasText: task.title }).first();
+    await expect(taskBlock).toBeVisible();
+    await taskBlock.click();
+
+    const details = page.getByRole('dialog', { name: `Task details: ${task.title}` });
+    await expect(details).toBeVisible();
+    await expect(details.getByRole('button', { name: `Open task: ${task.title}` })).toBeFocused();
+    await expect(details.getByRole('button', { name: 'Close task details' })).toBeVisible();
+    await expect(details.getByRole('button', { name: 'Edit', exact: true })).toBeVisible();
+    await expectWithinVisualViewport(page, details);
+
+    await page.keyboard.press('Escape');
+    await expect(details).toHaveCount(0);
+    await expect(taskBlock).toBeFocused();
+  } finally {
+    await data.cleanup();
+  }
+});

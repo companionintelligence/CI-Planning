@@ -181,13 +181,16 @@ export function DataList(props: {
 export interface ModalSheetProps {
   open: boolean;
   title: string;
+  ariaLabel?: string;
   onClose: () => void;
   children?: JSX.Element;
+  header?: JSX.Element;
   footer?: JSX.Element;
   mode?: 'modal' | 'sheet';
   class?: string;
   /** Extra backdrop classes for a feature's existing placement recipe (for example, a centered mobile dialog). */
   backdropClass?: string;
+  style?: JSX.CSSProperties;
   closeLabel?: string;
 }
 
@@ -230,18 +233,29 @@ export function ModalSheet(props: ModalSheetProps) {
       >
         <div
           ref={dialog}
+          style={props.style}
           role="dialog"
           aria-modal="true"
-          aria-labelledby={titleId}
+          aria-labelledby={props.header ? undefined : titleId}
+          aria-label={props.header ? (props.ariaLabel ?? props.title) : undefined}
           tabindex="-1"
           onKeyDown={keyDown}
           class={`card flex max-h-full min-h-0 w-full flex-col overflow-hidden ${props.mode === 'sheet' ? 'max-w-2xl rounded-b-none sm:rounded-b-sm' : 'max-w-xl'} ${props.class ?? ''}`}
         >
-          <header class="flex flex-shrink-0 items-center justify-between gap-3 border-b border-border pb-3">
-            <h2 id={titleId} class="min-w-0 text-sm font-bold text-foreground">{props.title}</h2>
-            <button type="button" class="btn-icon" aria-label={props.closeLabel ?? 'Close dialog'} onClick={props.onClose}>×</button>
-          </header>
-          <div class="min-h-0 flex-1 overflow-y-auto py-3">{props.children}</div>
+          <Show when={props.header} fallback={
+            <header class="flex flex-shrink-0 items-center justify-between gap-3 border-b border-border pb-3">
+              <h2 id={titleId} class="min-w-0 text-sm font-bold text-foreground">{props.title}</h2>
+              <button type="button" class="btn-icon" aria-label={props.closeLabel ?? 'Close dialog'} onClick={props.onClose}>×</button>
+            </header>
+          }>
+            {props.header}
+          </Show>
+          <div
+            role="region"
+            aria-label={`${props.ariaLabel ?? props.title} content`}
+            tabindex="0"
+            class="min-h-0 flex-1 overflow-y-auto py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >{props.children}</div>
           <Show when={props.footer}>
             <footer class="flex-shrink-0 border-t border-border pt-3">{props.footer}</footer>
           </Show>

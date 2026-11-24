@@ -180,6 +180,51 @@ test.describe('authenticated accessibility regressions', () => {
     }
   });
 
+  test('Planner task details dialog passes axe in both themes', async ({ page }, testInfo) => {
+    test.skip(!username || !password, 'requires a local-login container with LOGIN_USER and LOGIN_PASS');
+    const data = new OwnerFixtures(page.request, testInfo.testId);
+
+    try {
+      await signInLocal(page, url);
+      const day = await page.evaluate(() => {
+        const target = new Date();
+        target.setDate(target.getDate() + 1);
+        const year = target.getFullYear();
+        const month = target.getMonth();
+        const date = `${year}-${String(month + 1).padStart(2, '0')}-${String(target.getDate()).padStart(2, '0')}`;
+        const start = new Date(year, month, target.getDate(), 10, 0);
+        const end = new Date(start.getTime() + 45 * 60_000);
+        return { date, startAt: start.toISOString(), endAt: end.toISOString() };
+      });
+      const task = await data.createTask({ title: `E2E Planner axe ${testInfo.testId}`, estimated_minutes: 45 });
+      await data.createBlock({ title: task.title, task_id: task.id, block_kind: 'task', start_at: day.startAt, end_at: day.endAt });
+      await page.addInitScript({ content: axe.source });
+      await page.setViewportSize({ width: 430, height: 560 });
+
+      for (const theme of ['light', 'dark'] as const) {
+        await page.goto(`${url}/settings?tab=preferences`, { waitUntil: 'domcontentloaded' });
+        await expect(page.locator('[data-app-shell]')).toBeVisible();
+        await page.getByLabel('Theme mode').selectOption(theme);
+        await expect.poll(async () => /\bdark\b/.test((await page.locator('html').getAttribute('class')) ?? ''))
+          .toBe(theme === 'dark');
+
+        await page.goto(`${url}/`, { waitUntil: 'domcontentloaded' });
+        const dayPicker = page.locator('label[title="Pick a day"] input[type="date"]');
+        await dayPicker.fill(day.date);
+        const taskBlock = page.locator('div.absolute.z-10').filter({ hasText: task.title }).first();
+        await taskBlock.click();
+        const details = page.getByRole('dialog', { name: `Task details: ${task.title}` });
+        await expect(details).toBeVisible();
+        await waitForFiniteAnimations(details);
+        await expectAxeClean(page, `Planner task details (${theme})`, '[role="dialog"]');
+        await details.getByRole('button', { name: `Close task details` }).click();
+        await expect(details).toHaveCount(0);
+      }
+    } finally {
+      await data.cleanup();
+    }
+  });
+
   test('mobile primary navigation and assistant button meet 44px touch targets', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await signInLocal(page, url);

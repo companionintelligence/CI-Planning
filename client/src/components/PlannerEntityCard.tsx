@@ -1,4 +1,4 @@
-import { Show, For, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
+import { Show, For, createMemo, createSignal } from 'solid-js';
 import { Pencil, Repeat, Unlink, Lock, Trash2, X, Save, Star, Sparkles, Play, Plus, LayoutTemplate, Target } from 'lucide-solid';
 import {
   tasks, taskOf, blocks, tags, patternPrefs, categoryPrefs, patterns, patternTypes, blockTemplates,
@@ -18,7 +18,7 @@ import { type AxisState, yOf as axisYOf, axisHeightPx, visibleExtent, topCollaps
 import { isImmovable } from '../lib/drag.js';
 import { ShapeIcon } from './ShapeIcon.js';
 import { LockToggle } from './LockToggle.js';
-import { ViewportOverlay } from './ViewportOverlay.js';
+import { ModalSheet } from '../ui/index.js';
 
 function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
@@ -344,44 +344,37 @@ export function PlannerEntityCard(props: {
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
-  // Esc closes the card.
-  const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && open()) clearActiveEntity(); };
-  onMount(() => window.addEventListener('keydown', onKey));
-  onCleanup(() => window.removeEventListener('keydown', onKey));
-
   const rationale = createMemo(() => blockSel()?.rationale ?? null);
 
   return (
     <Show when={open()}>
-      {/* Only taps on the actual backdrop close the card; clicks inside the card
-          remain available to its title and action controls. */}
-      <ViewportOverlay
-        class="fixed inset-0 z-[1000] flex items-center justify-center overflow-y-auto bg-black/55 p-3"
-        onClick={(e) => { if (e.target === e.currentTarget) clearActiveEntity(); }}
-      >
-      <div
-        class="safe-area-bottom relative w-full max-w-md max-h-[calc(100dvh-24px)] overflow-y-auto overscroll-contain rounded-xl border border-border bg-popover shadow-2xl"
+      <ModalSheet
+        open={open()}
+        title={`${kindLabel()} details: ${title()}`}
+        ariaLabel={`${kindLabel()} details: ${title()}`}
+        onClose={clearActiveEntity}
+        mode="modal"
+        class="safe-area-bottom !p-0 !max-w-md !max-h-[calc(100dvh-24px)] overscroll-contain shadow-2xl"
         style={{ 'border-left': `4px solid ${accent()}` }}
-        onClick={(e) => e.stopPropagation()}
+        header={
+          <header class="flex flex-shrink-0 items-start gap-2 border-b border-border px-3 pt-2.5 pb-2">
+            <div class="flex-shrink-0 mt-0.5" style={{ color: accent() }}>
+              <Show when={dirTag()} fallback={<Star size={15} />}><ShapeIcon shape={dirShape()} size={15} strokeWidth={1.75} /></Show>
+            </div>
+            <div class="min-w-0 flex-1">
+              <div class="text-[10px] uppercase tracking-wide text-muted-foreground leading-none">{kindLabel()}</div>
+              <button
+                type="button"
+                class="block w-full text-left text-sm font-semibold text-foreground truncate mt-0.5 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-sm"
+                title={`Open ${kindLabel().toLowerCase()}: ${title()}`}
+                aria-label={`Open ${kindLabel().toLowerCase()}: ${title()}`}
+                onClick={edit}
+              >{title()}</button>
+            </div>
+            <button type="button" onClick={clearActiveEntity} class="btn-icon flex-shrink-0" title="Close (Esc)" aria-label={`Close ${kindLabel().toLowerCase()} details`}><X size={15} /></button>
+          </header>
+        }
       >
-        {/* Header: type + title + close */}
-        <div class="flex items-start gap-2 px-3 pt-2.5 pb-2 border-b border-border">
-          <div class="flex-shrink-0 mt-0.5" style={{ color: accent() }}>
-            <Show when={dirTag()} fallback={<Star size={15} />}><ShapeIcon shape={dirShape()} size={15} strokeWidth={1.75} /></Show>
-          </div>
-          <div class="min-w-0 flex-1">
-            <div class="text-[10px] uppercase tracking-wide text-muted-foreground leading-none">{kindLabel()}</div>
-            <button
-              type="button"
-              class="block w-full text-left text-sm font-semibold text-foreground truncate mt-0.5 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-sm"
-              title={`Open ${kindLabel().toLowerCase()}: ${title()}`}
-              aria-label={`Open ${kindLabel().toLowerCase()}: ${title()}`}
-              onClick={edit}
-            >{title()}</button>
-          </div>
-          <button onClick={clearActiveEntity} class="btn-icon flex-shrink-0" title="Close (Esc)"><X size={15} /></button>
-        </div>
-
         {/* Details */}
         <div class="px-3 py-2 flex flex-col gap-1.5 text-xs">
           <Show when={block()}>
@@ -531,8 +524,7 @@ export function PlannerEntityCard(props: {
             <button onClick={remove} class="btn-ghost text-xs px-2 py-1 hover:text-destructive ml-auto"><Trash2 size={13} /> Remove</button>
           </Show>
         </div>
-      </div>
-      </ViewportOverlay>
+      </ModalSheet>
     </Show>
   );
 }

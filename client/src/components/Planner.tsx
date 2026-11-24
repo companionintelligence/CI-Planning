@@ -216,7 +216,11 @@ function useBlockDrag(opts: {
       const rawPx = ev.clientY - startClientY; // RAW pixel delta: click detection
       const dMin = toDMin(rawPx);              // segmented minute delta: commit (clamps itself)
       if (!opts.locked()) { setDrag(null); if (mode === 'move') opts.onMoveEnd?.(); }
-      if (mode === 'move' && Math.abs(rawPx) < CLICK_PX) { opts.onClick(ev.clientX, ev.clientY); return; }
+      if (mode === 'move' && Math.abs(rawPx) < CLICK_PX) {
+        target.focus({ preventScroll: true });
+        opts.onClick(ev.clientX, ev.clientY);
+        return;
+      }
       if (opts.locked()) return; // no drag commit for locked blocks
       if (mode === 'move' && opts.onMoveCommit) { opts.onMoveCommit(dMin, ev); return; }
       // Resize (and any non-grouped move): clamp against neighbours so an edge can't
@@ -533,6 +537,7 @@ function PlannerChip(props: { placed: Placed; day: string; nowISO: () => string;
       {(e) => (
     <div
       class="absolute z-10 rounded-none overflow-hidden border bg-card text-[11px] leading-tight select-none touch-none transition-shadow"
+      tabindex="-1"
       classList={{
         'opacity-40': settled() && b().status !== 'completed' && !needsCloseReminder(),
         'opacity-70': completed() || (settled() && needsCloseReminder()),
