@@ -17,6 +17,7 @@ import { DayStarsRow } from '../components/DayStarsRow.js';
 import { ReplanBanner } from '../components/ReplanBanner.js';
 import { FocusMenu, BriefMenu } from '../components/DayGoals.js';
 import { ViewportOverlay } from '../components/ViewportOverlay.js';
+import { ModalSheet } from '../ui/index.js';
 
 /**
  * TODAY — the planner cockpit (Phase G, G5). **Day Overview** (day/date + today's
@@ -338,17 +339,21 @@ export function Today() {
 
       {/* Due — popup modal (button lives in the day-header icon row above). */}
       <Show when={dueOpen()}>
-        <ViewportOverlay class="modal-backdrop due-modal-backdrop" onClick={() => setDueOpen(false)}>
-          <div class="modal due-modal max-w-md overflow-auto p-4" onClick={(e) => e.stopPropagation()}>
-            <DueCard
-              date={selectedDay()}
-              taskList={() => dueTasks() ?? []}
-              onOpen={(t) => { openTask(t); setDueOpen(false); }}
-              onClose={() => setDueOpen(false)}
-              bare
-            />
-          </div>
-        </ViewportOverlay>
+        <ModalSheet
+          open
+          title="Due list"
+          onClose={() => setDueOpen(false)}
+          mode="modal"
+          backdropClass="modal-backdrop due-modal-backdrop"
+          class="due-modal !max-w-md p-4"
+        >
+          <DueCard
+            date={selectedDay()}
+            taskList={() => dueTasks() ?? []}
+            onOpen={(t) => { openTask(t); setDueOpen(false); }}
+            bare
+          />
+        </ModalSheet>
       </Show>
 
       {/* Replan suggestion — a big-disruption reflow asks to re-plan with AI (B4) */}
@@ -420,7 +425,7 @@ export function Today() {
  * on demand — a destructive-toned pill mirroring the overdue count button. Rows
  * reuse the bucket-list row styling and open the task editor the same way.
  */
-function DueCard(props: { date: string; taskList: () => Task[]; onOpen: (t: Task) => void; bare?: boolean; onClose?: () => void }) {
+function DueCard(props: { date: string; taskList: () => Task[]; onOpen: (t: Task) => void; bare?: boolean }) {
   // The day's dues + overdue rollup, then narrowed by the persisted filter
   // (direction include-set · hide habits · hide routines — habits & routines
   // hidden by default). Both lists share one predicate so they stay consistent.
@@ -587,12 +592,6 @@ function DueCard(props: { date: string; taskList: () => Task[]; onOpen: (t: Task
           </Show>
           {/* Multi-select filter menu — direction · hide habits · hide routines. */}
           <DueFilterMenu />
-          {/* Embedded-in-modal close (bare mode only — the standalone card has none). */}
-          <Show when={props.onClose}>
-            <button type="button" onClick={props.onClose} class="btn-icon" title="Close">
-              <X size={14} />
-            </button>
-          </Show>
         </div>
       </div>
 

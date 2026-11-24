@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import axe from 'axe-core';
-import { signInLocal } from './owner-fixtures.js';
+import { OwnerFixtures, signInLocal } from './owner-fixtures.js';
 
 const url = process.env.APP_URL || 'http://localhost:8080';
 const username = process.env.LOGIN_USER;
@@ -140,6 +140,44 @@ test.describe('authenticated accessibility regressions', () => {
     });
     expect(motion.preference).toBe(true);
     expect(motion.animation).toBe('none');
+  });
+
+  test('overdue due-list dialog passes axe in both themes', async ({ page }, testInfo) => {
+    test.skip(!username || !password, 'requires a local-login container with LOGIN_USER and LOGIN_PASS');
+    const data = new OwnerFixtures(page.request, testInfo.testId);
+
+    try {
+      await signInLocal(page, url);
+      const overdueDate = await page.evaluate(() => {
+        const date = new Date();
+        date.setDate(date.getDate() - 1);
+        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      });
+      await data.createTask({ title: `E2E overdue axe ${testInfo.testId}`, due_at: overdueDate });
+      await page.addInitScript({ content: axe.source });
+      await page.setViewportSize({ width: 430, height: 560 });
+
+      for (const theme of ['light', 'dark'] as const) {
+        await page.goto(`${url}/settings?tab=preferences`, { waitUntil: 'domcontentloaded' });
+        await expect(page.locator('[data-app-shell]')).toBeVisible();
+        await page.getByLabel('Theme mode').selectOption(theme);
+        await expect.poll(async () => /\bdark\b/.test((await page.locator('html').getAttribute('class')) ?? ''))
+          .toBe(theme === 'dark');
+
+        await page.goto(`${url}/`, { waitUntil: 'domcontentloaded' });
+        const dueButton = page.getByRole('button', { name: 'Due — deadlines for this day' }).first();
+        await dueButton.click();
+        const dueDialog = page.getByRole('dialog', { name: 'Due list' });
+        await expect(dueDialog).toBeVisible();
+        await dueDialog.getByTitle('Show overdue tasks').click();
+        await waitForFiniteAnimations(dueDialog);
+        await expectAxeClean(page, `Overdue due-list dialog (${theme})`, '[role="dialog"]');
+        await dueDialog.getByRole('button', { name: 'Close dialog' }).click();
+        await expect(dueDialog).toHaveCount(0);
+      }
+    } finally {
+      await data.cleanup();
+    }
   });
 
   test('mobile primary navigation and assistant button meet 44px touch targets', async ({ page }) => {

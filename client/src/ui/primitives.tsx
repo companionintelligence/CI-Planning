@@ -186,6 +186,8 @@ export interface ModalSheetProps {
   footer?: JSX.Element;
   mode?: 'modal' | 'sheet';
   class?: string;
+  /** Extra backdrop classes for a feature's existing placement recipe (for example, a centered mobile dialog). */
+  backdropClass?: string;
   closeLabel?: string;
 }
 
@@ -223,7 +225,7 @@ export function ModalSheet(props: ModalSheetProps) {
 
     return (
       <ViewportOverlay
-        class={`fixed inset-0 z-[1000] flex justify-center bg-black/60 p-3 ${props.mode === 'sheet' ? 'items-end sm:items-center' : 'items-center'}`}
+        class={`fixed inset-0 z-[1000] flex justify-center bg-black/60 p-3 ${props.mode === 'sheet' ? 'items-end sm:items-center' : 'items-center'} ${props.backdropClass ?? ''}`}
         onClick={(event) => { if (event.target === event.currentTarget) props.onClose(); }}
       >
         <div

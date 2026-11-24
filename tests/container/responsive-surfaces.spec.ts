@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
-import { signInLocal } from './owner-fixtures.js';
+import { OwnerFixtures, signInLocal } from './owner-fixtures.js';
 
 const url = process.env.APP_URL || 'http://localhost:8080';
 const username = process.env.LOGIN_USER;
@@ -66,4 +66,42 @@ test('task and objective sheets stay in the mobile viewport and return focus to 
   await objectiveDialog.getByRole('button', { name: 'Close dialog' }).click();
   await expect(objectiveDialog).toHaveCount(0);
   await expect(addObjective).toBeFocused();
+});
+
+test('overdue due-list dialog stays in the short mobile viewport and returns focus', async ({ page }, testInfo) => {
+  test.skip(!username || !password, 'requires an authenticated container with LOGIN_USER and LOGIN_PASS');
+  const data = new OwnerFixtures(page.request, testInfo.testId);
+
+  try {
+    await signInLocal(page, url);
+    const overdueDate = await page.evaluate(() => {
+      const date = new Date();
+      date.setDate(date.getDate() - 1);
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    });
+    const overdueTask = await data.createTask({
+      title: `E2E overdue viewport ${testInfo.testId}`,
+      due_at: overdueDate,
+    });
+
+    await page.setViewportSize({ width: 430, height: 420 });
+    await page.goto(`${url}/`, { waitUntil: 'domcontentloaded' });
+    const dueButton = page.getByRole('button', { name: 'Due — deadlines for this day' }).first();
+    await expect(dueButton).toBeVisible();
+    await dueButton.click();
+
+    const dueDialog = page.getByRole('dialog', { name: 'Due list' });
+    await expect(dueDialog).toBeVisible();
+    await expect(dueDialog.getByRole('button', { name: 'Close dialog' })).toBeFocused();
+    await expectWithinVisualViewport(page, dueDialog);
+
+    await dueDialog.getByTitle('Show overdue tasks').click();
+    await expect(dueDialog.getByText(overdueTask.title, { exact: true })).toBeVisible();
+    await expectWithinVisualViewport(page, dueDialog);
+    await page.keyboard.press('Escape');
+    await expect(dueDialog).toHaveCount(0);
+    await expect(dueButton).toBeFocused();
+  } finally {
+    await data.cleanup();
+  }
 });
