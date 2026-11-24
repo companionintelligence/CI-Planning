@@ -22,7 +22,7 @@ import { SectionAddTask } from '../components/SectionAddTask.js';
 import { DayReflowBanner } from '../components/DayReflowBanner.js';
 import { blockColorVar } from '../lib/textures.js';
 import { categoryPrefs, conflictedBlockIds } from '../stores/index.js';
-import { ViewportOverlay } from '../components/ViewportOverlay.js';
+import { ModalSheet } from '../ui/index.js';
 
 function taskNeedsApproval(task?: Task): boolean {
   return !!task?.auto_generated && !task.human_approved_at;
@@ -489,14 +489,28 @@ export function Focus() {
         </div>
       </div>
       <Show when={datePickerOpen()}>
-        <ViewportOverlay class="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 p-4" onClick={(e) => { if (e.target === e.currentTarget) setDatePickerOpen(false); }}>
-          <section class="w-full max-w-sm rounded-2xl border border-border bg-card p-4 shadow-2xl" role="dialog" aria-modal="true" aria-label="Choose Focus day">
-            <header class="mb-4 flex items-center justify-between gap-2">
+        <ModalSheet
+          open={datePickerOpen()}
+          title="Choose Focus day"
+          ariaLabel="Choose Focus day"
+          onClose={() => setDatePickerOpen(false)}
+          class="max-w-sm rounded-2xl"
+          header={
+            <header class="flex flex-shrink-0 items-center justify-between gap-2 border-b border-border px-4 pb-3">
               <button class="btn-icon" aria-label="Previous month" onClick={() => setPickerMonth(new Date(pickerMonth().getFullYear(), pickerMonth().getMonth() - 1, 1, 12))}><ChevronLeft size={18}/></button>
               <h2 class="flex-1 text-center text-lg font-semibold text-foreground">{monthLabel()}</h2>
               <button class="btn-icon" aria-label="Next month" onClick={() => setPickerMonth(new Date(pickerMonth().getFullYear(), pickerMonth().getMonth() + 1, 1, 12))}><ChevronRight size={18}/></button>
               <button class="btn-icon" aria-label="Close calendar" onClick={() => setDatePickerOpen(false)}><X size={16}/></button>
             </header>
+          }
+          footer={
+            <div class="flex items-center justify-between gap-2 px-4 pb-1">
+              <button class="btn-ghost" onClick={() => setPickerDay(localISODate())}>Today</button>
+              <div class="flex gap-2"><button class="btn-ghost" onClick={() => setDatePickerOpen(false)}>Cancel</button><button class="btn-primary" onClick={() => { setSelectedDay(pickerDay()); setDatePickerOpen(false); }}>Choose day</button></div>
+            </div>
+          }
+        >
+          <div class="px-4">
             <div class="mb-1 grid grid-cols-7 text-center text-xs font-semibold uppercase text-muted-foreground">
               <For each={['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']}>{(day) => <div class="py-2">{day}</div>}</For>
             </div>
@@ -506,12 +520,8 @@ export function Focus() {
                 : <button type="button" class={`aspect-square rounded-full text-sm transition-colors hover:bg-primary/15 ${pickerDay() === dateKey(day) ? 'bg-primary text-primary-foreground font-semibold' : 'text-foreground'}`} aria-label={new Date(`${dateKey(day)}T12:00:00`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} aria-pressed={pickerDay() === dateKey(day)} onClick={() => setPickerDay(dateKey(day))}>{day}</button>}
               </For>
             </div>
-            <footer class="mt-4 flex items-center justify-between border-t border-border pt-3">
-              <button class="btn-ghost" onClick={() => setPickerDay(localISODate())}>Today</button>
-              <div class="flex gap-2"><button class="btn-ghost" onClick={() => setDatePickerOpen(false)}>Cancel</button><button class="btn-primary" onClick={() => { setSelectedDay(pickerDay()); setDatePickerOpen(false); }}>Choose day</button></div>
-            </footer>
-          </section>
-        </ViewportOverlay>
+          </div>
+        </ModalSheet>
       </Show>
 
       {/* Inline day-note editor + display (the Today idiom — no modal). */}

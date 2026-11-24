@@ -81,6 +81,15 @@ test.describe('authenticated accessibility regressions', () => {
         await expectAxeClean(page, `${section} settings (${theme})`);
       }
 
+      await page.goto(`${url}/focus`, { waitUntil: 'domcontentloaded' });
+      await page.getByRole('button', { name: 'Choose Focus day' }).click();
+      const focusDateDialog = page.getByRole('dialog', { name: 'Choose Focus day' });
+      await expect(focusDateDialog).toBeVisible();
+      await waitForFiniteAnimations(focusDateDialog);
+      await expectAxeClean(page, `Focus date picker (${theme})`, '[role="dialog"]');
+      await page.keyboard.press('Escape');
+      await expect(focusDateDialog).toHaveCount(0);
+
       for (const [path, label] of [
         ['/', 'Today / Planner'],
         ['/tasks', 'Tasks'],

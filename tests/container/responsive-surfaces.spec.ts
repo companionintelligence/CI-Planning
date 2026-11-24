@@ -68,6 +68,27 @@ test('task and objective sheets stay in the mobile viewport and return focus to 
   await expect(addObjective).toBeFocused();
 });
 
+test('Focus day picker stays in the short mobile viewport and restores focus', async ({ page }) => {
+  test.skip(!username || !password, 'requires an authenticated container with LOGIN_USER and LOGIN_PASS');
+  await signInLocal(page, url);
+  await page.setViewportSize({ width: 430, height: 560 });
+  await page.goto(`${url}/focus`, { waitUntil: 'domcontentloaded' });
+
+  const opener = page.getByRole('button', { name: 'Choose Focus day' });
+  await expect(opener).toBeVisible();
+  await opener.click();
+  const picker = page.getByRole('dialog', { name: 'Choose Focus day' });
+  await expect(picker).toBeVisible();
+  await expect(picker.getByRole('button', { name: 'Previous month' })).toBeFocused();
+  await expectWithinVisualViewport(page, picker);
+
+  await page.setViewportSize({ width: 430, height: 420 });
+  await expectWithinVisualViewport(page, picker);
+  await page.keyboard.press('Escape');
+  await expect(picker).toHaveCount(0);
+  await expect(opener).toBeFocused();
+});
+
 test('overdue due-list dialog stays in the short mobile viewport and returns focus', async ({ page }, testInfo) => {
   test.skip(!username || !password, 'requires an authenticated container with LOGIN_USER and LOGIN_PASS');
   const data = new OwnerFixtures(page.request, testInfo.testId);
