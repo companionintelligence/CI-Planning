@@ -52,6 +52,19 @@ test('mobile details, Flight Plan, and assistant switch as viewport-bounded surf
   expect(assistantBounds!.x + assistantBounds!.width).toBeLessThanOrEqual(430);
   expect(assistantBounds!.y + assistantBounds!.height).toBeLessThanOrEqual(900);
   await expect(details).toHaveCount(0);
+
+  await page.setViewportSize({ width: 430, height: 560 });
+  await expect.poll(async () => {
+    const bounds = await assistant.boundingBox();
+    return bounds ? bounds.y + bounds.height : Number.POSITIVE_INFINITY;
+  }).toBeLessThanOrEqual(560);
+  const shortAssistantBounds = await assistant.boundingBox();
+  expect(shortAssistantBounds).not.toBeNull();
+  expect(shortAssistantBounds!.x + shortAssistantBounds!.width).toBeLessThanOrEqual(430);
+  expect(shortAssistantBounds!.y + shortAssistantBounds!.height).toBeLessThanOrEqual(560);
+  await expect(page.getByRole('button', { name: 'Close assistant' })).toBeVisible();
+  await page.setViewportSize({ width: 430, height: 900 });
+
   await page.getByRole('button', { name: 'Close assistant' }).click();
   await expect(details).toBeVisible();
   await expect(page.getByRole('button', { name: 'Back to work area' })).toBeFocused();

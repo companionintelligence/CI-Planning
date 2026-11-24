@@ -410,6 +410,40 @@ test.describe('authenticated accessibility regressions', () => {
     }
   });
 
+  test('Task assistant stays within a short mobile viewport and passes axe in both themes', async ({ page }) => {
+    await signInLocal(page, url);
+    await page.addInitScript({ content: axe.source });
+    await page.setViewportSize({ width: 430, height: 560 });
+
+    for (const theme of ['light', 'dark'] as const) {
+      await page.goto(`${url}/settings?tab=preferences`, { waitUntil: 'domcontentloaded' });
+      await expect(page.locator('[data-app-shell]')).toBeVisible();
+      await page.getByLabel('Theme mode').selectOption(theme);
+      await expect.poll(async () => /\bdark\b/.test((await page.locator('html').getAttribute('class')) ?? ''))
+        .toBe(theme === 'dark');
+
+      await page.goto(`${url}/`, { waitUntil: 'domcontentloaded' });
+      const opener = page.getByRole('button', { name: 'Talk to task assistant' });
+      await opener.click();
+      const dialog = page.getByRole('dialog', { name: 'Task assistant' });
+      await expect(dialog).toBeVisible();
+      await waitForFiniteAnimations(dialog);
+      await expectAxeClean(page, `Task assistant (${theme})`, '[role="dialog"][aria-label="Task assistant"]');
+
+      const shortBounds = await dialog.boundingBox();
+      expect(shortBounds).not.toBeNull();
+      expect(shortBounds!.x).toBeGreaterThanOrEqual(0);
+      expect(shortBounds!.y).toBeGreaterThanOrEqual(0);
+      expect(shortBounds!.x + shortBounds!.width).toBeLessThanOrEqual(430);
+      expect(shortBounds!.y + shortBounds!.height).toBeLessThanOrEqual(560);
+      await expect(dialog.getByRole('button', { name: 'Close assistant' })).toBeVisible();
+
+      await page.keyboard.press('Escape');
+      await expect(dialog).toHaveCount(0);
+      await expect(opener).toBeFocused();
+    }
+  });
+
   test('mobile primary navigation and assistant button meet 44px touch targets', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await signInLocal(page, url);
