@@ -50,8 +50,8 @@ html[data-text-size="larger"] { font-size: 125%; --app-text-scale: 1.25; }
   --secondary: oklch(96.8% 0.007 247.896);
   --secondary-foreground: #0a222e;
   --muted: oklch(96.8% 0.007 247.896);
-  /* Small helper labels need AA contrast on the light surface (about 4.97:1). */
-  --muted-foreground: oklch(52% 0.046 257.417);
+  /* Small helper labels need AA contrast on light cards and shaded sidebar surfaces. */
+  --muted-foreground: oklch(47% 0.046 257.417);
   /* Chevron for <select>, mirroring --muted-foreground above. Inlined per theme because a
      background-image cannot read a colour from a CSS variable, and kept directly beside
      the token it matches so the two are changed together. */
@@ -679,6 +679,8 @@ html[data-colorway="void"]:not(.dark) {
     @apply fixed bottom-6 right-6 z-30 flex items-center gap-2
            px-5 py-3 font-semibold rounded-lg
            transition-all duration-150 active:scale-95 select-none cursor-pointer;
+    min-width: 44px;
+    min-height: 44px;
     color: var(--primary-foreground);
     background: var(--primary);
     box-shadow: 0 8px 24px color-mix(in oklab, var(--primary) 25%, transparent);
@@ -689,7 +691,7 @@ html[data-colorway="void"]:not(.dark) {
   .nav-item {
     @apply flex items-center gap-2.5 px-3 py-2 rounded-sm text-sm font-medium
            transition-all duration-100 cursor-pointer select-none;
-    color: var(--muted-foreground);
+    color: var(--sidebar-foreground);
     letter-spacing: .02em;
   }
   .nav-item:hover { color: var(--foreground); background: var(--sidebar-accent); }
@@ -1028,7 +1030,7 @@ html[data-colorway="void"]:not(.dark) {
    overlaid so a selection stays readable against the list it came from — below
    `md` it becomes a bottom sheet, where a 400px side panel is the whole screen. */
 .details-rail {
-  flex: 0 0 6px;
+  flex: 1 1 auto;
   cursor: col-resize;
   background: var(--border);
   opacity: .45;
@@ -1036,6 +1038,7 @@ html[data-colorway="void"]:not(.dark) {
   touch-action: none;
   transition: opacity .12s, background .12s;
 }
+.details-rail-region { display: flex; flex: 0 0 6px; min-width: 6px; }
 .details-rail::after {
   content: "";
   position: absolute;
@@ -1274,7 +1277,7 @@ html[data-colorway="void"]:not(.dark) {
    Flight Plan is open. JS sizes the sheet against visualViewport so the keyboard and
    Safari's changing browser chrome cannot push its header offscreen. */
 @media (max-width: 767px) {
-  .details-rail { display: none; }
+  .details-rail-region { display: none; }
   .mobile-details-backdrop {
     display: flex;
     z-index: 39;
@@ -1640,7 +1643,8 @@ html[data-text-size="larger"] [class~="text-[11.5px]"] { font-size: 14.375px !im
 html[data-text-size="larger"] [class~="text-[13px]"] { font-size: 16.25px !important; }
 
 /* Shared presentation recipes for fixed treatments formerly repeated in JSX styles. */
-.brand-kicker { color: var(--brand-accent); }
+.brand-kicker { color: var(--primary); }
+.mobile-nav-item { color: var(--sidebar-foreground); }
 .safe-area-bottom { padding-bottom: env(safe-area-inset-bottom); }
 .icon-stroke-rounded { stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
 .icon-stroke-joined { stroke: currentColor; stroke-linejoin: round; }

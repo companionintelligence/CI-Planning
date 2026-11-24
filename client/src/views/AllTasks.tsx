@@ -278,8 +278,8 @@ export function AllTasks() {
       </ViewHeader>
 
       {/* Tabs — always visible; sort sits to the right on the Task/Habit tabs. */}
-      <div class="view-tabs tasks-view-tabs justify-between" role="tablist">
-        <div class="task-tab-strip flex flex-wrap">
+      <div class="view-tabs tasks-view-tabs justify-between">
+        <div class="task-tab-strip flex flex-wrap" role="tablist" aria-label="Task sections">
           {/* AF-1 order: Tasks · Shared · Objectives · Habits · Routines · Timeblock. */}
           <For each={taskTabs()}>
             {([v, label]) => (

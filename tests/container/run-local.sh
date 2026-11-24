@@ -79,6 +79,9 @@ APP_URL="http://localhost:$P_STANDALONE" SCREENSHOT_PATH="$TMP/screenshot.png" \
 echo "▶ phase 2a — local username/password login"
 LOGIN_SPEC=local LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL="http://localhost:$P_LOCAL" \
   node_modules/.bin/playwright test login.spec.ts --reporter=line || status=1
+echo "▶ phase 2a — accessibility regressions"
+LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL="http://localhost:$P_LOCAL" \
+  node_modules/.bin/playwright test accessibility.spec.ts --reporter=line || status=1
 echo "▶ phase 2b — Companion Portal login against the fixture portal"
 LOGIN_SPEC=portal APP_URL="http://localhost:$P_PORTAL" \
   node_modules/.bin/playwright test login.spec.ts --reporter=line || status=1

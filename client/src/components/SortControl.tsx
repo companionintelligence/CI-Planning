@@ -61,6 +61,7 @@ export function SortControl(props: SortControlProps) {
       <Show when={props.showDirection}>
         <select
           class="task-direction-select input py-0 text-[11px] self-stretch"
+          aria-label="Filter or group by direction"
           value={props.direction ?? ''}
           onChange={(e) => props.onDirection?.(e.currentTarget.value)}
           title="Filter / group by direction"

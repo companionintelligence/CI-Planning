@@ -86,6 +86,8 @@ Implementation sequence: (1) split the current container smoke suite into named 
 
 **Feature recipe status (2026-11-23):** `client/src/ui/recipes.css` documents the contracts and narrow-screen behavior for Planner action menus and modal form layouts. The Planner quick-action menu and Objective modal use those recipes: actions share alignment and hit-area rules, objective field pairs stack on mobile and form two columns at 40rem, and footer actions can share the available width on very narrow screens. Extend recipes by feature slice when adjacent controls are updated; keep content-specific visual states semantic on the control.
 
+**Accessibility regression status (2026-11-23):** The authenticated Playwright flow in `tests/container/accessibility.spec.ts` injects axe-core and checks Today/Planner and Tasks in light and dark themes, including WCAG color contrast. It also checks keyboard-visible focus, browser reduced-motion behavior, larger-text scaling, and minimum 44px targets for mobile navigation, More, and the task-assistant FAB. The first run found light-theme contrast and Tasks tab semantics issues; the implementation now uses higher-contrast semantic tokens, places filters outside the tablist, and labels the direction select. Appearance settings contain additional existing contrast and labeling violations and are not yet part of the axe gate. `axe-core` is added only to the isolated Playwright harness; it does not ship in the app runtime.
+
 ### Suggested web compartmentalization refactor
 
 1. Keep domain boundaries in `views/` and `components/`; do not split solely by file size.
@@ -97,4 +99,4 @@ Implementation sequence: (1) split the current container smoke suite into named 
 
 ### Audit limits
 
-The visual review covers the captured Today/Planner shell state, not every route, modal, theme, or device. The source audit inventories all TSX files but is not a rendered review of every individual component. Browser accessibility checks, contrast measurements, keyboard-only navigation, and a full mobile/tablet/desktop screenshot matrix remain to be added to the Playwright plan above.
+The visual review covers the captured Today/Planner shell state, not every route, modal, theme, or device. The source audit inventories all TSX files but is not a rendered review of every individual component. The accessibility gate covers Today/Planner and Tasks in both themes; settings, dialogs, and the broader mobile/tablet/desktop screenshot matrix remain outside the current automated checks.

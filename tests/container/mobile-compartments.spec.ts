@@ -20,6 +20,13 @@ test('mobile details, Flight Plan, and assistant switch as viewport-bounded surf
   }
 
   await expect(page.locator('[data-app-shell]')).toBeVisible();
+  if (await page.locator('.onboarding-backdrop').count()) {
+    const response = await page.request.patch(`${url}/api/prefs`, { data: { onboarded_at: new Date().toISOString() } });
+    expect(response.ok(), 'test fixture marks its owner as onboarded').toBe(true);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await expect(page.locator('[data-app-shell]')).toBeVisible();
+  }
+  await expect(page.locator('.onboarding-backdrop')).toHaveCount(0);
   const detailsToggle = page.getByRole('button', { name: /details drawer/i }).first();
   if (await detailsToggle.getAttribute('aria-expanded') !== 'true') await detailsToggle.click();
 

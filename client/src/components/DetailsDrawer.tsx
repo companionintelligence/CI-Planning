@@ -1540,11 +1540,17 @@ function EmptyPanel(props: { where: string }) {
 export function DetailsDrawer() {
   const location = useLocation();
   const phoneQuery = typeof window !== 'undefined' ? window.matchMedia('(max-width: 767px)') : null;
-  const readViewport = () => ({
-    top: window.visualViewport?.offsetTop ?? 0,
-    height: window.visualViewport?.height ?? window.innerHeight,
-    phone: phoneQuery?.matches ?? false,
-  });
+  const readViewport = () => {
+    const visualHeight = window.visualViewport?.height ?? window.innerHeight;
+    return {
+      top: window.visualViewport?.offsetTop ?? 0,
+      // The visual viewport normally shrinks for browser chrome and the keyboard. Some
+      // embedded/automation browsers leave that value stale on a resize, so clamp it
+      // to innerHeight as well to keep the sheet inside the actual current canvas.
+      height: Math.min(visualHeight, window.innerHeight),
+      phone: phoneQuery?.matches ?? false,
+    };
+  };
   const [viewport, setViewport] = createSignal(readViewport());
   let drawerEl: HTMLElement | undefined;
   let focusBeforeSheet: HTMLElement | null = null;
@@ -1791,23 +1797,25 @@ export function DetailsDrawer() {
       <ViewportOverlay class="mobile-details-backdrop" role="presentation">
         <button type="button" class="mobile-details-backdrop-button" aria-label="Dismiss details sheet" onClick={() => setDetailsOpen(false)} />
       </ViewportOverlay>
-      <div
-        class="details-rail"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize details drawer"
-        aria-valuemin={DETAILS_MIN_W}
-        aria-valuemax={DETAILS_MAX_W}
-        aria-valuenow={detailsWidth()}
-        tabindex="0"
-        data-dragging={dragging()}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
-        onDblClick={() => setDetailsWidth(DETAILS_DEFAULT_W)}
-        onKeyDown={onRailKey}
-      />
+      <div class="details-rail-region" role="region" aria-label="Details drawer resize controls">
+        <div
+          class="details-rail"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize details drawer"
+          aria-valuemin={DETAILS_MIN_W}
+          aria-valuemax={DETAILS_MAX_W}
+          aria-valuenow={detailsWidth()}
+          tabindex="0"
+          data-dragging={dragging()}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+          onDblClick={() => setDetailsWidth(DETAILS_DEFAULT_W)}
+          onKeyDown={onRailKey}
+        />
+      </div>
       <aside
         ref={drawerEl}
         class="details-drawer"

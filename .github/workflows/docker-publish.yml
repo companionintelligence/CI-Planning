@@ -193,6 +193,11 @@ jobs:
           cd tests/container
           LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL=http://localhost:8081 npx playwright test mobile-compartments.spec.ts
 
+      - name: Accessibility regressions (axe, keyboard, motion, text scaling, touch targets)
+        run: |
+          cd tests/container
+          LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL=http://localhost:8081 npx playwright test accessibility.spec.ts
+
       - name: Login test (Companion Portal flow against the fixture)
         run: |
           cd tests/container
