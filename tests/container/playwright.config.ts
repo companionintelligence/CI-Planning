@@ -35,6 +35,10 @@ export default defineConfig({
       testMatch: "objectives-flow.spec.ts",
     },
     {
+      name: "agent",
+      testMatch: "agent-flow.spec.ts",
+    },
+    {
       name: "mobile",
       testMatch: "mobile-compartments.spec.ts",
     },
