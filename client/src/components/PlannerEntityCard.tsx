@@ -160,9 +160,18 @@ export function PlannerEntityCard(props: {
 
   // ── Actions ────────────────────────────────────────────────────────────────────
   function edit() {
-    if (isContainer()) { const b = blockSel()!; setElementModal({ open: true, mode: 'edit', kind: 'timeblock', editTarget: { kind: 'timeblock', id: b.id } }); return; }
+    if (isContainer()) {
+      const b = blockSel()!;
+      setElementModal({ open: true, mode: 'edit', kind: 'timeblock', editTarget: { kind: 'timeblock', id: b.id } });
+      clearActiveEntity();
+      return;
+    }
     const t = task();
-    if (t) { setElementModal({ open: true, mode: 'edit', kind: t.is_habit ? 'habit' : 'task', editTarget: { kind: t.is_habit ? 'habit' : 'task', id: t.id } }); return; }
+    if (t) {
+      setElementModal({ open: true, mode: 'edit', kind: t.is_habit ? 'habit' : 'task', editTarget: { kind: t.is_habit ? 'habit' : 'task', id: t.id } });
+      clearActiveEntity();
+      return;
+    }
     showToast('Nothing to edit on this block', 'default');
   }
   // D4 — same on-demand memory enrichment as TaskCard; only fills blanks server-side,
@@ -317,9 +326,12 @@ export function PlannerEntityCard(props: {
 
   return (
     <Show when={open()}>
-      {/* Backdrop: closes the card; stops propagation so it never falls through to
-          click-to-create on the grid. */}
-      <ViewportOverlay class="fixed inset-0 z-[1000] flex items-center justify-center overflow-y-auto bg-black/55 p-3" onClick={() => clearActiveEntity()}>
+      {/* Only taps on the actual backdrop close the card; clicks inside the card
+          remain available to its title and action controls. */}
+      <ViewportOverlay
+        class="fixed inset-0 z-[1000] flex items-center justify-center overflow-y-auto bg-black/55 p-3"
+        onClick={(e) => { if (e.target === e.currentTarget) clearActiveEntity(); }}
+      >
       <div
         class="relative w-full max-w-md max-h-[calc(100dvh-24px)] overflow-y-auto overscroll-contain rounded-xl border border-border bg-popover shadow-2xl"
         style={{ 'border-left': `4px solid ${accent()}`, 'padding-bottom': 'env(safe-area-inset-bottom)' }}
@@ -332,7 +344,13 @@ export function PlannerEntityCard(props: {
           </div>
           <div class="min-w-0 flex-1">
             <div class="text-[10px] uppercase tracking-wide text-muted-foreground leading-none">{kindLabel()}</div>
-            <div class="text-sm font-semibold text-foreground truncate mt-0.5" title={title()}>{title()}</div>
+            <button
+              type="button"
+              class="block w-full text-left text-sm font-semibold text-foreground truncate mt-0.5 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-sm"
+              title={`Open ${kindLabel().toLowerCase()}: ${title()}`}
+              aria-label={`Open ${kindLabel().toLowerCase()}: ${title()}`}
+              onClick={edit}
+            >{title()}</button>
           </div>
           <button onClick={clearActiveEntity} class="btn-icon flex-shrink-0" title="Close (Esc)"><X size={15} /></button>
         </div>
