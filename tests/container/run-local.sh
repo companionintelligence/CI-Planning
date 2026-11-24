@@ -82,6 +82,9 @@ LOGIN_SPEC=local LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL="h
 echo "▶ phase 2a — task details, notes, and completion"
 LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL="http://localhost:$P_LOCAL" \
   node_modules/.bin/playwright test --project=tasks --workers=1 --reporter=line || status=1
+echo "▶ phase 2a — Planner auto-placement, overlap safety, and undo"
+LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL="http://localhost:$P_LOCAL" \
+  node_modules/.bin/playwright test --project=planner --workers=1 --reporter=line || status=1
 echo "▶ phase 2a — mobile compartment regressions"
 LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL="http://localhost:$P_LOCAL" \
   node_modules/.bin/playwright test --project=mobile --workers=1 --reporter=line || status=1

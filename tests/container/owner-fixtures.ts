@@ -52,7 +52,7 @@ export interface SeedBlockInput {
   start_at: string;
   end_at: string;
   task_id?: string;
-  block_kind?: 'task' | 'timeblock';
+  block_kind?: 'task' | 'timeblock' | 'meeting';
   tag?: string;
   duration_minutes?: number;
 }
@@ -79,6 +79,7 @@ interface BlockResponse {
 export class OwnerFixtures {
   private readonly taskIds: string[] = [];
   private readonly blockIds: string[] = [];
+  private readonly stagedTaskIds: string[] = [];
   private owner?: OwnerResponse;
   private taskNumber = 0;
   private blockNumber = 0;
@@ -128,6 +129,13 @@ export class OwnerFixtures {
     return block;
   }
 
+  async stageTask(taskId: string): Promise<void> {
+    await this.currentOwner();
+    const response = await this.request.post(`${this.baseUrl}/api/flight-plan`, { data: { task_id: taskId } });
+    if (!response.ok()) throw new Error(`Could not stage seeded task ${taskId} (${response.status()}): ${await response.text()}`);
+    this.stagedTaskIds.push(taskId);
+  }
+
   async cleanup(): Promise<void> {
     // Delete placements/containers before tasks so task-backed blocks can revert
     // their task state cleanly and the fixture can never leave a stale placement.
@@ -135,6 +143,12 @@ export class OwnerFixtures {
       const response = await this.request.delete(`${this.baseUrl}/api/blocks/${encodeURIComponent(id)}`);
       if (!response.ok() && response.status() !== 404) {
         throw new Error(`Could not clean up seeded block ${id} (${response.status()}).`);
+      }
+    }
+    for (const id of [...this.stagedTaskIds].reverse()) {
+      const response = await this.request.delete(`${this.baseUrl}/api/flight-plan/${encodeURIComponent(id)}`);
+      if (!response.ok() && response.status() !== 404) {
+        throw new Error(`Could not clean up seeded Flight Plan entry ${id} (${response.status()}).`);
       }
     }
     for (const id of [...this.taskIds].reverse()) {
