@@ -21,8 +21,12 @@ test('mobile details, Flight Plan, and assistant switch as viewport-bounded surf
 
   await expect(page.locator('[data-app-shell]')).toBeVisible();
   if (await page.locator('.onboarding-backdrop').count()) {
-    const response = await page.request.patch(`${url}/api/prefs`, { data: { onboarded_at: new Date().toISOString() } });
-    expect(response.ok(), 'test fixture marks its owner as onboarded').toBe(true);
+    const save = page.waitForResponse((response) =>
+      response.url().endsWith('/api/prefs') && response.request().method() === 'PATCH');
+    await page.getByRole('button', { name: 'Skip', exact: true }).click();
+    const response = await save;
+    expect(response.ok(), 'Skip saves the onboarding preference').toBe(true);
+    expect((await response.json()).prefs?.onboarded_at).toBeTruthy();
     await page.reload({ waitUntil: 'domcontentloaded' });
     await expect(page.locator('[data-app-shell]')).toBeVisible();
   }

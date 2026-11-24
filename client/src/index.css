@@ -1298,11 +1298,14 @@ html[data-colorway="void"]:not(.dark) {
   .details-drawer {
     position: fixed;
     inset-inline: 0;
-    top: var(--mobile-details-top, auto);
+    top: min(
+      var(--mobile-details-top, 22dvh),
+      calc(100dvh - min(var(--mobile-details-height, 78dvh), calc(100dvh - 1.5rem)))
+    );
     bottom: auto;
     width: auto;
-    height: var(--mobile-details-height, min(78dvh, calc(100dvh - 1.5rem)));
-    max-height: var(--mobile-details-height, min(78dvh, calc(100dvh - 1.5rem)));
+    height: min(var(--mobile-details-height, 78dvh), calc(100dvh - 1.5rem));
+    max-height: min(var(--mobile-details-height, 78dvh), calc(100dvh - 1.5rem));
     border-left: none;
     border-top: 1px solid var(--border);
     border-radius: var(--radius-30) var(--radius-30) var(--radius-0) var(--radius-0);

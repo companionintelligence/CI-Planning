@@ -380,7 +380,7 @@ export function AllTasks() {
             fallback={
               <div class="flex flex-col gap-2">
                 <Show when={(view() === 'habits' ? shownList() : explicitList()).length > 0} fallback={
-                  <EmptyState title={`No ${view() === 'habits' ? 'habits' : 'tasks'} found`} class="py-12 text-sm" />
+                  <EmptyState title={`No ${view() === 'habits' ? 'habits' : 'tasks'} found`} headingLevel={2} class="py-12 text-sm" />
                 }>
                   <For each={view() === 'habits' ? shownList() : explicitList()}>
                     {(task) => <TaskCard task={task} swipeActions={view() === 'tasks'} />}
@@ -394,6 +394,7 @@ export function AllTasks() {
               fallback={<div class="flex flex-col gap-2">
                 <EmptyState
                   title="No tasks found"
+                  headingLevel={2}
                   class="py-12 text-sm"
                   action={<button type="button" class="btn-primary text-xs" onClick={() => setElementModal({ open: true, mode: 'add', kind: null })}>Add a task</button>}
                   description={<EmptyStateConnectCTA />}

@@ -1594,11 +1594,13 @@ export function DetailsDrawer() {
       queueMicrotask(() => drawerEl?.querySelector<HTMLElement>('[data-drawer-back]')?.focus());
     } else if (!open && wasOpen && wasPhone) {
       const restore = focusBeforeSheet;
-      focusBeforeSheet = null;
       queueMicrotask(() => {
         // Another modal surface may have opened in the same transition (the assistant).
         if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
-        if (restore?.isConnected) restore.focus();
+        const canRestore = restore?.isConnected && restore !== document.body && restore !== document.documentElement;
+        const target = canRestore ? restore : document.querySelector<HTMLElement>('.details-toggle-button');
+        target?.focus();
+        if (focusBeforeSheet === restore) focusBeforeSheet = null;
       });
     }
   }, { defer: true }));
@@ -1740,6 +1742,18 @@ export function DetailsDrawer() {
   const [dragging, setDragging] = createSignal(false);
   let shellEl: HTMLElement | null = null;
 
+  const closeMobileDrawer = () => {
+    const restore = focusBeforeSheet;
+    setDetailsOpen(false);
+    requestAnimationFrame(() => {
+      if (!viewport().phone) return;
+      const canRestore = restore?.isConnected && restore !== document.body && restore !== document.documentElement;
+      const target = canRestore ? restore : document.querySelector<HTMLElement>('.details-toggle-button');
+      target?.focus();
+      if (focusBeforeSheet === restore) focusBeforeSheet = null;
+    });
+  };
+
   function onPointerDown(e: PointerEvent) {
     shellEl = (e.currentTarget as HTMLElement).closest('[data-app-shell]') as HTMLElement;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -1771,7 +1785,7 @@ export function DetailsDrawer() {
   const onEsc = (e: KeyboardEvent) => {
     if (e.key === 'Escape' && detailsOpen() && viewport().phone) {
       e.preventDefault();
-      setDetailsOpen(false);
+      closeMobileDrawer();
     }
   };
   window.addEventListener('keydown', onEsc);
@@ -1795,7 +1809,7 @@ export function DetailsDrawer() {
   return (
     <Show when={detailsOpen()}>
       <ViewportOverlay class="mobile-details-backdrop" role="presentation">
-        <button type="button" class="mobile-details-backdrop-button" aria-label="Dismiss details sheet" onClick={() => setDetailsOpen(false)} />
+        <button type="button" class="mobile-details-backdrop-button" aria-label="Dismiss details sheet" onClick={closeMobileDrawer} />
       </ViewportOverlay>
       <div class="details-rail-region" role="region" aria-label="Details drawer resize controls">
         <div
@@ -1839,7 +1853,7 @@ export function DetailsDrawer() {
               data-drawer-back
               aria-label="Back to work area"
               title="Back to work area"
-              onClick={() => setDetailsOpen(false)}
+              onClick={closeMobileDrawer}
             >
               <ChevronRight class="details-back-desktop" size={14} />
               <ChevronDown class="details-back-mobile" size={14} />
@@ -1858,7 +1872,7 @@ export function DetailsDrawer() {
             type="button"
             class="btn-icon flex-shrink-0"
             aria-label="Close details"
-            onClick={() => { clearActiveEntity(); setDetailsOpen(false); }}
+            onClick={() => { clearActiveEntity(); closeMobileDrawer(); }}
           >
             <X size={14} />
           </button>

@@ -59,11 +59,19 @@ export function EmptyState(props: SharedClass & {
   description?: JSX.Element | string;
   action?: JSX.Element;
   icon?: JSX.Element;
+  headingLevel?: 2 | 3 | 4;
 }) {
+  const headingClass = 'text-sm font-semibold text-foreground';
   return (
     <section class={`card flex flex-col items-center justify-center gap-2 p-5 text-center ${props.class ?? ''}`} aria-label={props.title}>
       <Show when={props.icon}><div class="text-muted-foreground" aria-hidden="true">{props.icon}</div></Show>
-      <h3 class="text-sm font-semibold text-foreground">{props.title}</h3>
+      <Show when={props.headingLevel === 2} fallback={
+        <Show when={props.headingLevel === 4} fallback={<h3 class={headingClass}>{props.title}</h3>}>
+          <h4 class={headingClass}>{props.title}</h4>
+        </Show>
+      }>
+        <h2 class={headingClass}>{props.title}</h2>
+      </Show>
       <Show when={props.description}><p class="max-w-prose text-xs text-muted-foreground">{props.description}</p></Show>
       <Show when={props.action}><div class="mt-1">{props.action}</div></Show>
     </section>

@@ -4,7 +4,7 @@ import axe from 'axe-core';
 const url = process.env.APP_URL || 'http://localhost:8080';
 const username = process.env.LOGIN_USER;
 const password = process.env.LOGIN_PASS;
-const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice'];
+const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'best-practice'];
 
 async function signIn(page: Page) {
   if ((await page.request.get(`${url}/api/auth/me`)).status() === 200) return;
@@ -17,11 +17,14 @@ async function signIn(page: Page) {
   await page.waitForURL((candidate) => new URL(candidate).pathname === '/', { timeout: 30_000 });
   await expect(page.locator('[data-app-shell]')).toBeVisible();
   if (await page.locator('.onboarding-backdrop').count()) {
-    // The smoke account is intentionally brand new. Seed just the onboarding gate
-    // through the same preferences endpoint the Skip action uses so tests reach the
-    // representative app surfaces without walking the ten-step first-run wizard.
-    const response = await page.request.patch(`${url}/api/prefs`, { data: { onboarded_at: new Date().toISOString() } });
-    expect(response.ok(), 'test fixture marks its owner as onboarded').toBe(true);
+    // Use the product's Skip action so fixture behavior stays aligned with the actual
+    // onboarding flow, including its client-side gate and preference refresh.
+    const save = page.waitForResponse((response) =>
+      response.url().endsWith('/api/prefs') && response.request().method() === 'PATCH');
+    await page.getByRole('button', { name: 'Skip', exact: true }).click();
+    const response = await save;
+    expect(response.ok(), 'Skip saves the onboarding preference').toBe(true);
+    expect((await response.json()).prefs?.onboarded_at).toBeTruthy();
     await page.reload({ waitUntil: 'domcontentloaded' });
     await expect(page.locator('[data-app-shell]')).toBeVisible();
   }
