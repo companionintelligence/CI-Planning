@@ -23,6 +23,10 @@ export default defineConfig({
       grep: /Companion Portal login \(fixture portal\)/,
     },
     {
+      name: "tasks",
+      testMatch: "tasks-flow.spec.ts",
+    },
+    {
       name: "mobile",
       testMatch: "mobile-compartments.spec.ts",
     },

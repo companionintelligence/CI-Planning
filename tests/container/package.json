@@ -6,6 +6,7 @@
     "test:smoke": "playwright test --project=smoke",
     "test:auth:local": "playwright test --project=auth-local",
     "test:auth:portal": "playwright test --project=auth-portal",
+    "test:tasks": "playwright test --project=tasks",
     "test:mobile": "playwright test --project=mobile",
     "test:accessibility": "playwright test --project=accessibility"
   },

@@ -58,7 +58,7 @@ wait_http() { # url
 echo "▶ booting (ports $P_STANDALONE standalone · $P_LOCAL local · $P_PORTAL portal · $P_FIXTURE fixture) — data in $TMP"
 start_app standalone "$P_STANDALONE" AUTH_MODE=standalone
 start_app local "$P_LOCAL" AUTH_MODE=sso DISABLE_OIDC=true SESSION_SECRET=smoke-session-secret \
-  AUTH_DEFAULT_USERNAME=smoke-admin AUTH_DEFAULT_PASSWORD=smoke-password-123
+  AUTH_DEFAULT_USERNAME=smoke-admin AUTH_DEFAULT_PASSWORD=smoke-password-123 AUTH_RATE_ISSUE_MAX=20
 (cd "$SERVER" && FIXTURE_PORTAL_PORT="$P_FIXTURE" FIXTURE_PORTAL_ISSUER="http://localhost:$P_FIXTURE" \
    node_modules/.bin/tsx src/scripts/fixture-portal.ts > "$TMP/fixture.log" 2>&1 & echo $! > "$TMP/fixture.pid")
 PIDS+=("$(cat "$TMP/fixture.pid")")
@@ -79,6 +79,9 @@ APP_URL="http://localhost:$P_STANDALONE" SCREENSHOT_PATH="$TMP/screenshot.png" \
 echo "▶ phase 2a — local username/password login"
 LOGIN_SPEC=local LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL="http://localhost:$P_LOCAL" \
   node_modules/.bin/playwright test --project=auth-local --reporter=line || status=1
+echo "▶ phase 2a — task details, notes, and completion"
+LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL="http://localhost:$P_LOCAL" \
+  node_modules/.bin/playwright test --project=tasks --workers=1 --reporter=line || status=1
 echo "▶ phase 2a — mobile compartment regressions"
 LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL="http://localhost:$P_LOCAL" \
   node_modules/.bin/playwright test --project=mobile --workers=1 --reporter=line || status=1

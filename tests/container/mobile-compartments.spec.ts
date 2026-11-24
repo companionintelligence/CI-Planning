@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { signInLocal } from './owner-fixtures.js';
 
 const url = process.env.APP_URL || 'http://localhost:8080';
 const username = process.env.LOGIN_USER;
@@ -9,28 +10,7 @@ test.use({ viewport: { width: 430, height: 900 } });
 test('mobile details, Flight Plan, and assistant switch as viewport-bounded surfaces', async ({ page }) => {
   test.skip(!username || !password, 'requires an authenticated container with LOGIN_USER and LOGIN_PASS');
 
-  await page.goto(url, { waitUntil: 'domcontentloaded' });
-  if ((await page.request.get(`${url}/api/auth/me`)).status() !== 200) {
-    await page.goto(`${url}/login`, { waitUntil: 'domcontentloaded' });
-    const localLogin = page.getByRole('button', { name: /sign in with username instead/i });
-    if (await localLogin.isVisible().catch(() => false)) await localLogin.click();
-    await page.getByLabel(/^username/i).fill(username!);
-    await page.getByLabel(/^password/i).fill(password!);
-    await page.getByRole('button', { name: /^sign in$/i }).click();
-  }
-
-  await expect(page.locator('[data-app-shell]')).toBeVisible();
-  if (await page.locator('.onboarding-backdrop').count()) {
-    const save = page.waitForResponse((response) =>
-      response.url().endsWith('/api/prefs') && response.request().method() === 'PATCH');
-    await page.getByRole('button', { name: 'Skip', exact: true }).click();
-    const response = await save;
-    expect(response.ok(), 'Skip saves the onboarding preference').toBe(true);
-    expect((await response.json()).prefs?.onboarded_at).toBeTruthy();
-    await page.reload({ waitUntil: 'domcontentloaded' });
-    await expect(page.locator('[data-app-shell]')).toBeVisible();
-  }
-  await expect(page.locator('.onboarding-backdrop')).toHaveCount(0);
+  await signInLocal(page, url);
   const detailsToggle = page.getByRole('button', { name: /details drawer/i }).first();
   if (await detailsToggle.getAttribute('aria-expanded') !== 'true') await detailsToggle.click();
 

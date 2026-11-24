@@ -1,35 +1,11 @@
 import { test, expect, type Page } from '@playwright/test';
 import axe from 'axe-core';
+import { signInLocal } from './owner-fixtures.js';
 
 const url = process.env.APP_URL || 'http://localhost:8080';
 const username = process.env.LOGIN_USER;
 const password = process.env.LOGIN_PASS;
 const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'best-practice'];
-
-async function signIn(page: Page) {
-  if ((await page.request.get(`${url}/api/auth/me`)).status() === 200) return;
-  await page.goto(`${url}/login`, { waitUntil: 'domcontentloaded' });
-  const localLogin = page.getByRole('button', { name: /sign in with username instead/i });
-  if (await localLogin.isVisible().catch(() => false)) await localLogin.click();
-  await page.getByLabel(/^username/i).fill(username!);
-  await page.getByLabel(/^password/i).fill(password!);
-  await page.getByRole('button', { name: /^sign in$/i }).click();
-  await page.waitForURL((candidate) => new URL(candidate).pathname === '/', { timeout: 30_000 });
-  await expect(page.locator('[data-app-shell]')).toBeVisible();
-  if (await page.locator('.onboarding-backdrop').count()) {
-    // Use the product's Skip action so fixture behavior stays aligned with the actual
-    // onboarding flow, including its client-side gate and preference refresh.
-    const save = page.waitForResponse((response) =>
-      response.url().endsWith('/api/prefs') && response.request().method() === 'PATCH');
-    await page.getByRole('button', { name: 'Skip', exact: true }).click();
-    const response = await save;
-    expect(response.ok(), 'Skip saves the onboarding preference').toBe(true);
-    expect((await response.json()).prefs?.onboarded_at).toBeTruthy();
-    await page.reload({ waitUntil: 'domcontentloaded' });
-    await expect(page.locator('[data-app-shell]')).toBeVisible();
-  }
-  await expect(page.locator('.onboarding-backdrop')).toHaveCount(0);
-}
 
 async function expectAxeClean(page: Page, surface: string, rootSelector = 'body') {
   // The route shell animates in from reduced opacity. Wait for that animation to finish
@@ -58,7 +34,7 @@ test.describe('authenticated accessibility regressions', () => {
   test.skip(!username || !password, 'requires a local-login container with LOGIN_USER and LOGIN_PASS');
 
   test('axe checks representative screens in both themes, including color contrast', async ({ page }) => {
-    await signIn(page);
+    await signInLocal(page, url);
     await page.addInitScript({ content: axe.source });
 
     for (const theme of ['light', 'dark'] as const) {
@@ -81,7 +57,7 @@ test.describe('authenticated accessibility regressions', () => {
   });
 
   test('keyboard focus, reduced motion, and larger text preferences remain effective', async ({ page }) => {
-    await signIn(page);
+    await signInLocal(page, url);
     await page.goto(`${url}/settings?tab=preferences`, { waitUntil: 'domcontentloaded' });
     await expect(page.locator('[data-app-shell]')).toBeVisible();
 
@@ -115,7 +91,7 @@ test.describe('authenticated accessibility regressions', () => {
 
   test('mobile primary navigation and assistant button meet 44px touch targets', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await signIn(page);
+    await signInLocal(page, url);
     await page.setViewportSize({ width: 390, height: 844 });
 
     const navLinks = page.locator('nav.fixed.bottom-0 a');

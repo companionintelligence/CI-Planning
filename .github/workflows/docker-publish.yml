@@ -165,6 +165,7 @@ jobs:
           docker run -d --name app-local -p 8081:${INTERNAL_PORT} \
             -e AUTH_MODE=sso -e DISABLE_OIDC=true -e SESSION_SECRET=smoke-session-secret \
             -e AUTH_DEFAULT_USERNAME=smoke-admin -e AUTH_DEFAULT_PASSWORD=smoke-password-123 \
+            -e AUTH_RATE_ISSUE_MAX=20 \
             -e CI_TELEMETRY=off ${{ steps.meta.outputs.sha_tag }}
           docker run -d --name app-portal --network cip-smoke -p 8082:${INTERNAL_PORT} \
             -e AUTH_MODE=sso -e SESSION_SECRET=smoke-session-secret -e AUTH_AUTO_PROVISION=true \
@@ -187,6 +188,11 @@ jobs:
         run: |
           cd tests/container
           LOGIN_SPEC=local LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL=http://localhost:8081 npx playwright test --project=auth-local
+
+      - name: Task details, notes, and completion flow
+        run: |
+          cd tests/container
+          LOGIN_USER=smoke-admin LOGIN_PASS=smoke-password-123 APP_URL=http://localhost:8081 npx playwright test --project=tasks
 
       - name: Mobile surface compartment regression (430x900)
         run: |
