@@ -206,6 +206,31 @@ test.describe('authenticated accessibility regressions', () => {
     expect(motion.animation).toBe('none');
   });
 
+  test('task reflection dialog passes axe in both themes', async ({ page }, testInfo) => {
+    await signInLocal(page, url);
+    await page.addInitScript({ content: axe.source });
+    const data = new OwnerFixtures(page.request, testInfo.testId);
+
+    try {
+      for (const theme of ['light', 'dark'] as const) {
+        const task = await data.createTask({ title: `A11y reflection ${theme} ${testInfo.testId}` });
+        await page.goto(`${url}/tasks?task=${encodeURIComponent(task.id)}`, { waitUntil: 'domcontentloaded' });
+        await page.evaluate((dark) => document.documentElement.classList.toggle('dark', dark), theme === 'dark');
+        const card = page.locator('.task-card').filter({ hasText: task.title });
+        await expect(card).toBeVisible();
+        await card.locator('button[title="Mark done"]').click();
+        const dialog = page.getByRole('dialog', { name: `Task reflection: ${task.title}` });
+        await expect(dialog).toBeVisible();
+        await waitForFiniteAnimations(dialog);
+        await expectAxeClean(page, `Task reflection dialog (${theme})`, '[role="dialog"]');
+        await dialog.getByTitle('Skip — the task stays done').click();
+        await expect(dialog).toHaveCount(0);
+      }
+    } finally {
+      await data.cleanup();
+    }
+  });
+
   test('conditional reminder and Time-Sense Settings states pass axe in both themes', async ({ page }) => {
     await signInLocal(page, url);
     await page.addInitScript({ content: axe.source });
@@ -530,28 +555,38 @@ test.describe('authenticated accessibility regressions', () => {
   });
 
   test('mobile primary navigation and assistant button meet 44px touch targets', async ({ page }) => {
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 320, height: 568 });
     await signInLocal(page, url);
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.addInitScript({ content: axe.source });
+    await page.setViewportSize({ width: 320, height: 568 });
 
-    const navLinks = page.locator('nav.fixed.bottom-0 a');
-    await expect(navLinks).toHaveCount(4);
-    for (const link of await navLinks.all()) {
-      const box = await link.boundingBox();
-      expect(box, 'mobile navigation target is rendered').not.toBeNull();
-      expect(box!.width, 'mobile navigation target is at least 44px wide').toBeGreaterThanOrEqual(44);
-      expect(box!.height, 'mobile navigation target is at least 44px high').toBeGreaterThanOrEqual(44);
+    for (const theme of ['light', 'dark'] as const) {
+      await page.goto(`${url}/settings?tab=preferences`, { waitUntil: 'domcontentloaded' });
+      await page.getByLabel('Theme mode').selectOption(theme);
+      await expect.poll(async () => /\bdark\b/.test((await page.locator('html').getAttribute('class')) ?? ''))
+        .toBe(theme === 'dark');
+      await page.goto(`${url}/`, { waitUntil: 'domcontentloaded' });
+      await expectAxeClean(page, `320px mobile navigation (${theme})`, 'nav.fixed.bottom-0');
+
+      const navLinks = page.locator('nav.fixed.bottom-0 a');
+      await expect(navLinks).toHaveCount(4);
+      for (const link of await navLinks.all()) {
+        const box = await link.boundingBox();
+        expect(box, 'mobile navigation target is rendered').not.toBeNull();
+        expect(box!.width, 'mobile navigation target is at least 44px wide').toBeGreaterThanOrEqual(44);
+        expect(box!.height, 'mobile navigation target is at least 44px high').toBeGreaterThanOrEqual(44);
+      }
+      const more = page.getByRole('button', { name: 'More' });
+      const moreBox = await more.boundingBox();
+      expect(moreBox).not.toBeNull();
+      expect(moreBox!.width).toBeGreaterThanOrEqual(44);
+      expect(moreBox!.height).toBeGreaterThanOrEqual(44);
+
+      const assistant = page.getByRole('button', { name: 'Talk to task assistant' });
+      const fab = await assistant.boundingBox();
+      expect(fab, 'task assistant button is rendered').not.toBeNull();
+      expect(fab!.width).toBeGreaterThanOrEqual(44);
+      expect(fab!.height).toBeGreaterThanOrEqual(44);
     }
-    const more = page.getByRole('button', { name: 'More' });
-    const moreBox = await more.boundingBox();
-    expect(moreBox).not.toBeNull();
-    expect(moreBox!.width).toBeGreaterThanOrEqual(44);
-    expect(moreBox!.height).toBeGreaterThanOrEqual(44);
-
-    const assistant = page.getByRole('button', { name: 'Talk to task assistant' });
-    const fab = await assistant.boundingBox();
-    expect(fab, 'task assistant button is rendered').not.toBeNull();
-    expect(fab!.width).toBeGreaterThanOrEqual(44);
-    expect(fab!.height).toBeGreaterThanOrEqual(44);
   });
 });

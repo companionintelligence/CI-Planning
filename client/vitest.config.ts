@@ -26,6 +26,13 @@ import solid from 'vite-plugin-solid';
 // export conditions vitest resolves the server/production build and rendering
 // misbehaves under jsdom.
 export default defineConfig({
+  coverage: {
+    provider: 'v8',
+    reporter: ['text-summary', 'lcov'],
+    include: ['src/**/*.{ts,tsx}'],
+    exclude: ['src/**/*.test.{ts,tsx}', 'src/**/*.d.ts'],
+    thresholds: { lines: 65, functions: 55, branches: 55, statements: 60 },
+  },
   test: {
     projects: [
       {

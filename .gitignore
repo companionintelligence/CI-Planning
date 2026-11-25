@@ -29,6 +29,9 @@ config.local.json
 data/
 .data/
 test-results/
+coverage/
+client/coverage/
+server/coverage/
 playwright-report/
 playwright/.cache/
 

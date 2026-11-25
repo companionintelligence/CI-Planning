@@ -80,6 +80,7 @@ test('task editor and assistant remain inside phone, tablet, and desktop viewpor
   await signInLocal(page, url);
 
   for (const viewport of [
+    { width: 320, height: 568 },
     { width: 430, height: 560 },
     { width: 768, height: 1024 },
     { width: 1280, height: 800 },
