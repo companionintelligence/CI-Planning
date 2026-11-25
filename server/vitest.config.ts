@@ -13,6 +13,13 @@ export default defineConfig({
   // directly (no dual-package dep), and prod runs under tsx which caches one instance.
   resolve: { dedupe: ['graphql'] },
   test: {
+    coverage: {
+      provider: 'v8',
+      reporter: ['text-summary', 'lcov'],
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: ['src/**/*.test.{ts,tsx}', 'src/**/*.d.ts'],
+      thresholds: { lines: 40, functions: 35, branches: 25, statements: 40 },
+    },
     environment: 'node',
     globalSetup: ['./test/global-setup.ts'],
     // Tests share one DB file and reset tables themselves; keep files sequential to avoid write races.

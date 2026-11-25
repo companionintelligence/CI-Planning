@@ -231,7 +231,7 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   ownerId: text('owner_id').references(() => owners.id),
   deepWorkWindows: text('deep_work_windows', { mode: 'json' }).$type<{ start: string; end: string }[]>(),
   maxFocusBlockMinutes: integer('max_focus_block_minutes').default(90),
-  minBreakMinutes: integer('min_break_minutes').default(10),
+  minBreakMinutes: integer('min_break_minutes').default(3),
   dayTheme: text('day_theme', { mode: 'json' }).$type<Record<string, string>>(),
   planningMode: text('planning_mode').default('basic'), // 'basic' (deterministic deadline→priority sort) | 'smart' (§A0 LLM loop). Set by the owner in Settings, independent of trustMode (0171).
   timezone: text('timezone'), // IANA zone (e.g. America/Los_Angeles); workday hours are wall-clock here

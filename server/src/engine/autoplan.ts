@@ -29,7 +29,7 @@ import { currentOwnerId } from '../lib/context.js';
 import { inheritContainerDirection, removeEntityTags, entityTagLevels, splitTagString, entityCategoryIds, categoryIdsForOwner } from '../services/tags.js';
 import { localISODate } from '../lib/dates.js';
 import { newId } from '../lib/ids.js';
-import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
+import { buildGaps, pickGap, splitIntoSessions, dayObstacles, placementConflicts, MS_PER_MIN } from './scheduler.js';
 import { mirrorEnginePlacement, revertTaskPlacementStatus, applyTaskPlacementStatus, TERMINAL_BLOCK_STATUS_SQL } from '../services/block-task-sync.js';
 import { getPatternBlocksForDate, directionWindowsByName, FALLBACK_FILL_DIRECTION_NAMES, HOME_DIRECTION_NAME } from '../services/pattern-blocks.js';
 import { resolveDayType } from '../services/day-types.js';
@@ -39,6 +39,7 @@ import { logPlacement, slotKeyFor, placementScorer, type CandidateGap } from '..
 import { dimensionShortfalls, biasLeadDimensions } from '../services/balance-budget.js';
 import { logger } from '../lib/logger.js';
 import { loadSchedulingIntelligence, type TaskSignals } from '../services/scheduling-intelligence.js';
+import { withPlacementLock } from './placement-lock.js';
 
 const DEFAULT_EST_MIN = 30;
 const MIN_SESSION_MS = 15 * MS_PER_MIN;
@@ -452,7 +453,7 @@ async function placeIntoWindow(
   if (opts.notBeforeMs != null) windowStartMs = Math.max(windowStartMs, opts.notBeforeMs);
   if (windowEndMs <= windowStartMs || tasks.length === 0) return { blocksCreated: 0, placedTaskIds };
 
-  const breakMs = (prefs?.min_break_minutes ?? 10) * MS_PER_MIN;
+  const breakMs = 0; // Auto packs tasks back-to-back; configured breaks are not placement gaps.
   const maxFocusMs = Math.max((prefs?.max_focus_block_minutes ?? 90) * MS_PER_MIN, MIN_SESSION_MS);
   const fixed = await dayObstacles(owner, windowStartMs, windowEndMs, {
     includePlans: opts.includePlans,
@@ -515,6 +516,12 @@ async function placeIntoWindow(
       if (!pick) break;
       const startMs = pick.gap.cursor;
       const endMs = startMs + pick.len;
+      // A final read guards against placements written after this pass built its gaps.
+      // Per-day serialization handles concurrent Auto runs; this check also protects
+      // against other placement paths that don't use the Auto run queue.
+      if (await placementConflicts(owner, startMs, endMs, { includePlans: opts.includePlans, excludeBlockId: opts.parentBlockId })) {
+        break; // stale gap snapshot; leave this task unscheduled instead of risking overlap
+      }
       const startISO = new Date(startMs).toISOString();
       const endISO = new Date(endMs).toISOString();
       const { id: blockId } = (await ins.get<{ id: string }>(t.task_id, owner, t.title, startISO, endISO, opts.parentBlockId ?? null, opts.runId ?? null, opts.parentBlockId ? containerTag : null))!;
@@ -624,7 +631,7 @@ async function pinTaskAt(
   }
 
   const durMs = Math.max((t.estimated_minutes ?? prefs?.default_time_block_minutes ?? 60) * MS_PER_MIN, MIN_SESSION_MS);
-  const breakMs = (prefs?.min_break_minutes ?? 10) * MS_PER_MIN;
+  const breakMs = 0;
   const create = async (startMs: number): Promise<boolean> => {
     const startAt = new Date(startMs).toISOString();
     const endAt = new Date(startMs + durMs).toISOString();
@@ -1122,7 +1129,7 @@ export async function placeFlightPlan(
       .get(t.task_id, owner);
     const pinned =
       t.scheduled_for === date
-        ? (await placeStartAnchoredTask(owner, t.task_id, { silent: true, nowMs })).placed
+        ? (await placeStartAnchoredTask(owner, t.task_id, { silent: true, nowMs, lockHeld: true })).placed
         : await pinTaskAt(owner, t, date, tz, prefs, notBeforeMs);
     if (pinned) { placedIds.add(t.task_id); if (!hadBlock) blocksCreated++; }
   }
@@ -1570,6 +1577,17 @@ const insAnchoredBlock = () =>
 export async function placeStartAnchoredTask(
   owner: string,
   taskId: string,
+  opts: { silent?: boolean; nowMs?: number; lockHeld?: boolean } = {},
+): Promise<StartAnchoredOutcome> {
+  const task = await store().prepare(`SELECT scheduled_for FROM tasks WHERE id = ? AND owner_id = ?`).get<{ scheduled_for: string | null }>(taskId, owner);
+  if (!task?.scheduled_for) return { placed: false, reason: task ? 'no_start' : 'not_found' };
+  if (opts.lockHeld) return placeStartAnchoredTaskUnlocked(owner, taskId, opts);
+  return withPlacementLock(owner, task.scheduled_for, () => placeStartAnchoredTaskUnlocked(owner, taskId, opts));
+}
+
+async function placeStartAnchoredTaskUnlocked(
+  owner: string,
+  taskId: string,
   opts: { silent?: boolean; nowMs?: number } = {},
 ): Promise<StartAnchoredOutcome> {
   const task = await store()
@@ -1604,9 +1622,10 @@ export async function placeStartAnchoredTask(
   const nowMs = opts.nowMs ?? Date.now();
   const notBeforeMs = date === localDateInTZ(new Date(nowMs).toISOString(), tz) ? nowMs : null;
   const durMs = Math.max((task.estimated_minutes ?? prefs?.default_time_block_minutes ?? 60) * MS_PER_MIN, MIN_SESSION_MS);
-  const breakMs = (prefs?.min_break_minutes ?? 10) * MS_PER_MIN;
+  const breakMs = 0;
 
   const create = async (startMs: number, endMs: number): Promise<StartAnchoredOutcome> => {
+    if (await placementConflicts(owner, startMs, endMs)) return { placed: false, reason: 'day_full' };
     const startAt = new Date(startMs).toISOString();
     const endAt = new Date(endMs).toISOString();
     const { id: blockId } = await insAnchoredBlock().get(task.id, owner, task.title, startAt, endAt) as { id: string };

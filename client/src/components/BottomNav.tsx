@@ -76,15 +76,14 @@ export function BottomNav() {
       </Show>
 
       <nav
-        class="md:hidden fixed bottom-0 inset-x-0 z-30 h-14 bg-sidebar border-t border-border flex items-stretch"
-        style={{ 'padding-bottom': 'env(safe-area-inset-bottom)' }}
+        class="mobile-bottom-nav safe-area-bottom md:hidden fixed bottom-0 inset-x-0 z-30 h-14 bg-sidebar border-t border-border flex items-stretch"
       >
         <For each={primary}>
           {(l) => (
             <A
               href={l.href}
               end={l.href === '/'}
-              class="relative flex-1 flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium text-muted-foreground"
+              class="mobile-nav-item relative flex-1 flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium text-muted-foreground"
               activeClass="!text-primary"
             >
               <l.Icon size={19} />
@@ -95,7 +94,7 @@ export function BottomNav() {
         <button
           type="button"
           onClick={() => setMoreOpen((v) => !v)}
-          class="flex-1 flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium"
+          class="mobile-nav-item flex-1 flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium"
           classList={{ 'text-primary': moreOpen(), 'text-muted-foreground': !moreOpen() }}
         >
           <MoreHorizontal size={19} />

@@ -1,5 +1,5 @@
 import { createSignal, createResource, createMemo, createEffect, onCleanup, Show, For } from 'solid-js';
-import { ViewHeader } from '../components/ViewHeader.js';
+import { Card, EmptyState, PageHeader, Toolbar } from '../ui/index.js';
 import { useSearchParams } from '@solidjs/router';
 import { SlidersHorizontal, Search, Archive, ChevronDown, ChevronRight, X, CalendarRange, Pencil, Pentagon, Clock3, Target } from 'lucide-solid';
 import { tasks, tags, concepts, prefs, taskFilter, setTaskFilter, refetchTasks, showToast, isRoutineTask, scheduledByTaskId, patternForTask, setPlanWeekModal, setElementModal } from '../stores/index.js';
@@ -244,8 +244,9 @@ export function AllTasks() {
 
   return (
     <div class="view-container page-enter">
-      <ViewHeader title="Tasks" sub={view() === 'shared' ? 'Read-only shared tasks' : `${activeTaskCount()} open`}>
+      <PageHeader title="Tasks" sub={view() === 'shared' ? 'Read-only shared tasks' : `${activeTaskCount()} open`}>
         <Show when={isTaskTab()}>
+          <Toolbar label="Task actions" class="flex flex-wrap items-center gap-2">
           <Show when={view() === 'tasks'}><button class="btn-secondary whitespace-nowrap" onClick={() => setBulkOpen(true)}>Bulk add</button></Show>
           <Show when={view() === 'tasks'}>
             <button
@@ -274,12 +275,13 @@ export function AllTasks() {
           >
             <Archive size={14} /> Archive
           </button>
+          </Toolbar>
         </Show>
-      </ViewHeader>
+      </PageHeader>
 
       {/* Tabs — always visible; sort sits to the right on the Task/Habit tabs. */}
-      <div class="view-tabs tasks-view-tabs justify-between" role="tablist">
-        <div class="task-tab-strip flex flex-wrap">
+      <div class="view-tabs tasks-view-tabs justify-between">
+        <div class="task-tab-strip flex flex-wrap" role="tablist" aria-label="Task sections">
           {/* AF-1 order: Tasks · Shared · Objectives · Habits · Routines · Timeblock. */}
           <For each={taskTabs()}>
             {([v, label]) => (
@@ -290,7 +292,7 @@ export function AllTasks() {
           </For>
         </div>
         <Show when={isTaskTab() && !showArchive()}>
-          <div class="task-view-controls">
+          <Toolbar label="Task list controls" class="task-view-controls">
             <SortControl
               order={order()}
               onOrder={setOrder}
@@ -323,7 +325,7 @@ export function AllTasks() {
                 </button>
               </Show>
             </div>
-          </div>
+          </Toolbar>
         </Show>
       </div>
 
@@ -331,7 +333,7 @@ export function AllTasks() {
       <Show when={isTaskTab()}>
         <Show when={!showArchive()}>
           <Show when={showFilters()}>
-            <div class="card mb-4 flex gap-2 flex-wrap animate-slide-down">
+              <Card class="mb-4 flex gap-2 flex-wrap animate-slide-down">
               <div class="flex-[2] min-w-[16rem] relative">
                 <Search size={13} class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
                 <input
@@ -359,7 +361,7 @@ export function AllTasks() {
                 </For>
               </select>
               <button class="btn-ghost text-xs" onClick={() => setTaskFilter({})}>Clear</button>
-            </div>
+              </Card>
           </Show>
 
           {/* Email review queue. Sits ABOVE the list branch (not inside it) so it is
@@ -378,7 +380,7 @@ export function AllTasks() {
             fallback={
               <div class="flex flex-col gap-2">
                 <Show when={(view() === 'habits' ? shownList() : explicitList()).length > 0} fallback={
-                  <div class="card text-center text-slate-500 py-12 text-sm">No {view() === 'habits' ? 'habits' : 'tasks'} found.</div>
+                  <EmptyState title={`No ${view() === 'habits' ? 'habits' : 'tasks'} found`} headingLevel={2} class="py-12 text-sm" />
                 }>
                   <For each={view() === 'habits' ? shownList() : explicitList()}>
                     {(task) => <TaskCard task={task} swipeActions={view() === 'tasks'} />}
@@ -390,13 +392,13 @@ export function AllTasks() {
             <Show
               when={newTodayList().length + openList().length + somedayList().length + scheduledList().length + routineList().length > 0}
               fallback={<div class="flex flex-col gap-2">
-                <div class="card text-center text-slate-500 py-12 text-sm flex flex-col items-center gap-2">
-                  No tasks found.
-                  <button type="button" class="btn-primary text-xs" onClick={() => setElementModal({ open: true, mode: 'add', kind: null })}>
-                    Add a task
-                  </button>
-                  <EmptyStateConnectCTA />
-                </div>
+                <EmptyState
+                  title="No tasks found"
+                  headingLevel={2}
+                  class="py-12 text-sm"
+                  action={<button type="button" class="btn-primary text-xs" onClick={() => setElementModal({ open: true, mode: 'add', kind: null })}>Add a task</button>}
+                  description={<EmptyStateConnectCTA />}
+                />
                 <SomedayTasksSection
                   open={somedaySecOpen()}
                   onToggle={() => setSomedaySecOpen((v) => !v)}
@@ -490,7 +492,7 @@ function ArchiveSection(props: {
   swipeActions?: boolean;
 }) {
   return (
-    <div class="card mb-3">
+    <Card class="mb-3">
       <button onClick={props.onToggle} class="flex items-center gap-2 w-full text-left text-sm font-semibold text-foreground" aria-expanded={props.open}>
         <Show when={props.open} fallback={<ChevronRight size={15} class="text-muted-foreground" />}>
           <ChevronDown size={15} class="text-muted-foreground" />
@@ -515,7 +517,7 @@ function ArchiveSection(props: {
           </Show>
         </div>
       </Show>
-    </div>
+    </Card>
   );
 }
 
@@ -529,7 +531,7 @@ function SomedayTasksSection(props: {
   defaultMinutes: number;
 }) {
   return (
-    <div class="card mb-3">
+    <Card class="mb-3">
       <button onClick={props.onToggle} class="flex items-center gap-2 w-full text-left text-sm font-semibold text-foreground" aria-expanded={props.open}>
         <Show when={props.open} fallback={<ChevronRight size={15} class="text-muted-foreground" />}>
           <ChevronDown size={15} class="text-muted-foreground" />
@@ -545,7 +547,7 @@ function SomedayTasksSection(props: {
           </Show>
         </div>
       </Show>
-    </div>
+    </Card>
   );
 }
 
@@ -601,7 +603,7 @@ function RoutineSection(props: {
   groups: { id: string; name: string; iconShape?: string; colorToken?: string | null; items: Task[] }[];
 }) {
   return (
-    <div class="card mb-3">
+    <Card class="mb-3">
       <button onClick={props.onToggle} class="flex items-center gap-2 w-full text-left text-sm font-semibold text-foreground">
         <Show when={props.open} fallback={<ChevronRight size={15} class="text-muted-foreground" />}>
           <ChevronDown size={15} class="text-muted-foreground" />
@@ -629,6 +631,6 @@ function RoutineSection(props: {
           </For>
         </div>
       </Show>
-    </div>
+    </Card>
   );
 }

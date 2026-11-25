@@ -61,7 +61,7 @@ export function Nav() {
         <BrandMark size={32} class="flex-shrink-0" />
         <Show when={!navCollapsed()}>
           <div>
-            <div class="text-[10px] font-medium tracking-[0.2em] uppercase leading-none" style={{ color: '#409b9b' }}>
+            <div class="brand-kicker text-[10px] font-medium tracking-[0.2em] uppercase leading-none">
               Companion
             </div>
             <div class="font-heading text-base text-slate-100 leading-tight mt-0.5 tracking-wide">

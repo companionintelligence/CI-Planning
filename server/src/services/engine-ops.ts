@@ -9,6 +9,7 @@ import {
   resolveTrustPolicy,
   type AutoResult,
 } from '../engine/autoplan.js';
+import { withPlacementLock } from '../engine/placement-lock.js';
 
 /**
  * Engine-ops service (Phase W · W13, Decision 3). The scheduling engines themselves
@@ -146,7 +147,7 @@ export async function autoRun(owner: string, input: AutoRunInput): Promise<AutoR
       // pre-T9 (day 0 authors normally, days 1..N forced deterministic).
       const source = await authorPlanOrder(owner, day, smart ? { force: true } : d === 0 ? {} : { deterministic: true });
       if (source === 'llm') llm = true;
-      const r = await placeFlightPlan(owner, { date: day, silent: true });
+      const r = await withPlacementLock(owner, day, () => placeFlightPlan(owner, { date: day, silent: true }));
       blocksCreated += r.blocksCreated ?? 0;
       placed += r.placed ?? 0;
       unplaced = r.unplaced ?? 0; // tasks still staged after the final day
@@ -156,7 +157,7 @@ export async function autoRun(owner: string, input: AutoRunInput): Promise<AutoR
   }
 
   const source = await authorPlanOrder(owner, date);
-  const result = await placeFlightPlan(owner, { blockId, date });
+  const result = await withPlacementLock(owner, date, () => placeFlightPlan(owner, { blockId, date }));
   writeAudit({ ownerId: owner, actor: 'owner', action: 'run', entity: 'flight-plan:run' });
   return { ...result, llm: source === 'llm' };
 }

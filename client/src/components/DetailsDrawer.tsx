@@ -1,11 +1,11 @@
-import { Show, For, Switch, Match, createSignal, createEffect, createMemo, createResource, on, onCleanup } from 'solid-js';
+import { Show, For, Switch, Match, createSignal, createEffect, createMemo, createResource, on, onCleanup, onMount } from 'solid-js';
 import { useLocation } from '@solidjs/router';
 import { FlightPlan } from './FlightPlan.js';
 import { EmptyStateConnectCTA } from './EmptyStateConnectCTA.js';
-import { X, PanelRight, Inbox, Pencil, Sparkles, Check, ChevronDown, ChevronRight, Rocket } from 'lucide-solid';
+import { X, PanelRight, Inbox, Pencil, Sparkles, Check, ChevronDown, ChevronRight, Rocket, MessageCircle } from 'lucide-solid';
 import {
   detailsOpen, detailsWidth, setDetailsOpen, setDetailsWidth,
-  drawerTab, setDrawerTab, DETAILS_MIN_W, DETAILS_MAX_W, DETAILS_DEFAULT_W, revealDetails,
+  drawerTab, setDrawerTab, DETAILS_MIN_W, DETAILS_MAX_W, DETAILS_DEFAULT_W, revealDetails, requestTaskAssistant,
 } from '../stores/ui.js';
 import { activeTask, activeBlock, activeEntity, clearActiveEntity, setActiveTask, setActiveBlock, setActiveEntity, type ActiveEntity } from '../stores/selection.js';
 import {
@@ -26,7 +26,9 @@ import { PriorityToggle, DateField } from './TaskCard.js';
 import { flattenObjectives } from '../lib/objectives.js';
 import { describeRule } from '../lib/recurrence.js';
 import { addDays, rangeUTC } from '../lib/dates.js';
+import { ViewportOverlay } from './ViewportOverlay.js';
 import { minutesIntoDay } from '../lib/grid.js';
+import { Card, Toolbar } from '../ui/index.js';
 import { OpenTimeSummary } from './OpenTimeSummary.js';
 import {
   windowFor, inWindow, targetForWindow, groupByTitle, minutesBetween, hoursLabel,
@@ -231,24 +233,29 @@ function TaskPanel(props: { task: () => Task }) {
           />
         </Show>
 
-        <Group label="Notes">
-          <div class="space-y-2">
-            <div class="flex items-center justify-between gap-2">
-              <span class="text-xs text-muted-foreground">Updates and context</span>
+        <Card
+          title="Notes"
+          description="Updates and context"
+          actions={
+            <Toolbar label="Task note actions">
               <button type="button" class="btn-ghost text-xs" onClick={() => setAddingNote(true)}>+ Add note</button>
-            </div>
+            </Toolbar>
+          }
+          class="task-notes-card"
+        >
+          <div class="task-note-feed">
             <Show when={addingNote()}>
               <div class="space-y-1">
                 <textarea class="textarea w-full text-sm" rows="3" aria-label="New task note" placeholder="Add a note…" value={newNote()} onInput={(e) => setNewNote(e.currentTarget.value)} />
                 <div class="flex gap-2 justify-end"><button class="btn-ghost text-xs" onClick={() => { setAddingNote(false); setNewNote(''); }}>Cancel</button><button class="btn-primary text-xs" disabled={!newNote().trim() || savingNote()} onClick={() => void addNote()}>Save note</button></div>
               </div>
             </Show>
-            <For each={noteHistory()?.notes ?? []}>{(entry) => <article class="rounded-md border border-border p-2 text-sm min-w-0"><time class="text-xs text-muted-foreground" dateTime={entry.created_at}>{new Date(entry.created_at).toLocaleString()}</time><p class="whitespace-pre-wrap break-words mt-1">{entry.body}</p></article>}</For>
+            <For each={noteHistory()?.notes ?? []}>{(entry) => <article class="task-note-entry"><time dateTime={entry.created_at}>{new Date(entry.created_at).toLocaleString()}</time><p>{entry.body}</p></article>}</For>
             <Show when={t().notes || t().description}><div class="text-xs text-muted-foreground">Task description</div><p class="drawer-note whitespace-pre-wrap break-words">{t().notes ?? t().description}</p></Show>
             <button type="button" class="text-xs text-muted-foreground hover:text-primary" onClick={startNotes}>Edit task description</button>
             <Show when={editingNotes()}><textarea class="textarea w-full text-sm" rows="3" aria-label="Task description" value={notesDraft()} onInput={(e) => setNotesDraft(e.currentTarget.value)} onBlur={commitNotes} /></Show>
           </div>
-        </Group>
+        </Card>
 
         <Group label="Planning">
           <dl class="drawer-grid">
@@ -1538,6 +1545,72 @@ function EmptyPanel(props: { where: string }) {
  */
 export function DetailsDrawer() {
   const location = useLocation();
+  const phoneQuery = typeof window !== 'undefined' ? window.matchMedia('(max-width: 767px)') : null;
+  const readViewport = () => {
+    const visualHeight = window.visualViewport?.height ?? window.innerHeight;
+    return {
+      top: window.visualViewport?.offsetTop ?? 0,
+      // The visual viewport normally shrinks for browser chrome and the keyboard. Some
+      // embedded/automation browsers leave that value stale on a resize, so clamp it
+      // to innerHeight as well to keep the sheet inside the actual current canvas.
+      height: Math.min(visualHeight, window.innerHeight),
+      phone: phoneQuery?.matches ?? false,
+    };
+  };
+  const [viewport, setViewport] = createSignal(readViewport());
+  let drawerEl: HTMLElement | undefined;
+  let focusBeforeSheet: HTMLElement | null = null;
+
+  onMount(() => {
+    const sync = () => {
+      const next = readViewport();
+      const current = viewport();
+      if (next.top !== current.top || next.height !== current.height || next.phone !== current.phone) setViewport(next);
+    };
+    const mediaChanged = () => sync();
+    window.addEventListener('resize', sync);
+    window.visualViewport?.addEventListener('resize', sync);
+    window.visualViewport?.addEventListener('scroll', sync);
+    phoneQuery?.addEventListener('change', mediaChanged);
+    onCleanup(() => {
+      window.removeEventListener('resize', sync);
+      window.visualViewport?.removeEventListener('resize', sync);
+      window.visualViewport?.removeEventListener('scroll', sync);
+      phoneQuery?.removeEventListener('change', mediaChanged);
+    });
+  });
+
+  const mobileDrawerStyle = () => {
+    const v = viewport();
+    const height = Math.max(0, Math.min(Math.round(v.height * 0.78), v.height - 24));
+    return {
+      '--details-w': `${detailsWidth()}px`,
+      '--mobile-details-height': `${height}px`,
+      '--mobile-details-top': `${v.top + Math.max(0, v.height - height)}px`,
+    };
+  };
+
+  createEffect(on([detailsOpen, () => viewport().phone], ([open, phone], previous) => {
+    const [wasOpen, wasPhone] = previous ?? [false, false];
+    if (open && phone && (!wasOpen || !wasPhone)) {
+      const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      focusBeforeSheet = active?.closest('[role="dialog"][aria-modal="true"]')
+        ? document.querySelector<HTMLElement>('.details-toggle-button')
+        : active;
+      queueMicrotask(() => drawerEl?.querySelector<HTMLElement>('[data-drawer-back]')?.focus());
+    } else if (!open && wasOpen && wasPhone) {
+      const restore = focusBeforeSheet;
+      queueMicrotask(() => {
+        // Another modal surface may have opened in the same transition (the assistant).
+        if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+        const canRestore = restore?.isConnected && restore !== document.body && restore !== document.documentElement;
+        const target = canRestore ? restore : document.querySelector<HTMLElement>('.details-toggle-button');
+        target?.focus();
+        if (focusBeforeSheet === restore) focusBeforeSheet = null;
+      });
+    }
+  }, { defer: true }));
+
   /** Today is the only route with a day grid to host, so it is the only one with tabs. */
   const hasSecondTab = () => location.pathname === '/';
   // Keep the Today canvas focused on the planner. Its empty-day prompt lives in
@@ -1675,6 +1748,18 @@ export function DetailsDrawer() {
   const [dragging, setDragging] = createSignal(false);
   let shellEl: HTMLElement | null = null;
 
+  const closeMobileDrawer = () => {
+    const restore = focusBeforeSheet;
+    setDetailsOpen(false);
+    requestAnimationFrame(() => {
+      if (!viewport().phone) return;
+      const canRestore = restore?.isConnected && restore !== document.body && restore !== document.documentElement;
+      const target = canRestore ? restore : document.querySelector<HTMLElement>('.details-toggle-button');
+      target?.focus();
+      if (focusBeforeSheet === restore) focusBeforeSheet = null;
+    });
+  };
+
   function onPointerDown(e: PointerEvent) {
     shellEl = (e.currentTarget as HTMLElement).closest('[data-app-shell]') as HTMLElement;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -1704,10 +1789,24 @@ export function DetailsDrawer() {
   }
 
   const onEsc = (e: KeyboardEvent) => {
-    if (e.key === 'Escape' && detailsOpen()) setDetailsOpen(false);
+    if (e.key === 'Escape' && detailsOpen() && viewport().phone) {
+      e.preventDefault();
+      closeMobileDrawer();
+    }
   };
   window.addEventListener('keydown', onEsc);
   onCleanup(() => window.removeEventListener('keydown', onEsc));
+
+  const onDrawerKeyDown = (event: KeyboardEvent) => {
+    if (!viewport().phone || event.key !== 'Tab' || !drawerEl) return;
+    const focusable = Array.from(drawerEl.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'));
+    if (!focusable.length) { event.preventDefault(); drawerEl.focus(); return; }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const outside = !drawerEl.contains(document.activeElement);
+    if (event.shiftKey && (document.activeElement === first || outside)) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && (document.activeElement === last || outside)) { event.preventDefault(); first.focus(); }
+  };
 
   // Marker for a drawer with no selected entity. On mobile it remains available as
   // a bottom sheet so the Today checklist and day details can be opened explicitly.
@@ -1715,52 +1814,71 @@ export function DetailsDrawer() {
 
   return (
     <Show when={detailsOpen()}>
-      <div
-        class="details-rail"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize details drawer"
-        aria-valuemin={DETAILS_MIN_W}
-        aria-valuemax={DETAILS_MAX_W}
-        aria-valuenow={detailsWidth()}
-        tabindex="0"
-        data-dragging={dragging()}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
-        onDblClick={() => setDetailsWidth(DETAILS_DEFAULT_W)}
-        onKeyDown={onRailKey}
-      />
+      <ViewportOverlay class="mobile-details-backdrop" role="presentation">
+        <button type="button" class="mobile-details-backdrop-button" aria-label="Dismiss details sheet" onClick={closeMobileDrawer} />
+      </ViewportOverlay>
+      <div class="details-rail-region" role="region" aria-label="Details drawer resize controls">
+        <div
+          class="details-rail"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize details drawer"
+          aria-valuemin={DETAILS_MIN_W}
+          aria-valuemax={DETAILS_MAX_W}
+          aria-valuenow={detailsWidth()}
+          tabindex="0"
+          data-dragging={dragging()}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+          onDblClick={() => setDetailsWidth(DETAILS_DEFAULT_W)}
+          onKeyDown={onRailKey}
+        />
+      </div>
       <aside
+        ref={drawerEl}
         class="details-drawer"
         classList={{ 'details-drawer-empty': isEmptyState() }}
-        style={{ '--details-w': `${detailsWidth()}px` }}
-        aria-label="Details"
+        style={mobileDrawerStyle()}
+        role={viewport().phone ? 'dialog' : undefined}
+        aria-modal={viewport().phone ? 'true' : undefined}
+        aria-label={`Details: ${title()}`}
+        tabindex={viewport().phone ? '-1' : undefined}
+        onKeyDown={onDrawerKeyDown}
       >
         <div class="drawer-head">
           <div class="min-w-0 flex-1">
             <div class="drawer-kind">{kind()}</div>
             <div class="drawer-title">{title()}</div>
           </div>
-          {/* Desktop only (see .details-collapse): folds the drawer away and keeps the selection,
-              so reopening brings the same item back. The close button below also clears it. */}
           <span class="details-collapse">
             <button
               type="button"
               class="btn-icon flex-shrink-0"
-              aria-label="Collapse details"
-              title="Collapse details"
-              onClick={() => setDetailsOpen(false)}
+              data-drawer-back
+              aria-label="Back to work area"
+              title="Back to work area"
+              onClick={closeMobileDrawer}
             >
-              <ChevronRight size={14} />
+              <ChevronRight class="details-back-desktop" size={14} />
+              <ChevronDown class="details-back-mobile" size={14} />
             </button>
           </span>
           <button
             type="button"
             class="btn-icon flex-shrink-0"
+            aria-label="Ask task assistant"
+            title="Ask task assistant"
+            onClick={requestTaskAssistant}
+          >
+            <MessageCircle size={16} />
+          </button>
+          <button
+            type="button"
+            class="btn-icon flex-shrink-0"
             aria-label="Close details"
-            onClick={() => { clearActiveEntity(); setDetailsOpen(false); }}
+            onClick={() => { clearActiveEntity(); closeMobileDrawer(); }}
           >
             <X size={14} />
           </button>

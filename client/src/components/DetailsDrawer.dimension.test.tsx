@@ -41,6 +41,7 @@ vi.mock('../lib/objectives.js', () => ({ flattenObjectives: () => [] }));
 const flightPlanAddTaskMock = vi.fn(async () => ({ flight_plan: [], added: 1 }));
 vi.mock('../lib/api.js', () => ({
   api: {
+    taskAgent: { notes: async () => ({ notes: [] }), addNote: vi.fn() },
     priorities: {
       list: async () => ({
         priorities: [
@@ -74,6 +75,7 @@ vi.mock('../stores/selection.js', () => ({
 }));
 vi.mock('../stores/ui.js', () => ({
   detailsOpen: () => true, detailsWidth: () => 360, setDetailsOpen: vi.fn(), setDetailsWidth: vi.fn(),
+  requestTaskAssistant: vi.fn(),
   drawerTab: () => 'details', setDrawerTab: vi.fn(),
   DETAILS_MIN_W: 280, DETAILS_MAX_W: 640, DETAILS_DEFAULT_W: 360,
 }));

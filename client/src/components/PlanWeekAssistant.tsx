@@ -1,11 +1,11 @@
 import { createSignal, createEffect, For, Show, type JSX } from 'solid-js';
-import { X, ChevronLeft } from 'lucide-solid';
+import { ChevronLeft } from 'lucide-solid';
 import { api, type PlanWeekEntryBranch } from '../lib/api.js';
 import { planWeekModal, setPlanWeekModal, showToast, aiAvailable } from '../stores/index.js';
 import { PlanWeekFill } from './PlanWeekFill.js';
 import { PlanWeekScheduleTasks } from './PlanWeekScheduleTasks.js';
 import { PlanWeekReviewBranch } from './PlanWeekReviewBranch.js';
-import { ViewportOverlay } from './ViewportOverlay.js';
+import { ModalSheet } from '../ui/index.js';
 
 /**
  * PlanWeekAssistant (FTUE · T2, #338) — the "Plan my week" shell.
@@ -240,19 +240,22 @@ export function PlanWeekAssistant() {
   };
 
   return (
-    <Show when={open()}>
-      <ViewportOverlay class="modal-backdrop" onClick={() => void close('abandoned')}>
-        <div class="modal max-w-lg" onClick={(e) => e.stopPropagation()}>
-          {/* Header */}
-          <div class="px-4 py-3 border-b border-border flex items-center justify-between">
-            <span class="text-sm font-semibold text-foreground">Plan my week</span>
-            <button class="btn-icon" aria-label="Close" onClick={() => void close('abandoned')}>
-              <X size={15} />
-            </button>
-          </div>
-
+    <ModalSheet
+      open={open()}
+      title="Plan my week"
+      onClose={() => void close('abandoned')}
+      backdropClass="modal-backdrop"
+      class="max-w-lg"
+      footer={
+        <div class="flex justify-end px-4 pb-1">
+          <button type="button" class="btn-primary text-xs" onClick={() => void close('completed')}>
+            Done
+          </button>
+        </div>
+      }
+    >
           {/* Body */}
-          <div class="p-4 flex flex-col gap-3">
+          <div class="px-4 flex flex-col gap-3">
             <Show
               when={branch()}
               fallback={
@@ -293,15 +296,6 @@ export function PlanWeekAssistant() {
               )}
             </Show>
           </div>
-
-          {/* Footer */}
-          <div class="px-4 py-3 border-t border-border flex justify-end gap-2">
-            <button type="button" class="btn-primary text-xs" onClick={() => void close('completed')}>
-              Done
-            </button>
-          </div>
-        </div>
-      </ViewportOverlay>
-    </Show>
+    </ModalSheet>
   );
 }

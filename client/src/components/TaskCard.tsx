@@ -386,6 +386,15 @@ export function TaskCard(props: Props) {
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
+  async function confirmOverdueTask() {
+    try {
+      await api.tasks.update(props.task.id, { scheduled_for: localISODate(), task_time: null, status: 'open' });
+      const result = await api.taskAgent.place(props.task.id).catch(() => ({ placement: { placed: false, reason: 'no slot available' } }));
+      refetchTasks();
+      showToast(result.placement.placed ? 'Confirmed and scheduled for today' : 'Confirmed for today; it remains in Tasks until a slot is available', 'success');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
   async function remove() {
     // A repeating occurrence is ambiguous — ask which occurrences this applies to. The
     // dialog carries its own confirmation, so the blunt confirm() is only for one-offs.
@@ -581,7 +590,7 @@ export function TaskCard(props: Props) {
         // Balanced layout (chips redesign): a vertical stack — title row, description,
         // full-width tags, then a single compact footer that collapses the former
         // left sorting-rail and right priority/date rail into one hairline-topped row.
-        class="card rounded-none group relative isolate flex flex-col"
+        class="task-card card mb-1.5 rounded-none group relative isolate flex flex-col"
         // While a dropdown is open, lift this card above its siblings: each card is
         // `isolate`, so a z-20 popover inside it would otherwise paint UNDER later
         // sibling cards (DOM order wins at equal z) and they'd swallow menu clicks.
@@ -590,24 +599,14 @@ export function TaskCard(props: Props) {
         classList={{
           'opacity-40': dimmed() && !objectiveMenu() && !routineMenu(),
           'z-30': objectiveMenu() || routineMenu(),
+          'touch-pan-y': canSwipe(),
+          'transition-transform duration-150 ease-out': canSwipe() && !dragging(),
+          'task-card-past-scheduled': pastScheduled(),
+          'task-card-awaiting-approval': awaitingHumanApproval(),
         }}
         style={{
-          'margin-bottom': '6px',
-          'touch-action': canSwipe() ? 'pan-y' : undefined,
           transform: canSwipe() ? `translateX(${swipeOffset()}px)` : undefined,
-          transition: canSwipe() && !dragging() ? 'transform 160ms ease-out' : undefined,
-          outline: pastScheduled() ? '2px solid #ef4444' : undefined,
-          'outline-offset': pastScheduled() ? '-2px' : undefined,
-          ...(awaitingHumanApproval() ? {
-            'border-style': 'dotted',
-            'border-width': '2px',
-            'border-color': '#f97316',
-          } : {}),
-          // Uniform 3px left accent for every card (no relative shift); coloured by
-          // direction when the task has a pattern-tag, default border otherwise.
-          'border-left-style': awaitingHumanApproval() ? 'dotted' : 'solid',
-          'border-left-width': awaitingHumanApproval() ? '2px' : '3px',
-          'border-left-color': awaitingHumanApproval() ? '#f97316' : dirColor(),
+          '--task-direction-color': dirColor(),
         }}
       >
         {/* Phase C texture background — category stripes / colour override / routine
@@ -615,7 +614,7 @@ export function TaskCard(props: Props) {
             card's isolated stacking context; rounded to match). */}
         <Show when={cardTexture()}>
           {(tex) => (
-            <div aria-hidden="true" style={{ ...tex(), 'z-index': '-1', 'border-radius': 'var(--radius-0)' }} />
+            <div aria-hidden="true" class="-z-[1] rounded-none" style={tex()} />
           )}
         </Show>
 
@@ -717,6 +716,14 @@ export function TaskCard(props: Props) {
             </div>
           </div>
         </div>
+
+        <Show when={pastScheduled() && !props.task.is_habit && !props.task.shared}>
+          <div class="mt-2 ml-9 flex items-center gap-1.5" role="group" aria-label={`Triage overdue task ${props.task.title}`}>
+            <button type="button" class="rounded border border-primary/40 px-2 py-1 text-[11px] text-primary hover:bg-primary/10" title="Keep this task open and move it to today" onClick={() => void confirmOverdueTask()}>Confirmed</button>
+            <button type="button" class="rounded border border-border px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground" title="Change this task's details or schedule" onClick={() => setElementModal({ open: true, mode: 'edit', kind: 'task', editTarget: { kind: 'task', id: props.task.id } })}>Change</button>
+            <button type="button" class="rounded border border-border px-2 py-1 text-[11px] text-muted-foreground hover:border-destructive/50 hover:text-destructive" title="Forget this task by archiving it; you can restore it later" onClick={() => void archiveTask()}>Forget</button>
+          </div>
+        </Show>
 
         <Show when={expanded()}>
         {/* Row B — routine label + description. */}

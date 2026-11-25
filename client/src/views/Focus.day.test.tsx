@@ -12,7 +12,7 @@ vi.mock('../stores/index.js', async () => {
     blocks: () => [],
     tasks: () => [
       { id: 'today-task', title: 'Today task', scheduled_for: localISODate(), status: 'open', tags: [] },
-      { id: 'future-task', title: 'Future task', scheduled_for: '2099-01-01', status: 'open', tags: [] },
+      { id: 'future-task', title: 'Future task', scheduled_for: '2099-02-01', status: 'open', tags: [] },
     ],
     taskOf: () => undefined,
     prefs: () => ({ time_sense_enabled: false }), tags: () => [], patternPrefs: () => ({ prefs: {} }),
@@ -39,11 +39,19 @@ describe('Focus day picker', () => {
   it('loads the chosen day’s tasks and note, with a way back to today', async () => {
     render(() => <Focus />);
     expect(screen.getByText('Today task')).toBeTruthy();
-    fireEvent.input(screen.getByLabelText('Focus day'), { target: { value: '2099-01-01' } });
+    setSelectedDay('2099-01-01'); // Start the calendar near the fixture date without navigating 870 months.
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Focus day' }));
+    const calendar = screen.getByRole('dialog', { name: 'Choose Focus day' });
+    fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
+    fireEvent.click(screen.getByRole('button', { name: 'February 1, 2099' }));
+    fireEvent.click(calendar.querySelector('button.btn-primary')!);
     expect(screen.getByText('Future task')).toBeTruthy();
     expect(screen.queryByText('Today task')).toBeNull();
-    await waitFor(() => expect(getNote).toHaveBeenCalledWith('2099-01-01'));
-    fireEvent.click(screen.getByText('Today'));
+    await waitFor(() => expect(getNote).toHaveBeenCalledWith('2099-02-01'));
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Focus day' }));
+    const returnCalendar = screen.getByRole('dialog', { name: 'Choose Focus day' });
+    fireEvent.click(returnCalendar.querySelector('footer button')!);
+    fireEvent.click(returnCalendar.querySelector('button.btn-primary')!);
     expect(screen.getByText('Today task')).toBeTruthy();
   });
 });

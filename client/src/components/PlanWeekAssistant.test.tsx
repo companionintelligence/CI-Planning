@@ -83,13 +83,13 @@ describe('PlanWeekAssistant — the shell', () => {
 
   it('renders nothing while closed, and the fixed top-3 menu when opened', async () => {
     const { container } = render(() => <PlanWeekAssistant />);
-    expect(container.querySelector('.modal-backdrop')).toBeNull();
+    expect(document.body.querySelector('.modal-backdrop')).toBeNull();
 
     setPlanWeekModal({ open: true });
-    await waitFor(() => expect(container.querySelector('.modal-backdrop')).not.toBeNull());
+    await waitFor(() => expect(document.body.querySelector('.modal-backdrop')).not.toBeNull());
 
     // Exactly these three, in this order.
-    expect(menuLabels(container)).toEqual(LABELS);
+    expect(menuLabels(document.body)).toEqual(LABELS);
 
     // No session until a branch is chosen — the menu itself has no entry_branch to send.
     expect(openMock).not.toHaveBeenCalled();
@@ -198,7 +198,7 @@ describe('PlanWeekAssistant — the shell', () => {
     fireEvent.click(screen.getByText('Review past data'));
     await waitFor(() => expect(openMock).toHaveBeenCalledTimes(2));
 
-    fireEvent.click(screen.getByLabelText('Close'));
+    fireEvent.click(screen.getByLabelText('Close dialog'));
     await waitFor(() => expect(closeMock).toHaveBeenCalledWith('sess-1', { status: 'abandoned', llm_used: false }));
     expect(planWeekModal().open).toBe(false);
   });
@@ -210,7 +210,7 @@ describe('PlanWeekAssistant — the shell', () => {
     fireEvent.click(screen.getByText('Fill next week'));
     await waitFor(() => expect(openMock).toHaveBeenCalled());
 
-    fireEvent.click(container.querySelector('.modal-backdrop')!);
+    fireEvent.click(document.body.querySelector('.modal-backdrop')!);
     await waitFor(() => expect(closeMock).toHaveBeenCalledWith('sess-1', { status: 'abandoned', llm_used: false }));
     expect(planWeekModal().open).toBe(false);
   });
@@ -253,7 +253,7 @@ describe('PlanWeekAssistant — the shell', () => {
     setPlanWeekModal({ open: true });
     await screen.findByText('Fill next week');
 
-    fireEvent.click(screen.getByLabelText('Close'));
+    fireEvent.click(screen.getByLabelText('Close dialog'));
 
     await waitFor(() => expect(planWeekModal().open).toBe(false));
     expect(openMock).not.toHaveBeenCalled();
@@ -288,7 +288,7 @@ describe('PlanWeekAssistant — the shell', () => {
     await screen.findByText('Schedule tasks'); // back at the menu, not the old branch
 
     // No stale id: dismissing without picking closes nothing server-side.
-    fireEvent.click(screen.getByLabelText('Close'));
+    fireEvent.click(screen.getByLabelText('Close dialog'));
     await waitFor(() => expect(planWeekModal().open).toBe(false));
     expect(closeMock).not.toHaveBeenCalled();
   });

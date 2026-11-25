@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent, screen } from '@solidjs/testing-library';
 
 /**
- * DetailsDrawer — the head has two ways out. "Collapse details" folds the drawer away and keeps the
+ * DetailsDrawer — the head has two ways out. "Back to work area" folds the drawer away and keeps the
  * selection, so reopening from the top bar brings the same item back. "Close details" folds it away
  * and clears the selection. Only the collapse must leave the selection alone.
  *
@@ -23,7 +23,10 @@ vi.mock('../lib/lock.js', () => ({ lockAffordance: () => ({}) }));
 vi.mock('../lib/recurrence.js', () => ({ describeRule: () => '' }));
 vi.mock('../lib/tag-tax.js', () => ({ displayTag: (n: string) => n }));
 vi.mock('../lib/objectives.js', () => ({ flattenObjectives: () => [] }));
-vi.mock('../lib/api.js', () => ({ api: { priorities: { list: async () => ({ priorities: [] }), history: async () => null } } }));
+vi.mock('../lib/api.js', () => ({ api: {
+  priorities: { list: async () => ({ priorities: [] }), history: async () => null },
+  taskAgent: { notes: async () => ({ notes: [] }), addNote: vi.fn() },
+} }));
 
 vi.mock('../stores/selection.js', () => ({
   activeTask: () => 't-1', activeBlock: () => null, activeEntity: () => null,
@@ -33,6 +36,7 @@ vi.mock('../stores/selection.js', () => ({
 
 vi.mock('../stores/ui.js', () => ({
   detailsOpen: () => true, detailsWidth: () => 360, setDetailsOpen, setDetailsWidth: vi.fn(),
+  requestTaskAssistant: vi.fn(),
   drawerTab: () => 'details', setDrawerTab: vi.fn(),
   DETAILS_MIN_W: 280, DETAILS_MAX_W: 640, DETAILS_DEFAULT_W: 360,
 }));
@@ -58,7 +62,7 @@ beforeEach(() => {
 describe('DetailsDrawer collapse', () => {
   it('collapse folds the drawer away and keeps the selection', () => {
     render(() => <DetailsDrawer />);
-    fireEvent.click(screen.getByLabelText('Collapse details'));
+    fireEvent.click(screen.getByLabelText('Back to work area'));
     expect(setDetailsOpen).toHaveBeenCalledWith(false);
     expect(clearActiveEntity).not.toHaveBeenCalled();
   });

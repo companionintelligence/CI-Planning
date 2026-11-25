@@ -1,4 +1,4 @@
-import { Show, For, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
+import { Show, For, createMemo, createSignal } from 'solid-js';
 import { Pencil, Repeat, Unlink, Lock, Trash2, X, Save, Star, Sparkles, Play, Plus, LayoutTemplate, Target } from 'lucide-solid';
 import {
   tasks, taskOf, blocks, tags, patternPrefs, categoryPrefs, patterns, patternTypes, blockTemplates,
@@ -18,7 +18,7 @@ import { type AxisState, yOf as axisYOf, axisHeightPx, visibleExtent, topCollaps
 import { isImmovable } from '../lib/drag.js';
 import { ShapeIcon } from './ShapeIcon.js';
 import { LockToggle } from './LockToggle.js';
-import { ViewportOverlay } from './ViewportOverlay.js';
+import { ModalSheet } from '../ui/index.js';
 
 function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
@@ -160,14 +160,50 @@ export function PlannerEntityCard(props: {
 
   // ── Actions ────────────────────────────────────────────────────────────────────
   function edit() {
-    if (isContainer()) { const b = blockSel()!; setElementModal({ open: true, mode: 'edit', kind: 'timeblock', editTarget: { kind: 'timeblock', id: b.id } }); return; }
+    if (isContainer()) {
+      const b = blockSel()!;
+      setElementModal({ open: true, mode: 'edit', kind: 'timeblock', editTarget: { kind: 'timeblock', id: b.id } });
+      clearActiveEntity();
+      return;
+    }
     const t = task();
-    if (t) { setElementModal({ open: true, mode: 'edit', kind: t.is_habit ? 'habit' : 'task', editTarget: { kind: t.is_habit ? 'habit' : 'task', id: t.id } }); return; }
+    if (t) {
+      setElementModal({ open: true, mode: 'edit', kind: t.is_habit ? 'habit' : 'task', editTarget: { kind: t.is_habit ? 'habit' : 'task', id: t.id } });
+      clearActiveEntity();
+      return;
+    }
     showToast('Nothing to edit on this block', 'default');
   }
   // D4 — same on-demand memory enrichment as TaskCard; only fills blanks server-side,
   // never rewrites a description or direction the user already chose.
   const [enriching, setEnriching] = createSignal(false);
+  const [scheduleDraft, setScheduleDraft] = createSignal<{ day: string; start: string; duration: number } | null>(null);
+  function editSchedule() {
+    const b = block();
+    if (!b) return;
+    const start = new Date(b.start_at);
+    setScheduleDraft({
+      day: `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`,
+      start: `${String(start.getHours()).padStart(2, '0')}:${String(start.getMinutes()).padStart(2, '0')}`,
+      duration: Math.max(1, Math.round((Date.parse(b.end_at) - Date.parse(b.start_at)) / 60000)),
+    });
+  }
+  async function saveSchedule() {
+    const b = block();
+    const draft = scheduleDraft();
+    if (!b || !draft) return;
+    const startAt = new Date(`${draft.day}T${draft.start}:00`);
+    if (!Number.isFinite(startAt.getTime()) || draft.duration < 1) {
+      showToast('Enter a valid date, start time, and duration', 'error');
+      return;
+    }
+    try {
+      await api.blocks.update(b.id, { start_at: startAt.toISOString(), end_at: new Date(startAt.getTime() + draft.duration * 60_000).toISOString() });
+      refetchBlocks(); refetchTasks();
+      setScheduleDraft(null);
+      showToast('Time block updated', 'success');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
   async function enrich() {
     const t = task(); if (!t) return;
     setEnriching(true);
@@ -308,35 +344,37 @@ export function PlannerEntityCard(props: {
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
-  // Esc closes the card.
-  const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && open()) clearActiveEntity(); };
-  onMount(() => window.addEventListener('keydown', onKey));
-  onCleanup(() => window.removeEventListener('keydown', onKey));
-
   const rationale = createMemo(() => blockSel()?.rationale ?? null);
 
   return (
     <Show when={open()}>
-      {/* Backdrop: closes the card; stops propagation so it never falls through to
-          click-to-create on the grid. */}
-      <ViewportOverlay class="fixed inset-0 z-[1000] flex items-center justify-center overflow-y-auto bg-black/55 p-3" onClick={() => clearActiveEntity()}>
-      <div
-        class="relative w-full max-w-md max-h-[calc(100dvh-24px)] overflow-y-auto overscroll-contain rounded-xl border border-border bg-popover shadow-2xl"
-        style={{ 'border-left': `4px solid ${accent()}`, 'padding-bottom': 'env(safe-area-inset-bottom)' }}
-        onClick={(e) => e.stopPropagation()}
+      <ModalSheet
+        open={open()}
+        title={`${kindLabel()} details: ${title()}`}
+        ariaLabel={`${kindLabel()} details: ${title()}`}
+        onClose={clearActiveEntity}
+        mode="modal"
+        class="safe-area-bottom !p-0 !max-w-md !max-h-[calc(100dvh-24px)] overscroll-contain shadow-2xl"
+        style={{ 'border-left': `4px solid ${accent()}` }}
+        header={
+          <header class="flex flex-shrink-0 items-start gap-2 border-b border-border px-3 pt-2.5 pb-2">
+            <div class="flex-shrink-0 mt-0.5" style={{ color: accent() }}>
+              <Show when={dirTag()} fallback={<Star size={15} />}><ShapeIcon shape={dirShape()} size={15} strokeWidth={1.75} /></Show>
+            </div>
+            <div class="min-w-0 flex-1">
+              <div class="text-[10px] uppercase tracking-wide text-muted-foreground leading-none">{kindLabel()}</div>
+              <button
+                type="button"
+                class="block w-full text-left text-sm font-semibold text-foreground truncate mt-0.5 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-sm"
+                title={`Open ${kindLabel().toLowerCase()}: ${title()}`}
+                aria-label={`Open ${kindLabel().toLowerCase()}: ${title()}`}
+                onClick={edit}
+              >{title()}</button>
+            </div>
+            <button type="button" onClick={clearActiveEntity} class="btn-icon flex-shrink-0" title="Close (Esc)" aria-label={`Close ${kindLabel().toLowerCase()} details`}><X size={15} /></button>
+          </header>
+        }
       >
-        {/* Header: type + title + close */}
-        <div class="flex items-start gap-2 px-3 pt-2.5 pb-2 border-b border-border">
-          <div class="flex-shrink-0 mt-0.5" style={{ color: accent() }}>
-            <Show when={dirTag()} fallback={<Star size={15} />}><ShapeIcon shape={dirShape()} size={15} strokeWidth={1.75} /></Show>
-          </div>
-          <div class="min-w-0 flex-1">
-            <div class="text-[10px] uppercase tracking-wide text-muted-foreground leading-none">{kindLabel()}</div>
-            <div class="text-sm font-semibold text-foreground truncate mt-0.5" title={title()}>{title()}</div>
-          </div>
-          <button onClick={clearActiveEntity} class="btn-icon flex-shrink-0" title="Close (Esc)"><X size={15} /></button>
-        </div>
-
         {/* Details */}
         <div class="px-3 py-2 flex flex-col gap-1.5 text-xs">
           <Show when={block()}>
@@ -420,9 +458,21 @@ export function PlannerEntityCard(props: {
           </div>
         </Show>
 
+        <Show when={scheduleDraft()}>
+          {(draft) => <div class="rounded-lg border border-border bg-card/60 p-2.5 flex flex-wrap items-end gap-2">
+            <label class="flex min-w-[130px] flex-1 flex-col gap-1"><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Date</span><input class="input py-1 text-xs" type="date" value={draft().day} onInput={(e) => setScheduleDraft((v) => v && ({ ...v, day: e.currentTarget.value }))}/></label>
+            <label class="flex min-w-[95px] flex-1 flex-col gap-1"><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Start</span><input class="input py-1 text-xs" type="time" value={draft().start} onInput={(e) => setScheduleDraft((v) => v && ({ ...v, start: e.currentTarget.value }))}/></label>
+            <label class="flex w-24 flex-col gap-1"><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Minutes</span><input class="input py-1 text-xs" type="number" min="1" value={draft().duration} onInput={(e) => setScheduleDraft((v) => v && ({ ...v, duration: Number(e.currentTarget.value) }))}/></label>
+            <div class="ml-auto flex gap-1"><button type="button" class="btn-ghost text-xs" onClick={() => setScheduleDraft(null)}>Cancel</button><button type="button" class="btn-primary text-xs" onClick={() => void saveSchedule()}>Save time</button></div>
+          </div>}
+        </Show>
+
         {/* Actions */}
         <div class="flex flex-wrap items-center gap-1 px-2.5 py-2 border-t border-border bg-card/40">
           <button onClick={edit} class="btn-ghost text-xs px-2 py-1"><Pencil size={13} /> Edit</button>
+          <Show when={block() && ['task', 'timeblock'].includes(block()!.block_kind)}>
+            <button type="button" onClick={editSchedule} class="btn-ghost text-xs px-2 py-1"><Pencil size={13} /> Edit time</button>
+          </Show>
           <Show when={task() && !isContainer()}>
             <button onClick={enrich} disabled={enriching()} class="btn-ghost text-xs px-2 py-1" title="Fill in details from memory">
               <Sparkles size={13} classList={{ 'animate-pulse': enriching() }} /> Enrich
@@ -474,8 +524,7 @@ export function PlannerEntityCard(props: {
             <button onClick={remove} class="btn-ghost text-xs px-2 py-1 hover:text-destructive ml-auto"><Trash2 size={13} /> Remove</button>
           </Show>
         </div>
-      </div>
-      </ViewportOverlay>
+      </ModalSheet>
     </Show>
   );
 }

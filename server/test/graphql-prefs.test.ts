@@ -55,7 +55,7 @@ describe('W11 — SchedulingPrefsType query', () => {
     expect(p.balanceBiasEnabled).toBe(true); // 0164 default ON (owner ruling 2026-08-29)
     expect(p.limits).toEqual({
       maxFocusBlockMinutes: 90,
-      minBreakMinutes: 10,
+      minBreakMinutes: 3,
       maxTimeBlockMinutes: 240,
       minTimeBlockMinutes: 15,
       defaultTimeBlockMinutes: 60,

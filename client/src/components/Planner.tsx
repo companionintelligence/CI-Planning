@@ -216,7 +216,11 @@ function useBlockDrag(opts: {
       const rawPx = ev.clientY - startClientY; // RAW pixel delta: click detection
       const dMin = toDMin(rawPx);              // segmented minute delta: commit (clamps itself)
       if (!opts.locked()) { setDrag(null); if (mode === 'move') opts.onMoveEnd?.(); }
-      if (mode === 'move' && Math.abs(rawPx) < CLICK_PX) { opts.onClick(ev.clientX, ev.clientY); return; }
+      if (mode === 'move' && Math.abs(rawPx) < CLICK_PX) {
+        target.focus({ preventScroll: true });
+        opts.onClick(ev.clientX, ev.clientY);
+        return;
+      }
       if (opts.locked()) return; // no drag commit for locked blocks
       if (mode === 'move' && opts.onMoveCommit) { opts.onMoveCommit(dMin, ev); return; }
       // Resize (and any non-grouped move): clamp against neighbours so an edge can't
@@ -401,8 +405,8 @@ function ContainerOutline(props: { block: Block; day: string; state: () => AxisS
       {/* Resize handles live in the task region (right of the label) so they don't
           fight the label's move-drag. */}
       <Show when={!locked()}>
-        <div class="absolute top-0 z-10 cursor-ns-resize pointer-events-auto" style={{ left: `${CAT_WIDTH_PX}px`, right: '0', height: `${HANDLE_PX}px` }} onPointerDown={(ev) => startGesture('resize-top', ev)} />
-        <div class="absolute bottom-0 z-10 cursor-ns-resize pointer-events-auto" style={{ left: `${CAT_WIDTH_PX}px`, right: '0', height: `${HANDLE_PX}px` }} onPointerDown={(ev) => startGesture('resize-bottom', ev)} />
+        <div class="absolute top-0 right-0 z-10 cursor-ns-resize pointer-events-auto" style={{ left: `${CAT_WIDTH_PX}px`, height: `${HANDLE_PX}px` }} onPointerDown={(ev) => startGesture('resize-top', ev)} />
+        <div class="absolute bottom-0 right-0 z-10 cursor-ns-resize pointer-events-auto" style={{ left: `${CAT_WIDTH_PX}px`, height: `${HANDLE_PX}px` }} onPointerDown={(ev) => startGesture('resize-bottom', ev)} />
       </Show>
     </div>
       )}
@@ -533,6 +537,7 @@ function PlannerChip(props: { placed: Placed; day: string; nowISO: () => string;
       {(e) => (
     <div
       class="absolute z-10 rounded-none overflow-hidden border bg-card text-[11px] leading-tight select-none touch-none transition-shadow"
+      tabindex="-1"
       classList={{
         'opacity-40': settled() && b().status !== 'completed' && !needsCloseReminder(),
         'opacity-70': completed() || (settled() && needsCloseReminder()),
@@ -891,6 +896,11 @@ export function Planner(props: { taskLookup?: (id: string) => Task | undefined }
   // tap (which does NOT stop propagation) means "toggle done", not "add".
   function clickToCreate(e: PointerEvent) {
     if (updateMode()) return;
+    // Pointer-down can bubble from PlannerChip through Solid's delegated event layer
+    // even when the chip's drag handler stops propagation. Only the grid's actual
+    // empty surface should arm click-to-create; an item tap must never open the
+    // Add wizard over its detail card.
+    if (e.target !== e.currentTarget) return;
     const startX = e.clientX, startY = e.clientY;
     const onUp = (ev: PointerEvent) => {
       window.removeEventListener('pointerup', onUp);
@@ -1108,13 +1118,13 @@ export function Planner(props: { taskLookup?: (id: string) => Task | undefined }
         <div class="relative flex items-center">
           <button type="button" class="btn-icon" aria-label="Planner quick actions" title="Planner quick actions" aria-expanded={quickActionsOpen()} onClick={() => setQuickActionsOpen((open) => !open)}><Zap size={15} /></button>
           <Show when={quickActionsOpen()}>
-          <div class="absolute right-0 top-full z-50 mt-1 flex min-w-40 flex-col gap-1 rounded-lg border border-border bg-card p-2 shadow-xl">
+          <div class="planner-actions-menu absolute right-0 top-full z-50 mt-1">
           {/* Multi-select → Routine: a one-click entry point for the Shift++ chord,
               shown once ≥2 task chips are selected (opens the same Create-Routine modal). */}
           <Show when={selection().size >= 2}>
             <button
               onClick={() => setRoutineModal({ open: true, name: '' })}
-              class="inline-flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors font-medium"
+              class="planner-actions-menu__action text-xs text-primary font-medium"
               title={`Create a routine from the ${selection().size} selected tasks`}
             >
               <Repeat size={12} /> + Routine
@@ -1124,7 +1134,7 @@ export function Planner(props: { taskLookup?: (id: string) => Task | undefined }
           <button
             onClick={runSchedule}
             disabled={scheduling()}
-            class="btn-primary !rounded-sm !py-1 !px-2.5 text-[11px] flex items-center gap-1 flex-shrink-0 disabled:opacity-40"
+            class="planner-actions-menu__action btn-primary !rounded-sm !py-1 !px-2.5 text-[11px] flex-shrink-0 disabled:opacity-40"
             title="Place the included flight-plan tasks into this day"
           >
             <CalendarCheck size={12} classList={{ 'animate-pulse': scheduling() }} /> Schedule
@@ -1134,22 +1144,22 @@ export function Planner(props: { taskLookup?: (id: string) => Task | undefined }
             <Show when={undoConfirm()} fallback={
               <button
                 onClick={() => setUndoConfirm(true)}
-            class="planner-undo inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-sm border transition-colors flex-shrink-0"
+                class="planner-actions-menu__action planner-undo text-[11px] border transition-colors flex-shrink-0"
                 title="Undo the last Schedule run"
               >
                 <Undo2 size={11} /> Undo
               </button>
             }>
-              <div class="inline-flex items-center gap-1 flex-shrink-0">
+              <div class="planner-actions-menu__confirm">
                 <span class="text-[11px] text-foreground">Undo?</span>
                 <button
                   onClick={undo}
-                  class="planner-undo text-[11px] px-1.5 py-0.5 rounded border transition-colors"
+                  class="planner-actions-menu__action planner-undo text-[11px] border transition-colors"
                   title="Confirm undo"
                 >Yes</button>
                 <button
                   onClick={() => { setUndoConfirm(false); setCanUndo(false); }}
-                  class="inline-flex items-center text-muted-foreground hover:text-foreground transition-colors"
+                  class="planner-actions-menu__dismiss text-muted-foreground hover:text-foreground transition-colors"
                   title="Dismiss"
                 ><X size={11} /></button>
               </div>
@@ -1158,7 +1168,7 @@ export function Planner(props: { taskLookup?: (id: string) => Task | undefined }
           {/* T-PLAN-1: clear this day's auto-placed blocks (keeps locked/calendar/habit). */}
           <button
             onClick={clearDay}
-            class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors"
+            class="planner-actions-menu__action text-xs text-muted-foreground hover:text-destructive transition-colors"
             title="Clear auto-placed blocks for this day (keeps locked, calendar, and habit blocks)"
           >
             <Eraser size={12} /> Clear
@@ -1166,7 +1176,7 @@ export function Planner(props: { taskLookup?: (id: string) => Task | undefined }
           {/* Update mode — tap a task to mark it done (no need to have started it). */}
           <button
             onClick={() => setUpdateMode((v) => !v)}
-            class="inline-flex items-center gap-1 text-xs transition-colors"
+            class="planner-actions-menu__action text-xs transition-colors"
             classList={{ 'text-primary font-medium': updateMode(), 'text-muted-foreground hover:text-foreground': !updateMode() }}
             title={updateMode() ? 'Done updating' : 'Update — tap tasks to mark them done'}
           >
@@ -1189,7 +1199,7 @@ export function Planner(props: { taskLookup?: (id: string) => Task | undefined }
       {/* The full-day segmented grid: natural height (day minus collapsed regions),
           no inner scroll. The page scrolls for everything else. */}
       <div class="relative">
-        <div class="grid" style={{ 'grid-template-columns': '3.5rem 1.75rem 1fr' }}>
+        <div class="planner-grid grid">
           <TimeGutter state={axisState} />
           {/* Direction column — colored letter bugs at each window transition. */}
           <div class="border-l border-border/60"><DirectionColumn bands={axisBands} state={axisState} currentMinute={currentMinute} /></div>

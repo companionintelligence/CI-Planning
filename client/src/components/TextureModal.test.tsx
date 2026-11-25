@@ -14,6 +14,7 @@ describe('the collapsed trigger', () => {
   it('reads On · Auto when the colour is derived', () => {
     render(() => <TextureTrigger enabled colorToken={null} onOpen={() => {}} />);
     expect(screen.getByText('On · Auto')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Texture: On · Auto' })).toBeTruthy();
   });
 
   it('reads On when a colour is pinned, and Off when disabled', () => {
@@ -61,16 +62,19 @@ describe('the modal', () => {
     expect(screen.getByText(/derived from the categories/)).toBeTruthy();
   });
 
-  it('closes on Escape and on a backdrop click, not on a click inside', () => {
+  it('uses the named shared dialog and closes on Escape and backdrop, not on an inside click', () => {
     const props = setup();
-    const dialog = screen.getByRole('dialog');
+    const dialog = screen.getByRole('dialog', { name: 'Texture' });
     fireEvent.keyDown(dialog, { key: 'Escape' });
     expect(props.onClose).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(dialog); // backdrop — the click target IS the dialog element
+    fireEvent.click(dialog.parentElement!); // backdrop is the dialog's parent overlay
     expect(props.onClose).toHaveBeenCalledTimes(2);
 
-    fireEvent.click(screen.getByText('Texture')); // inside the card
+    fireEvent.click(dialog); // inside the card
     expect(props.onClose).toHaveBeenCalledTimes(2);
+
+    expect(screen.getByRole('button', { name: 'Close texture settings' })).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Texture content' })).toBeTruthy();
   });
 });

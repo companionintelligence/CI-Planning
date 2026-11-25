@@ -18,6 +18,8 @@
     "test": "pnpm --filter server test && pnpm --filter client test",
     "test:server": "pnpm --filter server test",
     "test:client": "pnpm --filter client test",
+    "test:coverage:server": "pnpm --filter server exec vitest run --coverage",
+    "test:coverage:client": "pnpm --filter client exec vitest run --coverage",
     "seed": "pnpm --filter server seed",
     "db:generate": "pnpm --filter server db:generate",
     "db:migrate": "pnpm --filter server db:migrate",
@@ -26,7 +28,8 @@
     "lint:canon": "ci-lint-canon ."
   },
   "devDependencies": {
-    "concurrently": "^10.0.3",
-    "@companionintelligence/config": "^1.0.0"
+    "@companionintelligence/config": "^1.0.0",
+    "@vitest/coverage-v8": "4.1.8",
+    "concurrently": "^10.0.3"
   }
 }

@@ -1,6 +1,5 @@
 import { For, Show } from 'solid-js';
-import { X } from 'lucide-solid';
-import { ViewportOverlay } from './ViewportOverlay.js';
+import { ModalSheet } from '../ui/index.js';
 
 /**
  * The trust dial (`scheduling_prefs.trust_mode`, 0070) as a pop-up, plus the trigger
@@ -64,6 +63,7 @@ export function TrustTrigger(props: { mode: string | null | undefined; onOpen: (
       onClick={props.onOpen}
       class="inline-flex flex-shrink-0 items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-sm border border-surface-700/60 text-muted-foreground hover:text-foreground transition-colors"
       aria-haspopup="dialog"
+      aria-label={`Automation level: ${trustLabel(props.mode)}`}
       title={`Automation: ${trustLabel(props.mode)} — click to change how much the planner does on its own`}
     >
       <span
@@ -86,46 +86,44 @@ export function TrustModal(props: {
   onClose: () => void;
 }) {
   return (
-    <ViewportOverlay
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="trust-modal-title"
-      onClick={(e) => { if (e.target === e.currentTarget) props.onClose(); }}
-      onKeyDown={(e) => { if (e.key === 'Escape') props.onClose(); }}
+    <ModalSheet
+      open
+      title="Automation"
+      ariaLabel="Automation"
+      onClose={props.onClose}
+      class="max-w-sm"
     >
-      <div class="w-full max-w-sm rounded-lg border border-border bg-popover shadow-xl">
-        <div class="flex items-center justify-between px-4 py-3 border-b border-border">
-          <h2 id="trust-modal-title" class="text-sm font-semibold text-foreground">Automation</h2>
-          <button type="button" onClick={props.onClose} class="text-muted-foreground hover:text-foreground" aria-label="Close">
-            <X size={15} />
-          </button>
-        </div>
-
-        <div class="p-4 flex flex-col gap-2">
-          <p class="text-xs text-muted-foreground -mt-1 mb-1">How much should the planner do on its own?</p>
-          <For each={TRUST_OPTIONS}>
-            {(opt) => (
-              <button
-                type="button"
-                disabled={props.busy}
-                class="btn-ghost text-sm justify-start flex-col items-start gap-0.5 py-2 text-left disabled:opacity-50"
-                classList={{ 'bg-primary/10 border-primary': props.mode === opt.value }}
-                aria-pressed={props.mode === opt.value}
-                onClick={() => props.onPick(opt.value)}
+      <div class="p-4 flex flex-col gap-2">
+        <p class="text-xs text-muted-foreground -mt-1 mb-1">How much should the planner do on its own?</p>
+        <For each={TRUST_OPTIONS}>
+          {(opt) => (
+            <button
+              type="button"
+              disabled={props.busy}
+              class="btn-ghost text-sm justify-start flex-col items-start gap-0.5 py-2 text-left disabled:opacity-50"
+              classList={{ 'bg-primary/10 border-primary': props.mode === opt.value }}
+              aria-pressed={props.mode === opt.value}
+              onClick={() => props.onPick(opt.value)}
+            >
+              <span class="text-foreground">{opt.label}</span>
+              <span
+                class="text-[11px] font-normal whitespace-normal"
+                classList={{
+                  'text-foreground': props.mode === opt.value,
+                  'text-muted-foreground': props.mode !== opt.value,
+                }}
               >
-                <span class="text-foreground">{opt.label}</span>
-                <span class="text-[11px] text-muted-foreground font-normal whitespace-normal">{opt.hint}</span>
-              </button>
-            )}
-          </For>
-          <Show when={props.mode === 'hands_off'}>
-            <p class="text-[11px] text-muted-foreground mt-1 pt-2 border-t border-border">
-              Hands-off places work without asking. You can still undo anything it does.
-            </p>
-          </Show>
-        </div>
+                {opt.hint}
+              </span>
+            </button>
+          )}
+        </For>
+        <Show when={props.mode === 'hands_off'}>
+          <p class="text-[11px] text-muted-foreground mt-1 pt-2 border-t border-border">
+            Hands-off places work without asking. You can still undo anything it does.
+          </p>
+        </Show>
       </div>
-    </ViewportOverlay>
+    </ModalSheet>
   );
 }

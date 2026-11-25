@@ -272,8 +272,7 @@ export function OnboardingWizard() {
   return (
     <Show when={shouldOnboard()}>
       <ViewportOverlay
-        class="fixed inset-0 z-[1000] flex items-center justify-center p-4"
-        style={{ background: 'rgba(0,0,0,.7)', 'backdrop-filter': 'blur(6px)' }}
+        class="onboarding-backdrop fixed inset-0 z-[1000] flex items-center justify-center p-4"
       >
         <div class="card w-full max-w-md flex flex-col gap-4">
           <p class="text-[11px] text-muted-foreground -mb-1">Step {onboardingStep()} of 10</p>

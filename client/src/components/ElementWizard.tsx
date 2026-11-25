@@ -99,6 +99,39 @@ export function ElementWizard() {
   const kind = (): ElementKind => m().kind ?? 'task';
   const tab = (): 'task' | 'timeblock' | 'routine' => (kind() === 'habit' ? 'task' : (kind() as 'task' | 'timeblock' | 'routine'));
   const isEdit = () => m().mode === 'edit';
+  const dialogName = () => `${isEdit() ? 'Edit' : 'Add'} ${tab() === 'timeblock' ? 'time block' : tab()}`;
+  let modalRoot: HTMLDivElement | undefined;
+  let modalOpener: HTMLElement | null = null;
+  let wizardWasOpen = false;
+
+  createEffect(() => {
+    const visible = open();
+    if (visible && !wizardWasOpen) {
+      modalOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      queueMicrotask(() => {
+        const first = modalRoot?.querySelector<HTMLElement>('[autofocus]')
+          ?? modalRoot?.querySelector<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])');
+        (first ?? modalRoot)?.focus();
+      });
+    } else if (!visible && wizardWasOpen) {
+      const restore = modalOpener;
+      modalOpener = null;
+      queueMicrotask(() => restore?.isConnected && restore.focus());
+    }
+    wizardWasOpen = visible;
+  });
+
+  function containDialogTab(event: KeyboardEvent & { currentTarget: HTMLDivElement }) {
+    if (event.key !== 'Tab' || !modalRoot) return;
+    const focusable = Array.from(modalRoot.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ));
+    if (!focusable.length) { event.preventDefault(); modalRoot.focus(); return; }
+    const first = focusable[0]!, last = focusable[focusable.length - 1]!;
+    const outside = !modalRoot.contains(document.activeElement);
+    if (event.shiftKey && (document.activeElement === first || outside)) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && (document.activeElement === last || outside)) { event.preventDefault(); first.focus(); }
+  }
 
   // ── Shared form state ──────────────────────────────────────────────────────
   const [title, setTitle] = createSignal('');
@@ -359,7 +392,11 @@ export function ElementWizard() {
       if (calendarOpen() && !dayEl?.contains(t)) setCalendarOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (!open() || e.key !== 'Escape') return;
+      // The wizard listens at document level so its own popovers can dismiss, but
+      // nested viewport portals (Texture settings, for example) live outside this
+      // dialog in the DOM. Do not let this parent listener dismiss the wizard when
+      // Escape originates from the topmost portal.
+      if (!open() || e.key !== 'Escape' || !modalRoot?.contains(e.target as Node)) return;
       if (popover() || calendarOpen()) { setPopover(null); setCalendarOpen(false); }
       else close();
     };
@@ -1250,7 +1287,7 @@ export function ElementWizard() {
   return (
     <Show when={open()}>
       <ViewportOverlay class="modal-backdrop" onClick={(e) => e.target === e.currentTarget && close()}>
-        <div class="modal md:max-w-[680px]">
+        <div ref={modalRoot} class="modal md:max-w-[680px]" role="dialog" aria-modal="true" aria-label={dialogName()} tabindex="-1" onKeyDown={containDialogTab}>
           {/* ── Header: segmented tabs + close, then the borderless title ── */}
           <div class="px-5 pt-4 pb-3 border-b border-border">
             <div class="flex items-center gap-2 mb-3">
@@ -1291,7 +1328,7 @@ export function ElementWizard() {
                 </button>
               </Show>
               <span class="text-[11px] text-muted-foreground ml-1">{isEdit() ? 'Editing' : ''}</span>
-              <button onClick={close} class="btn-icon ml-auto"><X size={16} /></button>
+              <button type="button" onClick={close} class="btn-icon ml-auto" aria-label={`Close ${tab() === 'timeblock' ? 'time block' : tab()} form`}><X size={16} /></button>
             </div>
 
             {/* T14 (#350) — NL quick line: describe the task/block (typed or spoken) and
@@ -1442,7 +1479,12 @@ export function ElementWizard() {
           </div>
 
           {/* ── Body — identity left, time right (stacked on mobile) ── */}
-          <div class="flex flex-col md:flex-row max-h-[68vh] overflow-y-auto">
+          <div
+            class="flex flex-col md:flex-row max-h-[68vh] overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            role="region"
+            aria-label={`${tab() === 'timeblock' ? 'Time block' : 'Task'} settings`}
+            tabindex="0"
+          >
 
             {/* Routine — simple shell, no panes */}
             <Show when={tab() === 'routine'}>
@@ -1949,8 +1991,8 @@ export function ElementWizard() {
                 <Show when={blockAllDayView()}>
                   <div class="flex flex-col gap-1.5">
                     <div class={sectionLabel}>All day</div>
-                    <div class="h-14 rounded-xl flex items-center px-3.5 text-sm font-semibold"
-                      style={{ background: barGradient, color: '#041620' }}>
+                    <div class="on-accent-contrast h-14 rounded-xl flex items-center px-3.5 text-sm font-semibold"
+                      style={{ background: barGradient }}>
                       {title() || 'Time block'}
                     </div>
                   </div>
@@ -2007,7 +2049,7 @@ export function ElementWizard() {
                         a stack of grey static. Pin a legible floor instead. */}
                     <For each={ghostBlocks()}>
                       {(g) => (
-                        <div class="absolute left-8 right-2 rounded-none text-[10px] leading-[1.15] px-1.5 py-0.5 overflow-hidden whitespace-nowrap text-ellipsis border pointer-events-none"
+                        <div class="absolute left-8 right-2 min-h-4 rounded-none text-[10px] leading-[1.15] px-1.5 py-0.5 overflow-hidden whitespace-nowrap text-ellipsis border pointer-events-none"
                           classList={{
                             'bg-destructive/15 border-dashed border-destructive/60 text-destructive': dragging() && barConflicts(g),
                             'bg-muted-foreground/10 border-muted-foreground/25 text-muted-foreground': !(dragging() && barConflicts(g)),
@@ -2015,7 +2057,6 @@ export function ElementWizard() {
                           style={{
                             top: `${minutesToFrac(g.startMin) * 100}%`,
                             height: `${Math.max((minutesToFrac(g.endMin) - minutesToFrac(g.startMin)) * 100, 3)}%`,
-                            'min-height': '16px',
                           }}>
                           {g.title}
                         </div>
@@ -2028,17 +2069,12 @@ export function ElementWizard() {
                       </div>
                     }>
                       <div onPointerDown={onBarPointerDown}
-                        class="absolute left-8 right-2 rounded-none px-2 py-0.5 text-[11px] font-semibold overflow-hidden z-[5]"
-                        classList={{ 'cursor-grabbing': dragging(), 'cursor-grab': !dragging() }}
+                        class="wizard-time-bar absolute left-8 right-2 min-h-8 rounded-none px-2 py-0.5 text-[11px] font-semibold overflow-hidden z-[5]"
+                        classList={{ 'cursor-grabbing': dragging(), 'cursor-grab': !dragging(), 'wizard-time-bar-dragging': dragging() }}
                         style={{
                           top: `${minutesToFrac(barStartMin()!) * 100}%`,
                           height: `${Math.max((minutesToFrac(barStartMin()! + barDurMin()) - minutesToFrac(barStartMin()!)) * 100, 5)}%`,
-                          // Two lines of type (title + time range) need ~30px; the 5%
-                          // geometric floor is 11-15px, so a short block clipped its own
-                          // time range away. Same failure as the ghosts above.
-                          'min-height': '32px',
-                          background: barGradient, color: '#041620',
-                          'box-shadow': dragging() ? '0 6px 20px rgba(171,212,216,.35)' : undefined,
+                          background: barGradient,
                         }}>
                         <div class="truncate">{title() || (tab() === 'timeblock' ? 'Time block' : 'Task')}</div>
                         <div class="truncate text-[10px] font-medium opacity-80">

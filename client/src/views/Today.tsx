@@ -16,7 +16,7 @@ import { OpenTimeSummary } from '../components/OpenTimeSummary.js';
 import { DayStarsRow } from '../components/DayStarsRow.js';
 import { ReplanBanner } from '../components/ReplanBanner.js';
 import { FocusMenu, BriefMenu } from '../components/DayGoals.js';
-import { ViewportOverlay } from '../components/ViewportOverlay.js';
+import { ModalSheet } from '../ui/index.js';
 
 /**
  * TODAY — the planner cockpit (Phase G, G5). **Day Overview** (day/date + today's
@@ -338,17 +338,21 @@ export function Today() {
 
       {/* Due — popup modal (button lives in the day-header icon row above). */}
       <Show when={dueOpen()}>
-        <ViewportOverlay class="modal-backdrop due-modal-backdrop" onClick={() => setDueOpen(false)}>
-          <div class="modal due-modal max-w-md overflow-auto p-4" onClick={(e) => e.stopPropagation()}>
-            <DueCard
-              date={selectedDay()}
-              taskList={() => dueTasks() ?? []}
-              onOpen={(t) => { openTask(t); setDueOpen(false); }}
-              onClose={() => setDueOpen(false)}
-              bare
-            />
-          </div>
-        </ViewportOverlay>
+        <ModalSheet
+          open
+          title="Due list"
+          onClose={() => setDueOpen(false)}
+          mode="modal"
+          backdropClass="modal-backdrop due-modal-backdrop"
+          class="due-modal !max-w-md p-4"
+        >
+          <DueCard
+            date={selectedDay()}
+            taskList={() => dueTasks() ?? []}
+            onOpen={(t) => { openTask(t); setDueOpen(false); }}
+            bare
+          />
+        </ModalSheet>
       </Show>
 
       {/* Replan suggestion — a big-disruption reflow asks to re-plan with AI (B4) */}
@@ -376,38 +380,38 @@ export function Today() {
       </Show>
 
       {/* Create-Routine-from-selection modal (Phase F). */}
-      <Show when={routineModal().open}>
-        <ViewportOverlay class="modal-backdrop" onClick={() => setRoutineModal({ open: false, name: '' })}>
-          <div class="modal max-w-md" onClick={(e) => e.stopPropagation()}>
-            <div class="px-4 py-3 border-b border-border flex items-center gap-2">
-              <Repeat size={14} class="text-primary" />
-              <span class="text-sm font-semibold text-foreground">Create Routine from {selection().size} item{selection().size === 1 ? '' : 's'}</span>
-            </div>
-            <div class="p-4 flex flex-col gap-3">
-              <label class="flex flex-col gap-1">
-                <span class="text-[11px] text-muted-foreground">Name</span>
-                <input
-                  class="input"
-                  placeholder="e.g. Morning routine"
-                  autofocus
-                  value={routineModal().name}
-                  onInput={(e) => setRoutineModal({ open: true, name: e.currentTarget.value })}
-                  onKeyDown={(e) => { if (e.key === 'Enter') createRoutineFromSelection(); }}
-                />
-              </label>
-              <div class="rounded-md border border-border bg-background/40 p-2 max-h-40 overflow-auto">
-                <For each={selectedTitles(blocks() ?? [], tasks() ?? [])}>
-                  {(t) => <div class="text-xs text-foreground truncate py-0.5">· {t}</div>}
-                </For>
-              </div>
-              <div class="flex justify-end gap-2 pt-1">
-                <button onClick={() => setRoutineModal({ open: false, name: '' })} class="btn-ghost text-sm px-3 py-1.5">Cancel</button>
-                <button onClick={createRoutineFromSelection} class="btn-primary text-sm px-4 py-1.5"><Repeat size={13} /> Create</button>
-              </div>
-            </div>
+      <ModalSheet
+        open={routineModal().open}
+        title={`Create Routine from ${selection().size} item${selection().size === 1 ? '' : 's'}`}
+        onClose={() => setRoutineModal({ open: false, name: '' })}
+        mode="modal"
+        backdropClass="modal-backdrop"
+        class="max-w-md"
+        footer={<div class="flex justify-end gap-2">
+          <button type="button" onClick={() => setRoutineModal({ open: false, name: '' })} class="btn-ghost text-sm px-3 py-1.5">Cancel</button>
+          <button type="button" onClick={createRoutineFromSelection} class="btn-primary text-sm px-4 py-1.5"><Repeat size={13} /> Create</button>
+        </div>}
+      >
+        <div class="flex flex-col gap-3">
+          <label class="flex flex-col gap-1">
+            <span class="text-[11px] text-muted-foreground">Name</span>
+            <input
+              class="input"
+              aria-label="Routine name"
+              placeholder="e.g. Morning routine"
+              autofocus
+              value={routineModal().name}
+              onInput={(e) => setRoutineModal({ open: true, name: e.currentTarget.value })}
+              onKeyDown={(e) => { if (e.key === 'Enter') createRoutineFromSelection(); }}
+            />
+          </label>
+          <div class="rounded-md border border-border bg-background/40 p-2 max-h-40 overflow-auto" aria-label="Selected tasks">
+            <For each={selectedTitles(blocks() ?? [], tasks() ?? [])}>
+              {(t) => <div class="text-xs text-foreground truncate py-0.5">· {t}</div>}
+            </For>
           </div>
-        </ViewportOverlay>
-      </Show>
+        </div>
+      </ModalSheet>
     </div>
   );
 }
@@ -420,7 +424,7 @@ export function Today() {
  * on demand — a destructive-toned pill mirroring the overdue count button. Rows
  * reuse the bucket-list row styling and open the task editor the same way.
  */
-function DueCard(props: { date: string; taskList: () => Task[]; onOpen: (t: Task) => void; bare?: boolean; onClose?: () => void }) {
+function DueCard(props: { date: string; taskList: () => Task[]; onOpen: (t: Task) => void; bare?: boolean }) {
   // The day's dues + overdue rollup, then narrowed by the persisted filter
   // (direction include-set · hide habits · hide routines — habits & routines
   // hidden by default). Both lists share one predicate so they stay consistent.
@@ -587,12 +591,6 @@ function DueCard(props: { date: string; taskList: () => Task[]; onOpen: (t: Task
           </Show>
           {/* Multi-select filter menu — direction · hide habits · hide routines. */}
           <DueFilterMenu />
-          {/* Embedded-in-modal close (bare mode only — the standalone card has none). */}
-          <Show when={props.onClose}>
-            <button type="button" onClick={props.onClose} class="btn-icon" title="Close">
-              <X size={14} />
-            </button>
-          </Show>
         </div>
       </div>
 

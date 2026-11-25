@@ -17,8 +17,8 @@ export function EightPointStar(props: { size?: number; class?: string; strokeWid
       height={size()}
       viewBox="0 0 24 24"
       fill={props.fill ?? 'none'}
-      class={props.class}
-      style={{ stroke: 'currentColor', 'stroke-width': String(sw()), 'stroke-linejoin': 'round' }}
+      class={`icon-stroke-joined ${props.class ?? ''}`}
+      style={{ 'stroke-width': String(sw()) }}
     >
       <polygon points={points} />
     </svg>

@@ -264,10 +264,10 @@ describe('capturing what the scheduler chose and passed over', () => {
     const firstCandidates = JSON.parse(first.candidates) as { s: number; e: number; c: number }[];
     const secondCandidates = JSON.parse(second.candidates) as { s: number; e: number; c: number }[];
     // Same single gap both times (one continuous free day) — but the second
-    // snapshot's cursor has moved past the first session's end + the break.
+    // snapshot's cursor has moved past the first session's end; Auto inserts no break.
     expect(secondCandidates[0].s).toBe(firstCandidates[0].s);
     expect(secondCandidates[0].c).toBeGreaterThan(firstCandidates[0].c);
-    expect(secondCandidates[0].c).toBe(Date.parse(first.chosen_end_at) + 10 * 60_000); // min_break_minutes = 10
+    expect(secondCandidates[0].c).toBe(Date.parse(first.chosen_end_at));
   });
 
   it('does not write to time_blocks, tasks, daily_plan or flight_plan itself — only placement_log', async () => {

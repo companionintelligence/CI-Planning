@@ -144,7 +144,7 @@ export function CloseRitual(props: {
   return (
     <Show when={reviewConfirmed()} fallback={
       <ViewportOverlay class="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4" onClick={props.onAdvance}>
-        <div class="card w-full max-w-sm p-0 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div class="card w-full max-w-sm p-0 overflow-hidden" role="dialog" aria-modal="true" aria-label={`Review task: ${props.task.title}`} onClick={(e) => e.stopPropagation()}>
           <div class="flex items-center gap-2 px-4 py-3 border-b border-border">
             <AlertTriangle size={16} class="text-amber-500 flex-shrink-0" />
             <span class="text-sm font-semibold text-foreground">Review this task</span>
@@ -163,7 +163,7 @@ export function CloseRitual(props: {
       </ViewportOverlay>
     }>
     <ViewportOverlay class="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4" onClick={skip}>
-      <div class="card w-full max-w-sm p-0 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+      <div class="card w-full max-w-sm p-0 overflow-hidden" role="dialog" aria-modal="true" aria-label={`Task reflection: ${props.task.title}`} onClick={(e) => e.stopPropagation()}>
         <div class="flex items-center gap-2 px-4 py-3 border-b border-border">
           <div class="flex-1 min-w-0">
             <div class="text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -226,11 +226,12 @@ export function CloseRitual(props: {
           </div>
 
           <div>
-            <div class="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
+            <label for="close-ritual-minutes" class="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5 block">
               How long did it actually take?
-            </div>
+            </label>
             <div class="flex items-center gap-2">
               <input
+                id="close-ritual-minutes"
                 type="number"
                 min="0"
                 step="5"

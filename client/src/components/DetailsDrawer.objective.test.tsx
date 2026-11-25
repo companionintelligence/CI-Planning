@@ -48,7 +48,7 @@ vi.mock('../lib/lock.js', () => ({ lockAffordance: () => ({}) }));
 vi.mock('../lib/recurrence.js', () => ({ describeRule: () => '' }));
 vi.mock('../lib/tag-tax.js', () => ({ displayTag: (n: string) => n }));
 vi.mock('../lib/objectives.js', () => ({ flattenObjectives: () => [] }));
-vi.mock('../lib/api.js', () => ({ api: {} }));
+vi.mock('../lib/api.js', () => ({ api: { taskAgent: { notes: async () => ({ notes: [] }), addNote: vi.fn() } } }));
 
 vi.mock('../stores/selection.js', () => ({
   activeTask: () => null,
@@ -61,6 +61,7 @@ vi.mock('../stores/selection.js', () => ({
 }));
 vi.mock('../stores/ui.js', () => ({
   detailsOpen: () => true, detailsWidth: () => 360,
+  requestTaskAssistant: vi.fn(),
   setDetailsOpen: vi.fn(), setDetailsWidth: vi.fn(),
   drawerTab: () => 'details', setDrawerTab: vi.fn(),
   DETAILS_MIN_W: 280, DETAILS_MAX_W: 640, DETAILS_DEFAULT_W: 360,

@@ -25,6 +25,8 @@ export class ApiError extends Error {
 
 export type TaskAgentAction =
   | { kind: 'create_tasks'; tasks: Array<{ title: string; estimated_minutes?: number }>; target_block_id?: string; block_end_at?: string }
+  | { kind: 'bulk_unschedule_tasks'; tasks: Array<{ task_id: string; title: string; scheduled_for: string | null; task_time: string | null }> }
+  | { kind: 'bulk_reschedule_tasks'; tasks: Array<{ task_id: string; title: string; scheduled_for: string | null; task_time: string | null }>; scheduled_for: string; task_time?: string }
   | { kind: 'create_task'; title: string; priority?: number; scheduled_for?: string; task_time?: string }
   | { kind: 'update_task'; task_id: string; title?: string; priority?: number; scheduled_for?: string | null; task_time?: string | null; status?: 'open' | 'done' }
   | { kind: 'add_note'; task_id: string; body: string }
@@ -35,7 +37,7 @@ export interface TaskAgentPlan {
   actions: TaskAgentAction[];
   tasks: Array<{ id: string; title: string }>;
   objectives: Array<{ id: string; title: string }>;
-  blocks?: Array<{ id: string; title: string; start_at: string; end_at: string }> ;
+  blocks?: Array<{ id: string; title: string; start_at: string; end_at: string; tag?: string | null }> ;
 }
 export interface TaskAgentScreenContext {
   path: string;

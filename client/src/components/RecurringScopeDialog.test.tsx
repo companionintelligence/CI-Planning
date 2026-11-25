@@ -37,9 +37,18 @@ describe('RecurringScopeDialog', () => {
   it('names the item and offers both scopes', async () => {
     setAsk({ open: true, title: 'Standup', verb: 'delete' });
     render(() => <RecurringScopeDialog />);
+    expect(screen.getByRole('dialog', { name: 'Delete repeating item: Standup' })).toBeTruthy();
     expect(await screen.findByText('Standup')).toBeTruthy();
     expect(screen.getByText('Delete this one only')).toBeTruthy();
     expect(screen.getByText('Delete this and all following')).toBeTruthy();
+  });
+
+  it('Escape resolves null so dismissing cannot change the series', async () => {
+    setAsk({ open: true, title: 'Standup', verb: 'delete' });
+    render(() => <RecurringScopeDialog />);
+    const dialog = await screen.findByRole('dialog', { name: 'Delete repeating item: Standup' });
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    await waitFor(() => expect(answered).toEqual([null]));
   });
 
   it('wording follows the verb — a change is not a delete', async () => {

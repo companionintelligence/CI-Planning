@@ -10,6 +10,8 @@ the code at `3cfbbdf2` (v4.2.2 plus four commits, migration head `0172_signup_co
 |---|---|
 | [README](../README.md) | What the app does, how to run it (Docker, Compose, local dev), the environment variables, the HTTP API, the mobile shells, tests |
 | [ARCHITECTURE](../ARCHITECTURE.md) | Tech stack, repository layout, data model, scheduling engine, jobs, auth, connectors, sync, deployment, backup |
+| [Application technology and quality review](APP-TECH-AND-QUALITY-AUDIT.md) | Technology tables, test inventory, Playwright segmentation plan, front-end style audit and refactor proposal |
+| [Current system flows](DIAGRAMS.md) | Mermaid system, user, data, agent and metric flow diagrams |
 | [CHANGELOG](../CHANGELOG.md) | Release notes; releases are git tags |
 | [CONTRIBUTING](../CONTRIBUTING.md) | The local gate (`typecheck`, `build`, `test`, `lint:canon`), merge policy |
 | [GLOSSARY](GLOSSARY.md) | The canonical vocabulary: which words mean what, and which ones were retired |

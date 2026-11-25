@@ -68,8 +68,8 @@ function setSmartMode(): void {
     .prepare(`UPDATE scheduling_prefs SET planning_mode = 'smart', timezone = 'UTC' WHERE owner_id = ?`)
     .run(OWNER);
   // 0156: the undirected fallback fill now reads the work+community pattern_blocks
-  // union, not the removed flat workday_start/workday_end. Shrunk to fit exactly one
-  // 45-min task (sched-horizon.test.ts's exact window), so a 5-task staged set
+  // union, not the removed flat workday_start/workday_end. Shrunk to fit one 45-min task
+  // while leaving less than a 15-minute remainder, so a 5-task staged set
   // genuinely fans across the 3-day horizon instead of draining on day 0 — the only
   // way to observe day 1/2 authoring at all. The beforeEach's seedFallbackFillWindow()
   // lays down a wide 09:00-18:00 window for 'work'; replace it with the narrow one.
@@ -80,7 +80,7 @@ function setSmartMode(): void {
   sqlite
     .prepare(
       `INSERT INTO pattern_blocks (id, owner_id, direction_tag_id, day_type, start_time, end_time)
-       VALUES (uuid7(), ?, ?, 'workday', '09:00', '10:00')`,
+       VALUES (uuid7(), ?, ?, 'workday', '09:00', '09:59')`,
     )
     .run(OWNER, workId);
 }

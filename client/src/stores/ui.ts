@@ -82,11 +82,11 @@ export function toggleNav(): void {
 // ── Right details drawer ──────────────────────────────────────────────────
 /**
  * Open on a desktop, where it is a docked column beside the content, and remembered. On a
- * phone it is a sheet laid over up to 62% of the screen (index.css), so it starts closed:
- * open at launch it covers what the person opened the app to see, and it comes up by itself
- * when they select something (`revealDetails`). It is not remembered there either. "Open" on
- * a phone means "something is selected", not a layout the person chose, so saving it would
- * bring the sheet back on the next launch for no reason they could see.
+ * phone it is a viewport-bounded modal sheet with a dimmed canvas behind it, so it starts
+ * closed: open at launch it covers what the person opened the app to see, and it comes up by
+ * itself when they select something (`revealDetails`). It is not remembered there either.
+ * "Open" on a phone means "something is selected", not a layout the person chose, so saving
+ * it would bring the sheet back on the next launch for no reason they could see.
  */
 const [detailsOpen, setDetailsOpenSignal] = createSignal(isPhone() ? false : readBool(KEY.open, true));
 export { detailsOpen };
@@ -132,4 +132,12 @@ export function setDrawerTab(tab: DrawerTab): void {
 export function revealDetails(): void {
   setDrawerTab('details');
   if (!detailsOpen()) setDetailsOpen(true);
+}
+
+// A Details sheet can request the app-shell assistant without owning its state. A
+// monotonic request token lets the shell switch surfaces while keeping chat state mounted.
+const [taskAssistantRequest, setTaskAssistantRequest] = createSignal(0);
+export { taskAssistantRequest };
+export function requestTaskAssistant(): void {
+  setTaskAssistantRequest((request) => request + 1);
 }

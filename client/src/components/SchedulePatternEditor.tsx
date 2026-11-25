@@ -167,6 +167,8 @@ export function SchedulePatternEditor(props: SchedulePatternEditorProps) {
                   <button
                     type="button"
                     class="text-muted-foreground hover:text-destructive transition-colors"
+                    aria-label={`Remove ${dir.name} window starting ${r.start_time}`}
+                    title={`Remove ${dir.name} window starting ${r.start_time}`}
                     onClick={() => {
                       const next = getRanges(dir.id).filter((_, idx) => idx !== i());
                       setWindows((w) => ({ ...w, [dir.id]: next }));

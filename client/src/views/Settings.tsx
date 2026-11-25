@@ -31,6 +31,7 @@ import { clearDeviceLock, hasDeviceLock, setDeviceLockPassword } from '../lib/na
 import { colorway, setColorway, setTheme, theme, type Colorway, type Theme } from '../lib/theme.js';
 import { setTextSize, textSize, type TextSize } from '../lib/text-size.js';
 import { ViewportOverlay } from '../components/ViewportOverlay.js';
+import { Card } from '../ui/index.js';
 
 const BROWSER_TZ = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
@@ -77,7 +78,7 @@ type BoolField =
 
 const DEFAULTS: SettingsForm = {
   auto_fill_workday: true,
-  max_focus_block_minutes: 90, min_break_minutes: 10,
+  max_focus_block_minutes: 90, min_break_minutes: 3,
   max_time_block_minutes: 240, min_time_block_minutes: 15,
   default_time_block_minutes: 60,
   plan_allday_always: false, plan_daylong_for_promoted: false, plan_autofill_gaps: true,
@@ -273,7 +274,7 @@ export function Settings() {
     setForm({
       auto_fill_workday:          p.auto_fill_workday ?? true,
       max_focus_block_minutes:    p.max_focus_block_minutes ?? 90,
-      min_break_minutes:          p.min_break_minutes ?? 10,
+      min_break_minutes:          p.min_break_minutes ?? 3,
       max_time_block_minutes:     p.max_time_block_minutes ?? 240,
       min_time_block_minutes:     p.min_time_block_minutes ?? 15,
       default_time_block_minutes: p.default_time_block_minutes ?? 60,
@@ -405,6 +406,7 @@ export function Settings() {
   const Toggle = (props: { field: BoolField; label: string; hint?: string }) => (
     <label class="flex items-start gap-2 cursor-pointer select-none">
       <button type="button" role="switch" aria-checked={form()[props.field]}
+        aria-label={props.label}
         onClick={() => setField(props.field, !form()[props.field])}
         class="relative w-9 h-5 rounded-sm transition-colors flex-shrink-0 mt-0.5"
         classList={{ 'bg-primary': form()[props.field], 'bg-muted border border-border': !form()[props.field] }}>
@@ -943,7 +945,7 @@ export function Settings() {
         <div class="flex flex-col gap-5">
           <section class="card flex flex-col gap-4">
             <div>
-              <div class="section-label flex items-center gap-1.5 mb-1"><ShieldCheck size={13} /> Companion Planning privacy</div>
+              <h2 class="section-label flex items-center gap-1.5 mb-1"><ShieldCheck size={13} /> Companion Planning privacy</h2>
               <p class="text-sm text-muted-foreground">
                 Companion Planning sends its requests to the server address you choose. It does not send your plans, calendar, or reflections to Companion Intelligence by default; your selected server operator can see the information processed by that server.
               </p>
@@ -1177,7 +1179,7 @@ export function Settings() {
         {/* ── PREFERENCES TAB ─────────────────────────────────────────────────── */}
         <Show when={activeTab() === 'preferences'}>
 
-          <section class="card flex flex-col gap-4">
+          <section class="appearance-accessibility-settings card flex flex-col gap-4" data-testid="appearance-accessibility-settings">
             <div>
               <div class="section-label mb-1">Appearance and accessibility</div>
               <p class="text-xs text-muted-foreground">Choose the app color theme and a comfortable reading size. These choices are saved on this device.</p>
@@ -1324,7 +1326,7 @@ export function Settings() {
             <div class="section-label mb-1" title="Visual options for the Today planner. Changes apply immediately.">Planner display</div>
             {/* Direction textures (view_prefs.appearance.direction_textures) */}
             <label class="flex items-start gap-2 cursor-pointer select-none">
-              <button type="button" role="switch" aria-checked={texturesEnabled()}
+              <button type="button" role="switch" aria-label="Direction textures" aria-checked={texturesEnabled()}
                 onClick={() => setTexturesEnabled(!texturesEnabled())}
                 class="relative w-9 h-5 rounded-sm transition-colors flex-shrink-0 mt-0.5"
                 classList={{ 'bg-primary': texturesEnabled(), 'bg-muted border border-border': !texturesEnabled() }}>
@@ -1523,19 +1525,16 @@ export function Settings() {
               block at all still gets one, and the offsets are unioned across every
               direction row so even an untagged task is covered. Blocks are a reminder
               target only for the three Focus-Ritual cues. */}
-          <section class="card">
-            <div class="flex items-center justify-between mb-3">
-              <div
-                class="section-label flex items-center gap-1.5"
-                title="Applies to every task with a time or a due date — not just ones on the planner. Shared by Home, Community and Work. Device reminders are refreshed from this server when the app opens or resumes."
-              ><BellRing size={12} /> Reminders</div>
-              <button type="button" onClick={saveReminderDefaults} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
-            </div>
+          <Card
+            title={<span class="flex items-center gap-1.5" title="Applies to every task with a time or a due date — not just ones on the planner. Shared by Home, Community and Work. Device reminders are refreshed from this server when the app opens or resumes."><BellRing size={12} /> Reminders</span>}
+            actions={<button type="button" onClick={saveReminderDefaults} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>}
+            class="settings-preference-card flex flex-col gap-3"
+          >
             <div class="flex flex-col gap-3">
               {/* On-device local notifications for the Capacitor apps. */}
               <Show when={isCapacitorShell()}>
                 <label class="flex items-start gap-2 cursor-pointer select-none">
-                  <button type="button" role="switch" aria-checked={nativeRemindersOn()} disabled={nativeRemindersBusy()} onClick={toggleNativeReminders}
+                  <button type="button" role="switch" aria-label="Device reminders" aria-checked={nativeRemindersOn()} disabled={nativeRemindersBusy()} onClick={toggleNativeReminders}
                     class="relative w-9 h-5 rounded-sm transition-colors flex-shrink-0 mt-0.5 disabled:opacity-50"
                     classList={{ 'bg-primary': nativeRemindersOn(), 'bg-muted border border-border': !nativeRemindersOn() }}>
                     <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-circle bg-card transition-transform" classList={{ 'translate-x-4': nativeRemindersOn() }} />
@@ -1549,7 +1548,7 @@ export function Settings() {
               {/* Browser Web Push remains separate from the mobile local-notification path. */}
               <Show when={!isNativeShell()}>
                 <label class="flex items-start gap-2 cursor-pointer select-none">
-                  <button type="button" role="switch" aria-checked={pushOn()} disabled={pushBusy()} onClick={togglePush}
+                  <button type="button" role="switch" aria-label="Push notifications" aria-checked={pushOn()} disabled={pushBusy()} onClick={togglePush}
                     class="relative w-9 h-5 rounded-sm transition-colors flex-shrink-0 mt-0.5 disabled:opacity-50"
                     classList={{ 'bg-primary': pushOn(), 'bg-muted border border-border': !pushOn() }}>
                     <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-circle bg-card transition-transform" classList={{ 'translate-x-4': pushOn() }} />
@@ -1562,7 +1561,7 @@ export function Settings() {
               </Show>
               {/* Start-time reminder */}
               <label class="flex items-start gap-2 cursor-pointer select-none">
-                <button type="button" role="switch" aria-checked={remStartOn()} onClick={() => setRemStartOn((v) => !v)}
+                <button type="button" role="switch" aria-label="Start-time reminder" aria-checked={remStartOn()} onClick={() => setRemStartOn((v) => !v)}
                   class="relative w-9 h-5 rounded-sm transition-colors flex-shrink-0 mt-0.5"
                   classList={{ 'bg-primary': remStartOn(), 'bg-muted border border-border': !remStartOn() }}>
                   <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-circle bg-card transition-transform" classList={{ 'translate-x-4': remStartOn() }} />
@@ -1574,7 +1573,7 @@ export function Settings() {
               </label>
               {/* Advance reminder (advanced timer) */}
               <label class="flex items-start gap-2 cursor-pointer select-none">
-                <button type="button" role="switch" aria-checked={remAdvOn()} onClick={() => setRemAdvOn((v) => !v)}
+                <button type="button" role="switch" aria-label="Advance reminder" aria-checked={remAdvOn()} onClick={() => setRemAdvOn((v) => !v)}
                   class="relative w-9 h-5 rounded-sm transition-colors flex-shrink-0 mt-0.5"
                   classList={{ 'bg-primary': remAdvOn(), 'bg-muted border border-border': !remAdvOn() }}>
                   <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-circle bg-card transition-transform" classList={{ 'translate-x-4': remAdvOn() }} />
@@ -1592,14 +1591,14 @@ export function Settings() {
                 </div>
               </label>
             </div>
-          </section>
+          </Card>
 
           {/* Routine Settings — recall behaviour + Time-Sense + AI ordering */}
-          <section class="card">
-            <div class="flex items-center justify-between mb-3">
-              <div class="section-label">Routine Settings</div>
-              <button type="button" onClick={doSave} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
-            </div>
+          <Card
+            title="Routine Settings"
+            actions={<button type="button" onClick={doSave} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>}
+            class="settings-preference-card flex flex-col gap-3"
+          >
             {/* Feature flags, off by default. Routines (0073) gate the Routine tile in the Add
                 dialog and the automatic placement of recurring Routines (engine/patterns-place.ts);
                 Rituals (0024) gate the Ritual pattern type (services/patterns.ts). */}
@@ -1684,7 +1683,7 @@ export function Settings() {
               };
               return (
                 <label class="flex items-start gap-2 cursor-pointer select-none">
-                  <button type="button" role="switch" aria-checked={smartMode()}
+                  <button type="button" role="switch" aria-label="AI day ordering" aria-checked={smartMode()}
                     onClick={togglePlanningMode}
                     class="relative w-9 h-5 rounded-sm transition-colors flex-shrink-0 mt-0.5"
                     classList={{ 'bg-primary': smartMode(), 'bg-muted border border-border': !smartMode() }}>
@@ -1703,7 +1702,7 @@ export function Settings() {
             </Show>
 
             {/* The Suggest / Schedule toggle lives in the Day Overview header (Today view). */}
-          </section>
+          </Card>
 
           {/* Phase P · P2 — Clear Date Range: bulk-clear the planner from a date (optionally through a date). */}
           <section class="card">
@@ -1931,6 +1930,7 @@ export function Settings() {
               <button
                 type="button"
                 role="switch"
+                aria-label="Use Memory for suggestions"
                 aria-checked={form().memory_pull_enabled}
                 onClick={() => setField('memory_pull_enabled', !form().memory_pull_enabled)}
                 class="relative w-9 h-5 rounded-sm transition-colors flex-shrink-0 mt-0.5"
@@ -1972,6 +1972,7 @@ export function Settings() {
               <button
                 type="button"
                 role="switch"
+                aria-label="Sync with Companion Memory"
                 aria-checked={form().memory_sync_enabled}
                 onClick={() => setField('memory_sync_enabled', !form().memory_sync_enabled)}
                 class="relative w-9 h-5 rounded-sm transition-colors flex-shrink-0 mt-0.5"
@@ -2028,7 +2029,7 @@ export function Settings() {
               <label class="flex items-center justify-between gap-3">
                 <span class="text-xs text-muted-foreground">
                   Look back
-                  <span class="block text-[11px] opacity-70">
+                  <span class="block text-[11px] text-foreground">
                     How far back to read a connected mailbox. Applies when email is first connected
                     (or after an outage) — routine checks only pick up what has arrived since the last one.
                   </span>
@@ -2334,7 +2335,7 @@ export function Settings() {
                     <For each={list()}>
                       {(session) => (
                         <div class="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
-                          <div class="flex items-center gap-2 min-w-0">
+                          <label class="flex items-center gap-2 min-w-0 cursor-pointer">
                             <input
                               type="checkbox"
                               class="accent-primary w-4 h-4 flex-shrink-0"
@@ -2349,7 +2350,7 @@ export function Settings() {
                                 {session.status} · {new Date(session.started_at).toLocaleString()}
                               </div>
                             </div>
-                          </div>
+                          </label>
                           <div class="flex items-center gap-1 flex-shrink-0">
                             <button type="button" class="btn-ghost text-xs px-2 py-1" title="Review" onClick={() => reviewSession(session.id)}>
                               <Eye size={13} />
@@ -2479,6 +2480,7 @@ export function Settings() {
                         <div class="flex items-center gap-1.5 shrink-0">
                           <select
                             class="input py-0.5 text-xs w-auto"
+                            aria-label={`Role for ${a.name}`}
                             value={a.role}
                             disabled={a.id === me()!.ownerId}
                             title={a.id === me()!.ownerId ? 'Another operator must change your role' : 'Set this account\'s role'}

@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./ui/recipes.css";
 /* The canon token layer is imported before app-specific overrides below so every token
    the app does not set falls back to CI-Common. */
 @import "@companionintelligence/tokens/tokens.css";
@@ -49,8 +50,8 @@ html[data-text-size="larger"] { font-size: 125%; --app-text-scale: 1.25; }
   --secondary: oklch(96.8% 0.007 247.896);
   --secondary-foreground: #0a222e;
   --muted: oklch(96.8% 0.007 247.896);
-  /* Small helper labels need AA contrast on the light surface (about 4.97:1). */
-  --muted-foreground: oklch(52% 0.046 257.417);
+  /* Small helper labels need AA contrast on light cards and shaded sidebar surfaces. */
+  --muted-foreground: oklch(47% 0.046 257.417);
   /* Chevron for <select>, mirroring --muted-foreground above. Inlined per theme because a
      background-image cannot read a colour from a CSS variable, and kept directly beside
      the token it matches so the two are changed together. */
@@ -547,6 +548,9 @@ html[data-colorway="void"]:not(.dark) {
   .input-lg { @apply py-2.5 text-base; }
   .textarea  { @apply resize-none; }
 
+  /* Fixed Planner lane proportions; per-day geometry stays data-driven inline. */
+  .planner-grid { grid-template-columns: 3.5rem 1.75rem minmax(0, 1fr); }
+
   /* <select> is the one control the canon classes did not actually reach. `.input` gives
      it the right border, radius and text colour, but the BROWSER still draws the dropdown
      arrow itself — its own glyph, its own colour, its own box — so a select sat visibly
@@ -623,8 +627,10 @@ html[data-colorway="void"]:not(.dark) {
 
   /* ── Z-index scale (update this table whenever you add a new layer) ──────
        30   FAB, BottomNav bar, sticky calendar headers (.fab, z-30)
-       40   BottomNav "more" backdrop (z-40)
+       39   Mobile details backdrop (.mobile-details-backdrop)
+       40   Mobile details sheet, BottomNav "more" backdrop
        50   Toast notifications (.toast, Toast.tsx z-50)
+      100   Task assistant surface
      [999]  Planner options popover — fixed, beats grid overflow-hidden (z-[999])
     [1000]  Modal backdrop — must sit above every in-page layer, including the
             Planner popover at z-[999]. Children use z-50 freely within this
@@ -676,6 +682,8 @@ html[data-colorway="void"]:not(.dark) {
     @apply fixed bottom-6 right-6 z-30 flex items-center gap-2
            px-5 py-3 font-semibold rounded-lg
            transition-all duration-150 active:scale-95 select-none cursor-pointer;
+    min-width: 44px;
+    min-height: 44px;
     color: var(--primary-foreground);
     background: var(--primary);
     box-shadow: 0 8px 24px color-mix(in oklab, var(--primary) 25%, transparent);
@@ -686,7 +694,7 @@ html[data-colorway="void"]:not(.dark) {
   .nav-item {
     @apply flex items-center gap-2.5 px-3 py-2 rounded-sm text-sm font-medium
            transition-all duration-100 cursor-pointer select-none;
-    color: var(--muted-foreground);
+    color: var(--sidebar-foreground);
     letter-spacing: .02em;
   }
   .nav-item:hover { color: var(--foreground); background: var(--sidebar-accent); }
@@ -1025,7 +1033,7 @@ html[data-colorway="void"]:not(.dark) {
    overlaid so a selection stays readable against the list it came from — below
    `md` it becomes a bottom sheet, where a 400px side panel is the whole screen. */
 .details-rail {
-  flex: 0 0 6px;
+  flex: 1 1 auto;
   cursor: col-resize;
   background: var(--border);
   opacity: .45;
@@ -1033,6 +1041,7 @@ html[data-colorway="void"]:not(.dark) {
   touch-action: none;
   transition: opacity .12s, background .12s;
 }
+.details-rail-region { display: flex; flex: 0 0 6px; min-width: 6px; }
 .details-rail::after {
   content: "";
   position: absolute;
@@ -1057,6 +1066,8 @@ html[data-colorway="void"]:not(.dark) {
   overflow: hidden;
   container: details-panel / inline-size;
 }
+.mobile-details-backdrop { display: none; }
+.mobile-details-backdrop-button { display: none; }
 
 .drawer-head {
   flex: 0 0 auto;
@@ -1265,20 +1276,49 @@ html[data-colorway="void"]:not(.dark) {
 .nav-rail-collapsed .nav-item { justify-content: center; padding-left: .5rem; padding-right: .5rem; }
 .nav-rail-collapsed .nav-item-active { border-left: none; }
 
-/* Bottom sheet below the app's md breakpoint: the columns stop being columns. */
+/* Mobile uses one primary surface: the canvas is dimmed and inert while details or
+   Flight Plan is open. JS sizes the sheet against visualViewport so the keyboard and
+   Safari's changing browser chrome cannot push its header offscreen. */
 @media (max-width: 767px) {
-  .details-rail { display: none; }
+  .details-rail-region { display: none; }
+  .mobile-details-backdrop {
+    display: flex;
+    z-index: 39;
+    overscroll-behavior: contain;
+  }
+  .mobile-details-backdrop-button {
+    display: block;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: rgba(0,0,0,.62);
+    backdrop-filter: blur(2px);
+    cursor: pointer;
+    touch-action: none;
+  }
   .details-drawer {
     position: fixed;
-    inset: auto 0 0 0;
+    inset-inline: 0;
+    top: min(
+      var(--mobile-details-top, 22dvh),
+      calc(100dvh - min(var(--mobile-details-height, 78dvh), calc(100dvh - 1.5rem)))
+    );
+    bottom: auto;
     width: auto;
-    max-height: 62vh;
+    height: min(var(--mobile-details-height, 78dvh), calc(100dvh - 1.5rem));
+    max-height: min(var(--mobile-details-height, 78dvh), calc(100dvh - 1.5rem));
     border-left: none;
     border-top: 1px solid var(--border);
     border-radius: var(--radius-30) var(--radius-30) var(--radius-0) var(--radius-0);
     z-index: 40;
     box-shadow: var(--shadow-lg);
+    padding-bottom: env(safe-area-inset-bottom);
   }
+  .drawer-head .btn-icon { min-width: 2.75rem; min-height: 2.75rem; justify-content: center; }
+  .details-back-desktop { display: none; }
+  .details-back-mobile { display: block; }
   .details-toggle-button svg { transform: rotate(90deg); }
   /* Give the Flight Plan title its own row on a phone so the control buttons
      cannot squeeze it into broken, per-letter fragments. Keep the controls on
@@ -1456,11 +1496,12 @@ html[data-colorway="void"]:not(.dark) {
   .skeleton { animation: none; }
 }
 
-/* Desktop only: the drawer is a docked side panel here, so its collapse button folds it away and keeps
-   the selection. On a phone the drawer is a sheet, and it keeps its close button. */
-.details-collapse { display: none; }
+/* Back preserves the selected item and Flight Plan tab on every viewport. The X
+   remains the explicit close-and-clear action. */
+.details-collapse { display: inline-flex; }
+.details-back-mobile { display: none; }
 @media (min-width: 768px) {
-  .details-collapse { display: inline-flex; }
+  .details-back-desktop { display: block; }
 }
 
 /* Touch devices: no text-entry control under 16px.
@@ -1606,3 +1647,42 @@ html[data-text-size="larger"] [class~="text-[10px]"] { font-size: 12.5px !import
 html[data-text-size="larger"] [class~="text-[11px]"] { font-size: 13.75px !important; }
 html[data-text-size="larger"] [class~="text-[11.5px]"] { font-size: 14.375px !important; }
 html[data-text-size="larger"] [class~="text-[13px]"] { font-size: 16.25px !important; }
+
+/* Shared presentation recipes for fixed treatments formerly repeated in JSX styles. */
+.brand-kicker { color: var(--primary); }
+.mobile-nav-item { color: var(--sidebar-foreground); }
+.safe-area-bottom { padding-bottom: env(safe-area-inset-bottom); }
+.icon-stroke-rounded { stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
+.icon-stroke-joined { stroke: currentColor; stroke-linejoin: round; }
+.onboarding-backdrop { background: rgb(0 0 0 / 70%); backdrop-filter: blur(6px); }
+.calendar-month-grid { grid-auto-rows: 1fr; }
+.calendar-perfect-day {
+  background-color: color-mix(in srgb, var(--star-gold) 10%, transparent);
+  border-color: color-mix(in srgb, var(--star-gold) 40%, transparent);
+}
+.calendar-star-marker { background-color: var(--star-gold); }
+.objective-complete-fill { background-color: var(--star-gold); }
+.calendar-block-chip-approval {
+  border: 1px dotted var(--auto-generated-outline);
+  border-left: 1px dotted var(--auto-generated-outline);
+}
+.task-approval-outline {
+  border-style: dotted !important;
+  border-color: var(--auto-generated-outline) !important;
+}
+.task-card { border-left: 3px solid var(--task-direction-color, var(--border)); }
+.task-card-past-scheduled { outline: 2px solid var(--destructive); outline-offset: -2px; }
+.task-card-awaiting-approval {
+  border: 2px dotted var(--auto-generated-outline);
+  border-left: 2px dotted var(--auto-generated-outline);
+}
+.fx-halo-delay-short { animation-delay: -1.6s; }
+.fx-halo-delay-long { animation-delay: -3.2s; }
+.on-accent-contrast { color: var(--teal-950); }
+.chart-hollow-dot { fill: var(--card); }
+.auto-generated-card {
+  border-style: dotted;
+  border-color: var(--auto-generated-outline);
+  background-color: color-mix(in srgb, var(--warning) 5%, transparent);
+}
+.wizard-time-bar-dragging { box-shadow: 0 6px 20px color-mix(in srgb, var(--teal-200) 35%, transparent); }

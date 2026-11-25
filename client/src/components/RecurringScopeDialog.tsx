@@ -1,7 +1,6 @@
-import { Show } from 'solid-js';
-import { Repeat } from 'lucide-solid';
+import { Repeat, X } from 'lucide-solid';
 import { recurringScopeAsk, answerRecurringScope } from '../stores/index.js';
-import { ViewportOverlay } from './ViewportOverlay.js';
+import { ModalSheet } from '../ui/index.js';
 
 /**
  * "Just this one, or this and everything after it?" — asked before changing or deleting
@@ -18,27 +17,29 @@ import { ViewportOverlay } from './ViewportOverlay.js';
 export function RecurringScopeDialog() {
   const ask = () => recurringScopeAsk();
   const isDelete = () => ask().verb === 'delete';
+  const title = () => isDelete() ? 'Delete repeating item' : 'Change repeating item';
 
   return (
-    <Show when={ask().open}>
-      <ViewportOverlay
-        class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="recurring-scope-title"
-        onClick={(e) => { if (e.target === e.currentTarget) answerRecurringScope(null); }}
-        onKeyDown={(e) => { if (e.key === 'Escape') answerRecurringScope(null); }}
-      >
-        <div class="card w-full max-w-sm flex flex-col gap-3">
-          <div class="flex items-start gap-2">
+    <ModalSheet
+      open={ask().open}
+      title={title()}
+      ariaLabel={`${title()}: ${ask().title}`}
+      onClose={() => answerRecurringScope(null)}
+      class="max-w-sm"
+      header={
+        <header class="flex flex-shrink-0 items-start justify-between gap-2 border-b border-border px-4 py-3">
+          <div class="flex min-w-0 items-start gap-2">
             <Repeat size={15} class="text-muted-foreground mt-0.5 flex-shrink-0" />
             <div class="min-w-0">
-              <div id="recurring-scope-title" class="text-sm font-semibold text-foreground">
-                {isDelete() ? 'Delete repeating item' : 'Change repeating item'}
-              </div>
+              <h2 class="text-sm font-semibold text-foreground">{title()}</h2>
               <div class="text-xs text-muted-foreground truncate">{ask().title}</div>
             </div>
           </div>
+          <button type="button" class="btn-icon flex-shrink-0" aria-label="Close dialog" onClick={() => answerRecurringScope(null)}><X size={15} /></button>
+        </header>
+      }
+    >
+        <div class="px-4 pb-4 flex flex-col gap-3">
 
           <p class="text-xs text-muted-foreground">
             This repeats. {isDelete() ? 'Delete' : 'Apply the change to'} only this one, or this
@@ -70,7 +71,6 @@ export function RecurringScopeDialog() {
             </button>
           </div>
         </div>
-      </ViewportOverlay>
-    </Show>
+    </ModalSheet>
   );
 }

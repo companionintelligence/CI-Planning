@@ -42,7 +42,7 @@ function toNode(row: Row): Row & { id: string } {
 
 const limits = (p: Row) => ({
   maxFocusBlockMinutes: p.maxFocusBlockMinutes ?? 90,
-  minBreakMinutes: p.minBreakMinutes ?? 10,
+  minBreakMinutes: p.minBreakMinutes ?? 3,
   maxTimeBlockMinutes: p.maxTimeBlockMinutes ?? 240,
   minTimeBlockMinutes: p.minTimeBlockMinutes ?? 15,
   defaultTimeBlockMinutes: p.defaultTimeBlockMinutes ?? 60,

@@ -9,12 +9,14 @@ import { listSharedTasks } from '../services/shared-tasks.js';
 import { newId } from '../lib/ids.js';
 import { writeAudit } from '../lib/audit.js';
 
-type TaskSummary = { id: string; title: string; status: string; priority: number; due_at: string | null; scheduled_for: string | null; task_time: string | null; completed_at: string | null; shared?: boolean };
-type BlockSummary = { id: string; title: string; start_at: string; end_at: string; status: string };
+type TaskSummary = { id: string; title: string; status: string; priority: number; due_at: string | null; scheduled_for: string | null; task_time: string | null; completed_at: string | null; direction_tags?: string | null; shared?: boolean };
+type BlockSummary = { id: string; title: string; start_at: string; end_at: string; status: string; tag: string | null };
 type ObjectiveSummary = { id: string; title: string; task_id: string | null };
 type Screen = { path: string; tab: string; selectedTaskId: string | null; selectedBlockId: string | null; selectedEntity: { kind: string; id: string } | null; headings: string[] };
 type Action =
   | { kind: 'create_tasks'; tasks: Array<{ title: string; estimated_minutes?: number }>; target_block_id?: string }
+  | { kind: 'bulk_unschedule_tasks'; tasks: Array<{ task_id: string; title: string; scheduled_for: string | null; task_time: string | null }> }
+  | { kind: 'bulk_reschedule_tasks'; tasks: Array<{ task_id: string; title: string; scheduled_for: string | null; task_time: string | null }>; scheduled_for: string; task_time?: string }
   | { kind: 'create_task'; title: string; priority?: number; scheduled_for?: string; task_time?: string }
   | { kind: 'update_task'; task_id: string; title?: string; priority?: number; scheduled_for?: string | null; task_time?: string | null; status?: 'open' | 'done' }
   | { kind: 'add_note'; task_id: string; body: string }
@@ -89,20 +91,41 @@ export function taskAgentRouter() {
     const owner = currentOwnerId();
     const screen = cleanScreen(body.screen);
     const [allTasks, objectives, sharedTasks, blockRows] = await Promise.all([
-      store().prepare(`SELECT id, title, status, priority, due_at, scheduled_for, task_time, completed_at FROM tasks WHERE owner_id = ? ORDER BY COALESCE(updated_at, created_at) DESC`).all<TaskSummary>(owner),
+      store().prepare(`SELECT ts.id, ts.title, ts.status, ts.priority, ts.due_at, ts.scheduled_for, ts.task_time, ts.completed_at, (SELECT group_concat(t.name, ', ') FROM entity_tags et JOIN tags t ON t.id = et.tag_id WHERE et.entity_kind = 'task' AND et.entity_id = ts.id AND et.level = 1) AS direction_tags FROM tasks ts WHERE ts.owner_id = ? ORDER BY COALESCE(ts.updated_at, ts.created_at) DESC`).all<TaskSummary>(owner),
       store().prepare(`SELECT o.id, o.title, ot.task_id FROM objectives o LEFT JOIN objective_tasks ot ON ot.objective_id = o.id WHERE o.owner_id = ? AND o.status = 'active'`).all<ObjectiveSummary>(owner),
       listSharedTasks(owner),
-      store().prepare(`SELECT id, title, start_at, end_at, status FROM time_blocks WHERE owner_id = ? AND block_kind = 'timeblock' AND start_at BETWEEN ? AND ? ORDER BY start_at LIMIT 250`).all<BlockSummary>(owner, new Date(Date.now() - 2 * 86400000).toISOString(), new Date(Date.now() + 30 * 86400000).toISOString()),
+      store().prepare(`SELECT tb.id, tb.title, tb.start_at, tb.end_at, tb.status, COALESCE((SELECT group_concat(t.name, ', ') FROM entity_tags et JOIN tags t ON t.id = et.tag_id WHERE et.entity_kind = 'time_block' AND et.entity_id = tb.id AND et.level = 1), tb.tag) AS tag FROM time_blocks tb WHERE tb.owner_id = ? AND tb.block_kind = 'timeblock' AND tb.start_at BETWEEN ? AND ? ORDER BY tb.start_at LIMIT 250`).all<BlockSummary>(owner, new Date(Date.now() - 2 * 86400000).toISOString(), new Date(Date.now() + 30 * 86400000).toISOString()),
     ]);
+    const timezone = await ownerTimezone(owner);
+    const todayLocal = new Date().toLocaleDateString('en-CA', { timeZone: timezone });
     const readableTasks: TaskSummary[] = [...allTasks, ...sharedTasks.map((task) => ({ id: task.id, title: task.title, status: task.status, priority: task.priority, due_at: task.due_at, scheduled_for: null, task_time: null, completed_at: null, shared: true }))];
-    const taskRows = taskCandidates(allTasks, text, screen.selectedTaskId);
-    const selectedBlock = screen.selectedBlockId ? await store().prepare(`SELECT id, title, start_at, end_at, status FROM time_blocks WHERE id = ? AND owner_id = ? AND block_kind = 'timeblock'`).get<BlockSummary>(screen.selectedBlockId, owner) : undefined;
+    const broadTaskRequest = /\b(?:all|every|each|open|incomplete|unfinished)\b/i.test(text) && /\b(tasks?|everything)\b/i.test(text);
+    const taskRows = broadTaskRequest
+      ? allTasks.filter((task) => ['open', 'scheduled', 'in_progress'].includes(task.status))
+      : taskCandidates(allTasks, text, screen.selectedTaskId);
+    const selectedBlock = screen.selectedBlockId ? await store().prepare(`SELECT tb.id, tb.title, tb.start_at, tb.end_at, tb.status, COALESCE((SELECT group_concat(t.name, ', ') FROM entity_tags et JOIN tags t ON t.id = et.tag_id WHERE et.entity_kind = 'time_block' AND et.entity_id = tb.id AND et.level = 1), tb.tag) AS tag FROM time_blocks tb WHERE tb.id = ? AND tb.owner_id = ? AND tb.block_kind = 'timeblock'`).get<BlockSummary>(screen.selectedBlockId, owner) : undefined;
     const blockCandidates = [...(selectedBlock ? [selectedBlock] : []), ...blockRows.filter((block) => block.id !== selectedBlock?.id)];
+    // Treat bulk unscheduling as a first-class operation. Without this deterministic
+    // route the model sometimes mistakes the phrase "reschedule open tasks" for a
+    // request to create a task literally named "Reschedule open tasks".
+    const asksToUnSchedule = /\b(?:un\s*[-]?\s*schedule|clear (?:the )?schedule|remove (?:the )?schedule|move (?:them|tasks?) to unscheduled|unscheduled)\b/i.test(text);
+    const asksForAllOpen = broadTaskRequest;
+    if (asksToUnSchedule && asksForAllOpen) {
+      const asksForPast = /\b(?:past|overdue|from the past)\b/i.test(text);
+      const candidates = allTasks.filter((task) => ['open', 'scheduled', 'in_progress'].includes(task.status)
+        && (task.scheduled_for || task.task_time || task.status === 'scheduled')
+        && (!asksForPast || (!!task.due_at && task.due_at.slice(0, 10) < todayLocal)));
+      const action: Action = { kind: 'bulk_unschedule_tasks', tasks: candidates.map((task) => ({ task_id: task.id, title: task.title, scheduled_for: task.scheduled_for, task_time: task.task_time })) };
+      ctx.body = {
+        reply: candidates.length ? `I found ${candidates.length} unfinished scheduled tasks. Review the list, then apply to unschedule them; they will remain open in Tasks for later scheduling.` : 'I did not find any unfinished scheduled tasks to unschedule.',
+        actions: candidates.length ? [action] : [], tasks: candidates, objectives: [],
+      };
+      return;
+    }
     const blockWords = (text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []);
     const relevantBlocks = blockCandidates.filter((block) => block.id === selectedBlock?.id || blockWords.some((word) => block.title.toLowerCase().includes(word))).slice(0, 30);
     const blocksForPlan = relevantBlocks.length ? relevantBlocks : blockCandidates.slice(0, 20);
     const readRows = taskCandidates(readableTasks, text, screen.selectedTaskId);
-    const timezone = await ownerTimezone(owner);
     const now = new Date().toLocaleString('en-US', { timeZone: timezone, hour12: false });
     const readOnly = !/\b(draft|suggest|fill|create|add|edit|update|change|move|reschedule|schedule|mark|complete|finish|set|delete|remove|cancel)\b/i.test(text);
     const metricsRequest = /\b(metrics?|recap|progress|performance|completion|completions|tracked time)\b/i.test(text);
@@ -150,12 +173,14 @@ export function taskAgentRouter() {
       `Today and current time in ${timezone}: ${now}. Reply with JSON {"reply":"short plain response","actions":[]}. ` +
       `For a list of NEW tasks, return ONE action {"kind":"create_tasks","tasks":[{"title":"...","estimated_minutes":15}],"target_block_id":"exact ID from time blocks when requested"}. The tasks are editable drafts until the user applies. For a request to update a time block with tasks, create_tasks with target_block_id is REQUIRED; never use an existing-task edit action. Do not include target_block_id when no block is requested. Up to 20 new tasks. ` +
       `Allowed actions: {"kind":"create_task","title":"...","priority":1..5,"scheduled_for":"YYYY-MM-DD","task_time":"HH:MM"}; ` +
+      `For a user-requested bulk reschedule, return {"kind":"bulk_reschedule_tasks","task_ids":["exact IDs from tasks"],"scheduled_for":"YYYY-MM-DD","task_time":"HH:MM optional"}. Use only the explicitly requested task filter: status, incomplete/open, scheduled (scheduled_for/task_time present), overdue (due_at before today in the owner's timezone), or matching direction_tags. For bulk operations exclude done/cancelled/archived. Never invent a target date. If the date or scope is missing, ask one clarifying question instead of creating a task. ` +
       `{"kind":"update_task","task_id":"exact ID from tasks","title":"...","priority":1..5,"scheduled_for":"YYYY-MM-DD or null","task_time":"HH:MM or null","status":"open or done"}; ` +
       `{"kind":"move_task","task_id":"exact ID from tasks","source_objective_id":"current objective ID if linked","target_objective_id":"exact objective ID"}. ` +
       `For adding a timestamped note use {"kind":"add_note","task_id":"exact ID","body":"note text"}. For a suggestion that should fill an unsaved task edit form, use {"kind":"draft_task","task_id":"exact ID","title":"...","priority":1..5,"scheduled_for":"YYYY-MM-DD","task_time":"HH:MM","notes":"..."}. Use draft_task only for suggested changes to an EXISTING task, never for creating a new task. ` +
       `Omit unchanged fields. At most four actions, but use one create_tasks action for a list. For a time change, set scheduled_for and task_time. Describe proposed changes in future tense; never claim they are saved. ` +
       `When the user answers a clarifying question, continue the original request using that answer. Example: after asking which time block, if they reply "don't put them in a time block, create them individually", draft individual tasks with the original names and estimates and omit target_block_id. Do not ask them to repeat the task list. If an essential detail remains ambiguous, ask one focused follow-up and return no actions. Never invent IDs, dates, or task names. ` +
-      `Current screen: ${JSON.stringify(screen)}. Your tasks matching the request (including archived tasks): ${JSON.stringify(newTaskListRequest ? [] : taskRows.slice(0, 35))}. Shared tasks (read only): ${JSON.stringify(newTaskListRequest ? [] : readRows.filter((task) => task.shared).slice(0, 12))}. Objectives and task links: ${JSON.stringify(newTaskListRequest ? [] : objectives.slice(0, 50))}. Time blocks available for placement: ${JSON.stringify(blocksForPlan)}. ` +
+      `Current screen: ${JSON.stringify(screen)}. Your tasks matching the request (including archived tasks): ${JSON.stringify(newTaskListRequest ? [] : taskRows.slice(0, 35))}. Shared tasks (read only): ${JSON.stringify(newTaskListRequest ? [] : readRows.filter((task) => task.shared).slice(0, 12))}. Objectives and task links: ${JSON.stringify(newTaskListRequest ? [] : objectives.slice(0, 50))}. Existing time blocks available for placement, with their direction tags: ${JSON.stringify(blocksForPlan)}. ` +
+      `When drafting tasks, use a tagged block only when the user explicitly requests scheduling or names that block. Otherwise keep tasks as individual drafts and mention matching tagged blocks as optional destinations in the reply; the review UI lets the user select one before applying. A task's direction tag should match a block tag for placement. ` +
       `Recent conversation: ${JSON.stringify(recent)}. User request: ${JSON.stringify(text)}`,
       { purpose: 'plan_instruct', tier: 'quality', ...(agentModel ? { model: agentModel } : {}), timeoutMs: 45_000, think: false },
     ));
@@ -195,6 +220,11 @@ export function taskAgentRouter() {
         const changes = Object.fromEntries(['title', 'priority', 'scheduled_for', 'task_time', 'status'].filter((key) => a[key] !== undefined).map((key) => [key, a[key]]));
         if (!Object.keys(changes).length) { invalid = true; break; }
         actions.push({ kind: 'update_task', task_id: a.task_id, ...changes } as Action);
+      } else if (a.kind === 'bulk_reschedule_tasks') {
+        const ids = a.task_ids;
+        if (!Array.isArray(ids) || ids.length < 1 || ids.length > 100 || ids.some((id) => typeof id !== 'string' || !allTasks.some((task) => task.id === id && ['open', 'scheduled', 'in_progress'].includes(task.status))) || !dateValid(a.scheduled_for) || (a.task_time !== undefined && !timeValid(a.task_time))) { invalid = true; break; }
+        const uniqueIds = [...new Set(ids as string[])];
+        actions.push({ kind: 'bulk_reschedule_tasks', tasks: uniqueIds.map((id) => { const task = allTasks.find((row) => row.id === id)!; return { task_id: id, title: task.title, scheduled_for: task.scheduled_for, task_time: task.task_time }; }), scheduled_for: a.scheduled_for, ...(timeValid(a.task_time) ? { task_time: a.task_time } : {}) });
       } else if (a.kind === 'add_note') {
         if (typeof a.task_id !== 'string' || !knownTasks.has(a.task_id) || typeof a.body !== 'string' || !a.body.trim() || a.body.length > 10000) { invalid = true; break; }
         actions.push({ kind: 'add_note', task_id: a.task_id, body: a.body.trim() });
@@ -218,7 +248,7 @@ export function taskAgentRouter() {
     }
     if (invalid || actions.length > 4) { ctx.body = { reply: 'I could not match that safely. Please name the task and the change you want.', actions: [], tasks: [], objectives: [] }; return; }
     const reply = actions.some((action) => action.kind === 'create_tasks') ? `I drafted the new tasks below. Review their names and estimates, then apply to create them${actions.some((action) => action.kind === 'create_tasks' && action.target_block_id) ? ' and place them in the selected time block' : ''}.` : typeof raw.reply === 'string' ? raw.reply.slice(0, 1000) : 'Here is what I found.';
-    ctx.body = { reply: actions.length ? reply : `${reply} No changes were made.`, actions, tasks: taskRows.filter((task) => actions.some((action) => 'task_id' in action && action.task_id === task.id)), objectives: objectives.filter((objective) => actions.some((action) => action.kind === 'move_task' && (action.target_objective_id === objective.id || action.source_objective_id === objective.id))), blocks: blocksForPlan.filter((block) => actions.some((action) => action.kind === 'create_tasks' && action.target_block_id === block.id)) };
+    ctx.body = { reply: actions.length ? reply : `${reply} No changes were made.`, actions, tasks: taskRows.filter((task) => actions.some((action) => 'task_id' in action && action.task_id === task.id)), objectives: objectives.filter((objective) => actions.some((action) => action.kind === 'move_task' && (action.target_objective_id === objective.id || action.source_objective_id === objective.id))), blocks: blockCandidates.slice(0, 30) };
   });
   return router;
 }

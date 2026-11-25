@@ -72,7 +72,7 @@ export function up(db: Database): void {
       workday_end              TEXT DEFAULT '18:00',
       deep_work_windows        TEXT,
       max_focus_block_minutes  INTEGER DEFAULT 90,
-      min_break_minutes        INTEGER DEFAULT 10,
+      min_break_minutes        INTEGER DEFAULT 3,
       day_theme                TEXT,
       planning_mode            TEXT DEFAULT 'basic',
       timezone                 TEXT,

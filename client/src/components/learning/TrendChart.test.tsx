@@ -83,8 +83,8 @@ describe('TrendChart: what is drawn for each kind of reading', () => {
     const c = draw([point(WEEKS[0], 0.5, 9), point(WEEKS[1], 0.5, 10), point(WEEKS[2], 0.75, 4), point(WEEKS[3], 0.9, 30)]);
     expect(c.circles()).toHaveLength(4);
     expect(c.hollow()).toHaveLength(2);
-    // Hollow is filled with the card colour (so the line does not show through), filled with the stroke.
-    for (const el of c.hollow()) expect((el as SVGElement).style.fill).toBe('var(--card)');
+    // The fill is a shared semantic CSS treatment, not a per-point inline style.
+    for (const el of c.hollow()) expect((el as SVGElement).classList.contains('chart-hollow-dot')).toBe(true);
     const filled = c.circles().filter((el) => !el.hasAttribute('data-hollow'));
     for (const el of filled) expect(el.getAttribute('fill')).toBe('currentColor');
   });
@@ -285,7 +285,7 @@ describe('TrendChart: paint', () => {
     expect(html).toContain('currentColor');
     expect(html).toContain('text-primary');
     expect(html).toContain('text-muted-foreground');
-    expect(html).toContain('var(--card)');
+    expect(html).toContain('chart-hollow-dot');
   });
 
   it('is a fixed-size viewBox that scales down, so a phone does not scroll sideways', () => {

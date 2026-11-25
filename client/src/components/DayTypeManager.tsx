@@ -85,12 +85,14 @@ export function DayTypeManager() {
       <Show when={selectedType()}>
         {(t) => (
           <div class="flex items-center gap-2">
-            <span class="text-[11px] uppercase tracking-wide text-muted-foreground">Name</span>
+            <label class="flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
+              Name
             <input
               class="input py-1 text-sm w-44"
               value={t().name}
               onChange={(e) => rename(t(), e.currentTarget.value)}
             />
+            </label>
             <Show when={!t().is_builtin} fallback={<span class="text-[10px] text-muted-foreground">built-in</span>}>
               <button type="button" onClick={() => remove(t())} class="btn-icon hover:text-destructive" title="Delete day type"><Trash2 size={14} /></button>
             </Show>

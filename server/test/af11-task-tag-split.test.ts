@@ -182,12 +182,13 @@ describe('direction-only passes stay level-1 / kind=direction', () => {
     expect(placed.placed).toBe(true);
     expect((placed as { startAt?: string }).startAt).toBe(at('10:00')); // the direction window
 
-    // Same setup but only an L2 intention → falls through to the fallback-fill gap, not a window.
+    // Same setup but only an L2 intention → it does not borrow the L1 work window. The
+    // general work/community fallback still uses the next available time in that window.
     const loose = insertTask('Loose', { intentionsL2: ['email'], est: 60 });
     sqlite.prepare(`UPDATE tasks SET scheduled_for = ? WHERE id = ?`).run(DAY, loose);
     const placed2 = await placeStartAnchoredTask(OWNER, loose, { silent: true });
     expect(placed2.placed).toBe(true);
-    expect((placed2 as { startAt?: string }).startAt).toBe(at('14:00')); // fallback-fill window, not the 'work' direction's
+    expect((placed2 as { startAt?: string }).startAt).toBe(at('11:00')); // next available in the general fallback union
   });
 });
 

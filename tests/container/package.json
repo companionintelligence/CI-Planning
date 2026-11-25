@@ -2,7 +2,21 @@
   "name": "container-screenshot-test",
   "private": true,
   "description": "Self-contained Playwright harness that screenshots the running container. Isolated from the app's own deps.",
+  "scripts": {
+    "test:smoke": "playwright test --project=smoke",
+    "test:auth:local": "playwright test --project=auth-local",
+    "test:auth:portal": "playwright test --project=auth-portal",
+    "test:tasks": "playwright test --project=tasks",
+    "test:planner": "playwright test --project=planner",
+    "test:objectives": "playwright test --project=objectives",
+    "test:agent": "playwright test --project=agent",
+    "test:metrics": "playwright test --project=metrics",
+    "test:responsive": "playwright test --project=responsive",
+    "test:mobile": "playwright test --project=mobile",
+    "test:accessibility": "playwright test --project=accessibility"
+  },
   "devDependencies": {
-    "@playwright/test": "^1.60.0"
+    "@playwright/test": "^1.60.0",
+    "axe-core": "^4.14.1"
   }
 }
