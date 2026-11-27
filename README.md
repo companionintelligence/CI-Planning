@@ -2951,6 +2951,27 @@ cd tests/container && npm i && npx playwright install chromium && APP_URL=http:/
 tests/container/run-local.sh   # the same container smoke gate (standalone, password login, Companion Portal login) from this checkout, no Docker; needs `pnpm install` and `pnpm --filter client build` first
 ```
 
+### Route and theme review
+
+The container Playwright suite includes a separate `visual-review` project for
+release-candidate and shared-UI reviews. Against an already-running local-login
+container, it captures 23 authenticated/public surface states at desktop and phone
+sizes in light and dark themes. Point `UI_REVIEW_DIR` at an artifact directory to keep
+the individual PNGs grouped by theme and viewport:
+
+```bash
+LOGIN_USER=<local-user> LOGIN_PASS=<local-password> \
+APP_URL=http://localhost:3848 \
+UI_REVIEW_DIR=test-results/ui-surface-review/<commit> \
+pnpm --dir tests/container test:visual-review
+```
+
+Review the screenshots at normal size; capture and axe results are not visual sign-off.
+This Chromium viewport sweep does not replace physical iOS/Android keyboard and
+screen-reader checks. See [UI surface review](docs/ui-surface-review.md) for the route
+matrix, migration checklist, and device checklist. Generated screenshots under
+`test-results/` are ignored by Git.
+
 <!-- companion-hub-readme-deep-review -->
 
 ## Common task lifecycle

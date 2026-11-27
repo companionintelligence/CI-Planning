@@ -84,7 +84,7 @@ Execution rules: use role/name locators, seed only test-owned data, and attach t
 | Radius and shadow rules | No arbitrary `rounded-[…]` classes remain in production TSX. Tailwind radius utilities resolve to the five canonical `--radius-*` tokens. Repeated timeline and calendar-star glows now use named CSS recipes instead of arbitrary shadow utilities. |
 | Overlay composition | The former feature-level `ViewportOverlay` dialog callers now use `ModalSheet`, including the mobile details sheet. `ModalSheet` owns dialog semantics, focus cycling, Escape handling and backdrop dismissal. No feature code calls `ViewportOverlay` directly; it remains an internal placement layer documented without dialog behavior. |
 | Large modules | Six production files exceed 800 lines: `Settings.tsx` (2,682), `ElementWizard.tsx` (2,116), `DetailsDrawer.tsx` (1,964), `Planner.tsx` (1,255), `CalendarGrid.tsx` (853), and `ObjectivesPanel.tsx` (829). These are the clearest remaining boundaries for extracting feature subcomponents and hooks. |
-| Evidence limit | This is a source-level audit across every production TSX file. No fresh screenshots were captured, so pixel alignment, rendered theme contrast and every responsive state are not claimed as visually audited here. Historical browser/axe results are listed separately. |
+| Evidence limit | This is a source-level audit across every production TSX file. The separate 2026-11-27 route/theme review captures 23 states in two themes and two viewports; it does not cover every production component, conditional state, or native-device behavior. See [UI surface review](ui-surface-review.md#2026-11-27-release-review). |
 
 ### Findings
 
