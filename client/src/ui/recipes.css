@@ -12,11 +12,15 @@
  *   preserve long text and timestamps without creating horizontal overflow.
  * - modal-form-fields owns vertical rhythm inside a modal body. modal-form-field aligns
  *   a label and control. modal-form-grid stacks fields on narrow screens and uses two
- *   equal columns once there is room. modal-form-footer keeps actions reachable and
+ *   equal columns once there is room. ui-form-actions keeps actions reachable and
  *   allows buttons to share width on very narrow screens.
  * - settings-preference-card uses the shared Card title/actions slots for settings
  *   groups. Its header wraps without squeezing the section title or Save action;
  *   settings content remains feature-owned and keeps the existing responsive field rows.
+ * - ui-card header slots keep title/description and actions from fighting for
+ *   width. The action group wraps below 26rem; body layout remains feature-owned.
+ * - ui-form-actions is the shared right-aligned button row. Below 26rem direct
+ *   buttons share available width; use it for form and modal actions, not toolbars.
  */
 .planner-actions-menu {
   display: flex;
@@ -117,12 +121,6 @@
   grid-template-columns: minmax(0, 1fr);
   gap: 0.75rem;
 }
-.modal-form-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-}
-
 .settings-preference-card {
   min-width: 0;
 }
@@ -133,10 +131,36 @@
   min-width: 0;
 }
 
+.ui-card__header {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.ui-card__copy { min-width: 0; flex: 1 1 12rem; }
+.ui-card__title { color: var(--foreground); font-size: 0.875rem; font-weight: 700; }
+.ui-card__description { color: var(--muted-foreground); font-size: 0.75rem; }
+.ui-card__actions {
+  display: flex;
+  max-width: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ui-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
 @media (min-width: 40rem) {
   .modal-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 26rem) {
-  .modal-form-footer > button { flex: 1 1 0; }
+  .ui-card__actions { width: 100%; }
+  .ui-form-actions > button { flex: 1 1 0; }
 }

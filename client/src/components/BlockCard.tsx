@@ -3,14 +3,15 @@ import { Lock, CheckCircle, SkipForward, AlertTriangle } from 'lucide-solid';
 import { type Block, api } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
 
-// CI teal palette for block kinds
+// Keep block-kind color selection in the component while the actual palette
+// lives in named CSS variables shared with theme and feature styles.
 const kindBorderStyle: Record<string, string> = {
-  task:    '#409b9b',  // ci-4
-  meeting: '#244859',  // ci-10
-  focus:   '#58ebbf',  // ci-3
-  habit:   '#85c3b4',  // ci-2
-  break:   '#152637',
-  buffer:  '#0f1e2e',
+  task: 'var(--block-kind-task)',
+  meeting: 'var(--block-kind-meeting)',
+  focus: 'var(--block-kind-focus)',
+  habit: 'var(--block-kind-habit)',
+  break: 'var(--block-kind-break)',
+  buffer: 'var(--block-kind-buffer)',
 };
 
 const kindBadgeClass: Record<string, string> = {
@@ -32,7 +33,7 @@ interface Props {
 }
 
 export function BlockCard(props: Props) {
-  const borderColor = () => kindBorderStyle[props.block.block_kind] ?? '#152637';
+  const borderColor = () => kindBorderStyle[props.block.block_kind] ?? 'var(--block-kind-default)';
   // Settled = any terminal status, matching PlannerChip.settled() and the server's
   // TERMINAL_BLOCK_STATUSES — cancelled/missed dim like other settled history.
   const done = () => ['completed', 'skipped', 'cancelled', 'missed'].includes(props.block.status);
@@ -76,7 +77,7 @@ export function BlockCard(props: Props) {
         <div class="opacity-0 group-hover:opacity-100 flex items-center gap-1 transition-opacity flex-shrink-0">
           <button
             onClick={() => setStatus('completed')}
-            class="btn-ghost text-xs gap-1 text-green-400 hover:bg-green-950/30"
+            class="btn-ghost text-xs gap-1 text-success hover:bg-success/10"
           >
             <CheckCircle size={13} /> Done
           </button>

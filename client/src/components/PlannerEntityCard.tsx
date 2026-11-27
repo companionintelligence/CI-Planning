@@ -1,7 +1,7 @@
 import { Show, For, createMemo, createSignal } from 'solid-js';
 import { Pencil, Repeat, Unlink, Lock, Trash2, X, Save, Star, Sparkles, Play, Plus, LayoutTemplate, Target } from 'lucide-solid';
 import {
-  tasks, taskOf, blocks, tags, patternPrefs, categoryPrefs, patterns, patternTypes, blockTemplates,
+  tasks, taskOf, blocks, tags, patternPrefs, categoryPrefs, textureColorSource, patterns, patternTypes, blockTemplates,
   setElementModal, showToast, refetchBlocks, refetchFlightPlan, refetchTasks,
   askRecurringScope, isRecurringOccurrence, openCloseRitual,
 } from '../stores/index.js';
@@ -105,7 +105,7 @@ export function PlannerEntityCard(props: {
     const t = task();
     if (t) return directionColorForTask(t, tags() ?? [], patternPrefs()?.prefs ?? {});
     const b = block();
-    return b ? blockColorVar(b, categoryPrefs()?.prefs) : 'var(--primary)';
+    return b ? blockColorVar(b, categoryPrefs()?.prefs, { source: textureColorSource(), tags: tags(), categories: categoryPrefs()?.prefs, directions: patternPrefs()?.prefs }) : 'var(--primary)';
   };
 
   // The grouping labels: a block's #tag(s) or its Time Block Category name (0069); a

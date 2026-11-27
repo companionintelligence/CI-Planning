@@ -15,6 +15,6 @@ The web manifest's maskable icon is `app-icon-maskable.svg`: the glyph at 86% ov
 
 ## Animated mark
 
-`app-mark-animation.json` is a 512 px transparent Lottie loop at 30 fps. The black disk swings continuously on a 2-second pendulum cycle and clips against the fixed rounded triangle silhouette. The outer triangle sections shrink to 25%, rotate 120°, and regrow at three crossings; the full 6-second cycle ends at its starting orientation. Set `loop: true` in the Lottie player. `app-mark-animation-preview.gif` is a rendered preview.
+`app-mark-animation.json` is a 512 px transparent Lottie loop at 30 fps. The black disk swings continuously on a 2-second pendulum cycle and clips against the rounded triangle silhouette. The outer triangle sections shrink to 25%, rotate 120° around the empty circle at the center, and regrow at three crossings; the full 6-second cycle ends at its starting orientation. Set `loop: true` in the Lottie player. `app-mark-animation-preview.gif` is a rendered preview.
 
 The launch screens show `app-icon-rounded.svg` centred on the app's dark background (#041620): the iOS `Splash.imageset` (2732 px, all three scales) and the Android `drawable*/splash.png` files, each with the mark at 30% of the shorter side. Regenerate them with `rsvg-convert` for the mark, then `magick -size WxH xc:'#041620' mark.png -gravity center -composite splash.png`.

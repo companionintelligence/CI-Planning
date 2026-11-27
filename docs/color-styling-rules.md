@@ -159,10 +159,19 @@ A few values are intentionally fixed (constant across modes) in `index.css`:
 
 - Primary actions (`.btn-primary`, `.fab`, `.checkbox-checked`) are not hard-coded any more: they fill with `var(--primary)` and put `var(--primary-foreground)` on it, so they flip with the theme. The old mint gradient (`linear-gradient(135deg, #58ebbf, #409b9b)`) is gone from `index.css`. Hover is `color-mix(in srgb, var(--primary) 90%, transparent)` plus a primary-tinted shadow.
 - Active nav item (`.nav-item-active`): text `var(--primary)` on `var(--sidebar-accent)`, with a `2px solid var(--primary)` left border.
-- Priority dots: `p1` `#ef4444`, `p2` `#f97316`, `p3` `#58ebbf`, `p4` `#409b9b`, `p5` `#244859` (each with a matching glow shadow).
-- Glow shadows in the places that keep them (focused inputs, `.card-hover`, the P3 dot, `toast-success`, the done-pulse) use `rgba(88,235,191,...)` (the mint `#58ebbf`), e.g. `shadow-glow-ci` `0 0 20px -4px rgba(88,235,191,.35)`.
+- Priority dots retain their authored palette in CSS (`.p1` through `.p5`). Priority controls use `--priority-1-*`, `--priority-2-*`, `--priority-3-*` and `--priority-later-*` so the button foregrounds stay paired with their fills.
+- Rating and block-kind colors use `--rating-score-*` and `--block-kind-*`. Keep these component palettes in CSS, not in TSX data tables.
+- Repeated timeline and calendar glows use `--shadow-timeline-now` and `--filter-calendar-star`. Other established glows (focused inputs, `.card-hover`, the P3 dot, `toast-success`, the done-pulse) remain in the shared CSS recipes.
 - Modal backdrop: `rgba(0,0,0,.7)` with a 6px blur.
 - Badge tints (dark): green on `rgba(88,235,191,.12)`, yellow on `bg-yellow-900/40` text `yellow-400`, red on `bg-red-900/40` text `red-400`. In light mode (`:root:not(.dark)`) the teal-family badges switch to `--teal-900` text, yellow becomes `#fef3c7` on `#92400e`, and red `#fee2e2` on `#b91c1c`.
+
+## TSX color exceptions and dynamic values
+
+- `client/src/components/BrandMark.tsx` is the sole approved production TSX exception for fixed hex colors: its SVG artwork has an intentional, mode-independent logo palette and mask colors.
+- Comments and issue references may contain color-looking strings; these are not rendered styles.
+- Runtime colors from tasks, tags, categories, patterns and timeline data must stay dynamic through `colorVar()`, `blockColorVar()` or a named per-value CSS custom property. Do not replace those values with a static class.
+- The production scan found no arbitrary radius utilities. Continue using `rounded-*` aliases, which resolve through `tailwind.config.js` to the canonical radius tokens.
+- There is no broad lint rule yet. Keep this exception list current before adding a check that rejects color literals in production TSX.
 
 ## Legacy scale remaps
 

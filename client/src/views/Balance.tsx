@@ -1,5 +1,5 @@
 import { For, Show, createSignal } from 'solid-js';
-import { PageHeader } from '../ui/index.js';
+import { ModalSheet, PageHeader } from '../ui/index.js';
 import { setActiveEntity } from '../stores/selection.js';
 import { revealDetails } from '../stores/ui.js';
 import { A } from '@solidjs/router';
@@ -9,7 +9,6 @@ import { api } from '../lib/api.js';
 import type { Priority, Task } from '../lib/api.js';
 import { BalanceMetrics } from '../components/BalanceMetrics.js';
 import { SchedulingPreferences } from '../components/SchedulingPreferences.js';
-import { ViewportOverlay } from '../components/ViewportOverlay.js';
 
 interface CategoryConfig { key: string; name: string; icon: typeof Heart; colorClass: string; }
 
@@ -240,14 +239,20 @@ export function Balance() {
           edit wizard (the app-global ElementWizard), same affordance as a card edit. */}
       <Show when={modalCat()}>
         {(cat) => (
-          <ViewportOverlay class="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setTasksModal(null)}>
-            <div class="card w-full max-w-md max-h-[70vh] flex flex-col p-0 overflow-hidden" onClick={(e) => e.stopPropagation()}>
-              <div class="flex items-center gap-2.5 px-4 py-3 border-b border-border">
-                <div class={`p-1.5 rounded-lg bg-muted ${cat().colorClass}`}>{(() => { const I = cat().icon; return <I class="w-4 h-4" />; })()}</div>
-                <h3 class="text-sm font-bold text-foreground flex-1">{cat().name} — open tasks</h3>
-                <button type="button" class="btn-icon" onClick={() => setTasksModal(null)}><X size={14} /></button>
-              </div>
-              <div class="overflow-y-auto p-2 flex flex-col gap-1">
+          <ModalSheet
+            open
+            title={`${cat().name} — open tasks`}
+            onClose={() => setTasksModal(null)}
+            mode="modal"
+            backdropClass="modal-backdrop"
+            class="max-w-md !max-h-[70vh] !p-0 overflow-hidden"
+            header={<header class="flex items-center gap-2.5 px-4 py-3 border-b border-border">
+              <div class={`p-1.5 rounded-lg bg-muted ${cat().colorClass}`}>{(() => { const I = cat().icon; return <I class="w-4 h-4" />; })()}</div>
+              <h2 class="text-sm font-bold text-foreground flex-1">{cat().name} — open tasks</h2>
+              <button type="button" class="btn-icon" aria-label="Close dialog" onClick={() => setTasksModal(null)}><X size={14} /></button>
+            </header>}
+          >
+            <div class="overflow-y-auto p-2 flex flex-col gap-1">
                 <For each={openTasksFor(cat().key)}>
                   {(t) => (
                     <button
@@ -269,9 +274,8 @@ export function Balance() {
                     No open tasks in this area yet — categorize tasks in the Add/Edit wizard.
                   </div>
                 </Show>
-              </div>
             </div>
-          </ViewportOverlay>
+          </ModalSheet>
         )}
       </Show>
     </div>

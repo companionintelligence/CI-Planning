@@ -1,8 +1,13 @@
 import { onCleanup, onMount, type JSX } from 'solid-js';
 import { Portal } from 'solid-js/web';
 
-/** Render screen-level UI outside route scrollers and keep it inside iOS's
- * currently visible viewport (which can shrink or pan when the keyboard opens). */
+/**
+ * Low-level viewport-anchored layer for passive/non-modal surfaces such as a
+ * backdrop or popover. This component only portals and tracks the visual viewport;
+ * it does not supply dialog semantics, focus management, Escape handling, or a
+ * dismissal contract. Feature dialogs must use `ModalSheet` from `client/src/ui`.
+ * `ModalSheet` uses this layer internally after applying the complete dialog contract.
+ */
 export function ViewportOverlay(props: JSX.HTMLAttributes<HTMLDivElement>) {
   let overlay: HTMLDivElement | undefined;
 

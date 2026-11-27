@@ -647,13 +647,14 @@ export async function createTag(owner: string, input: CreateTagInput): Promise<C
 export type UpdateTagInput = {
   name?: string;
   muted?: boolean;
+  color_token?: string | null;
   directions?: string[];
   categories?: string[];
   direction_toggle?: { directionTagId?: string; enabled?: boolean };
 };
 export type UpdateTagResult =
   | { ok: true; tag: { id: string; name: string; kind: string; isBase: number; muted: number } }
-  | { ok: false; error: 'not_found' | 'name_conflict' };
+  | { ok: false; error: 'not_found' | 'name_conflict' | 'invalid_color' };
 
 /** Update a tag (rename / mute / membership / category-direction toggle). Extracted from
  *  PATCH /api/tags/:id so REST + GraphQL share it. Owner-scoped throughout. */
@@ -686,6 +687,13 @@ export async function updateTag(owner: string, id: string, patch: UpdateTagInput
       if (clash) return { ok: false, error: 'name_conflict' };
       await store().prepare(`UPDATE tags SET name = ? WHERE id = ? AND owner_id = ?`).run(newName, id, owner);
     }
+  }
+  if (tag.kind === 'intention' && patch.color_token !== undefined) {
+    const token = patch.color_token;
+    if (token !== null && !/^tag-(?:[1-9]|1[0-2])$/.test(token)) {
+      return { ok: false, error: 'invalid_color' };
+    }
+    await store().prepare(`UPDATE tags SET color_token = ? WHERE id = ? AND owner_id = ?`).run(token, id, owner);
   }
   if (typeof patch.muted === 'boolean') {
     await store().prepare(`UPDATE tags SET muted = ? WHERE id = ? AND owner_id = ?`).run(patch.muted ? 1 : 0, id, owner);

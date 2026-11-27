@@ -21,7 +21,7 @@ import { LockToggle } from '../components/LockToggle.js';
 import { SectionAddTask } from '../components/SectionAddTask.js';
 import { DayReflowBanner } from '../components/DayReflowBanner.js';
 import { blockColorVar } from '../lib/textures.js';
-import { categoryPrefs, conflictedBlockIds } from '../stores/index.js';
+import { categoryPrefs, textureColorSource, conflictedBlockIds } from '../stores/index.js';
 import { ModalSheet, PageHeader, Toolbar } from '../ui/index.js';
 
 function taskNeedsApproval(task?: Task): boolean {
@@ -370,7 +370,7 @@ export function Focus() {
             </Show>
             <span
               class="w-1.5 h-4 rounded-sm flex-shrink-0"
-              style={{ 'background-color': blockColorVar(b(), categoryPrefs()?.prefs) }}
+              style={{ 'background-color': blockColorVar(b(), categoryPrefs()?.prefs, { source: textureColorSource(), tags: tags(), categories: categoryPrefs()?.prefs, directions: patternPrefs()?.prefs }) }}
             />
             <span class="text-sm font-medium text-foreground truncate">{b().title}</span>
             <span class="text-[11px] font-mono tabular-nums text-muted-foreground flex-shrink-0">
@@ -559,7 +559,7 @@ export function Focus() {
                 <div class="text-xs text-muted-foreground mt-0.5">
                   {fmtTime(b().start_at)} – {fmtTime(b().end_at)}
                   <Show when={heroState()}>
-                    {(s) => <span classList={{ 'text-red-400 font-medium': s().phase === 'warning' }}> · {formatRemaining(s().remainingMs)} left</span>}
+                    {(s) => <span classList={{ 'text-destructive font-medium': s().phase === 'warning' }}> · {formatRemaining(s().remainingMs)} left</span>}
                   </Show>
                 </div>
               </div>
@@ -575,7 +575,7 @@ export function Focus() {
               </button>
               <button
                 onClick={() => setRitualOpen(true)}
-                class="flex items-center gap-1.5 h-9 px-4 rounded-sm bg-accent-hi text-[#041620] text-sm font-semibold hover:brightness-110 transition-all flex-shrink-0"
+                class="flex items-center gap-1.5 h-9 px-4 rounded-sm bg-accent-hi text-accent-hi-foreground text-sm font-semibold hover:brightness-110 transition-all flex-shrink-0"
               >
                 <Play size={14} /> Enter Focus
               </button>

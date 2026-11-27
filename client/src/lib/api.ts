@@ -914,6 +914,7 @@ export const api = {
         direction_toggle?: { directionTagId: string; enabled: boolean };
         name?: string;
         muted?: boolean;
+        color_token?: string | null;
       },
     ) => request<{ tag: Tag }>('PATCH', `/tags/${id}`, body),
     remove: (id: string) => request<{ ok: boolean }>('DELETE', `/tags/${id}`),
@@ -1656,6 +1657,7 @@ export interface Tag {
   // grouping over intentions ("Time Block Category"). `used` blocks delete. `directions` =
   // member pattern names (empty intention = Unsorted).
   kind: 'direction' | 'intention' | 'category';
+  color_token?: string | null;
   muted: boolean;
   is_base: boolean;
   used: boolean;
@@ -1704,6 +1706,7 @@ export interface ViewPrefs {
   appearance?: {
     /** Routine/direction background textures on cards & planner chips. Absent = on. */
     direction_textures?: boolean;
+    texture_color_source?: 'direction' | 'category' | 'tag' | 'responsible';
   };
   /**
    * Phase Z · Z3b — how the Focus Ritual looks and how long a "Start now" session

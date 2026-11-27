@@ -63,6 +63,26 @@ export function rankedSecondaryTags(title: string, primaryName: string, llm: str
   return [...candidates].sort((a, b) => score(b) - score(a) || a.name.localeCompare(b.name));
 }
 
+/** Rank existing task tags by title evidence, model order, and the chosen direction. */
+export function suggestedTaskTags(title: string, direction: string, modelNames: string[]): Tag[] {
+  if (!title.trim()) return [];
+  const candidates = (tags() ?? []).filter((tag) => !tag.muted && (
+    tag.kind === 'intention' || (tag.kind === 'direction' && !direction)
+  ));
+  const titleMatches = new Set(suggestTagsFromTitle(title, candidates.map((tag) => tag.name)));
+  const modelRanks = new Map(modelNames.map((name, index) => [name.toLowerCase(), index]));
+  const ranked = candidates.map((tag) => ({
+    tag,
+    direct: Number(titleMatches.has(tag.name)),
+    model: modelRanks.get(tag.name.toLowerCase()) ?? modelNames.length,
+    related: Number(!!direction && tag.directions.some((name) => name.toLowerCase() === direction.toLowerCase())),
+  })).filter(({ direct, model, related }) => direct || model < modelNames.length || related);
+  ranked.sort((a, b) => b.direct - a.direct || a.model - b.model || b.related - a.related
+    || a.tag.name.localeCompare(b.tag.name));
+  const bestDirection = ranked.find(({ tag }) => tag.kind === 'direction')?.tag;
+  return ranked.map(({ tag }) => tag).filter((tag) => tag.kind === 'intention' || tag === bestDirection);
+}
+
 // ── AF-9: time-block tag shape helpers (pure; unit-tested) ──────────────────────
 
 /**
@@ -434,15 +454,27 @@ export async function saveElement(
 
   // Membership changes (scheduled blocks only) — applied after we hold the block id, so
   // this works identically for New (just-created) and Edit. Detach first, then add.
+  let attachmentMessage = '';
   if (!form.someday) {
     for (const cid of form.detachBlockIds ?? []) await api.blocks.update(cid, { parent_block_id: null });
-    if (form.attachTaskIds?.length) await api.blocks.addTasks(blockId, form.attachTaskIds);
+    if (form.attachTaskIds?.length) {
+      try {
+        const result = await api.blocks.addTasks(blockId, form.attachTaskIds);
+        const details = [];
+        if (result.placed) details.push(`${result.placed} added`);
+        if (result.unplaced) details.push(`${result.unplaced} could not fit`);
+        if (result.skipped) details.push(`${result.skipped} skipped`);
+        if (details.length) attachmentMessage = ` · Tasks: ${details.join(', ')}`;
+      } catch {
+        attachmentMessage = ' · Could not confirm task placement';
+      }
+    }
     for (const rid of form.attachRoutineIds ?? []) await api.patterns.placeToday(rid, { block_id: blockId, date: form.day || localISODate() });
   }
 
   refetchBlocks(); refetchConcepts(); refetchTags();
   if (form.attachTaskIds?.length || form.attachRoutineIds?.length) { refetchTasks(); refetchPatterns(); }
-  return 'Time Block saved';
+  return 'Time Block saved' + attachmentMessage;
 }
 
 /**

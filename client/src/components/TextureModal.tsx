@@ -51,6 +51,7 @@ export function TextureTrigger(props: {
 export function TextureModal(props: {
   enabled: boolean;
   colorToken: string | null;
+  source?: string;
   onToggle: (on: boolean) => void;
   onColor: (token: string | null) => void;
   onClose: () => void;
@@ -81,21 +82,17 @@ export function TextureModal(props: {
             </button>
           </div>
 
-          <Show when={props.enabled}>
-            <div class="flex flex-col gap-2">
+          <div class="flex flex-col gap-2">
               <div class="text-[11px] uppercase tracking-wide text-muted-foreground">Colour</div>
-              {/* The inherit chip IS "Auto" here: null means derive the colour from the
-                  element's categories, which is what the old Auto pill did. */}
               <ItemColorPicker
                 value={props.colorToken}
                 onChange={props.onColor}
-                inheritLabel="Auto — derive the colour from this item's categories"
+                inheritLabel={`Auto — use ${props.source ?? 'category'} color`}
               />
               <p class="text-[11px] text-muted-foreground">
-                {props.colorToken ? 'Fixed colour.' : 'Auto — derived from the categories above.'}
+                {props.colorToken ? 'Fixed colour.' : `Auto — ${props.source ?? 'category'} color.`}
               </p>
-            </div>
-          </Show>
+          </div>
 
           <button type="button" onClick={props.onClose} class="btn-primary text-xs py-1.5 mt-1">
             Done

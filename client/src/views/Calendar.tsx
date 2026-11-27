@@ -29,6 +29,7 @@ import { showToast } from '../stores/index.js';
 import { shareApiExport } from '../lib/native-export.js';
 import { localISODate, rangeUTC, addDays, weekDaysOf, monthGridOf } from '../lib/dates.js';
 import { minutesIntoDay } from '../lib/grid.js';
+import { proposeSlot } from '../lib/propose-slot.js';
 import { DayReflowBanner } from '../components/DayReflowBanner.js';
 import { CalendarGrid } from '../components/CalendarGrid.js';
 import { DayTypeControl } from '../components/DayTypeControl.js';
@@ -592,15 +593,30 @@ export function Calendar() {
           // day type. The picker renders above, keyed off the selection.
           selectedDate={selectedDate}
           onSelectDate={(day) => { setSelectedDate(day); setSelectedDay(day); }}
-          // Wave-3 item 10: clicking an empty slot adds a TASK auto-scheduled at that
-          // time. Defaulting to `kind: 'task'` (not the type chooser) + threading the
-          // clicked day/time into the task's own schedule fields (see ElementWizard's
-          // prefill seeding) means Save creates a scheduled placement at that instant.
-          // In month view the grid supplies a placeholder '09:00'; skip `start` there so
-          // the modal doesn't pin an arbitrary time on month-cell clicks.
           onCreateAt={(day, hhmm) => {
-            const prefill = view() === 'month' ? { day } : { day, start: hhmm };
-            setElementModal({ open: true, mode: 'add', kind: 'task', prefill });
+            // Month cells provide a date. Suggest the first gap that fits the
+            // default 30-minute task on that date, including hidden task blocks.
+            let start: string | undefined = hhmm;
+            if (view() === 'month') {
+              const now = new Date();
+              const nowMin = day === localISODate(now) ? now.getHours() * 60 + now.getMinutes() : null;
+              const minuteOnDay = (iso: string) => {
+                const date = new Date(iso);
+                const localDay = localISODate(date);
+                if (localDay < day) return 0;
+                if (localDay > day) return 24 * 60;
+                return date.getHours() * 60 + date.getMinutes();
+              };
+              const busy = visibleBlocks()
+                .filter((b) => !b.all_day && b.block_type !== 'someday' && b.status !== 'cancelled')
+                .map((b) => ({ startMin: minuteOnDay(b.start_at), endMin: minuteOnDay(b.end_at) }))
+                .filter((span) => span.startMin < span.endMin);
+              const slot = { busy, nowMin, durationMin: 30, workStartMin: 9 * 60 };
+              start = proposeSlot({ ...slot, workEndMin: 18 * 60 })
+                ?? proposeSlot({ ...slot, workEndMin: 24 * 60 })
+                ?? undefined;
+            }
+            setElementModal({ open: true, mode: 'add', kind: 'task', prefill: { day, start } });
           }}
         />
       </div>
