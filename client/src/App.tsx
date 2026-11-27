@@ -27,7 +27,6 @@ import { captureException } from './lib/telemetry.js';
 import { setElementModal, blocks, taskOf, tags, patternPrefs, prefs, refetchPrefs, showToast, refetchTasks, refetchBlocks, refetchFlightPlan, reminders as serverReminders, refetchReminders, closeRitualTask, closeRitualQueue, advanceCloseRitual, clearCloseRitual } from './stores/index.js';
 import { api } from './lib/api.js';
 import {
-  requestNotificationPermission,
   scheduleTaskReminders,
   type ReminderTask,
 } from './lib/notifications.js';
@@ -54,9 +53,10 @@ const Settings = lazy(() => import('./views/Settings.js').then((m) => ({ default
 const Jobs = lazy(() => import('./views/Jobs.js').then((m) => ({ default: m.Jobs })));
 
 /**
- * T7 — wire browser reminders into the app root. Ask once for permission, then
- * (re)schedule whenever the day's scheduled blocks / pattern prefs / tag taxonomy
- * change, and again whenever the tab becomes visible (a `visibilitychange` tick the
+ * T7 — wire browser reminders into the app root. Schedule only after notification
+ * permission has been explicitly granted in Settings, then refresh whenever the day's
+ * scheduled blocks / pattern prefs / tag taxonomy change, and again whenever the tab
+ * becomes visible (a `visibilitychange` tick the
  * effect depends on). The block→ReminderTask mapping lives here so notifications.ts
  * stays store-free: we resolve each block's task's kind='pattern' tag *names* to ids
  * via the tags() resource, keep only future starts, and feed patternPrefs to the
@@ -70,7 +70,6 @@ function useTaskReminders() {
     // Capacitor shells use OS scheduled notifications below. Web Notifications and
     // JavaScript timers are foreground-only there and would duplicate reminders.
     if (isCapacitorShell()) return;
-    requestNotificationPermission();
     const onVisibility = () => {
       if (document.visibilityState === 'visible') setVisibleTick((n) => n + 1);
     };
