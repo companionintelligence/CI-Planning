@@ -44,9 +44,9 @@ describe('the modal', () => {
     return props;
   };
 
-  it('hides the colour grid when texture is off — nothing to colour', () => {
+  it('allows a color override while texture is off', () => {
     setup({ enabled: false });
-    expect(screen.queryByText('Colour')).toBeNull();
+    expect(screen.getByText('Colour')).toBeTruthy();
   });
 
   it('toggles and closes', () => {
@@ -59,7 +59,7 @@ describe('the modal', () => {
 
   it('explains what Auto actually derives from', () => {
     setup({ colorToken: null });
-    expect(screen.getByText(/derived from the categories/)).toBeTruthy();
+    expect(screen.getByText(/Auto — category color/)).toBeTruthy();
   });
 
   it('uses the named shared dialog and closes on Escape and backdrop, not on an inside click', () => {

@@ -3,6 +3,7 @@ export {
   Card,
   DataList,
   EmptyState,
+  FormActions,
   FormField,
   Modal,
   ModalSheet,

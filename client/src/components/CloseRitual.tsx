@@ -4,7 +4,7 @@ import { api, DECLINED_SCORE, type Block, type Score, type Task } from '../lib/a
 import { blocks, refetchTasks, showToast } from '../stores/index.js';
 import { defaultDuration, pickBlock } from '../lib/close-ritual-duration.js';
 import { FACE_KEYS, scoreOf, toggleFace, type FaceKey } from '../lib/close-ritual-score.js';
-import { ViewportOverlay } from './ViewportOverlay.js';
+import { ModalSheet } from '../ui/index.js';
 
 /**
  * The close ritual — a small sheet offered right AFTER a task is ticked off: how did it
@@ -31,10 +31,10 @@ import { ViewportOverlay } from './ViewportOverlay.js';
 
 /** Icons and colours for the three faces. The ORDER and the encoding live in
  *  lib/close-ritual-score.ts — pure, and unit-tested without a DOM. */
-const FACE_META: Record<FaceKey, { label: string; icon: typeof Frown; color: string }> = {
-  frown: { label: 'Bad',  icon: Frown, color: '#f97316' },
-  flat:  { label: 'Fine', icon: Meh,   color: '#94a3b8' },
-  smile: { label: 'Good', icon: Smile, color: '#58ebbf' },
+const FACE_META: Record<FaceKey, { label: string; icon: typeof Frown; colorToken: string }> = {
+  frown: { label: 'Bad',  icon: Frown, colorToken: '--warning' },
+  flat:  { label: 'Fine', icon: Meh,   colorToken: '--muted-foreground' },
+  smile: { label: 'Good', icon: Smile, colorToken: '--mint' },
 };
 
 const FACES = FACE_KEYS.map((key) => ({ key, ...FACE_META[key] }));
@@ -143,12 +143,19 @@ export function CloseRitual(props: {
 
   return (
     <Show when={reviewConfirmed()} fallback={
-      <ViewportOverlay class="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4" onClick={props.onAdvance}>
-        <div class="card w-full max-w-sm p-0 overflow-hidden" role="dialog" aria-modal="true" aria-label={`Review task: ${props.task.title}`} onClick={(e) => e.stopPropagation()}>
-          <div class="flex items-center gap-2 px-4 py-3 border-b border-border">
-            <AlertTriangle size={16} class="text-amber-500 flex-shrink-0" />
-            <span class="text-sm font-semibold text-foreground">Review this task</span>
-          </div>
+      <ModalSheet
+        open
+        title="Review this task"
+        ariaLabel={`Review task: ${props.task.title}`}
+        onClose={props.onAdvance}
+        mode="modal"
+        backdropClass="modal-backdrop"
+        class="max-w-sm !p-0 overflow-hidden"
+        header={<header class="flex items-center gap-2 px-4 py-3 border-b border-border">
+            <AlertTriangle size={16} class="text-warning flex-shrink-0" />
+            <h2 class="text-sm font-semibold text-foreground">Review this task</h2>
+        </header>}
+      >
           <div class="p-4 flex flex-col gap-3">
             <div class="text-sm font-medium text-foreground">{props.task.title}</div>
             <p class="text-xs text-muted-foreground">
@@ -159,12 +166,17 @@ export function CloseRitual(props: {
               <button type="button" class="btn-primary text-xs flex-1" onClick={() => setReviewConfirmed(true)}>Yes, close task</button>
             </div>
           </div>
-        </div>
-      </ViewportOverlay>
+      </ModalSheet>
     }>
-    <ViewportOverlay class="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4" onClick={skip}>
-      <div class="card w-full max-w-sm p-0 overflow-hidden" role="dialog" aria-modal="true" aria-label={`Task reflection: ${props.task.title}`} onClick={(e) => e.stopPropagation()}>
-        <div class="flex items-center gap-2 px-4 py-3 border-b border-border">
+    <ModalSheet
+      open
+      title={`Task reflection: ${props.task.title}`}
+      ariaLabel={`Task reflection: ${props.task.title}`}
+      onClose={skip}
+      mode="modal"
+      backdropClass="modal-backdrop"
+      class="max-w-sm !p-0 overflow-hidden"
+      header={<header class="flex items-center gap-2 px-4 py-3 border-b border-border">
           <div class="flex-1 min-w-0">
             <div class="text-[10px] uppercase tracking-wider text-muted-foreground">
               Nice — done
@@ -177,7 +189,25 @@ export function CloseRitual(props: {
           <button type="button" class="btn-icon" title="Skip — the task stays done" onClick={skip}>
             <X size={14} />
           </button>
+      </header>}
+      footer={<>
+        <div class="flex items-center gap-2">
+          <button type="button" class="btn-ghost text-xs flex-1" onClick={skip}>Skip</button>
+          <button type="button" class="btn-primary text-xs flex-1" disabled={saving()} onClick={save}>
+            {saving() ? 'Saving…' : 'Log it'}
+          </button>
         </div>
+        <Show when={props.remaining > 0}>
+          <button
+            type="button"
+            class="w-full text-[11px] text-muted-foreground hover:text-foreground py-2 border-t border-border mt-2"
+            onClick={skipAll}
+          >
+            Skip the rest ({props.remaining} more)
+          </button>
+        </Show>
+      </>}
+    >
 
         <div class="p-4 flex flex-col gap-4">
           <div>
@@ -195,7 +225,11 @@ export function CloseRitual(props: {
                       onClick={() => setPicked((p) => toggleFace(p, f.key))}
                       class="flex-1 flex flex-col items-center gap-1 py-2 rounded-xl border transition-colors"
                       classList={{ 'border-border text-muted-foreground hover:text-foreground': !on() }}
-                      style={on() ? { 'border-color': f.color, color: f.color, background: `${f.color}1a` } : {}}
+                      style={on() ? {
+                        'border-color': `var(${f.colorToken})`,
+                        color: `var(${f.colorToken})`,
+                        background: `color-mix(in srgb, var(${f.colorToken}) 10%, transparent)`,
+                      } : {}}
                       title={f.label}
                       aria-pressed={on()}
                     >
@@ -260,25 +294,7 @@ export function CloseRitual(props: {
           </div>
         </div>
 
-        <div class="flex items-center gap-2 px-4 py-3 border-t border-border">
-          <button type="button" class="btn-ghost text-xs flex-1" onClick={skip}>Skip</button>
-          <button type="button" class="btn-primary text-xs flex-1" disabled={saving()} onClick={save}>
-            {saving() ? 'Saving…' : 'Log it'}
-          </button>
-        </div>
-
-        {/* The burst escape hatch: only worth offering when there IS a backlog. */}
-        <Show when={props.remaining > 0}>
-          <button
-            type="button"
-            class="w-full text-[11px] text-muted-foreground hover:text-foreground py-2 border-t border-border"
-            onClick={skipAll}
-          >
-            Skip the rest ({props.remaining} more)
-          </button>
-        </Show>
-      </div>
-    </ViewportOverlay>
+    </ModalSheet>
     </Show>
   );
 }

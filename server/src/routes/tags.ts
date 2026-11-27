@@ -15,7 +15,7 @@ export function tagsRouter() {
   router.get('/api/tags', async (ctx) => {
     const rows = await store()
       .prepare(
-        `SELECT t.id, t.name, t.kind, t.is_base AS isBase, t.muted,
+        `SELECT t.id, t.name, t.kind, t.is_base AS isBase, t.muted, t.color_token AS colorToken,
                 COUNT(et.tag_id) AS count
            FROM tags t
            LEFT JOIN entity_tags et ON et.tag_id = t.id
@@ -23,7 +23,7 @@ export function tagsRouter() {
           GROUP BY t.id
           ORDER BY t.kind DESC, count DESC, t.name`,
       )
-      .all<{ id: string; name: string; kind: string; isBase: number; muted: number; count: number }>(currentOwnerId());
+      .all<{ id: string; name: string; kind: string; isBase: number; muted: number; colorToken: string | null; count: number }>(currentOwnerId());
     const tags = await Promise.all(rows.map(async (r) => ({
       id: r.id,
       name: r.name,
@@ -31,6 +31,7 @@ export function tagsRouter() {
       is_base: !!r.isBase,
       muted: !!r.muted,
       count: r.count,
+      color_token: r.kind === 'intention' ? r.colorToken : null,
       used: r.count > 0,
       directions: r.kind === 'intention' ? await directionsOf(r.id) : [],
       categories: r.kind === 'intention' ? await categoriesOf(r.id) : [],
@@ -60,6 +61,7 @@ export function tagsRouter() {
     const res = await updateTag(currentOwnerId(), ctx.params.id, (ctx.request.body ?? {}) as Parameters<typeof updateTag>[2]);
     if (!res.ok) {
       if (res.error === 'not_found') { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+      if (res.error === 'invalid_color') { ctx.status = 400; ctx.body = { error: 'invalid tag color' }; return; }
       ctx.status = 409; ctx.body = { error: 'a tag with that name already exists' }; return;
     }
     const out = res.tag;

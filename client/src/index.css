@@ -127,8 +127,34 @@ html[data-text-size="larger"] { font-size: 125%; --app-text-scale: 1.25; }
   --info-foreground: #ffffff;
   --star-gold: #b57800;
   --auto-generated-outline: #a64b00;
+  /* Semantic component accents. Feature components consume these instead of
+     repeating literal palette values in JSX. */
+  --accent-hi-foreground: var(--teal-950);
+  --priority-1-bg: var(--destructive);
+  --priority-1-fg: var(--destructive-foreground);
+  --priority-2-bg: var(--warning);
+  --priority-2-fg: var(--warning-foreground);
+  --priority-3-bg: var(--mint);
+  --priority-3-fg: var(--teal-950);
+  --priority-later-bg: var(--ci-10);
+  --priority-later-fg: #fff;
+  --rating-score-1: var(--destructive);
+  --rating-score-2: var(--warning);
+  --rating-score-3: var(--muted-foreground);
+  --rating-score-4: var(--brand-accent-light);
+  --rating-score-5: var(--mint);
+  --block-kind-task: var(--brand-accent);
+  --block-kind-meeting: var(--ci-10);
+  --block-kind-focus: var(--mint);
+  --block-kind-habit: var(--ci-2);
+  --block-kind-break: var(--muted-foreground);
+  --block-kind-buffer: var(--border);
+  --block-kind-default: var(--border);
+  --shadow-timeline-now: 0 0 6px color-mix(in srgb, var(--brand-accent-hi) 55%, transparent);
+  --filter-calendar-star: drop-shadow(0 0 4px color-mix(in srgb, var(--star-gold) 80%, transparent));
   --gradient-brand: linear-gradient(135deg, #0f717a, #00a9a7);
   --gradient-hero: linear-gradient(135deg, #e8f9f8, #abd4d8);
+  --gradient-capacity-bar: linear-gradient(135deg, var(--brand-accent-light), var(--info));
   --gradient-aurora: radial-gradient(120% 90% at 50% -10%, rgba(80, 150, 150, 0.1), transparent 60%);
   --shadow-sm: 0 1px 2px rgba(15, 113, 122, 0.08);
   --shadow-md: 0 4px 12px rgba(15, 113, 122, 0.1);
@@ -606,6 +632,12 @@ html[data-colorway="void"]:not(.dark) {
   .p4 { background: #409b9b; }
   .p5 { background: #244859; }
 
+  .priority-choice-1 { background: var(--priority-1-bg); color: var(--priority-1-fg); }
+  .priority-choice-2 { background: var(--priority-2-bg); color: var(--priority-2-fg); }
+  .priority-choice-3 { background: var(--priority-3-bg); color: var(--priority-3-fg); }
+  .priority-choice-later { background: var(--priority-later-bg); color: var(--priority-later-fg); }
+  .text-accent-hi-foreground { color: var(--accent-hi-foreground); }
+
   /* ── Toast ───────────────────────────────────────────────────── */
   .toast,
   .toast-success,
@@ -689,6 +721,19 @@ html[data-colorway="void"]:not(.dark) {
     box-shadow: 0 8px 24px color-mix(in oklab, var(--primary) 25%, transparent);
     letter-spacing: .03em;
   }
+  .dockable-fab {
+    width: 56px;
+    padding: 0;
+    justify-content: center;
+    touch-action: pan-y;
+    transition: transform 180ms ease, background-color 150ms ease;
+  }
+  .dockable-fab-docked {
+    justify-content: flex-start;
+    padding-left: 1px;
+    border-radius: 8px 0 0 8px;
+  }
+  .dockable-fab-dragging { transition: none; }
 
   /* ── Nav ─────────────────────────────────────────────────────── */
   .nav-item {
@@ -1067,7 +1112,6 @@ html[data-colorway="void"]:not(.dark) {
   container: details-panel / inline-size;
 }
 .mobile-details-backdrop { display: none; }
-.mobile-details-backdrop-button { display: none; }
 
 .drawer-head {
   flex: 0 0 auto;
@@ -1286,17 +1330,13 @@ html[data-colorway="void"]:not(.dark) {
     z-index: 39;
     overscroll-behavior: contain;
   }
-  .mobile-details-backdrop-button {
-    display: block;
+  .mobile-details-backdrop::before {
+    content: "";
     position: absolute;
     inset: 0;
-    width: 100%;
-    height: 100%;
-    border: 0;
     background: rgba(0,0,0,.62);
     backdrop-filter: blur(2px);
-    cursor: pointer;
-    touch-action: none;
+    pointer-events: none;
   }
   .details-drawer {
     position: fixed;
@@ -1351,12 +1391,14 @@ html[data-colorway="void"]:not(.dark) {
 .open-time-bug { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 11px; width: 11px; height: 11px; color: var(--background); background: var(--bug-color, var(--primary)); border: 1px solid color-mix(in srgb, var(--bug-color, var(--primary)) 75%, var(--foreground)); border-radius: var(--radius-3); font-size: calc(7px * var(--app-text-scale, 1)); font-weight: 800; line-height: 1; }
 .open-time-bug.is-dimmed { opacity: .38; }
 .open-time-bug.is-ending { border-style: dashed; }
-.open-time-track { position: relative; height: 14px; border: 1px solid var(--border); background: var(--background); overflow: visible; isolation: isolate; }
-.open-time-track::before { content: ''; position: absolute; z-index: -1; inset: 50% 0 auto; height: 1px; background: var(--border); }
+.open-time-track { position: relative; height: 28px; border: 1px solid var(--border); background: var(--background); overflow: visible; isolation: isolate; }
+.open-time-track::before { content: ''; position: absolute; z-index: 0; top: 50%; left: 0; right: 0; height: 1px; background: var(--border); }
 .open-time-slot { position: absolute; z-index: 1; inset-block: 0; min-width: 1px; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; cursor: pointer; transition: background-color 120ms ease, outline-color 120ms ease; }
 .open-time-slot:hover, .open-time-slot:focus-visible { z-index: 3; outline: 1px dashed var(--primary); outline-offset: -2px; background: color-mix(in srgb, var(--primary) 10%, transparent); }
 .open-time-slot.is-dimmed { opacity: .22; }
 .open-time-scheduled { position: absolute; z-index: 2; top: 0; bottom: 0; display: flex; align-items: center; justify-content: center; min-width: 2px; padding: 0 3px; overflow: visible; border: 1px solid var(--item-color, var(--primary)); border-left: 3px solid var(--item-color, var(--primary)); border-radius: 0; color: var(--foreground); background: color-mix(in srgb, var(--item-color, var(--primary)) 72%, var(--background)); cursor: pointer; transition: opacity 120ms ease, filter 120ms ease; }
+.open-time-scheduled.is-timeblock { bottom: 50%; }
+.open-time-scheduled.is-contained { top: 50%; }
 .open-time-scheduled:hover, .open-time-scheduled:focus-visible { z-index: 5; filter: brightness(1.12); outline: 1px solid var(--foreground); outline-offset: 1px; }
 .open-time-scheduled.is-dimmed { opacity: .22; }
 .open-time-scheduled-title { display: none; max-width: 100%; overflow: hidden; font-size: calc(9px * var(--app-text-scale, 1)); line-height: 1; text-overflow: ellipsis; white-space: nowrap; }
@@ -1419,6 +1461,12 @@ html[data-colorway="void"]:not(.dark) {
   display: flex; gap: .25rem; align-items: center;
   border-bottom: 1px solid var(--border);
   margin-bottom: 1.25rem; flex-wrap: wrap;
+}
+.settings-log-title { margin-bottom: 0; }
+@media (max-width: 640px) {
+  .settings-log-header { align-items: stretch; flex-direction: column; }
+  .settings-log-actions { width: 100%; flex-wrap: wrap; }
+  .settings-log-actions > button { flex: 0 0 auto; justify-content: center; white-space: nowrap; }
 }
 .view-tab {
   padding: .5rem .75rem; font-size: .875rem; font-weight: 500;
@@ -1661,6 +1709,8 @@ html[data-text-size="larger"] [class~="text-[13px]"] { font-size: 16.25px !impor
   border-color: color-mix(in srgb, var(--star-gold) 40%, transparent);
 }
 .calendar-star-marker { background-color: var(--star-gold); }
+.timeline-now-glow { box-shadow: var(--shadow-timeline-now); }
+.calendar-perfect-star { filter: var(--filter-calendar-star); }
 .objective-complete-fill { background-color: var(--star-gold); }
 .calendar-block-chip-approval {
   border: 1px dotted var(--auto-generated-outline);

@@ -2,7 +2,7 @@ import { createSignal, createEffect, Show, createResource, For, onMount } from '
 import { useSearchParams } from '@solidjs/router';
 import { ViewHeader } from '../components/ViewHeader.js';
 import { BellRing, Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, Database, AlertTriangle, Users, KeyRound, ScrollText, Eye, FileJson, FileText, Mail, Ticket, ShieldCheck, ExternalLink } from 'lucide-solid';
-import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast, texturesEnabled, setTexturesEnabled, focusAppearance, setFocusAppearance, plannerAxisState, setPlannerCollapseBounds, integrations, refetchIntegrations, recheckIntegrations, aiAvailable, connections, refetchConnections, openOnboardingAt, openTimeRange, setOpenTimeRange, refetchPatternTypes,
+import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast, texturesEnabled, setTexturesEnabled, textureColorSource, setTextureColorSource, type TextureColorSource, focusAppearance, setFocusAppearance, plannerAxisState, setPlannerCollapseBounds, integrations, refetchIntegrations, recheckIntegrations, aiAvailable, connections, refetchConnections, openOnboardingAt, openTimeRange, setOpenTimeRange, refetchPatternTypes,
 } from '../stores/index.js';
 import { api, type PlanningSession } from '../lib/api.js';
 import { sessionToMarkdown, sessionToJson, exportFilename } from '../lib/plan-week-export.js';
@@ -30,8 +30,7 @@ import { shareApiExport, shareTextExport } from '../lib/native-export.js';
 import { clearDeviceLock, hasDeviceLock, setDeviceLockPassword } from '../lib/native-app-lock.js';
 import { colorway, setColorway, setTheme, theme, type Colorway, type Theme } from '../lib/theme.js';
 import { setTextSize, textSize, type TextSize } from '../lib/text-size.js';
-import { ViewportOverlay } from '../components/ViewportOverlay.js';
-import { Card } from '../ui/index.js';
+import { Card, ModalSheet } from '../ui/index.js';
 
 const BROWSER_TZ = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
@@ -1338,6 +1337,17 @@ export function Settings() {
                 <div class="text-[11px] text-muted-foreground">Paint the subtle Home / Work / Community routine texture behind task cards and planner chips.</div>
               </div>
             </label>
+            <label class="flex items-center justify-between gap-3 mt-4 pt-3 border-t border-border">
+              <span class="text-sm text-foreground">Automatic texture source</span>
+              <select class="input py-1 text-sm w-40" aria-label="Automatic texture source"
+                value={textureColorSource()}
+                onChange={(e) => void setTextureColorSource(e.currentTarget.value as TextureColorSource)}>
+                <option value="direction">Direction</option>
+                <option value="category">Category</option>
+                <option value="tag">Tag</option>
+                <option value="responsible">Responsible person</option>
+              </select>
+            </label>
             {/* Night-collapse boundaries (view_prefs.planner.topEndMin / bottomStartMin) */}
             <div class="mt-4 pt-3 border-t border-border flex flex-col gap-3">
               <label class="flex items-center justify-between gap-3">
@@ -2276,9 +2286,9 @@ export function Settings() {
             settings form submit (no fields here feed `form()`/`doSave`). */}
         <Show when={activeTab() === 'logs'}>
           <section class="card">
-            <div class="flex items-center justify-between mb-1 gap-2">
-              <div class="section-label flex items-center gap-1.5" title="Every Weekly-Planning-Assistant session — fill week, schedule tasks, and review — recorded for your own reference. Select sessions below to consolidate them into one summary."><ScrollText size={12} /> Planning-session logs</div>
-              <div class="flex items-center gap-1.5 flex-shrink-0">
+            <div class="settings-log-header flex items-center justify-between mb-1 gap-2">
+              <div class="settings-log-title section-label flex items-center gap-1.5" title="Every Weekly-Planning-Assistant session — fill week, schedule tasks, and review — recorded for your own reference. Select sessions below to consolidate them into one summary."><ScrollText size={12} /> Planning-session logs</div>
+              <div class="settings-log-actions flex items-center gap-1.5 flex-shrink-0">
                 <button
                   type="button"
                   class="btn-secondary text-xs px-3 py-1.5"
@@ -2630,15 +2640,23 @@ export function Settings() {
           for the ElementWizard). Closes on backdrop click or the X. */}
       <Show when={reviewing()}>
         {(session) => (
-          <ViewportOverlay class="modal-backdrop" onClick={() => setReviewing(null)}>
-            <div class="modal max-w-lg" onClick={(e) => e.stopPropagation()}>
-              <div class="px-4 py-3 border-b border-border flex items-center justify-between">
-                <span class="text-sm font-semibold text-foreground">
-                  {session().entry_branch.replace(/_/g, ' ')} · {session().started_at.slice(0, 10)}
-                </span>
-                <button class="btn-icon" onClick={() => setReviewing(null)}><X size={15} /></button>
-              </div>
-
+          <ModalSheet
+            open
+            title={`${session().entry_branch.replace(/_/g, ' ')} · ${session().started_at.slice(0, 10)}`}
+            ariaLabel="Review planning session"
+            onClose={() => setReviewing(null)}
+            mode="modal"
+            backdropClass="modal-backdrop"
+            class="max-w-lg"
+            footer={<div class="flex items-center gap-2">
+              <button type="button" class="btn-secondary text-xs px-3 py-1.5" onClick={() => downloadSession(session(), 'json')}>
+                <FileJson size={12} /> Export JSON
+              </button>
+              <button type="button" class="btn-secondary text-xs px-3 py-1.5" onClick={() => downloadSession(session(), 'md')}>
+                <FileText size={12} /> Export Markdown
+              </button>
+            </div>}
+          >
               <div class="p-4 flex flex-col gap-3 max-h-[60vh] overflow-y-auto">
                 <div class="text-[11px] text-muted-foreground">
                   {session().status} · Started {new Date(session().started_at).toLocaleString()}
@@ -2665,16 +2683,7 @@ export function Settings() {
                 </Show>
               </div>
 
-              <div class="px-4 py-3 border-t border-border flex items-center gap-2">
-                <button type="button" class="btn-secondary text-xs px-3 py-1.5" onClick={() => downloadSession(session(), 'json')}>
-                  <FileJson size={12} /> Export JSON
-                </button>
-                <button type="button" class="btn-secondary text-xs px-3 py-1.5" onClick={() => downloadSession(session(), 'md')}>
-                  <FileText size={12} /> Export Markdown
-                </button>
-              </div>
-            </div>
-          </ViewportOverlay>
+          </ModalSheet>
         )}
       </Show>
     </div>

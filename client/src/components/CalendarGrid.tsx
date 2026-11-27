@@ -16,8 +16,23 @@ import {
   minAt as axisMinAt,
   visibleExtent,
 } from '../lib/day-axis.js';
-import { setElementModal, calendarAxisState, toggleCalendarTop, toggleCalendarBottom, connectionPrefs, categoryPrefs, conflictedBlockIds, taskOf } from '../stores/index.js';
+import { setElementModal, calendarAxisState, toggleCalendarTop, toggleCalendarBottom, connectionPrefs, categoryPrefs, textureColorSource, tags, patternPrefs, conflictedBlockIds, taskOf } from '../stores/index.js';
 import { setActiveBlock, setActiveEntity } from '../stores/selection.js';
+
+function colorForBlock(block: Block): string {
+  const task = block.task_id ? taskOf(block.task_id) : undefined;
+  const colored = {
+    ...task, ...block,
+    tags: task?.tags,
+    secondary_tags: task?.secondary_tags,
+    categories: block.categories?.length ? block.categories : task?.categories,
+    texture_color_token: block.texture_color_token ?? task?.texture_color_token,
+    responsible: block.responsible?.length ? block.responsible : task?.responsible,
+  };
+  return blockColorVar(colored, categoryPrefs()?.prefs, {
+    source: textureColorSource(), tags: tags(), categories: categoryPrefs()?.prefs, directions: patternPrefs()?.prefs,
+  });
+}
 
 function taskNeedsApproval(block: Block): boolean {
   const task = block.task_id ? taskOf(block.task_id) : undefined;
@@ -202,7 +217,7 @@ function NowLine(props: { day: string; state: () => AxisState }) {
         class="absolute left-0 right-0 z-20 pointer-events-none"
         style={{ top: `${axisYOf(mins(), props.state(), PX_PER_MIN)}px` }}
       >
-        <div class="h-px bg-accent-hi shadow-[0_0_6px_rgba(88,235,191,.6)]" />
+        <div class="h-px bg-accent-hi timeline-now-glow" />
         <div class="absolute -left-1 -top-[3px] w-[7px] h-[7px] rounded-circle bg-accent-hi" />
       </div>
     </Show>
@@ -229,7 +244,7 @@ function BlockChip(props: { placed: Placed; day: string; state: () => AxisState;
   // Calendar. A configured connection colour still wins: it is a deliberate per-calendar
   // choice. The old `kindColor` palette was Calendar-only, which is what made the two
   // views disagree.
-  const color = () => connectionColor(b()) ?? blockColorVar(b(), categoryPrefs()?.prefs);
+  const color = () => connectionColor(b()) ?? colorForBlock(b());
   const texture = () => connectionTextureFor(b());
   // Conflict = sharing a cluster in the pass this chip was laid out in. Top-level
   // chips cluster against containers and loose blocks; a member clusters against its
@@ -349,7 +364,7 @@ function BlockChip(props: { placed: Placed; day: string; state: () => AxisState;
 
 // ── All-day chip (pinned header lane; not on the minute axis) ──────────────────
 function AllDayChip(props: { block: Block }) {
-  const color = () => connectionColor(props.block) ?? blockColorVar(props.block, categoryPrefs()?.prefs);
+  const color = () => connectionColor(props.block) ?? colorForBlock(props.block);
   const texture = () => connectionTextureFor(props.block);
   const done = () => ['completed', 'skipped'].includes(props.block.status);
   return (
@@ -796,7 +811,7 @@ export function CalendarGrid(props: Props) {
                           </span>
                         }
                       >
-                        <span title="Perfect day — 5 of 5 stars" class="drop-shadow-[0_0_4px_rgba(244,211,94,0.8)]">
+                        <span title="Perfect day — 5 of 5 stars" class="calendar-perfect-star">
                           <Star size={12} color="var(--star-gold)" fill="var(--star-gold)" />
                         </span>
                       </Show>
@@ -821,7 +836,7 @@ export function CalendarGrid(props: Props) {
                       <div
                         class="text-[10px] leading-tight truncate rounded-none px-1 py-0.5 bg-card"
                         classList={{ 'calendar-block-chip-approval': taskNeedsApproval(b) }}
-                        style={taskNeedsApproval(b) ? undefined : { 'border-left': `2px solid ${blockColorVar(b, categoryPrefs()?.prefs)}` }}
+                        style={taskNeedsApproval(b) ? undefined : { 'border-left': `2px solid ${colorForBlock(b)}` }}
                         title={`${b.title} · ${fmtTime(b.start_at)}`}
                       >
                         <span class="text-slate-300">{b.title}</span>

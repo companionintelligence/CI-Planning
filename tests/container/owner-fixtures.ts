@@ -76,6 +76,10 @@ interface ObjectiveResponse {
   objective: { id: string; title: string; parent_id: string | null };
 }
 
+interface TagResponse {
+  tag: { id: string; name: string; kind: 'direction' | 'intention' | 'category' };
+}
+
 /**
  * Request-scoped test data for the currently authenticated owner. Every row is
  * created through the same REST APIs as the app, and only IDs created by this
@@ -86,6 +90,7 @@ export class OwnerFixtures {
   private readonly blockIds: string[] = [];
   private readonly stagedTaskIds: string[] = [];
   private readonly objectiveIds: string[] = [];
+  private readonly tagIds: string[] = [];
   private owner?: OwnerResponse;
   private taskNumber = 0;
   private blockNumber = 0;
@@ -136,6 +141,21 @@ export class OwnerFixtures {
 
   trackObjective(id: string): void {
     if (!this.objectiveIds.includes(id)) this.objectiveIds.push(id);
+  }
+
+  async createTag(input: {
+    name: string;
+    kind?: 'direction' | 'intention' | 'category';
+    directions?: string[];
+    categories?: string[];
+  }): Promise<TagResponse['tag']> {
+    await this.currentOwner();
+    const response = await this.request.post(`${this.baseUrl}/api/tags`, { data: input });
+    if (!response.ok()) throw new Error(`Could not seed tag (${response.status()}): ${await response.text()}`);
+    const tag = (await response.json() as TagResponse).tag;
+    if (!tag?.id) throw new Error('POST /api/tags did not return a tag ID.');
+    this.tagIds.push(tag.id);
+    return tag;
   }
 
   async createBlock(input: Partial<SeedBlockInput> & Pick<SeedBlockInput, 'start_at' | 'end_at'>): Promise<BlockResponse['block']> {
@@ -206,6 +226,12 @@ export class OwnerFixtures {
       const response = await this.request.delete(`${this.baseUrl}/api/objectives/${encodeURIComponent(id)}`);
       if (!response.ok() && response.status() !== 404) {
         throw new Error(`Could not archive seeded objective ${id} (${response.status()}).`);
+      }
+    }
+    for (const id of [...this.tagIds].reverse()) {
+      const response = await this.request.delete(`${this.baseUrl}/api/tags/${encodeURIComponent(id)}`);
+      if (!response.ok() && response.status() !== 404) {
+        throw new Error(`Could not clean up seeded tag ${id} (${response.status()}).`);
       }
     }
   }

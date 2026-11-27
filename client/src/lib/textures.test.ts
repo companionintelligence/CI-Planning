@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   textureSeed, textureStyle, motifFor, TEXTURE_OPACITY,
-  stripeStyle, categoryStripeColors, elementTextureStyle,
+  stripeStyle, categoryStripeColors, elementTextureStyle, automaticTextureColor, blockColorVar, tagHueToken,
 } from './textures.js';
 
 describe('textureSeed — deterministic + well-distributed', () => {
@@ -143,5 +143,32 @@ describe('elementTextureStyle — the one resolution rule', () => {
   });
   it('nothing to derive and no fallback → undefined', () => {
     expect(elementTextureStyle({}, TAGS, PREFS)).toBeUndefined();
+  });
+});
+
+// The appearance setting must resolve saved colors from the selected source.
+describe('automatic texture colors', () => {
+  const definitions = [
+    { id: 'd1', name: 'work', kind: 'direction' },
+    { id: 'c1', name: 'health', kind: 'category' },
+    { id: 't1', name: 'email', kind: 'intention', color_token: 'tag-8' },
+  ];
+  const element = { tags: ['work'], secondary_tags: ['email'], categories: ['health'], responsible: [{ id: 'person-1' }] };
+  const context = { tags: definitions, categories: { c1: { color_token: 'tag-5' } }, directions: { d1: { color_token: 'tag-7' } } };
+  it('uses the selected direction, category, tag, or lead responsible person', () => {
+    expect(automaticTextureColor(element, { ...context, source: 'direction' })).toBe('tag-7');
+    expect(automaticTextureColor(element, { ...context, source: 'category' })).toBe('tag-5');
+    expect(automaticTextureColor(element, { ...context, source: 'tag' })).toBe('tag-8');
+    expect(automaticTextureColor(element, { ...context, source: 'responsible' })).toBe(tagHueToken('person-1'));
+  });
+  it('keeps the element override ahead of the automatic source', () => {
+    expect(blockColorVar({ ...element, texture_color_token: 'tag-2' }, undefined,
+      { ...context, source: 'tag' })).toBe('var(--tag-2)');
+  });
+  it('varies the stripe pattern with the chosen source', () => {
+    const style = elementTextureStyle(element, definitions, context.categories, undefined,
+      { ...context, source: 'responsible' });
+    const expectedAngle = 30 + (textureSeed('person-1') % 4) * 15;
+    expect(style?.['background-image']).toContain(`repeating-linear-gradient(${expectedAngle}deg`);
   });
 });

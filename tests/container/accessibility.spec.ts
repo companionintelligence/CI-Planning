@@ -231,6 +231,55 @@ test.describe('authenticated accessibility regressions', () => {
     }
   });
 
+  test('mobile details sheet uses the modal contract in both themes', async ({ page }) => {
+    await signInLocal(page, url);
+    await page.addInitScript({ content: axe.source });
+    await page.setViewportSize({ width: 430, height: 560 });
+
+    for (const theme of ['light', 'dark'] as const) {
+      await page.goto(`${url}/settings?tab=preferences`, { waitUntil: 'domcontentloaded' });
+      await expect(page.locator('[data-app-shell]')).toBeVisible();
+      await page.getByLabel('Theme mode').selectOption(theme);
+      await expect.poll(async () => /\bdark\b/.test((await page.locator('html').getAttribute('class')) ?? ''))
+        .toBe(theme === 'dark');
+
+      await page.goto(`${url}/`, { waitUntil: 'domcontentloaded' });
+      const opener = page.getByRole('button', { name: /details drawer/i }).first();
+      if (await opener.getAttribute('aria-expanded') !== 'true') await opener.click();
+      const dialog = page.getByRole('dialog', { name: /^Details:/ });
+      await expect(dialog).toBeVisible();
+      await expect(dialog.getByRole('button', { name: 'Back to work area' })).toBeFocused();
+      await waitForFiniteAnimations(dialog);
+      await expectAxeClean(page, `Details sheet (${theme})`, '[role="dialog"]');
+
+      const bounds = await dialog.boundingBox();
+      const viewport = await page.evaluate(() => ({
+        width: window.visualViewport?.width ?? window.innerWidth,
+        height: window.visualViewport?.height ?? window.innerHeight,
+      }));
+      expect(bounds).not.toBeNull();
+      expect(bounds!.x).toBeGreaterThanOrEqual(0);
+      expect(bounds!.y).toBeGreaterThanOrEqual(0);
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width + 1);
+      expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport.height + 1);
+
+      // The dialog owns Tab cycling, Escape and opener restoration on mobile.
+      await page.keyboard.press('Shift+Tab');
+      await page.keyboard.press('Shift+Tab');
+      await expect.poll(() => dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+      await page.keyboard.press('Escape');
+      await expect(dialog).toHaveCount(0);
+      await expect(opener).toBeFocused();
+
+      await opener.click();
+      const reopenedDialog = page.getByRole('dialog', { name: /^Details:/ });
+      await expect(reopenedDialog).toBeVisible();
+      await page.locator('.mobile-details-backdrop').click({ position: { x: 2, y: 2 } });
+      await expect(reopenedDialog).toHaveCount(0);
+      await expect(opener).toBeFocused();
+    }
+  });
+
   test('conditional reminder and Time-Sense Settings states pass axe in both themes', async ({ page }) => {
     await signInLocal(page, url);
     await page.addInitScript({ content: axe.source });

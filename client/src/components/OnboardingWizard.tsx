@@ -15,7 +15,7 @@ import { PatternTagsSetup, DayTypeSetup, WeekdayTypesStep } from './onboarding/P
 import { useNavigate } from '@solidjs/router';
 import { isCapacitorShell } from '../lib/server-config.js';
 import { clearDeviceLock, hasDeviceLock, setDeviceLockPassword } from '../lib/native-app-lock.js';
-import { ViewportOverlay } from './ViewportOverlay.js';
+import { ModalSheet } from '../ui/index.js';
 
 const BROWSER_TZ = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
@@ -271,10 +271,16 @@ export function OnboardingWizard() {
 
   return (
     <Show when={shouldOnboard()}>
-      <ViewportOverlay
-        class="onboarding-backdrop fixed inset-0 z-[1000] flex items-center justify-center p-4"
+      <ModalSheet
+        open
+        title="Set up your planner"
+        onClose={() => void completeOnboarding()}
+        mode="modal"
+        backdropClass="onboarding-backdrop"
+        class="w-full max-w-md"
+        header={<h2 class="sr-only">Set up your planner</h2>}
       >
-        <div class="card w-full max-w-md flex flex-col gap-4">
+        <div class="flex flex-col gap-4">
           <p class="text-[11px] text-muted-foreground -mb-1">Step {onboardingStep()} of 10</p>
           <Show when={onboardingStep() === 1}>
             <div class="flex flex-col gap-3">
@@ -434,7 +440,7 @@ export function OnboardingWizard() {
             </div>
           </Show>
         </div>
-      </ViewportOverlay>
+      </ModalSheet>
     </Show>
   );
 }

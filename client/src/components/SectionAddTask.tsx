@@ -6,8 +6,7 @@ import { addCandidates, moveHighlight, describeAddOutcome } from '../lib/focus-a
 
 /**
  * Phase 3 — one inline input per expanded Time-Block section: type to search the
- * open backlog, or type something new and press Enter to create it. Either way the
- * task lands INSIDE this container as a member block.
+ * open backlog and place an existing task inside the container.
  *
  * Placement is not reimplemented here. `POST /blocks/:id/add-tasks`
  * (`placeTasksInBlock`) already scatters chosen tasks into a container's free gaps
@@ -16,7 +15,7 @@ import { addCandidates, moveHighlight, describeAddOutcome } from '../lib/focus-a
  * Time-Block modal does, so the two surfaces cannot drift.
  *
  * Keyboard-complete by design (the phase's acceptance bar): ↓/↑ move the highlight,
- * Enter picks the highlighted match or creates when there is none, Escape clears.
+ * Enter picks the highlighted match and Escape clears.
  */
 /**
  * Which section's box should take focus when it next mounts. A successful add
@@ -82,7 +81,10 @@ export function SectionAddTask(props: { block: Block; memberTaskIds: ReadonlySet
     () => api.tasks.list({ status: 'open' }).then((r) => r.tasks),
   );
 
-  const matches = createMemo(() => addCandidates(openTasks() ?? [], query(), props.memberTaskIds));
+  const blockTags = () => [...(props.block.tag?.split(',') ?? []), ...(props.block.secondary_tags ?? [])];
+  const matches = createMemo(() => addCandidates(
+    openTasks.state === 'errored' ? [] : openTasks.latest ?? [], query(), props.memberTaskIds, blockTags(),
+  ));
 
   function reset() {
     setQuery('');
@@ -112,15 +114,6 @@ export function SectionAddTask(props: { block: Block; memberTaskIds: ReadonlySet
     }
   }
 
-  /**
-   * The Enter / "create" path: decide pick-vs-create against a RESOLVED backlog.
-   *
-   * `matches()` is empty both when nothing matches AND while the backlog resource is
-   * still in flight. Reading the second as the first meant a fast typist got a
-   * duplicate task instead of the existing one — and typing fast is the normal case
-   * for the keyboard-only flow this box exists to serve. So when the resource has not
-   * landed yet, wait for a fetch and decide on real data.
-   */
   async function submit() {
     const title = query().trim();
     if (!title || busy()) return;
@@ -129,14 +122,10 @@ export function SectionAddTask(props: { block: Block; memberTaskIds: ReadonlySet
       const backlog = openTasks.loading || openTasks() === undefined
         ? await api.tasks.list({ status: 'open' }).then((r) => r.tasks)
         : openTasks()!;
-      const m = addCandidates(backlog, title, props.memberTaskIds);
-      if (m.length === 0) {
-        const { task } = await api.tasks.create({ title });
-        await place(task.id, task.title);
-      } else {
-        const chosen = m[Math.min(highlight(), m.length - 1)];
-        await place(chosen.id, chosen.title);
-      }
+      const candidates = addCandidates(backlog, title, props.memberTaskIds, blockTags());
+      const chosen = candidates[Math.min(highlight(), candidates.length - 1)];
+      if (!chosen) return;
+      await place(chosen.id, chosen.title);
       reset();
     } catch (err) {
       showToast((err as Error).message, 'error');
@@ -185,19 +174,9 @@ export function SectionAddTask(props: { block: Block; memberTaskIds: ReadonlySet
           <For
             each={matches()}
             fallback={
-              <button
-                type="button"
-                class="w-full text-left px-3 py-2 text-sm hover:bg-muted/50 transition-colors disabled:opacity-50"
-                // Also gated on `loading`: while the backlog is in flight this button
-                // says "Searching…", and clicking it would have created a duplicate of
-                // a task the fetch was about to surface.
-                disabled={busy() || openTasks.loading}
-                onClick={() => void submit()}
-              >
-                <Show when={!openTasks.loading} fallback={<span class="text-muted-foreground">Searching…</span>}>
-                  Create <span class="font-medium">“{query().trim()}”</span> and add it here
-                </Show>
-              </button>
+              <div class="px-3 py-2 text-sm text-muted-foreground" role="status">
+                {openTasks.loading ? 'Searching…' : openTasks.state === 'errored' ? 'Couldn’t load tasks' : 'No matching tasks'}
+              </div>
             }
           >
             {(t, i) => (

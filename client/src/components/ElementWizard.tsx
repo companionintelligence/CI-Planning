@@ -9,11 +9,11 @@ import { TextureTrigger, TextureModal } from './TextureModal.js';
 import { PeopleField } from './PeopleField.js';
 import {
   elementModal, setElementModal, tags, blocks, concepts, tasks, patterns, patternTypes, categoryPrefs, prefs, showToast,
-  refetchBlocks, refetchTasks, refetchFlightPlan,
+  refetchBlocks, refetchTasks, refetchFlightPlan, textureColorSource,
   type ElementKind,
 } from '../stores/index.js';
 import {
-  patternTagList, patternDefaultMinutes, rankedSecondaryTags,
+  patternTagList, patternDefaultMinutes, rankedSecondaryTags, suggestedTaskTags,
   nextHalfHour, saveElement, splitBlockTag, mergeTagNames, isoAt, claimIfFaithful, type ElementForm,
 } from '../lib/element.js';
 import { sortCategories, displayTag } from '../lib/tag-tax.js';
@@ -24,7 +24,8 @@ import { proposeSlot, narrowToBand } from '../lib/propose-slot.js';
 import { findSimilarTasks } from '../lib/similar-tasks.js';
 import { inheritedBlockTag } from '../lib/planner.js';
 import { api, type Task, type Person, type DurationSuggestion, type PatternWindows, type ClassificationClaim } from '../lib/api.js';
-import { ViewportOverlay } from './ViewportOverlay.js';
+import { prioritizeMatchingTags } from '../lib/focus-add.js';
+import { ModalSheet } from '../ui/index.js';
 
 const TB_REPEAT: RepeatPreset[] = ['none', 'daily', 'weekly', 'custom'];
 const TASK_REPEAT: RepeatPreset[] = ['none', 'daily', 'weekly', 'custom'];
@@ -100,50 +101,21 @@ export function ElementWizard() {
   const tab = (): 'task' | 'timeblock' | 'routine' => (kind() === 'habit' ? 'task' : (kind() as 'task' | 'timeblock' | 'routine'));
   const isEdit = () => m().mode === 'edit';
   const dialogName = () => `${isEdit() ? 'Edit' : 'Add'} ${tab() === 'timeblock' ? 'time block' : tab()}`;
-  let modalRoot: HTMLDivElement | undefined;
-  let modalOpener: HTMLElement | null = null;
-  let wizardWasOpen = false;
-
-  createEffect(() => {
-    const visible = open();
-    if (visible && !wizardWasOpen) {
-      modalOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      queueMicrotask(() => {
-        const first = modalRoot?.querySelector<HTMLElement>('[autofocus]')
-          ?? modalRoot?.querySelector<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])');
-        (first ?? modalRoot)?.focus();
-      });
-    } else if (!visible && wizardWasOpen) {
-      const restore = modalOpener;
-      modalOpener = null;
-      queueMicrotask(() => restore?.isConnected && restore.focus());
-    }
-    wizardWasOpen = visible;
-  });
-
-  function containDialogTab(event: KeyboardEvent & { currentTarget: HTMLDivElement }) {
-    if (event.key !== 'Tab' || !modalRoot) return;
-    const focusable = Array.from(modalRoot.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-    ));
-    if (!focusable.length) { event.preventDefault(); modalRoot.focus(); return; }
-    const first = focusable[0]!, last = focusable[focusable.length - 1]!;
-    const outside = !modalRoot.contains(document.activeElement);
-    if (event.shiftKey && (document.activeElement === first || outside)) { event.preventDefault(); last.focus(); }
-    else if (!event.shiftKey && (document.activeElement === last || outside)) { event.preventDefault(); first.focus(); }
-  }
-
   // ── Shared form state ──────────────────────────────────────────────────────
   const [title, setTitle] = createSignal('');
   const [primary, setPrimary] = createSignal('');
   const [intentions, setIntentions] = createSignal<string[]>([]);
   const [tagDraft, setTagDraft] = createSignal('');
+  const [tagPickerOpen, setTagPickerOpen] = createSignal(false);
+  const [dismissedTags, setDismissedTags] = createSignal<string[]>([]);
   const [llm, setLlm] = createSignal<string[]>([]);
   // scheduling / type-specific
   const [day, setDay] = createSignal(localISODate());
   const [start, setStart] = createSignal(nextHalfHour());
   const [durMin, setDurMin] = createSignal(60);
-  const [someday, setSomeday] = createSignal(false);
+  const [taskSomeday, setTaskSomeday] = createSignal(false);
+  const [blockSomeday, setBlockSomeday] = createSignal(false);
+  const someday = () => tab() === 'timeblock' ? blockSomeday() : taskSomeday();
   const [goalDay, setGoalDay] = createSignal(localISODate());
   const [scheduledFor, setScheduledFor] = createSignal(localISODate());
   const [estimate, setEstimate] = createSignal(30);
@@ -258,6 +230,12 @@ export function ElementWizard() {
   const [attachDraft, setAttachDraft] = createSignal('');
   const [attachItems, setAttachItems] = createSignal<{ kind: 'task' | 'habit' | 'routine'; id: string; label: string }[]>([]);
   const [removedMemberIds, setRemovedMemberIds] = createSignal<string[]>([]);
+  const [attachPickerOpen, setAttachPickerOpen] = createSignal(false);
+  let attachInput: HTMLInputElement | undefined;
+  const [attachTasks, { refetch: refetchAttachTasks }] = createResource(
+    () => open() && tab() === 'timeblock' && !someday() && attachPickerOpen(),
+    () => api.tasks.list().then((result) => result.tasks),
+  );
   // popover machinery
   const [popover, setPopover] = createSignal<PopoverName>(null);
   const [calendarOpen, setCalendarOpen] = createSignal(false);
@@ -341,18 +319,18 @@ export function ElementWizard() {
   };
   // Typeahead over open tasks + habit templates, and (when enabled) Routine patterns;
   // excludes self, already-staged, and tasks already inside the block.
-  const attachSuggestions = () => {
+  const attachSuggestions = createMemo(() => {
     const q = attachDraft().trim().toLowerCase();
-    if (!q) return [];
     const takenTasks = new Set(attachItems().filter((i) => i.kind !== 'routine').map((i) => i.id));
     const takenRoutines = new Set(attachItems().filter((i) => i.kind === 'routine').map((i) => i.id));
     const memberTaskIds = new Set(existingMembers().map((b) => b.task_id).filter(Boolean) as string[]);
     // Non-terminal tasks + habit templates (not instances/subtasks). Mirrors the server's
     // skip rule so we never offer something `placeTasksInBlock` would reject.
-    const taskHits = (tasks() ?? [])
-      .filter((t) => !t.parent_id && !t.recurrence_parent_id
+    const eligibleTasks = (attachTasks.state === 'errored' ? [] : attachTasks.latest ?? [])
+      .filter((t) => !t.shared && !t.parent_id && !t.recurrence_parent_id
         && !['done', 'completed', 'skipped', 'cancelled', 'missed'].includes(t.status)
-        && !takenTasks.has(t.id) && !memberTaskIds.has(t.id) && t.title.toLowerCase().includes(q))
+        && !takenTasks.has(t.id) && !memberTaskIds.has(t.id) && t.title.toLowerCase().includes(q));
+    const taskHits = prioritizeMatchingTags(eligibleTasks, [primary(), ...intentions()])
       .map((t) => ({ kind: (t.is_habit ? 'habit' : 'task') as 'habit' | 'task', id: t.id, label: t.title }));
     const rid = routineTypeId();
     const routineHits = enableRoutines() && rid
@@ -360,16 +338,18 @@ export function ElementWizard() {
           .map((p) => ({ kind: 'routine' as const, id: p.id, label: p.name }))
       : [];
     return [...taskHits, ...routineHits].slice(0, 8);
-  };
+  });
   const addAttach = (item: { kind: 'task' | 'habit' | 'routine'; id: string; label: string }) => {
     if (!attachItems().some((i) => i.kind === item.kind && i.id === item.id)) setAttachItems([...attachItems(), item]);
     setAttachDraft('');
+    attachInput?.focus();
   };
   const removeAttach = (id: string) => setAttachItems(attachItems().filter((i) => i.id !== id));
   const removeMember = (id: string) => setRemovedMemberIds([...removedMemberIds(), id]);
   const attachIcon = (k: 'task' | 'habit' | 'routine') => (k === 'routine' ? Boxes : k === 'habit' ? Flame : ListTodo);
 
   function close() {
+    if (saving()) return;
     setElementModal({ open: false, mode: 'add', kind: null });
   }
 
@@ -391,20 +371,9 @@ export function ElementWizard() {
       if (p && !regionFor(p)?.contains(t)) setPopover(null);
       if (calendarOpen() && !dayEl?.contains(t)) setCalendarOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => {
-      // The wizard listens at document level so its own popovers can dismiss, but
-      // nested viewport portals (Texture settings, for example) live outside this
-      // dialog in the DOM. Do not let this parent listener dismiss the wizard when
-      // Escape originates from the topmost portal.
-      if (!open() || e.key !== 'Escape' || !modalRoot?.contains(e.target as Node)) return;
-      if (popover() || calendarOpen()) { setPopover(null); setCalendarOpen(false); }
-      else close();
-    };
     document.addEventListener('mousedown', onDown, true);
-    document.addEventListener('keydown', onKey);
     onCleanup(() => {
       document.removeEventListener('mousedown', onDown, true);
-      document.removeEventListener('keydown', onKey);
     });
   });
 
@@ -416,6 +385,7 @@ export function ElementWizard() {
     if (st.open && !wasOpen) {
       const pf = st.prefill ?? {};
       setTitle(''); setPrimary(''); setIntentions([]); setTagDraft(''); setLlm([]);
+      setDismissedTags([]); setTagPickerOpen(false);
       setNlText(''); setNlBusy(false); setNlLlm(false); setNlError(null);
       setDurationSuggestion(null);
       setNlClaim(null);
@@ -423,7 +393,8 @@ export function ElementWizard() {
       setDay(pf.day || localISODate());
       setStart(pf.start || nextHalfHour());
       setDurMin(pf.durationMin ?? 60);
-      setSomeday(false); setGoalDay(localISODate());
+      setTaskSomeday(st.mode === 'add' && !!pf.taskSomeday);
+      setBlockSomeday(false); setGoalDay(localISODate());
       // A calendar empty-slot click prefills day+time; for a TASK those map to its own
       // schedule fields (scheduled_for / task_time) so Save places it at that instant.
       // Add-mode only — Edit seeds from the target below.
@@ -436,7 +407,7 @@ export function ElementWizard() {
       setTextureEnabled(true); setTextureColorToken(null);
       setMotivation(null); setMotivationSource(null); setMotivationTouched(false);
       setLocked(false); setAllDay(false); setRoutineId(''); setInitialRoutineId('');
-      setAttachDraft(''); setAttachItems([]); setRemovedMemberIds([]);
+      setAttachDraft(''); setAttachItems([]); setRemovedMemberIds([]); setAttachPickerOpen(false);
       setPopover(null); setCalendarOpen(false); setCalTarget('start');
       setCalMonth((pf.day || localISODate()).slice(0, 8) + '01');
       if (st.mode === 'edit' && st.editTarget) loadForEdit(st.editTarget.kind, st.editTarget.id);
@@ -482,7 +453,7 @@ export function ElementWizard() {
       setTbWeekdays(ps.weekdays);
       setTbCustomRule(b.recurrence_rule ?? '');
       if (b.block_type === 'someday') {
-        setSomeday(true); setGoalDay(b.goal_start_date ?? localISODate());
+        setBlockSomeday(true); setGoalDay(b.goal_start_date ?? localISODate());
         setDurMin(b.duration_minutes ?? 60);
       } else {
         setAllDay(!!b.all_day);
@@ -571,6 +542,7 @@ export function ElementWizard() {
   // ── Tag interactions ────────────────────────────────────────────────────────
   function pickPrimary(name: string) {
     const next = primary().toLowerCase() === name.toLowerCase() ? '' : name;
+    if (!next && newTask()) dismissTag(name);
     setPrimary(next);
     // Direction drives the default duration (redesign): estimate + block length.
     if (next) { setDurMin(patternDefaultMinutes(next)); setEstimate(patternDefaultMinutes(next)); }
@@ -605,7 +577,9 @@ export function ElementWizard() {
       setDurationSuggestion(isBlock ? duration ?? null : null);
       // Hydrate the form fields — every value below is visible in the wizard for
       // review/correction before Add.
+      const previousDay = isBlock ? day() : scheduledFor();
       setTitle(parsed.title);
+      if (!isBlock && (parsed.scheduledFor || parsed.taskTime)) setTaskSomeday(false);
       if (parsed.scheduledFor) { if (isBlock) setDay(parsed.scheduledFor); else setScheduledFor(parsed.scheduledFor); }
       if (parsed.taskTime) { if (isBlock) setStart(parsed.taskTime); else setTaskTime(parsed.taskTime); }
       // Priority: task only — the parse/enrichment value, else P1 (owner rule: a
@@ -644,7 +618,8 @@ export function ElementWizard() {
       // Add to accept). Preview-only — nothing is written until Add. The busy list
       // comes from the loaded blocks store, which may not cover a far-off day; the
       // server re-validates placement at create time anyway.
-      if (!parsed.taskTime) {
+      const keepPrefilledStart = !!m().prefill?.start && (!parsed.scheduledFor || parsed.scheduledFor === previousDay);
+      if (!parsed.taskTime && !keepPrefilledStart && (isBlock || !taskSomeday())) {
         const targetDay = parsed.scheduledFor ?? (isBlock ? day() : scheduledFor());
         const dur = parsed.estimatedMinutes ?? (dirs.length ? patternDefaultMinutes(dirs[0]) : (isBlock ? durMin() : estimate()));
         const busy = (blocks() ?? [])
@@ -766,40 +741,64 @@ export function ElementWizard() {
       setSchedulingId(null);
     }
   }
+  const newTask = () => open() && !isEdit() && tab() === 'task';
+  const proposedTags = createMemo(() => {
+    if (!newTask()) return [];
+    const selected = new Set(intentions().map((name) => name.toLowerCase()));
+    return suggestedTaskTags(title(), primary(), llm())
+      .filter((tag) => !selected.has(tag.name.toLowerCase()))
+      .slice(0, 3)
+      .filter((tag) => !dismissedTags().includes(tag.name.toLowerCase()));
+  });
+  const taskDirection = () => primary() || proposedTags().find((tag) => tag.kind === 'direction')?.name || '';
+  const dismissTag = (name: string) => setDismissedTags((names) => [...names, name.toLowerCase()]);
+
   function addIntention(name: string) {
-    const n = name.replace(/^#/, '').trim();
-    if (!n || n.toLowerCase() === primary().toLowerCase()) return;
-    if (intentions().some((x) => x.toLowerCase() === n.toLowerCase())) return;
-    setIntentions([...intentions(), n]);
+    const typed = name.replace(/^#+/, '').trim();
+    if (!typed) return;
+    const existing = (tags() ?? []).find((tag) => tag.name.toLowerCase() === typed.toLowerCase());
+    const canonical = existing?.name ?? typed;
+    if (existing?.kind === 'category') return;
+    if (existing?.kind === 'direction' && tab() === 'task') {
+      if (primary() !== canonical) pickPrimary(canonical);
+    } else if (canonical.toLowerCase() !== primary().toLowerCase()) {
+      setIntentions(mergeTagNames(intentions(), [canonical]));
+    }
     setTagDraft('');
   }
-  const removeIntention = (name: string) => setIntentions(intentions().filter((x) => x !== name));
+  function removeIntention(name: string) {
+    dismissTag(name);
+    setIntentions((names) => names.filter((n) => n !== name));
+  }
 
   const secondarySuggestions = () =>
     rankedSecondaryTags(title(), primary(), llm()).filter(
       (t) => !intentions().some((x) => x.toLowerCase() === t.name.toLowerCase()),
     );
   const tagSuggestions = () => {
-    const q = tagDraft().trim().toLowerCase().replace(/^#/, '');
-    if (!q) return [];
-    const taken = new Set([primary().toLowerCase(), ...intentions().map((s) => s.toLowerCase())]);
+    const q = tagDraft().trim().toLowerCase().replace(/^#+/, '');
+    const taken = new Set([taskDirection().toLowerCase(), ...intentions().map((s) => s.toLowerCase()),
+      ...proposedTags().map((tag) => tag.name.toLowerCase())]);
     return (tags() ?? [])
-      .filter((t) => t.kind === 'intention' && t.name.toLowerCase().includes(q) && !taken.has(t.name.toLowerCase()))
+      .filter((t) => (t.kind === 'intention' || (tab() === 'task' && t.kind === 'direction'))
+        && (q || !t.muted) && t.name.toLowerCase().includes(q) && !taken.has(t.name.toLowerCase()))
       .slice(0, 6);
   };
 
-  // Debounced LLM tag refine — feeds the ranking; degrades to heuristic when down.
-  let llmTimer: ReturnType<typeof setTimeout> | undefined;
+  // Ignore outdated responses when the title changes or the wizard closes.
   createEffect(() => {
-    const t = title();
-    clearTimeout(llmTimer);
-    if (!t.trim() || !primary()) { setLlm([]); return; }
-    llmTimer = setTimeout(async () => {
+    const t = title().trim();
+    const shouldSuggest = open() && (newTask() || !!primary());
+    setLlm([]);
+    if (!t || !shouldSuggest) return;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
       try {
         const { tags: out } = await api.tasks.suggestTags(t);
-        if (title() === t) setLlm(out);
+        if (!cancelled) setLlm(out);
       } catch { /* offline → heuristic only */ }
     }, 600);
+    onCleanup(() => { cancelled = true; clearTimeout(timer); });
   });
 
   // ── Day / due / calendar ────────────────────────────────────────────────────
@@ -821,6 +820,7 @@ export function ElementWizard() {
     if (tab() === 'timeblock') setDay(d);
     else {
       setScheduledFor(d);
+      setTaskSomeday(false);
       // Due reacts to the start date: a new start day clears any custom due
       // override so due falls back to "same as start" until re-picked.
       setDueEdited(false);
@@ -874,7 +874,8 @@ export function ElementWizard() {
   const barDurMin = () => (tab() === 'timeblock' ? durMin() : estimate());
   const setBarStart = (min: number) => {
     const v = minToHHMM(clampDay(min));
-    if (tab() === 'timeblock') setStart(v); else setTaskTime(v);
+    if (tab() === 'timeblock') setStart(v);
+    else { setTaskTime(v); setTaskSomeday(false); }
   };
   // Time blocks are clamped to a 15-minute floor on save (saveElement); tasks
   // (estimated_minutes) are not, so their floor is 5. Enforce the same floor HERE
@@ -973,13 +974,13 @@ export function ElementWizard() {
   // an existing task may legitimately have no direction, and gating would strand it.
   // A gated pane sets `inert` (blocks focus + keyboard, drops it from the a11y tree);
   // pointer-events-none is the mouse-only fallback for browsers without inert.
-  const gateLeft = () => !isEdit() && tab() !== 'routine' && title().trim() === '';
-  const gateRight = () => !isEdit() && tab() !== 'routine' && (title().trim() === '' || !primary());
+  const gateLeft = () => !isEdit() && tab() === 'task' && title().trim() === '';
+  const gateRight = () => !isEdit() && tab() !== 'routine' && (title().trim() === '' || !taskDirection());
 
   // ── Summary line ────────────────────────────────────────────────────────────
   const summaryText = () => {
     if (tab() === 'routine') return 'A named, reusable bundle of tasks';
-    const dir = primary() || displayTag(categoryNames()[0] ?? '') || (tab() === 'task' ? 'Task' : 'Block');
+    const dir = taskDirection() || displayTag(categoryNames()[0] ?? '') || (tab() === 'task' ? 'Task' : 'Block');
     if (taskIsSomeday()) return `${dir} · Someday${intentions().length ? ' · ' + intentions().join(', ') : ''}`;
     if (tab() === 'timeblock' && someday()) return `${dir} · Someday Task · ${fmtDayLabel(goalDay())} · ${fmtDur(durMin())}`;
     if (blockAllDayView()) return `${dir} · ${fmtDayLabel(day())} · All-day`;
@@ -989,12 +990,14 @@ export function ElementWizard() {
   };
 
   async function doSave() {
+    if (saving()) return;
     const k = kind();
     const effectiveKind = k === 'task' && makeHabit() ? 'habit' : k;
     setSaving(true);
     try {
       const form: ElementForm = {
-        title: title(), primary: primary(), intentions: intentions(),
+        title: title(), primary: taskDirection(),
+        intentions: mergeTagNames(intentions(), proposedTags().filter((tag) => tag.kind === 'intention').map((tag) => tag.name)),
         note: note() || undefined,
         day: day(), start: start(), durationMin: durMin(), someday: someday(), goalDay: goalDay(),
         locked: locked(), allDay: allDay(),
@@ -1065,6 +1068,7 @@ export function ElementWizard() {
       };
       const msg = await saveElement(effectiveKind, m().mode, form, m().editTarget?.id);
       showToast(msg, 'success');
+      setSaving(false);
       close();
     } catch (err) { showToast((err as Error).message, 'error'); }
     finally { setSaving(false); }
@@ -1105,47 +1109,63 @@ export function ElementWizard() {
     </div>
   );
 
-  // Tags — selected chips + up to 3 ranked "likely" dashed suggestions inline,
-  // then the small "+ tag" input with typeahead.
   const TagSection = () => (
     <div class="flex flex-col gap-1.5">
       <div class={sectionLabel}>Tags</div>
-      <div class="flex flex-wrap gap-1.5">
+      <div class="flex flex-wrap items-center gap-1.5">
         <For each={intentions()}>
           {(name) => (
             <span class="text-xs px-2 py-0.5 rounded-sm border border-primary/40 bg-primary/10 text-primary inline-flex items-center gap-1">
               {name}
-              <button type="button" onClick={() => removeIntention(name)} class="opacity-60 hover:opacity-100"><X size={10} /></button>
+              <button type="button" aria-label={`Remove tag ${name}`} onClick={() => removeIntention(name)}
+                class="opacity-60 hover:opacity-100"><X size={12} /></button>
             </span>
           )}
         </For>
-        <For each={secondarySuggestions().slice(0, 3)}>
-          {(t) => (
-            <button type="button" onClick={() => addIntention(t.name)}
-              class="text-xs px-2 py-0.5 rounded-sm border border-dashed border-border text-muted-foreground hover:text-foreground inline-flex items-center gap-1 transition-colors">
-              <Plus size={10} /> {t.name}
-            </button>
-          )}
-        </For>
-      </div>
-      <div class="relative">
-        <input class="w-28 bg-transparent border-0 border-b border-border text-xs text-foreground py-1 px-0.5 outline-none focus:border-ring"
-          placeholder="+ tag" value={tagDraft()}
-          onInput={(e) => setTagDraft(e.currentTarget.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter' && tagDraft().trim()) { e.preventDefault(); addIntention(tagDraft()); } }} />
-        <Show when={tagSuggestions().length > 0}>
-          <div class="absolute z-50 left-0 mt-1 min-w-40 rounded-md border border-border bg-popover shadow-xl max-h-40 overflow-y-auto">
-            <For each={tagSuggestions()}>
-              {(t) => (
-                <button type="button" onClick={() => addIntention(t.name)}
-                  class="w-full text-left px-3 py-1.5 text-sm text-foreground hover:bg-sidebar-accent">
-                  {t.name}
-                </button>
-              )}
-            </For>
-          </div>
+        <Show when={newTask()} fallback={
+          <For each={secondarySuggestions().slice(0, 3)}>
+            {(t) => (
+              <button type="button" onClick={() => addIntention(t.name)}
+                class="text-xs px-2 py-0.5 rounded-sm border border-dashed border-border text-muted-foreground hover:text-foreground inline-flex items-center gap-1">
+                <Plus size={10} /> {t.name}
+              </button>
+            )}
+          </For>
+        }>
+          <For each={proposedTags()}>
+            {(tag) => (
+              <span title="Suggested tag" class="text-xs px-2 py-0.5 rounded-sm border border-dashed border-primary/50 bg-primary/10 text-primary inline-flex items-center gap-1">
+                {tag.name}
+                <button type="button" aria-label={`Remove suggested tag ${tag.name}`} onClick={() => dismissTag(tag.name)}
+                  class="opacity-60 hover:opacity-100"><X size={12} /></button>
+              </span>
+            )}
+          </For>
         </Show>
+        <button type="button" aria-label="Add tag" title="Add tag" aria-expanded={tagPickerOpen()}
+          onClick={() => setTagPickerOpen(!tagPickerOpen())} class="btn-icon">
+          <Plus size={14} />
+        </button>
       </div>
+      <Show when={tagPickerOpen()}>
+        <div class="relative">
+          <input ref={(el) => queueMicrotask(() => el.isConnected && el.focus())}
+            class="input w-full text-xs" aria-label="Find or type a tag" placeholder="Find or type a tag…"
+            value={tagDraft()} onInput={(e) => setTagDraft(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && tagDraft().trim()) { e.preventDefault(); addIntention(tagDraft()); }
+              if (e.key === 'Escape') { e.stopPropagation(); setTagPickerOpen(false); }
+            }} />
+          <For each={tagSuggestions()}>
+            {(t) => (
+              <button type="button" onClick={() => addIntention(t.name)}
+                class="w-full text-left px-2 py-1 text-xs text-foreground hover:bg-sidebar-accent">
+                {t.name}
+              </button>
+            )}
+          </For>
+        </div>
+      </Show>
     </div>
   );
 
@@ -1282,12 +1302,241 @@ export function ElementWizard() {
     </div>
   );
 
-  const barGradient = 'linear-gradient(135deg, #abd4d8, #70a6af)';
+  const NotesAndActions = () => (
+    <>
+      <NoteSection />
+
+      {/* ── Utility chips + popovers ── */}
+      <div ref={utilityEl} class="relative flex flex-col gap-2 mt-0.5">
+        <div class="flex flex-wrap gap-1.5">
+          <Show when={tab() === 'task'}>
+            <button type="button" onClick={() => togglePopover('defer')}
+              class={utilChip}
+              classList={{ [chipOn]: !!deferUntil() || popover() === 'defer', [chipOff]: !deferUntil() && popover() !== 'defer' }}>
+              <Clock size={11} /> {deferUntil() ? `Defer · ${shortDate(deferUntil())}` : 'Defer'}
+            </button>
+            <button type="button" onClick={() => togglePopover('depends')}
+              class={utilChip}
+              classList={{ [chipOn]: dependsOn().length > 0 || popover() === 'depends', [chipOff]: dependsOn().length === 0 && popover() !== 'depends' }}>
+              <Link2 size={11} /> {dependsOn().length ? `Depends · ${dependsOn().length}` : 'Depends'}
+            </button>
+          </Show>
+          <button type="button" onClick={() => togglePopover('repeat')}
+            class={utilChip}
+            classList={{
+              [chipOn]: (tab() === 'task' ? taskRepeat() !== 'none' : tbRepeat() !== 'none') || popover() === 'repeat',
+              [chipOff]: (tab() === 'task' ? taskRepeat() === 'none' : tbRepeat() === 'none') && popover() !== 'repeat',
+            }}>
+            <RepeatIcon size={11} /> {(tab() === 'task' ? taskRepeat() : tbRepeat()) === 'none' ? 'Repeat' : repeatLabel(tab() === 'task' ? taskRepeat() : tbRepeat())}
+          </button>
+          <Show when={tab() === 'task' && enableRoutines()}>
+            <button type="button" onClick={() => togglePopover('routine')}
+              class={utilChip}
+              classList={{ [chipOn]: !!routineId() || popover() === 'routine', [chipOff]: !routineId() && popover() !== 'routine' }}>
+              <Boxes size={11} /> {routineId() ? `Routine · ${routineList().find((r) => r.id === routineId())?.name ?? ''}` : 'Routine'}
+            </button>
+          </Show>
+          <Show when={tab() === 'task'}>
+            <button type="button"
+              onClick={() => { if (kind() !== 'habit' && taskRepeat() !== 'none') setMakeHabit(!makeHabit()); }}
+              disabled={kind() !== 'habit' && taskRepeat() === 'none'}
+              title={kind() === 'habit' ? 'This is a habit' : taskRepeat() === 'none' ? 'Set a repeat first' : 'Track a daily streak'}
+              class={utilChip}
+              classList={{
+                [chipOn]: makeHabit() || kind() === 'habit',
+                [chipOff]: !makeHabit() && kind() !== 'habit' && taskRepeat() !== 'none',
+                'border-border text-muted-foreground/40 cursor-not-allowed': kind() !== 'habit' && taskRepeat() === 'none',
+              }}>
+              <Flame size={11} /> Track as habit
+            </button>
+          </Show>
+          <Show when={tab() === 'timeblock'}>
+            <button type="button" onClick={() => setLocked(!locked())}
+              class={utilChip}
+              classList={{ [chipOn]: locked(), [chipOff]: !locked() }}>
+              <Lock size={11} /> Lock
+            </button>
+            <Show when={!someday()}>
+              <button type="button" onClick={() => setAllDay(!allDay())}
+                class={utilChip}
+                classList={{ [chipOn]: allDay(), [chipOff]: !allDay() }}>
+                <Square size={11} /> All-day
+              </button>
+            </Show>
+          </Show>
+        </div>
+
+        {/* Defer popover */}
+        <Show when={popover() === 'defer'}>
+          <div class={`${popCard} min-w-48`}>
+            <div class={popLabel}>Hide until…</div>
+            <For each={deferOptions()}>
+              {(o) => (
+                <button type="button" class={popItem}
+                  onClick={() => { setDeferUntil(o.date); setPopover(null); }}>
+                  {o.label}
+                </button>
+              )}
+            </For>
+            <label class="flex items-center gap-2 border-t border-border mt-1 pt-1.5 px-2 text-xs text-muted-foreground">
+              Date
+              <input type="date" class="input py-0.5 text-xs flex-1" value={deferUntil()}
+                onInput={(e) => setDeferUntil(e.currentTarget.value)} />
+            </label>
+            <Show when={deferUntil()}>
+              <button type="button" class={`${popItem} text-muted-foreground`}
+                onClick={() => { setDeferUntil(''); setPopover(null); }}>Clear defer</button>
+            </Show>
+          </div>
+        </Show>
+
+        {/* Depends popover */}
+        <Show when={popover() === 'depends'}>
+          <div class={`${popCard} w-60`}>
+            <div class={popLabel}>Depends on (won't schedule until done)</div>
+            <Show when={dependsOn().length > 0}>
+              <div class="flex flex-wrap gap-1 mb-1.5">
+                <For each={dependsOn()}>
+                  {(id) => (
+                    <span class="text-[11px] px-2 py-0.5 rounded-sm border border-primary/40 bg-primary/10 text-primary inline-flex items-center gap-1 max-w-full">
+                      <span class="truncate">{taskById(id)?.title ?? id}</span>
+                      <button type="button" onClick={() => removeDep(id)} class="flex-shrink-0"><X size={9} /></button>
+                    </span>
+                  )}
+                </For>
+              </div>
+            </Show>
+            <input class="input py-1 text-xs mb-1" placeholder="Search tasks…" value={depDraft()}
+              onInput={(e) => setDepDraft(e.currentTarget.value)} />
+            <For each={depSuggestions()}>
+              {(t) => (
+                <button type="button" class={`${popItem} truncate`} onClick={() => addDep(t.id)}>
+                  {t.title}
+                </button>
+              )}
+            </For>
+          </div>
+        </Show>
+
+        {/* Repeat popover */}
+        <Show when={popover() === 'repeat'}>
+          <div class={`${popCard} w-60`}>
+            <Show when={tab() === 'task'} fallback={
+              <RepeatPopoverBody presets={TB_REPEAT} value={tbRepeat} set={setTbRepeat}
+                weekdays={tbWeekdays} toggle={toggleTbWeekday}
+                custom={tbCustomRule} setCustom={setTbCustomRule} rule={currentTbRule} />
+            }>
+              <RepeatPopoverBody presets={kind() === 'habit' ? HABIT_REPEAT : TASK_REPEAT}
+                value={taskRepeat} set={setTaskRepeat}
+                weekdays={taskWeekdays} toggle={toggleWeekday}
+                custom={taskCustomRule} setCustom={setTaskCustomRule} rule={currentTaskRule} />
+            </Show>
+          </div>
+        </Show>
+
+        {/* Routine popover — single-select membership */}
+        <Show when={popover() === 'routine'}>
+          <div class={`${popCard} min-w-48 max-h-56 overflow-y-auto`}>
+            <div class={popLabel}>Add to routine</div>
+            <For each={routineList()}>
+              {(r) => (
+                <button type="button" class={popItem}
+                  classList={{ 'text-primary': routineId() === r.id }}
+                  onClick={() => { setRoutineId(r.id); setPopover(null); }}>
+                  {r.name}
+                </button>
+              )}
+            </For>
+            <Show when={routineList().length === 0}>
+              <div class="text-xs text-muted-foreground px-2 py-1">No routines yet.</div>
+            </Show>
+            <Show when={routineId()}>
+              <button type="button"
+                class="w-full text-left text-xs px-2 py-1.5 mt-1 border-t border-border text-muted-foreground hover:text-foreground"
+                onClick={() => { setRoutineId(''); setPopover(null); }}>
+                Remove from routine
+              </button>
+            </Show>
+          </div>
+        </Show>
+      </div>
+    </>
+  );
+
+  const PeopleAndTexture = () => (
+    <>
+      {/* People on work (0151) — two peer sets over ONE model, replacing the
+          old three-pill "Who is this for?" control. Beneficiaries IS that
+          question, now answered with actual people; the server derives the
+          Triality motivation axis from the set (empty ⇒ unlabeled, self-only
+          ⇒ me, self+others ⇒ us, others-only ⇒ them).
+
+          Both fields render on BOTH tabs: a meeting block having attendees is
+          the most natural case in the whole feature, and entity_people is
+          keyed by entity_kind so a block carries them natively.
+
+          The space comes out even — "Who is this for?" was 2 rows and the
+          texture swatch grid was 4; these two fields plus the collapsed
+          texture trigger are 6. */}
+      <PeopleField
+        label="Responsible"
+        value={responsible()}
+        onChange={(next) => { setResponsibleTouched(true); setResponsibleInherit(false); setResponsible(next); }}
+        directory={directory() ?? []}
+        roster={roster() ?? []}
+        onDirectoryChanged={() => void refetchDirectory()}
+        suggested={!responsibleTouched()}
+        onInherit={backsATask() ? () => { setResponsibleTouched(true); setResponsibleInherit(true); } : undefined}
+        onOverride={() => { setResponsibleTouched(true); setResponsibleInherit(false); setResponsible([]); }}
+        inheriting={responsibleInherit()}
+      />
+      <PeopleField
+        label="Beneficiaries"
+        value={beneficiaries()}
+        onChange={(next) => { setBeneficiariesTouched(true); setBeneficiariesInherit(false); setBeneficiaries(next); }}
+        directory={directory() ?? []}
+        roster={roster() ?? []}
+        onDirectoryChanged={() => void refetchDirectory()}
+        suggested={!beneficiariesTouched()}
+        onInherit={backsATask() ? () => { setBeneficiariesTouched(true); setBeneficiariesInherit(true); } : undefined}
+        onOverride={() => { setBeneficiariesTouched(true); setBeneficiariesInherit(false); setBeneficiaries([]); }}
+        inheriting={beneficiariesInherit()}
+      />
+
+      {/* Texture — Phase B (0135). Collapsed to a single trigger (0151): the
+          14-swatch grid wrapped to three rows here, and that space now
+          carries the two people fields above. Same signals, same payload —
+          only the presentation moved. */}
+      <div class="flex flex-col gap-1.5">
+        <div class={sectionLabel}>Texture</div>
+        <TextureTrigger
+          enabled={textureEnabled()}
+          colorToken={textureColorToken()}
+          onOpen={() => setTextureOpen(true)}
+        />
+      </div>
+    </>
+  );
+
+  const barGradient = 'var(--gradient-capacity-bar)';
 
   return (
-    <Show when={open()}>
-      <ViewportOverlay class="modal-backdrop" onClick={(e) => e.target === e.currentTarget && close()}>
-        <div ref={modalRoot} class="modal md:max-w-[680px]" role="dialog" aria-modal="true" aria-label={dialogName()} tabindex="-1" onKeyDown={containDialogTab}>
+      <ModalSheet
+        open={open()}
+        title={dialogName()}
+        ariaLabel={dialogName()}
+        onClose={close}
+        mode="modal"
+        backdropClass="modal-backdrop"
+        class="md:max-w-[680px] !p-0 overflow-hidden"
+        header={<h2 class="sr-only">{dialogName()}</h2>}
+        onEscape={() => {
+          if (!popover() && !calendarOpen()) return false;
+          setPopover(null);
+          setCalendarOpen(false);
+          return true;
+        }}
+      >
           {/* ── Header: segmented tabs + close, then the borderless title ── */}
           <div class="px-5 pt-4 pb-3 border-b border-border">
             <div class="flex items-center gap-2 mb-3">
@@ -1298,7 +1547,12 @@ export function ElementWizard() {
                     const disabled = () => isEdit() && !active();
                     return (
                       <button type="button"
-                        onClick={() => !disabled() && setElementModal({ ...m(), kind: key })}
+                        onClick={() => {
+                          if (disabled() || active()) return;
+                          setTaskSearchMode(false);
+                          setTaskQuery('');
+                          setElementModal({ ...m(), kind: key });
+                        }}
                         disabled={disabled()}
                         title={disabled() ? "Can't change type while editing" : undefined}
                         class="px-3 py-1 rounded-sm text-[11.5px] font-semibold transition-colors whitespace-nowrap"
@@ -1316,7 +1570,7 @@ export function ElementWizard() {
               {/* Search-existing-tasks toggle (owner request) — sits beside the type
                   toggle, not buried in the "Describe it" input. Hidden during edit/
                   routine, same scope as the NL line it repurposes. */}
-              <Show when={tab() !== 'routine' && !isEdit()}>
+              <Show when={tab() === 'task' && !isEdit()}>
                 <button
                   type="button"
                   class="btn-icon"
@@ -1499,7 +1753,112 @@ export function ElementWizard() {
                 classList={{ 'opacity-50': gateLeft(), 'pointer-events-none': gateLeft() }}
                 inert={gateLeft()}
                 aria-disabled={gateLeft()}>
+                <Show when={tab() === 'task'}><NotesAndActions /></Show>
+
+                {/* Priority — tasks */}
+                <Show when={tab() === 'task'}>
+                  <div class="flex flex-col gap-1.5">
+                    <div class={sectionLabel}>Priority</div>
+                    <div class="flex gap-1">
+                      <For each={[1, 2, 3]}>
+                        {(p) => (
+                          <button type="button" onClick={() => { setPriority(p); setTaskSomeday(false); }}
+                            class={`${seg} font-semibold`}
+                            classList={{ [chipOn]: !someday() && priority() === p, [chipOff]: someday() || priority() !== p }}>
+                            P{p}
+                          </button>
+                        )}
+                      </For>
+                      <Show when={kind() === 'task'}>
+                        <button type="button" onClick={() => setTaskSomeday(true)}
+                          class={`${seg} font-semibold`}
+                          classList={{ [chipOn]: someday(), [chipOff]: !someday() }}>
+                          Someday
+                        </button>
+                      </Show>
+                    </div>
+                  </div>
+                </Show>
+
                 <PrimaryPicker label="Direction" empty="No direction tags yet." />
+
+                {/* Block contents — scheduled blocks only */}
+                <Show when={tab() === 'timeblock' && !someday()}>
+                  <div class="flex flex-col gap-1.5 border-t border-border pt-2.5">
+                    <div class={sectionLabel}>Tasks in this block</div>
+                    <Show when={existingMembers().length > 0 || attachItems().length > 0}>
+                      <div class="flex flex-wrap gap-1.5">
+                        <For each={existingMembers()}>
+                          {(b) => (
+                            <span class="text-xs px-2 py-0.5 rounded-sm border border-border text-foreground inline-flex items-center gap-1 max-w-full">
+                              <ListTodo size={11} class="flex-shrink-0 text-muted-foreground" />
+                              <span class="truncate">{b.title}</span>
+                              <button type="button" aria-label={`Remove ${b.title} from block`} onClick={() => removeMember(b.id)} class="hover:text-destructive flex-shrink-0"><X size={11} /></button>
+                            </span>
+                          )}
+                        </For>
+                        <For each={attachItems()}>
+                          {(it) => {
+                            const Icon = attachIcon(it.kind);
+                            return (
+                              <span class="text-xs px-2 py-0.5 rounded-sm border border-primary/40 bg-primary/10 text-primary inline-flex items-center gap-1 max-w-full">
+                                <Icon size={11} class="flex-shrink-0" />
+                                <span class="truncate">{it.label}</span>
+                                <button type="button" aria-label={`Remove ${it.label} from block`} onClick={() => removeAttach(it.id)} class="hover:text-destructive flex-shrink-0"><X size={11} /></button>
+                              </span>
+                            );
+                          }}
+                        </For>
+                      </div>
+                    </Show>
+                    <input ref={attachInput} class="input w-full text-xs"
+                      aria-label="Find tasks to add"
+                      aria-expanded={attachPickerOpen()}
+                      placeholder={enableRoutines() ? 'Find tasks, habits, or routines…' : 'Find tasks or habits…'}
+                      value={attachDraft()}
+                      onFocus={() => setAttachPickerOpen(true)}
+                      onInput={(e) => setAttachDraft(e.currentTarget.value)}
+                      onKeyDown={(e) => {
+                        if (e.key !== 'Enter') return;
+                        e.preventDefault();
+                        const first = attachSuggestions()[0];
+                        if (first) addAttach(first);
+                      }} />
+                    <Show when={attachPickerOpen()}>
+                      <div class="rounded-md border border-border bg-popover max-h-44 overflow-y-auto">
+                        <Show when={attachTasks.loading}>
+                          <div class="px-3 py-1.5 text-xs text-muted-foreground" role="status">Loading tasks…</div>
+                        </Show>
+                        <Show when={attachTasks.state === 'errored'}>
+                          <button type="button" class={popItem} onClick={() => void refetchAttachTasks()}>
+                            Couldn’t load tasks. Try again
+                          </button>
+                        </Show>
+                          <For each={attachSuggestions()}>
+                            {(s) => {
+                              const Icon = attachIcon(s.kind);
+                              return (
+                                <button type="button" onClick={() => addAttach(s)}
+                                  class="w-full flex items-center gap-2 text-left px-3 py-1.5 text-sm text-foreground hover:bg-sidebar-accent">
+                                  <Icon size={12} class="flex-shrink-0 text-muted-foreground" />
+                                  <span class="truncate flex-1">{s.label}</span>
+                                  <span class="text-[10px] text-muted-foreground capitalize flex-shrink-0">{s.kind}</span>
+                                </button>
+                              );
+                            }}
+                          </For>
+                          <Show when={attachTasks.state === 'ready' && attachSuggestions().length === 0}>
+                            <div class="px-3 py-1.5 text-xs text-muted-foreground" role="status">No matching tasks</div>
+                          </Show>
+                      </div>
+                    </Show>
+                    <Show when={attachItems().length > 0}>
+                      <p role="status" class="text-xs text-muted-foreground">
+                        {attachItems().length} selected. {isEdit() ? 'Save' : 'Add'} the time block to place them.
+                      </p>
+                    </Show>
+                  </div>
+                </Show>
 
                 {/* Categories — Phase B: 1–3 multi-select on BOTH tabs (was single,
                     block-only). Pick order = stripe order; a chip dot shows the
@@ -1527,240 +1886,12 @@ export function ElementWizard() {
                   </div>
                 </div>
 
-                {/* People on work (0151) — two peer sets over ONE model, replacing the
-                    old three-pill "Who is this for?" control. Beneficiaries IS that
-                    question, now answered with actual people; the server derives the
-                    Triality motivation axis from the set (empty ⇒ unlabeled, self-only
-                    ⇒ me, self+others ⇒ us, others-only ⇒ them).
-
-                    Both fields render on BOTH tabs: a meeting block having attendees is
-                    the most natural case in the whole feature, and entity_people is
-                    keyed by entity_kind so a block carries them natively.
-
-                    The space comes out even — "Who is this for?" was 2 rows and the
-                    texture swatch grid was 4; these two fields plus the collapsed
-                    texture trigger are 6. */}
-                <PeopleField
-                  label="Responsible"
-                  value={responsible()}
-                  onChange={(next) => { setResponsibleTouched(true); setResponsibleInherit(false); setResponsible(next); }}
-                  directory={directory() ?? []}
-                  roster={roster() ?? []}
-                  onDirectoryChanged={() => void refetchDirectory()}
-                  suggested={!responsibleTouched()}
-                  onInherit={backsATask() ? () => { setResponsibleTouched(true); setResponsibleInherit(true); } : undefined}
-                  onOverride={() => { setResponsibleTouched(true); setResponsibleInherit(false); setResponsible([]); }}
-                  inheriting={responsibleInherit()}
-                />
-                <PeopleField
-                  label="Beneficiaries"
-                  value={beneficiaries()}
-                  onChange={(next) => { setBeneficiariesTouched(true); setBeneficiariesInherit(false); setBeneficiaries(next); }}
-                  directory={directory() ?? []}
-                  roster={roster() ?? []}
-                  onDirectoryChanged={() => void refetchDirectory()}
-                  suggested={!beneficiariesTouched()}
-                  onInherit={backsATask() ? () => { setBeneficiariesTouched(true); setBeneficiariesInherit(true); } : undefined}
-                  onOverride={() => { setBeneficiariesTouched(true); setBeneficiariesInherit(false); setBeneficiaries([]); }}
-                  inheriting={beneficiariesInherit()}
-                />
-
-                {/* Texture — Phase B (0135). Collapsed to a single trigger (0151): the
-                    14-swatch grid wrapped to three rows here, and that space now
-                    carries the two people fields above. Same signals, same payload —
-                    only the presentation moved. */}
-                <div class="flex flex-col gap-1.5">
-                  <div class={sectionLabel}>Texture</div>
-                  <TextureTrigger
-                    enabled={textureEnabled()}
-                    colorToken={textureColorToken()}
-                    onOpen={() => setTextureOpen(true)}
-                  />
-                </div>
-
-                <Show when={tab() === 'task' ? !!primary() : true}><TagSection /></Show>
-
-                {/* Priority — tasks */}
-                <Show when={tab() === 'task'}>
-                  <div class="flex flex-col gap-1.5">
-                    <div class={sectionLabel}>Priority</div>
-                    <div class="flex gap-1">
-                      <For each={[1, 2, 3]}>
-                        {(p) => (
-                          <button type="button" onClick={() => { setPriority(p); setSomeday(false); }}
-                            class={`${seg} font-semibold`}
-                            classList={{ [chipOn]: !someday() && priority() === p, [chipOff]: someday() || priority() !== p }}>
-                            P{p}
-                          </button>
-                        )}
-                      </For>
-                      <Show when={kind() === 'task'}>
-                        <button type="button" onClick={() => setSomeday(true)}
-                          class={`${seg} font-semibold`}
-                          classList={{ [chipOn]: someday(), [chipOff]: !someday() }}>
-                          Someday
-                        </button>
-                      </Show>
-                    </div>
-                  </div>
+                <Show when={tab() === 'timeblock'}>
+                  <PeopleAndTexture />
+                  <TagSection />
+                  <NotesAndActions />
                 </Show>
-
-                <NoteSection />
-
-                {/* ── Utility chips + popovers ── */}
-                <div ref={utilityEl} class="relative flex flex-col gap-2 mt-0.5">
-                  <div class="flex flex-wrap gap-1.5">
-                    <Show when={tab() === 'task'}>
-                      <button type="button" onClick={() => togglePopover('defer')}
-                        class={utilChip}
-                        classList={{ [chipOn]: !!deferUntil() || popover() === 'defer', [chipOff]: !deferUntil() && popover() !== 'defer' }}>
-                        <Clock size={11} /> {deferUntil() ? `Defer · ${shortDate(deferUntil())}` : 'Defer'}
-                      </button>
-                      <button type="button" onClick={() => togglePopover('depends')}
-                        class={utilChip}
-                        classList={{ [chipOn]: dependsOn().length > 0 || popover() === 'depends', [chipOff]: dependsOn().length === 0 && popover() !== 'depends' }}>
-                        <Link2 size={11} /> {dependsOn().length ? `Depends · ${dependsOn().length}` : 'Depends'}
-                      </button>
-                    </Show>
-                    <button type="button" onClick={() => togglePopover('repeat')}
-                      class={utilChip}
-                      classList={{
-                        [chipOn]: (tab() === 'task' ? taskRepeat() !== 'none' : tbRepeat() !== 'none') || popover() === 'repeat',
-                        [chipOff]: (tab() === 'task' ? taskRepeat() === 'none' : tbRepeat() === 'none') && popover() !== 'repeat',
-                      }}>
-                      <RepeatIcon size={11} /> {(tab() === 'task' ? taskRepeat() : tbRepeat()) === 'none' ? 'Repeat' : repeatLabel(tab() === 'task' ? taskRepeat() : tbRepeat())}
-                    </button>
-                    <Show when={tab() === 'task' && enableRoutines()}>
-                      <button type="button" onClick={() => togglePopover('routine')}
-                        class={utilChip}
-                        classList={{ [chipOn]: !!routineId() || popover() === 'routine', [chipOff]: !routineId() && popover() !== 'routine' }}>
-                        <Boxes size={11} /> {routineId() ? `Routine · ${routineList().find((r) => r.id === routineId())?.name ?? ''}` : 'Routine'}
-                      </button>
-                    </Show>
-                    <Show when={tab() === 'task'}>
-                      <button type="button"
-                        onClick={() => { if (kind() !== 'habit' && taskRepeat() !== 'none') setMakeHabit(!makeHabit()); }}
-                        disabled={kind() !== 'habit' && taskRepeat() === 'none'}
-                        title={kind() === 'habit' ? 'This is a habit' : taskRepeat() === 'none' ? 'Set a repeat first' : 'Track a daily streak'}
-                        class={utilChip}
-                        classList={{
-                          [chipOn]: makeHabit() || kind() === 'habit',
-                          [chipOff]: !makeHabit() && kind() !== 'habit' && taskRepeat() !== 'none',
-                          'border-border text-muted-foreground/40 cursor-not-allowed': kind() !== 'habit' && taskRepeat() === 'none',
-                        }}>
-                        <Flame size={11} /> Track as habit
-                      </button>
-                    </Show>
-                    <Show when={tab() === 'timeblock'}>
-                      <button type="button" onClick={() => setLocked(!locked())}
-                        class={utilChip}
-                        classList={{ [chipOn]: locked(), [chipOff]: !locked() }}>
-                        <Lock size={11} /> Lock
-                      </button>
-                      <Show when={!someday()}>
-                        <button type="button" onClick={() => setAllDay(!allDay())}
-                          class={utilChip}
-                          classList={{ [chipOn]: allDay(), [chipOff]: !allDay() }}>
-                          <Square size={11} /> All-day
-                        </button>
-                      </Show>
-                    </Show>
-                  </div>
-
-                  {/* Defer popover */}
-                  <Show when={popover() === 'defer'}>
-                    <div class={`${popCard} min-w-48`}>
-                      <div class={popLabel}>Hide until…</div>
-                      <For each={deferOptions()}>
-                        {(o) => (
-                          <button type="button" class={popItem}
-                            onClick={() => { setDeferUntil(o.date); setPopover(null); }}>
-                            {o.label}
-                          </button>
-                        )}
-                      </For>
-                      <label class="flex items-center gap-2 border-t border-border mt-1 pt-1.5 px-2 text-xs text-muted-foreground">
-                        Date
-                        <input type="date" class="input py-0.5 text-xs flex-1" value={deferUntil()}
-                          onInput={(e) => setDeferUntil(e.currentTarget.value)} />
-                      </label>
-                      <Show when={deferUntil()}>
-                        <button type="button" class={`${popItem} text-muted-foreground`}
-                          onClick={() => { setDeferUntil(''); setPopover(null); }}>Clear defer</button>
-                      </Show>
-                    </div>
-                  </Show>
-
-                  {/* Depends popover */}
-                  <Show when={popover() === 'depends'}>
-                    <div class={`${popCard} w-60`}>
-                      <div class={popLabel}>Depends on (won't schedule until done)</div>
-                      <Show when={dependsOn().length > 0}>
-                        <div class="flex flex-wrap gap-1 mb-1.5">
-                          <For each={dependsOn()}>
-                            {(id) => (
-                              <span class="text-[11px] px-2 py-0.5 rounded-sm border border-primary/40 bg-primary/10 text-primary inline-flex items-center gap-1 max-w-full">
-                                <span class="truncate">{taskById(id)?.title ?? id}</span>
-                                <button type="button" onClick={() => removeDep(id)} class="flex-shrink-0"><X size={9} /></button>
-                              </span>
-                            )}
-                          </For>
-                        </div>
-                      </Show>
-                      <input class="input py-1 text-xs mb-1" placeholder="Search tasks…" value={depDraft()}
-                        onInput={(e) => setDepDraft(e.currentTarget.value)} />
-                      <For each={depSuggestions()}>
-                        {(t) => (
-                          <button type="button" class={`${popItem} truncate`} onClick={() => addDep(t.id)}>
-                            {t.title}
-                          </button>
-                        )}
-                      </For>
-                    </div>
-                  </Show>
-
-                  {/* Repeat popover */}
-                  <Show when={popover() === 'repeat'}>
-                    <div class={`${popCard} w-60`}>
-                      <Show when={tab() === 'task'} fallback={
-                        <RepeatPopoverBody presets={TB_REPEAT} value={tbRepeat} set={setTbRepeat}
-                          weekdays={tbWeekdays} toggle={toggleTbWeekday}
-                          custom={tbCustomRule} setCustom={setTbCustomRule} rule={currentTbRule} />
-                      }>
-                        <RepeatPopoverBody presets={kind() === 'habit' ? HABIT_REPEAT : TASK_REPEAT}
-                          value={taskRepeat} set={setTaskRepeat}
-                          weekdays={taskWeekdays} toggle={toggleWeekday}
-                          custom={taskCustomRule} setCustom={setTaskCustomRule} rule={currentTaskRule} />
-                      </Show>
-                    </div>
-                  </Show>
-
-                  {/* Routine popover — single-select membership */}
-                  <Show when={popover() === 'routine'}>
-                    <div class={`${popCard} min-w-48 max-h-56 overflow-y-auto`}>
-                      <div class={popLabel}>Add to routine</div>
-                      <For each={routineList()}>
-                        {(r) => (
-                          <button type="button" class={popItem}
-                            classList={{ 'text-primary': routineId() === r.id }}
-                            onClick={() => { setRoutineId(r.id); setPopover(null); }}>
-                            {r.name}
-                          </button>
-                        )}
-                      </For>
-                      <Show when={routineList().length === 0}>
-                        <div class="text-xs text-muted-foreground px-2 py-1">No routines yet.</div>
-                      </Show>
-                      <Show when={routineId()}>
-                        <button type="button"
-                          class="w-full text-left text-xs px-2 py-1.5 mt-1 border-t border-border text-muted-foreground hover:text-foreground"
-                          onClick={() => { setRoutineId(''); setPopover(null); }}>
-                          Remove from routine
-                        </button>
-                      </Show>
-                    </div>
-                  </Show>
-                </div>
+                <Show when={tab() === 'task'}><TagSection /></Show>
 
                 {/* Similar-task notice (UI-comments 2026-07-20): existing tasks whose
                     title is close to the one being composed. Tapping one OPENS it —
@@ -1802,59 +1933,7 @@ export function ElementWizard() {
                   </div>
                 </Show>
 
-                {/* Block contents — scheduled blocks only */}
-                <Show when={tab() === 'timeblock' && !someday()}>
-                  <div class="flex flex-col gap-1.5 border-t border-border pt-2.5">
-                    <div class={sectionLabel}>In this block</div>
-                    <Show when={existingMembers().length > 0 || attachItems().length > 0}>
-                      <div class="flex flex-wrap gap-1.5">
-                        <For each={existingMembers()}>
-                          {(b) => (
-                            <span class="text-xs px-2 py-0.5 rounded-sm border border-border text-foreground inline-flex items-center gap-1 max-w-full">
-                              <ListTodo size={11} class="flex-shrink-0 text-muted-foreground" />
-                              <span class="truncate">{b.title}</span>
-                              <button type="button" title="Remove from block" onClick={() => removeMember(b.id)} class="hover:text-destructive flex-shrink-0"><X size={11} /></button>
-                            </span>
-                          )}
-                        </For>
-                        <For each={attachItems()}>
-                          {(it) => {
-                            const Icon = attachIcon(it.kind);
-                            return (
-                              <span class="text-xs px-2 py-0.5 rounded-sm border border-primary/40 bg-primary/10 text-primary inline-flex items-center gap-1 max-w-full">
-                                <Icon size={11} class="flex-shrink-0" />
-                                <span class="truncate">{it.label}</span>
-                                <button type="button" onClick={() => removeAttach(it.id)} class="hover:text-destructive flex-shrink-0"><X size={11} /></button>
-                              </span>
-                            );
-                          }}
-                        </For>
-                      </div>
-                    </Show>
-                    <div class="relative">
-                      <input class="w-full bg-transparent border-0 border-b border-border text-xs text-foreground py-1 px-0.5 outline-none focus:border-ring"
-                        placeholder={enableRoutines() ? '+ add task, habit, or routine…' : '+ add task or habit…'}
-                        value={attachDraft()} onInput={(e) => setAttachDraft(e.currentTarget.value)} />
-                      <Show when={attachSuggestions().length > 0}>
-                        <div class="absolute z-50 left-0 right-0 mt-1 rounded-md border border-border bg-popover shadow-xl max-h-44 overflow-y-auto">
-                          <For each={attachSuggestions()}>
-                            {(s) => {
-                              const Icon = attachIcon(s.kind);
-                              return (
-                                <button type="button" onClick={() => addAttach(s)}
-                                  class="w-full flex items-center gap-2 text-left px-3 py-1.5 text-sm text-foreground hover:bg-sidebar-accent">
-                                  <Icon size={12} class="flex-shrink-0 text-muted-foreground" />
-                                  <span class="truncate flex-1">{s.label}</span>
-                                  <span class="text-[10px] text-muted-foreground capitalize flex-shrink-0">{s.kind}</span>
-                                </button>
-                              );
-                            }}
-                          </For>
-                        </div>
-                      </Show>
-                    </div>
-                  </div>
-                </Show>
+                <Show when={tab() === 'task'}><PeopleAndTexture /></Show>
               </div>
 
               {/* RIGHT PANE — scheduling */}
@@ -1956,9 +2035,9 @@ export function ElementWizard() {
                 {/* Scheduled block / Someday Task toggle */}
                 <Show when={tab() === 'timeblock'}>
                   <div class="flex gap-1">
-                    <button type="button" onClick={() => setSomeday(false)} class={seg}
+                    <button type="button" onClick={() => setBlockSomeday(false)} class={seg}
                       classList={{ [chipOn]: !someday(), [chipOff]: someday() }}>Scheduled</button>
-                    <button type="button" onClick={() => { setSomeday(true); setDurMin(prefs()?.concept_default_minutes ?? 60); }} class={seg}
+                    <button type="button" onClick={() => { setBlockSomeday(true); setDurMin(prefs()?.concept_default_minutes ?? 60); }} class={seg}
                       classList={{ [chipOn]: someday(), [chipOff]: !someday() }}>Someday Task</button>
                   </div>
                 </Show>
@@ -2097,20 +2176,18 @@ export function ElementWizard() {
               {saving() ? 'Saving…' : isEdit() ? 'Save' : 'Add'}
             </button>
           </div>
-        </div>
-
         {/* Rendered as a sibling of the wizard card, not inside the scrolling left
             pane — a dialog nested in an `overflow-y-auto` column would clip. */}
         <Show when={textureOpen()}>
           <TextureModal
             enabled={textureEnabled()}
             colorToken={textureColorToken()}
+            source={textureColorSource()}
             onToggle={setTextureEnabled}
             onColor={setTextureColorToken}
             onClose={() => setTextureOpen(false)}
           />
         </Show>
-      </ViewportOverlay>
-    </Show>
+      </ModalSheet>
   );
 }

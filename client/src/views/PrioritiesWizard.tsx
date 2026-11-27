@@ -3,6 +3,7 @@ import { A } from '@solidjs/router';
 import { Heart, Briefcase, Users, Brain, Smile, DollarSign, ChevronLeft, ChevronRight, Check, Save, Moon } from 'lucide-solid';
 import { priorities, refetchPriorities, prefs, refetchPrefs, showToast } from '../stores/index.js';
 import { api, type Priority } from '../lib/api.js';
+import { FormActions } from '../ui/index.js';
 
 interface CategoryConfig {
   key: string;
@@ -150,9 +151,9 @@ export function PrioritiesWizard() {
           <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
             <For each={CATEGORIES}>{(cat) => <Slider cat={cat} label="satisfaction" value={() => satisfactions()[cat.key] ?? 5} onInput={(v) => setSat(cat.key, v)} />}</For>
           </div>
-          <div class="flex justify-end gap-3 mt-8">
+          <FormActions class="mt-8 gap-3">
             <button onClick={() => setStep(2)} class="btn-primary">Next: Desired Focus <ChevronRight class="w-4 h-4 ml-1" /></button>
-          </div>
+          </FormActions>
         </Show>
 
         {/* Step 2 — importance */}

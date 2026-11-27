@@ -26,9 +26,9 @@ import { PriorityToggle, DateField } from './TaskCard.js';
 import { flattenObjectives } from '../lib/objectives.js';
 import { describeRule } from '../lib/recurrence.js';
 import { addDays, rangeUTC } from '../lib/dates.js';
-import { ViewportOverlay } from './ViewportOverlay.js';
+import { ModalSheet } from '../ui/index.js';
 import { minutesIntoDay } from '../lib/grid.js';
-import { Card, Toolbar } from '../ui/index.js';
+import { Card, FormActions, Toolbar } from '../ui/index.js';
 import { OpenTimeSummary } from './OpenTimeSummary.js';
 import {
   windowFor, inWindow, targetForWindow, groupByTitle, minutesBetween, hoursLabel,
@@ -247,7 +247,7 @@ function TaskPanel(props: { task: () => Task }) {
             <Show when={addingNote()}>
               <div class="space-y-1">
                 <textarea class="textarea w-full text-sm" rows="3" aria-label="New task note" placeholder="Add a note…" value={newNote()} onInput={(e) => setNewNote(e.currentTarget.value)} />
-                <div class="flex gap-2 justify-end"><button class="btn-ghost text-xs" onClick={() => { setAddingNote(false); setNewNote(''); }}>Cancel</button><button class="btn-primary text-xs" disabled={!newNote().trim() || savingNote()} onClick={() => void addNote()}>Save note</button></div>
+                <FormActions><button class="btn-ghost text-xs" onClick={() => { setAddingNote(false); setNewNote(''); }}>Cancel</button><button class="btn-primary text-xs" disabled={!newNote().trim() || savingNote()} onClick={() => void addNote()}>Save note</button></FormActions>
               </div>
             </Show>
             <For each={noteHistory()?.notes ?? []}>{(entry) => <article class="task-note-entry"><time dateTime={entry.created_at}>{new Date(entry.created_at).toLocaleString()}</time><p>{entry.body}</p></article>}</For>
@@ -1558,8 +1558,8 @@ export function DetailsDrawer() {
     };
   };
   const [viewport, setViewport] = createSignal(readViewport());
-  let drawerEl: HTMLElement | undefined;
   let focusBeforeSheet: HTMLElement | null = null;
+  let drawerDialog: HTMLDivElement | undefined;
 
   onMount(() => {
     const sync = () => {
@@ -1597,12 +1597,13 @@ export function DetailsDrawer() {
       focusBeforeSheet = active?.closest('[role="dialog"][aria-modal="true"]')
         ? document.querySelector<HTMLElement>('.details-toggle-button')
         : active;
-      queueMicrotask(() => drawerEl?.querySelector<HTMLElement>('[data-drawer-back]')?.focus());
     } else if (!open && wasOpen && wasPhone) {
       const restore = focusBeforeSheet;
       queueMicrotask(() => {
         // Another modal surface may have opened in the same transition (the assistant).
-        if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+        const otherDialogOpen = Array.from(document.querySelectorAll('[role="dialog"][aria-modal="true"]'))
+          .some((dialog) => dialog !== drawerDialog);
+        if (otherDialogOpen) return;
         const canRestore = restore?.isConnected && restore !== document.body && restore !== document.documentElement;
         const target = canRestore ? restore : document.querySelector<HTMLElement>('.details-toggle-button');
         target?.focus();
@@ -1748,17 +1749,7 @@ export function DetailsDrawer() {
   const [dragging, setDragging] = createSignal(false);
   let shellEl: HTMLElement | null = null;
 
-  const closeMobileDrawer = () => {
-    const restore = focusBeforeSheet;
-    setDetailsOpen(false);
-    requestAnimationFrame(() => {
-      if (!viewport().phone) return;
-      const canRestore = restore?.isConnected && restore !== document.body && restore !== document.documentElement;
-      const target = canRestore ? restore : document.querySelector<HTMLElement>('.details-toggle-button');
-      target?.focus();
-      if (focusBeforeSheet === restore) focusBeforeSheet = null;
-    });
-  };
+  const closeMobileDrawer = () => setDetailsOpen(false);
 
   function onPointerDown(e: PointerEvent) {
     shellEl = (e.currentTarget as HTMLElement).closest('[data-app-shell]') as HTMLElement;
@@ -1788,65 +1779,12 @@ export function DetailsDrawer() {
     else if (e.key === 'End') { setDetailsWidth(DETAILS_MIN_W); e.preventDefault(); }
   }
 
-  const onEsc = (e: KeyboardEvent) => {
-    if (e.key === 'Escape' && detailsOpen() && viewport().phone) {
-      e.preventDefault();
-      closeMobileDrawer();
-    }
-  };
-  window.addEventListener('keydown', onEsc);
-  onCleanup(() => window.removeEventListener('keydown', onEsc));
-
-  const onDrawerKeyDown = (event: KeyboardEvent) => {
-    if (!viewport().phone || event.key !== 'Tab' || !drawerEl) return;
-    const focusable = Array.from(drawerEl.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'));
-    if (!focusable.length) { event.preventDefault(); drawerEl.focus(); return; }
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    const outside = !drawerEl.contains(document.activeElement);
-    if (event.shiftKey && (document.activeElement === first || outside)) { event.preventDefault(); last.focus(); }
-    else if (!event.shiftKey && (document.activeElement === last || outside)) { event.preventDefault(); first.focus(); }
-  };
-
   // Marker for a drawer with no selected entity. On mobile it remains available as
   // a bottom sheet so the Today checklist and day details can be opened explicitly.
   const isEmptyState = () => !task() && !block() && !entity() && !(hasSecondTab() && drawerTab() === 'flightplan');
 
-  return (
-    <Show when={detailsOpen()}>
-      <ViewportOverlay class="mobile-details-backdrop" role="presentation">
-        <button type="button" class="mobile-details-backdrop-button" aria-label="Dismiss details sheet" onClick={closeMobileDrawer} />
-      </ViewportOverlay>
-      <div class="details-rail-region" role="region" aria-label="Details drawer resize controls">
-        <div
-          class="details-rail"
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize details drawer"
-          aria-valuemin={DETAILS_MIN_W}
-          aria-valuemax={DETAILS_MAX_W}
-          aria-valuenow={detailsWidth()}
-          tabindex="0"
-          data-dragging={dragging()}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={endDrag}
-          onPointerCancel={endDrag}
-          onDblClick={() => setDetailsWidth(DETAILS_DEFAULT_W)}
-          onKeyDown={onRailKey}
-        />
-      </div>
-      <aside
-        ref={drawerEl}
-        class="details-drawer"
-        classList={{ 'details-drawer-empty': isEmptyState() }}
-        style={mobileDrawerStyle()}
-        role={viewport().phone ? 'dialog' : undefined}
-        aria-modal={viewport().phone ? 'true' : undefined}
-        aria-label={`Details: ${title()}`}
-        tabindex={viewport().phone ? '-1' : undefined}
-        onKeyDown={onDrawerKeyDown}
-      >
+  const renderDrawerContents = () => (
+    <>
         <div class="drawer-head">
           <div class="min-w-0 flex-1">
             <div class="drawer-kind">{kind()}</div>
@@ -1857,6 +1795,7 @@ export function DetailsDrawer() {
               type="button"
               class="btn-icon flex-shrink-0"
               data-drawer-back
+              autofocus={viewport().phone ? true : undefined}
               aria-label="Back to work area"
               title="Back to work area"
               onClick={closeMobileDrawer}
@@ -1942,7 +1881,58 @@ export function DetailsDrawer() {
             <Match when={entity()?.kind === 'objective' && entityObjective()}>{(o) => <ObjectivePanel objective={o()} />}</Match>
           </Switch>
         </Show>
-      </aside>
+    </>
+  );
+
+  return (
+    <Show when={detailsOpen()}>
+      <div class="details-rail-region" role="region" aria-label="Details drawer resize controls">
+        <div
+          class="details-rail"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize details drawer"
+          aria-valuemin={DETAILS_MIN_W}
+          aria-valuemax={DETAILS_MAX_W}
+          aria-valuenow={detailsWidth()}
+          tabindex="0"
+          data-dragging={dragging()}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+          onDblClick={() => setDetailsWidth(DETAILS_DEFAULT_W)}
+          onKeyDown={onRailKey}
+        />
+      </div>
+      <Show when={viewport().phone} fallback={
+        <aside
+          class="details-drawer"
+          classList={{ 'details-drawer-empty': isEmptyState() }}
+          style={mobileDrawerStyle()}
+          aria-label={`Details: ${title()}`}
+        >
+          {renderDrawerContents()}
+        </aside>
+      }>
+        {/* The drawer preserves its opener itself because it can sit above another modal. */}
+        <ModalSheet
+          open
+          title={`Details: ${title()}`}
+          ariaLabel={`Details: ${title()}`}
+          onClose={closeMobileDrawer}
+          mode="modal"
+          backdropClass="mobile-details-backdrop !z-[39] !p-0 !bg-transparent"
+          class={`details-drawer !max-w-none !w-auto ${isEmptyState() ? 'details-drawer-empty' : ''}`}
+          style={mobileDrawerStyle()}
+          contentClass="!overflow-hidden !py-0 flex flex-col"
+          dialogRef={(element) => { drawerDialog = element; }}
+          header={<h2 class="sr-only">{`Details: ${title()}`}</h2>}
+          restoreFocus={false}
+        >
+          {renderDrawerContents()}
+        </ModalSheet>
+      </Show>
     </Show>
   );
 }

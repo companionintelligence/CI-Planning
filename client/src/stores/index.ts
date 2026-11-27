@@ -431,6 +431,18 @@ export const [prefs, { refetch: refetchPrefs }] = createResource(signedIn, () =>
 // setter writes straight through (merge-over-existing so calendar/planner blobs
 // survive) and refetches so every card re-renders from the server truth.
 export const texturesEnabled = () => prefs()?.view_prefs?.appearance?.direction_textures !== false;
+export type TextureColorSource = 'direction' | 'category' | 'tag' | 'responsible';
+export const textureColorSource = (): TextureColorSource =>
+  prefs()?.view_prefs?.appearance?.texture_color_source ?? 'category';
+export async function setTextureColorSource(source: TextureColorSource) {
+  const existing = prefs()?.view_prefs ?? {};
+  const appearance = { ...(existing.appearance ?? {}), texture_color_source: source };
+  try {
+    await api.prefs.update({ view_prefs: { ...existing, appearance } });
+    refetchPrefs();
+  } catch (err) { showToast((err as Error).message, 'error'); }
+}
+
 export function setTexturesEnabled(v: boolean) {
   const existing = prefs()?.view_prefs ?? {};
   const appearance = { ...(existing.appearance ?? {}), direction_textures: v };
@@ -692,7 +704,7 @@ export const [elementModal, setElementModal] = createSignal<{
   open: boolean;
   mode: 'add' | 'edit';
   kind: ElementKind | null;
-  prefill?: { day?: string; start?: string; durationMin?: number };
+  prefill?: { day?: string; start?: string; durationMin?: number; taskSomeday?: boolean };
   editTarget?: { kind: ElementKind; id: string };
   agentDraft?: { title?: string; priority?: number; scheduled_for?: string; task_time?: string; notes?: string };
   parentId?: string; // when adding a subtask

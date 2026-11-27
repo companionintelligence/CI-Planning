@@ -16,7 +16,7 @@ import { OpenTimeSummary } from '../components/OpenTimeSummary.js';
 import { DayStarsRow } from '../components/DayStarsRow.js';
 import { ReplanBanner } from '../components/ReplanBanner.js';
 import { FocusMenu, BriefMenu } from '../components/DayGoals.js';
-import { ModalSheet } from '../ui/index.js';
+import { FormActions, ModalSheet } from '../ui/index.js';
 
 /**
  * TODAY — the planner cockpit (Phase G, G5). **Day Overview** (day/date + today's
@@ -318,10 +318,10 @@ export function Today() {
                 if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) saveNote();
               }}
             />
-            <div class="flex justify-end gap-2">
+            <FormActions>
               <button class="btn-ghost text-xs px-2 py-1" onClick={() => setEditingNote(false)}>Cancel</button>
               <button class="btn-primary text-xs px-3 py-1" onClick={saveNote}>Save note</button>
-            </div>
+            </FormActions>
           </div>
         </Show>
         <Show when={!editingNote() && note()}>
@@ -387,10 +387,10 @@ export function Today() {
         mode="modal"
         backdropClass="modal-backdrop"
         class="max-w-md"
-        footer={<div class="flex justify-end gap-2">
+        footer={<FormActions>
           <button type="button" onClick={() => setRoutineModal({ open: false, name: '' })} class="btn-ghost text-sm px-3 py-1.5">Cancel</button>
           <button type="button" onClick={createRoutineFromSelection} class="btn-primary text-sm px-4 py-1.5"><Repeat size={13} /> Create</button>
-        </div>}
+        </FormActions>}
       >
         <div class="flex flex-col gap-3">
           <label class="flex flex-col gap-1">

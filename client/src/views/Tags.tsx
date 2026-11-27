@@ -3,8 +3,11 @@ import { ViewHeader } from '../components/ViewHeader.js';
 import { setActiveEntity } from '../stores/selection.js';
 import { revealDetails } from '../stores/ui.js';
 import { Lock, Trash2, VolumeX, Volume2, ChevronRight, ChevronDown } from 'lucide-solid';
-import { tags, refetchTags, showToast } from '../stores/index.js';
+import { tags, refetchTags, patternPrefs, refetchPatternPrefs, categoryPrefs, refetchCategoryPrefs, showToast } from '../stores/index.js';
 import { api, type Tag } from '../lib/api.js';
+import { ItemColorPicker } from '../components/ItemColorPicker.js';
+import { colorVar } from '../lib/pattern-meta.js';
+import { tagHueToken } from '../lib/textures.js';
 import { groupByDirection, groupByCategory, sortDirections, sortCategories, displayTag } from '../lib/tag-tax.js';
 import { useDraggable, useDropZone } from '../lib/draggable.js';
 
@@ -87,6 +90,7 @@ export function Tags() {
               <DirectionCard
                 title={displayTag(g.direction.name)}
                 pattern={g.direction.name}
+                groupTag={g.direction}
                 locked={g.direction.is_base}
                 active={g.active}
                 muted={g.muted}
@@ -123,6 +127,7 @@ export function Tags() {
               <DirectionCard
                 title={displayTag(g.category.name)}
                 pattern={g.category.name}
+                groupTag={g.category}
                 locked={g.category.is_base}
                 active={g.active}
                 muted={g.muted}
@@ -162,6 +167,7 @@ export function Tags() {
 function DirectionCard(props: {
   title: string;
   pattern: string | null;
+  groupTag?: Tag;
   locked: boolean;
   active: Tag[];
   muted: Tag[];
@@ -176,6 +182,7 @@ function DirectionCard(props: {
   onDeletePattern?: () => void;
 }): JSX.Element {
   const [showMuted, setShowMuted] = createSignal(false);
+  const [groupColorOpen, setGroupColorOpen] = createSignal(false);
   const [adding, setAdding] = createSignal('');
   const drop = useDropZone((payload) => {
     if (payload.kind !== 'tag-chip') return;
@@ -183,6 +190,25 @@ function DirectionCard(props: {
       ?? (tags() ?? []).find((t) => t.id === payload.id);
     if (tag && !props.membersOf(tag).includes(props.pattern ?? '')) props.onDrop(tag);
   });
+
+  const groupColor = () => props.groupTag?.kind === 'category'
+    ? categoryPrefs()?.prefs?.[props.groupTag.id]?.color_token
+    : props.groupTag ? patternPrefs()?.prefs?.[props.groupTag.id]?.color_token : undefined;
+  async function setGroupColor(token: string | null) {
+    const tag = props.groupTag;
+    if (!tag) return;
+    try {
+      if (tag.kind === 'category') {
+        await api.categoryPrefs.set(tag.id, { color_token: token ?? tagHueToken(tag.name) });
+        refetchCategoryPrefs();
+      } else {
+        await api.patternPrefs.set(tag.id, { color_token: token ?? tagHueToken(tag.name) });
+        refetchPatternPrefs();
+      }
+      setGroupColorOpen(false);
+      showToast('Tag color saved', 'success');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
 
   function submitAdd(e: Event) {
     e.preventDefault();
@@ -210,10 +236,21 @@ function DirectionCard(props: {
             }}
           >{props.title}</button>
         </div>
+        <Show when={props.groupTag}>
+          <button type="button" aria-label={`Color for ${props.title}`}
+            title={`Color for ${props.title}`} onClick={() => setGroupColorOpen(!groupColorOpen())}
+            class="w-4 h-4 rounded-circle border border-border"
+            style={{ 'background-color': colorVar(groupColor() ?? tagHueToken(props.pattern)) }} />
+        </Show>
         <Show when={props.onDeletePattern}>
           <button onClick={() => props.onDeletePattern!()} class="btn-icon" title="Delete"><Trash2 size={13} /></button>
         </Show>
       </div>
+
+      <Show when={groupColorOpen()}>
+        <ItemColorPicker value={groupColor()} onChange={(token) => void setGroupColor(token)}
+          inheritLabel="Use automatic tag color" />
+      </Show>
 
       {/* Category tab: direction-scope toggles (default ON; click to opt a direction out). */}
       <Show when={props.toggles}>
@@ -277,11 +314,20 @@ function Chip(props: { tag: Tag; onMute: (t: Tag) => void; onDelete: (t: Tag) =>
   const drag = useDraggable(() => ({ kind: 'tag-chip' as const, id: props.tag.id }));
   const categoryOptions = () => sortCategories((tags() ?? []).filter((t) => t.kind === 'category'));
   const current = () => props.tag.categories?.[0] ?? '';
+  const [colorOpen, setColorOpen] = createSignal(false);
   async function setCategory(name: string) {
     try {
       await api.tags.update(props.tag.id, { categories: name ? [name] : [] });
       refetchTags();
       showToast(name ? `Filed under ${displayTag(name)}` : 'Category cleared', 'success');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+  async function setColor(token: string | null) {
+    try {
+      await api.tags.update(props.tag.id, { color_token: token });
+      refetchTags();
+      setColorOpen(false);
+      showToast('Tag color saved', 'success');
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
   // max-w-full is load-bearing: a flex item defaults to min-width:auto, so a chip wider
@@ -290,7 +336,11 @@ function Chip(props: { tag: Tag; onMute: (t: Tag) => void; onDelete: (t: Tag) =>
   // only min-w-0 child) to absorb the overflow as an ellipsis, while the select and
   // buttons stay flex-shrink-0 so the controls never squash.
   return (
-    <span class="badge-neutral text-[11px] flex items-center gap-1 pr-1 max-w-full">
+    <span class="badge-neutral text-[11px] inline-flex flex-wrap items-center gap-1 pr-1 max-w-full">
+      <button type="button" title={`Color for ${props.tag.name}`}
+        aria-label={`Color for ${props.tag.name}`} onClick={() => setColorOpen(!colorOpen())}
+        class="w-3 h-3 rounded-circle border border-border flex-shrink-0"
+        style={{ 'background-color': colorVar(props.tag.color_token ?? tagHueToken(props.tag.name)) }} />
       <span {...drag} class="cursor-grab select-none truncate min-w-0" title={`#${props.tag.name}`}>#{props.tag.name}</span>
       {/* max-w is sized for the longest balance category ("Relationships"). At 72px a
           native select clips mid-word with no ellipsis, so the chip rendered
@@ -318,6 +368,12 @@ function Chip(props: { tag: Tag; onMute: (t: Tag) => void; onDelete: (t: Tag) =>
       >
         <Trash2 size={11} />
       </button>
+      <Show when={colorOpen()}>
+        <span class="flex flex-wrap w-full gap-1.5 p-1" onPointerDown={(e) => e.stopPropagation()}>
+          <ItemColorPicker value={props.tag.color_token} onChange={(token) => void setColor(token)}
+            inheritLabel="Use automatic tag color" />
+        </span>
+      </Show>
     </span>
   );
 }

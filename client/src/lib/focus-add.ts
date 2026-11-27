@@ -4,9 +4,7 @@ import { filterByName } from './flight-plan-view.js';
 /**
  * FOCUS × Time Blocks, Phase 3 — the inline "add a task to this Time Block" box.
  *
- * One input, two paths, one gesture: type to SEARCH the open backlog, or type
- * something with no match and press Enter to CREATE it. Both end the same way —
- * the task is placed inside the container as a member block.
+ * Search the open backlog and place an existing task inside the container.
  *
  * The matching and the outcome wording are pure so the keyboard contract can be
  * tested without jsdom, and so Focus words a full container the same way the
@@ -15,6 +13,20 @@ import { filterByName } from './flight-plan-view.js';
 
 /** How many matches the dropdown shows — FlightPlan's cap, for one idiom. */
 export const MATCH_CAP = 8;
+
+/** Stable partition so tasks sharing any block tag appear first. */
+export function prioritizeMatchingTags(tasks: readonly Task[], blockTags: readonly string[]): Task[] {
+  const normalize = (tag: string) => tag.trim().toLowerCase();
+  const wanted = new Set(blockTags.map(normalize).filter(Boolean));
+  const matching: Task[] = [];
+  const others: Task[] = [];
+  for (const task of tasks) {
+    const matches = [...(task.tags ?? []), ...(task.secondary_tags ?? [])]
+      .some((tag) => wanted.has(normalize(tag)));
+    (matches ? matching : others).push(task);
+  }
+  return [...matching, ...others];
+}
 
 /**
  * Backlog matches for a section's add box: open tasks whose title contains the
@@ -28,16 +40,17 @@ export function addCandidates(
   tasks: readonly Task[],
   query: string,
   alreadyInBlock: ReadonlySet<string>,
+  blockTags: readonly string[] = [],
 ): Task[] {
   if (!query.trim()) return [];
-  return filterByName([...tasks], query, (t) => t.title)
-    .filter((t) => !alreadyInBlock.has(t.id) && !t.recurrence_parent_id)
-    .slice(0, MATCH_CAP);
+  const matches = filterByName([...tasks], query, (t) => t.title)
+    .filter((t) => !alreadyInBlock.has(t.id) && !t.recurrence_parent_id);
+  return prioritizeMatchingTags(matches, blockTags).slice(0, MATCH_CAP);
 }
 
 /**
  * Move the highlighted index by `delta`, wrapping at both ends. Returns 0 for an
- * empty list so Enter on no matches is unambiguous (it means "create this").
+ * empty list so Enter on no matches has nothing to select.
  */
 export function moveHighlight(current: number, delta: number, count: number): number {
   if (count <= 0) return 0;
