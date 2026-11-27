@@ -1162,13 +1162,13 @@ export function Settings() {
             </div>
           </section>
 
-          {/* Restart FTUE — replays the onboarding wizard from step 1. */}
+          {/* Restart FTUE — replays the onboarding wizard from its first setup step. */}
           <section class="card">
             <div class="section-label flex items-center gap-1.5 mb-2"><RefreshCw size={12} /> First-Time Experience</div>
             <div class="text-[11px] text-muted-foreground mb-3">
-              Replay the initial setup wizard — identity, schedule, connect a source, trust level.
+              Replay the initial setup wizard — schedule, connect a source, trust level.
             </div>
-            <button type="button" class="btn-secondary text-sm" onClick={() => openOnboardingAt(1)}>
+            <button type="button" class="btn-secondary text-sm" onClick={() => openOnboardingAt(2)}>
               Restart the First-Time Experience
             </button>
           </section>

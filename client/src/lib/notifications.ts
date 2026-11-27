@@ -31,20 +31,6 @@ function notificationsSupported(): boolean {
   return typeof Notification !== 'undefined';
 }
 
-/**
- * Ask for notification permission once. No-op if unsupported or already
- * decided (granted/denied) — the browser only shows the prompt while the
- * permission is still 'default'.
- */
-export function requestNotificationPermission(): void {
-  if (!notificationsSupported()) return;
-  if (Notification.permission === 'default') {
-    // Fire-and-forget; the returned promise's result is reflected in
-    // Notification.permission, which scheduleTaskReminders re-checks.
-    void Notification.requestPermission();
-  }
-}
-
 /** Format a reminder body: "Starting now" at offset 0, else the localized start time. */
 function reminderBody(scheduledAt: Date, isAtStart: boolean): string {
   if (isAtStart) return 'Starting now';

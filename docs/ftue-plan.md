@@ -35,7 +35,7 @@
 > Gaps **4–6** (auto-schedule click count, auto-promote/trust dial, auto-block policy) were
 > since addressed: Phase AF (AF-3) promotes every possible task on ingest and retired the
 > Inbox — except Gmail suggestions, which wait for approval (`services/review-gate.ts`) — and
-> the trust dial (`scheduling_prefs.trust_mode`: Cautious · Balanced · Hands-off, set in step 8
+> the trust dial (`scheduling_prefs.trust_mode`: Cautious · Balanced · Hands-off, set in step 7
 > of the wizard and from the top bar via `TrustModal.tsx`) now governs placement and ordering,
 > not promotion. Gap 8 (multi-account) still stands: the live client binds one Google account
 > (`CP_GOOGLE_ACCOUNT`).
@@ -143,64 +143,60 @@ review safety net.
 
 ## 5. The FTUE flow
 
-Current flow: confirm identity and time settings, define pattern tags and day-type
+Current flow: set time preferences, define pattern tags and day-type
 availability, connect a source, choose automation trust, run an initial sync, then
 optionally open the Life Balance wizard. Day type, pattern tag, and weekday choices
 are saved to the same APIs used by Settings. Weekend setup is encouraged but skippable.
 
 ```mermaid
 flowchart TD
-    A[First launch, empty DB] --> B[Step 1, Welcome and identity]
-    B --> C[Step 2, Time and place]
-    C --> D[Step 3, Pattern Tags]
-    D --> E[Step 4, Workday availability]
-    E --> F[Step 5, Weekend availability or skip]
-    F --> G[Step 6, Default weekdays]
-    G --> H[Step 7, Connect a source]
-    H --> I[Step 8, Trust dial]
-    I --> J[Step 9, Run first sync]
-    J --> K[Step 10, Finish or set up Life Balance]
-    G --> I
+    A[First launch, empty DB] --> B[Step 1, Time and place]
+    B --> C[Step 2, Pattern Tags]
+    C --> D[Step 3, Workday availability]
+    D --> E[Step 4, Weekend availability or skip]
+    E --> F[Step 5, Default weekdays]
+    F --> G[Step 6, Connect a source]
+    G --> H[Step 7, Trust dial]
+    H --> I[Step 8, Run first sync]
+    I --> J[Step 9, Finish or set up Life Balance]
+    F --> H
 ```
 
 Step by step:
 
-Step 1, Welcome and identity. One screen. Prefill name and email if known,
-otherwise a single field. Writes the owner row instead of relying on the
-hardcoded migration value. Skippable to a default single owner.
+Step 1, Time and place. Auto-detect timezone from the browser and show it for
+confirmation. Wake and bed times are editable in a themed picker and set the
+planner's night-collapse bounds. Account name and email stay in Settings → Profile;
+the FTUE does not display or request those personal details.
 
-Step 2, Time and place. Auto-detect timezone from the browser and show it for
-confirmation. Show work hours prefilled at 09:00 to 18:00 with a quick edit.
-Zero clicks if the user accepts. This closes gap 7 before it can bite.
-
-Step 3, Pattern Tags. Rename the direction tags and choose their color and Lucide
+Step 2, Pattern Tags. Rename the direction tags and choose their color and Lucide
 icon. Save through the tag and pattern preference APIs.
 
-Step 4, Workday availability. Set one or more availability windows per direction.
+Step 3, Workday availability. Set one or more availability windows per direction.
 These are the day-type defaults consumed by open-time and auto-scheduling.
 
-Step 5, Weekend availability. Encourage users to define separate time windows for
+Step 4, Weekend availability. Encourage users to define separate time windows for
 days off, while allowing a skip that keeps their existing Weekend settings.
 
-Step 6, Default weekdays. Assign each weekday to an existing day type and save the
+Step 5, Default weekdays. Assign each weekday to an existing day type and save the
 weekly map used by the day-type resolver.
 
-Step 7, Connect a source. The heart of the FTUE and the one click that matters.
+Step 6, Connect a source. The heart of the FTUE and the one click that matters.
 A single "Connect Google" button starts the OAuth flow, scoped read-only (Gmail
 read, Calendar read, Drive readonly). On return, store the token securely and flip
 that account to live. If the user is not ready, a "Try with sample data" path
 drops them into fixture mode so the app is never empty.
 
-Step 8, Trust dial. Three options as described in section 4, Balanced
+Step 7, Trust dial. Three options as described in section 4, Balanced
 preselected. This sets the auto-promote threshold and the auto-block policy in one
 choice, so the steady-state click count is decided here, not rediscovered daily.
 
-Step 9, Run first sync now. A button that triggers the ingest jobs immediately
+Step 8, Run first sync now. A button that triggers the ingest jobs immediately
 rather than waiting for the 06:30 cron, so the user sees the payoff in the same
 session: the Inbox fills, calendar events mirror as meeting blocks, Auto places
 the day, and the Today briefing renders. This is the moment that proves the value.
 
-Step 10, Finish or set up Life Balance. Completing onboarding records the owner’s
+Step 9, Finish or set up Life Balance. Completing onboarding records the owner’s
 completion timestamp; the optional action opens the existing priorities wizard.
 
 Empty-state fallback. If the user skips connection, every view shows a one-line
