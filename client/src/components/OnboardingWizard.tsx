@@ -243,27 +243,7 @@ export function OnboardingWizard() {
         header={<h2 class="sr-only">Set up your planner</h2>}
       >
         <div class="flex flex-col gap-4">
-          <p class="text-[11px] text-muted-foreground -mb-1">Step {onboardingStep()} of 10</p>
-          <Show when={onboardingStep() === 1}>
-            <div class="flex flex-col gap-3">
-              <div>
-                <h2 class="text-base font-semibold text-foreground">Welcome</h2>
-                <p class="text-xs text-muted-foreground mt-0.5">Let's get your planner set up — every step is skippable.</p>
-              </div>
-              <label class="flex flex-col gap-1 text-sm">
-                <span class="text-xs text-muted-foreground">Your name</span>
-                <input ref={nameEl} class="input" value={name()} onInput={(e) => setName(e.currentTarget.value)} placeholder="Your name" />
-              </label>
-              <label class="flex flex-col gap-1 text-sm">
-                <span class="text-xs text-muted-foreground">Email</span>
-                <input ref={emailEl} class="input" type="email" value={email()} onInput={(e) => setEmail(e.currentTarget.value)} placeholder="you@example.com" />
-              </label>
-              <div class="flex justify-between items-center pt-1">
-                <button type="button" class="btn-ghost text-xs" disabled={busy()} onClick={() => void completeOnboarding()}>Skip</button>
-                <button type="button" class="btn-primary text-xs" disabled={busy()} onClick={() => void nextFromIdentity()}>Next</button>
-              </div>
-            </div>
-          </Show>
+          <p class="text-[11px] text-muted-foreground -mb-1">Step {onboardingStep() - 1} of 9</p>
 
           <Show when={onboardingStep() === 2}>
             <div class="flex flex-col gap-3">
@@ -274,7 +254,7 @@ export function OnboardingWizard() {
                   <span class="text-foreground">{BROWSER_TZ}</span>
                 </p>
               </div>
-              <div class="flex gap-3">
+              <div class="flex gap-3 ftue-time-fields">
                 <div class="flex min-w-0 flex-1 flex-col gap-1 text-sm">
                   <span class="text-xs text-muted-foreground">Usually wake up</span>
                   <TimePicker label="Usually wake up" value={wakeTime()} onChange={setWakeTime} align="start" />
