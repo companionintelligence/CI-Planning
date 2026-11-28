@@ -1,4 +1,5 @@
 import { createResource, createSignal, createMemo, For, Show } from 'solid-js';
+import { Portal } from 'solid-js/web';
 import { Check, X, Link as LinkIcon, Target, Cpu, RefreshCw, Circle, Moon } from 'lucide-solid';
 import { api, type WeeklyGoal, type ReflectionWrite, type DaySummary, type TopTask } from '../lib/api.js';
 import { isoWeekKey } from '../lib/dates.js';
@@ -174,9 +175,10 @@ export function FocusMenu(props: { date: string }) {
         <Target size={16} />
       </button>
       <Show when={open()}>
+        <Portal>
         {/* click-away backdrop */}
-        <div class="fixed inset-0 z-20" onClick={() => setOpen(false)} />
-        <div style={popoverStyle()} class="z-30 w-[22rem] max-w-[calc(100vw-1.5rem)] rounded-xl border border-border bg-popover p-4 shadow-lg">
+        <div class="fixed inset-0 z-[1299]" onClick={() => setOpen(false)} />
+        <div style={popoverStyle()} class="z-[1300] w-[22rem] max-w-[calc(100vw-1.5rem)] rounded-xl border border-border bg-popover p-4 shadow-lg">
           {/* FOCUS label · [ Today | This week ] toggle */}
           <div class="flex items-center justify-between mb-3">
             <div class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary">Focus</div>
@@ -330,8 +332,8 @@ export function FocusMenu(props: { date: string }) {
           </For>
         </div>
       </Show>
-
         </div>
+        </Portal>
       </Show>
     </div>
   );
@@ -520,9 +522,10 @@ export function BriefMenu(props: { date: string }) {
         <Cpu size={16} />
       </button>
       <Show when={open()}>
+        <Portal>
         {/* click-away backdrop */}
-        <div class="fixed inset-0 z-20" onClick={() => setOpen(false)} />
-        <div style={popoverStyle()} class="z-30 w-[24rem] max-w-[calc(100vw-1.5rem)] rounded-xl border border-border bg-popover shadow-lg">
+        <div class="fixed inset-0 z-[1299]" onClick={() => setOpen(false)} />
+        <div style={popoverStyle()} class="z-[1300] w-[24rem] max-w-[calc(100vw-1.5rem)] rounded-xl border border-border bg-popover shadow-lg">
           <div class="px-4 py-3 border-b border-border flex items-center justify-between">
             <span class="flex items-center gap-1.5 text-sm font-semibold text-foreground">
               <Cpu size={14} class="text-primary" /> Today's Brief
@@ -682,6 +685,7 @@ export function BriefMenu(props: { date: string }) {
           </div>
         </div>
         </div>
+        </Portal>
       </Show>
     </div>
   );

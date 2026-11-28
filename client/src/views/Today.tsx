@@ -11,6 +11,7 @@ import { localISODate, addDays, durationLabel } from '../lib/dates.js';
 import { busyFromBlocks, mergeRanges } from '../lib/open-time.js';
 import { dueItems } from '../lib/task-buckets.js';
 import { whenSignedIn } from '../lib/session.js';
+import { createAnchoredPopoverStyle } from '../lib/anchored-popover.js';
 import { Planner } from '../components/Planner.js';
 import { OpenTimeSummary } from '../components/OpenTimeSummary.js';
 import { DayStarsRow } from '../components/DayStarsRow.js';
@@ -94,6 +95,13 @@ export function Today() {
   // unfiltered, owner-scoped task request: the shared Tasks resource can be
   // narrowed by search/status/tag filters on the Tasks page.
   const [dueOpen, setDueOpen] = createSignal(false);
+  let dueMobileTrigger: HTMLButtonElement | undefined;
+  let dueDesktopTrigger: HTMLButtonElement | undefined;
+  const duePopoverStyle = createAnchoredPopoverStyle(
+    dueOpen,
+    () => window.matchMedia('(max-width: 767px)').matches ? dueMobileTrigger : dueDesktopTrigger,
+    448,
+  );
   const [dueTasks, { refetch: refetchDueTasks }] = createResource(
     whenSignedIn(() => true),
     () => api.tasks.list().then((r) => r.tasks),
@@ -178,7 +186,7 @@ export function Today() {
       <div class="flex items-center justify-between gap-2">
         <DayStarsRow date={selectedDay()} />
         <div class="flex items-center justify-end gap-1.5 md:hidden">
-          <button onClick={() => setDueOpen(true)} class="btn-icon relative" classList={{ 'text-destructive': dueBadgeCount() > 0, 'text-muted-foreground': dueBadgeCount() === 0 }} title="Due — deadlines for this day" aria-label="Due — deadlines for this day">
+          <button ref={dueMobileTrigger} onClick={() => setDueOpen(true)} class="btn-icon relative" classList={{ 'text-destructive': dueBadgeCount() > 0, 'text-muted-foreground': dueBadgeCount() === 0 }} title="Due — deadlines for this day" aria-label="Due — deadlines for this day">
             <CalendarClock size={16} />
             <Show when={dueBadgeCount() > 0}><span class="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-[3px] rounded-sm bg-destructive text-[9px] leading-[14px] text-white text-center font-semibold">{dueBadgeCount()}</span></Show>
           </button>
@@ -204,7 +212,7 @@ export function Today() {
               </div>
               <button onClick={() => stepDay(1)} class="btn-icon flex-shrink-0" title="Next day"><ChevronRight size={16} /></button>
               <DatePicker appearance="icon" label="Pick a day" value={selectedDay()} onChange={setSelectedDay} />
-              <button type="button" class="btn-icon flex-shrink-0" aria-label="Filter directions" title="Filter directions" aria-expanded={directionFilterOpen()} onClick={() => setDirectionFilterOpen((open) => !open)}><ListFilter size={15} /></button>
+              <button id="today-direction-filter-trigger" type="button" class="btn-icon flex-shrink-0" aria-label="Filter directions" title="Filter directions" aria-expanded={directionFilterOpen()} onClick={() => setDirectionFilterOpen((open) => !open)}><ListFilter size={15} /></button>
               <Show when={!isToday()}>
                 <button onClick={() => setSelectedDay(today())} class="text-xs text-primary hover:underline ml-1">Jump to today</button>
               </Show>
@@ -217,6 +225,7 @@ export function Today() {
               <div class="flex items-center justify-end gap-1.5">
                 {/* Due — was an always-open card; now a button + popup modal. */}
                 <button
+                  ref={dueDesktopTrigger}
                   onClick={() => setDueOpen(true)}
                   class="btn-icon relative"
                   classList={{ 'text-destructive': dueBadgeCount() > 0, 'text-muted-foreground': dueBadgeCount() === 0 }}
@@ -291,7 +300,7 @@ export function Today() {
             header answers is where something new could go. */}
         <Show when={!firstRun()}>
           <div class="mt-3">
-            <OpenTimeSummary date={selectedDay()} filterOpen={directionFilterOpen()} onToggleFilter={() => setDirectionFilterOpen((open) => !open)} hideFilterTrigger />
+            <OpenTimeSummary date={selectedDay()} filterOpen={directionFilterOpen()} onToggleFilter={() => setDirectionFilterOpen((open) => !open)} hideFilterTrigger filterAnchorId="today-direction-filter-trigger" />
           </div>
         </Show>
 
@@ -337,6 +346,7 @@ export function Today() {
           mode="modal"
           backdropClass="modal-backdrop due-modal-backdrop"
           class="due-modal !max-w-md p-4"
+          style={duePopoverStyle()}
         >
           <DueCard
             date={selectedDay()}

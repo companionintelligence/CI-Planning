@@ -255,25 +255,6 @@ function visibleHours(state: AxisState): number[] {
   });
 }
 
-function TimeGutter(props: { state: () => AxisState }) {
-  return (
-    <div class="relative" style={{ height: `${axisHeightPx(props.state(), PX_PER_MIN)}px` }}>
-      <For each={visibleHours(props.state())}>
-        {(h) => (
-          <div
-            class="absolute right-1.5 -translate-y-1/2 text-[10px] text-muted-foreground font-mono tabular-nums"
-            style={{ top: `${axisYOf(h * 60, props.state(), PX_PER_MIN)}px` }}
-          >
-            <Show when={h > 0}>
-              {new Date(2000, 0, 1, h).toLocaleTimeString('en-US', { hour: 'numeric', hour12: true })}
-            </Show>
-          </div>
-        )}
-      </For>
-    </div>
-  );
-}
-
 function HourLines(props: { state: () => AxisState }) {
   return (
     <For each={visibleHours(props.state())}>
@@ -307,7 +288,7 @@ function NowLine(props: { day: string; now: string; state: () => AxisState }) {
 // A thin clickable bar per collapsible region. Collapsed → "▸ label" (fills its thin
 // segment); expanded → "▾" (a slim strip at the region's top edge so it never eats
 // the revealed hours). Positioned via the segment's own top/height. Spans the grid
-// column only (left of it are the gutter + direction lane).
+// column only (left of it is the combined time and window lane).
 function ExpanderBar(props: { region: 'top' | 'bottom'; label: string; state: () => AxisState; onToggle: () => void }) {
   const seg = () => {
     const segs = segments(props.state(), PX_PER_MIN);
@@ -1198,9 +1179,8 @@ export function Planner(props: { taskLookup?: (id: string) => Task | undefined }
           no inner scroll. The page scrolls for everything else. */}
       <div class="relative">
         <div class="planner-grid grid">
-          <TimeGutter state={axisState} />
-          {/* Direction column — colored letter bugs at each window transition. */}
-          <div class="border-l border-border/60"><DirectionColumn bands={axisBands} state={axisState} currentMinute={currentMinute} /></div>
+          {/* Combined time and window lane: hour labels and their window tags share one column. */}
+          <div class="border-r border-border/60"><DirectionColumn bands={axisBands} state={axisState} currentMinute={currentMinute} hours={() => visibleHours(axisState())} /></div>
           <div
             ref={gridEl}
             class="relative border-l border-border/60 transition-colors"

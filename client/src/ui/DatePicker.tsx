@@ -2,6 +2,7 @@ import { createSignal, createUniqueId, For, onCleanup, Show } from 'solid-js';
 import { CalendarDays, ChevronLeft, ChevronRight, X } from 'lucide-solid';
 import { localISODate } from '../lib/dates.js';
 import { ModalSheet } from './primitives.js';
+import { Portal } from 'solid-js/web';
 
 type Props = {
   value: string;
@@ -59,8 +60,25 @@ export function DatePicker(props: Props) {
   const [month, setMonth] = createSignal(new Date(`${localISODate()}T12:00:00`));
   const [draft, setDraft] = createSignal(props.value);
   const [focusDate, setFocusDate] = createSignal(props.value || localISODate());
+  const [popoverPosition, setPopoverPosition] = createSignal({ top: 8, left: 8, width: 320, maxHeight: 'calc(100dvh - 16px)' });
   let root: HTMLDivElement | undefined;
   let triggerRef: HTMLButtonElement | undefined;
+  let popoverRef: HTMLDivElement | undefined;
+
+  function positionPopover() {
+    const anchor = triggerRef?.getBoundingClientRect();
+    if (!anchor) return;
+    const viewport = window.visualViewport;
+    const leftBound = viewport?.offsetLeft ?? 0;
+    const topBound = viewport?.offsetTop ?? 0;
+    const viewportWidth = viewport?.width ?? window.innerWidth;
+    const viewportHeight = viewport?.height ?? window.innerHeight;
+    const width = Math.min(320, viewportWidth - 16);
+    const height = Math.min(popoverRef?.offsetHeight ?? 420, viewportHeight - 16);
+    const left = leftBound + (viewportWidth - width) / 2;
+    const top = Math.max(topBound + 8, Math.min(anchor.bottom + 6, topBound + viewportHeight - height - 8));
+    setPopoverPosition({ top, left, width, maxHeight: `${Math.max(160, viewportHeight - 16)}px` });
+  }
 
   const initialDate = () => {
     const selected = props.value || localISODate();
@@ -88,6 +106,7 @@ export function DatePicker(props: Props) {
     setFocusDate(initial);
     setMonth(new Date(date.getFullYear(), date.getMonth(), 1, 12));
     setOpen(true);
+    requestAnimationFrame(positionPopover);
   }
   function closePicker(commit = false, restoreFocus = false) {
     if (commit && mode() === 'confirm') props.onChange(draft());
@@ -183,7 +202,7 @@ export function DatePicker(props: Props) {
   // The anchored field popover closes on outside click; the modal version delegates
   // Escape, focus trapping and focus restoration to ModalSheet.
   const closeOnOutside = (event: PointerEvent) => {
-    if (open() && presentation() === 'popover' && root && !root.contains(event.target as Node)) closePicker(mode() === 'confirm');
+    if (open() && presentation() === 'popover' && root && !root.contains(event.target as Node) && !popoverRef?.contains(event.target as Node)) closePicker(mode() === 'confirm');
   };
   const closeOnEscape = (event: KeyboardEvent) => {
     if (event.key === 'Escape' && open() && presentation() === 'popover') {
@@ -220,11 +239,13 @@ export function DatePicker(props: Props) {
         <button type="button" class={appearance() === 'pill' ? 'ui-date-picker__pill-clear' : 'ui-date-picker__clear'} aria-label={`Clear ${props.label.toLowerCase()}`} onClick={() => props.onChange('')}><X size={appearance() === 'pill' ? 11 : 13} /></button>
       </Show>
       <Show when={presentation() === 'popover' && open()}>
-        <div id={`${id}-popup`} class="ui-date-picker__popover" role="dialog" aria-label={props.label}>
-          {monthControls()}
-          {calendarGrid()}
-          {footer()}
-        </div>
+        <Portal>
+          <div ref={popoverRef} id={`${id}-popup`} class="ui-date-picker__popover ui-picker-popover--viewport" style={{ top: `${popoverPosition().top}px`, left: `${popoverPosition().left}px`, width: `${popoverPosition().width}px`, 'max-height': popoverPosition().maxHeight }} role="dialog" aria-label={props.label}>
+            {monthControls()}
+            {calendarGrid()}
+            {footer()}
+          </div>
+        </Portal>
       </Show>
       <Show when={presentation() === 'dialog' && open()}>
         <ModalSheet open title={props.label} ariaLabel={props.label} onClose={() => closePicker()} class="max-w-sm rounded-2xl"
