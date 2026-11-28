@@ -11,6 +11,8 @@ server/dist/
 # it lands in the repo whenever a dev points DB_PATH at a working directory here.
 .session-secret
 .env
+# MCP bridge credentials are local to the machine running the MCP client.
+server/mcp.local.env
 # Sibling env files for extra local instances (e.g. .env.ssotest). `.env` alone does
 # not match them, so one could otherwise be committed by accident.
 .env.*

@@ -34,7 +34,8 @@ mkdir -p "$REPO_ROOT/logs"
 chmod +x "$REPO_ROOT/ops/scripts/autocommit.sh"
 chmod +x "$REPO_ROOT/ops/scripts/install-hooks.sh"
 chmod +x "$REPO_ROOT/ops/scripts/summary.sh"
-chmod +x "$REPO_ROOT/ops/scripts/install-hermes-routines.sh"
+chmod +x "$REPO_ROOT/ops/scripts/install-hermes-mcp.sh"
+chmod +x "$REPO_ROOT/ops/scripts/install-openclaw.sh"
 
 # Install pre-commit hook
 bash "$REPO_ROOT/ops/scripts/install-hooks.sh"

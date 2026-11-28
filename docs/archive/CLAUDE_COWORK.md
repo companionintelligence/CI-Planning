@@ -90,8 +90,8 @@ schedule_task, generate_summary, reconcile_past, last_summaries, find_slot`.
 
 This is the **planning brain** other agents read from and write to:
 
-- **hermes** (already a daemon + MCP client) runs the scheduled summary/calendar
-  routines — see `ops/scripts/install-hermes-routines.sh`.
+- **Hermes** can connect to the local stdio MCP bridge for task and planner actions;
+  setup is documented in `docs/local-mcp-setup.md`.
 - **Cowork** attaches for interactive planning: triage, scheduling, briefings.
 - **The calendar bridge** lets any calendar-capable agent push events in
   (`POST /api/calendar/events`) — see `ops/scripts/sync-google-calendar.md`.

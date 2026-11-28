@@ -2811,8 +2811,13 @@ All from the repo root:
 | `pnpm --filter server restore -- <file>` | Restore a snapshot (server stopped) |
 | `pnpm --filter server db:check-drift` | Diff `schema.ts` against what the migrations actually produce (exits non-zero on drift) |
 | `pnpm --filter server key:issue` | Mint a standalone API key for `AUTH_MODE=standalone` (`--scopes read\|write`, `--ttl-days N`, `--owner <uuid>`); the raw key is printed once |
+| `bash ops/scripts/install-hermes-mcp.sh` / `bash ops/scripts/install-openclaw.sh` | Install Companion Planning workflow skills and register its local stdio MCP server with Hermes or OpenClaw; credentials stay in ignored `server/mcp.local.env` |
 | `pnpm --filter client build:mobile` | Build the client into `client/dist` for the [mobile shells](#mobile-app-ios-and-android), not `server/public` |
 | `pnpm lint:canon` | Lint the design canon (`ci-lint-canon` from `@companionintelligence/config`): `--primary` must be the CI canon value |
+
+## Local MCP
+
+The local stdio MCP bridge exposes server-backed workflows for tasks, calendar, planning, routines, objectives, tags, reviews, settings, integrations, sharing, and operator operations through the authenticated REST API. Portable workflow skills in `skills/` help Hermes and OpenClaw select and sequence those tools. Setup, tool coverage, and both client installers are documented in [docs/local-mcp-setup.md](docs/local-mcp-setup.md). The bridge launches as a child of the agent client and does not add another listening port. Browser-local controls and literal screen interaction require a browser/UI automation MCP alongside it.
 
 ## HTTP API
 
