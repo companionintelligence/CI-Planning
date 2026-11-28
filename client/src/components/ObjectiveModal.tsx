@@ -1,7 +1,7 @@
 import { createSignal, createResource, createEffect, For } from 'solid-js';
 import { api, type Objective, type ObjectiveInput } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
-import { FormActions, FormField, ModalSheet } from '../ui/index.js';
+import { DatePicker, FormActions, FormField, ModalSheet } from '../ui/index.js';
 import { ItemColorPicker } from './ItemColorPicker.js';
 
 /** Flatten the objectives tree into indented rows for the parent picker.
@@ -173,7 +173,7 @@ export function ObjectiveModal(props: Props) {
           </FormField>
 
           <FormField label="Target date (soft)" class="modal-form-field">
-            {(control) => <input {...control} type="date" class="input text-sm" value={targetDate()} onInput={(e) => setTargetDate(e.currentTarget.value)} />}
+            {(control) => <DatePicker {...control} label="Target date" value={targetDate()} onChange={setTargetDate} triggerClass="text-sm" clearable />}
           </FormField>
         </div>
 

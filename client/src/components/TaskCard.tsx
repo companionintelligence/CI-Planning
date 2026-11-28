@@ -1,7 +1,7 @@
 import { createSignal, Show, For, createResource } from 'solid-js';
 import { setActiveTask } from '../stores/selection.js';
 import { revealDetails } from '../stores/ui.js';
-import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward, CalendarDays, Rocket, X, Shapes, Target, Check, Sparkles, Share2 } from 'lucide-solid';
+import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward, Rocket, X, Shapes, Target, Check, Sparkles, Share2 } from 'lucide-solid';
 import { type Task, type RecurringScope, api } from '../lib/api.js';
 import { ObjectiveMenu } from './ObjectiveMenu.js';
 import { RoutineMenu } from './RoutineMenu.js';
@@ -12,6 +12,7 @@ import { initialsOf } from '../lib/element.js';
 import { localISODate } from '../lib/dates.js';
 import { isTaskOverdueOnDay } from '../lib/task-buckets.js';
 import { ShapeIcon } from './ShapeIcon.js';
+import { DatePicker } from '../ui/index.js';
 
 const statusClass: Record<string, string> = {
   open:      'text-foreground',
@@ -50,9 +51,7 @@ export function PriorityToggle(props: { value: number; onPick: (v: number) => vo
   );
 }
 
-// Compact inline date field: a calendar-icon BUTTON that opens the native date
-// picker, plus a clear (×) button to reset the date. Matches the Today/Settings
-// "pick a day" pattern but with an explicit trigger + reset.
+// Compact task date pill; the shared picker owns its calendar and clear behavior.
 export function DateField(props: {
   label: string;
   value?: string | null;
@@ -63,55 +62,21 @@ export function DateField(props: {
   onSet: (v: string) => void;
 }) {
   const ymd = () => (props.value ? props.value.slice(0, 10) : '');
-  const display = () => {
-    const v = ymd();
-    if (!v) return '—';
-    const d = new Date(v + 'T00:00:00');
-    return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  };
-  let inputRef: HTMLInputElement | undefined;
-  const openPicker = () => {
-    // showPicker() needs a user gesture (this click) and an in-DOM, non-hidden input.
-    try { inputRef?.showPicker(); } catch { inputRef?.focus(); }
-  };
   const labelClass = () =>
     props.overdue ? 'text-destructive'
     : props.highlight ? 'text-accent-hi font-medium'
     : 'text-muted-foreground';
   return (
-    // A uniform-height pill (matches the footer's 32px controls); the clear (×) lives
-    // INSIDE the bordered pill (nesting a real button in a button is invalid, so the
-    // pill container is a div holding two sibling buttons).
-    <div
-      class="relative flex items-center h-8 rounded-lg border border-border/70 bg-muted/30 text-[11px] flex-shrink-0"
-      classList={{
-        'bg-accent-hi/10 border-accent-hi/40': props.highlight === 'accent',
-        'bg-accent-hi/20 border-accent-hi/60': props.highlight === 'routine',
-      }}
-    >
-      <button
-        type="button"
-        class="flex items-center gap-1 h-full pl-2.5 rounded-lg hover:text-foreground"
-        classList={{ 'pr-1.5': !ymd(), 'pr-1': !!ymd() }}
-        title={`Set ${props.label.toLowerCase()} date`}
-        onClick={openPicker}
-      >
-        <CalendarDays size={11} class={`flex-shrink-0 ${props.highlight ? 'text-accent-hi' : 'text-muted-foreground'}`} />
-        <span class={labelClass()}>{props.label} {display()}</span>
-      </button>
-      <Show when={ymd()}>
-        <button type="button" class="flex items-center h-full pr-2 text-muted-foreground hover:text-destructive" title={`Clear ${props.label.toLowerCase()} date`} onClick={() => props.onSet('')}>
-          <X size={11} />
-        </button>
-      </Show>
-      <input
-        ref={inputRef}
-        type="date"
-        class="absolute bottom-0 right-0 w-0 h-0 opacity-0 pointer-events-none"
-        value={ymd()}
-        onChange={(e) => props.onSet(e.currentTarget.value)}
-      />
-    </div>
+    <DatePicker
+      appearance="pill"
+      label={`Set ${props.label.toLowerCase()} date`}
+      prefix={props.label}
+      value={ymd()}
+      onChange={props.onSet}
+      clearable
+      triggerClass={labelClass()}
+      class={`text-[11px] ${props.highlight === 'accent' ? 'bg-accent-hi/10 border-accent-hi/40' : ''} ${props.highlight === 'routine' ? 'bg-accent-hi/20 border-accent-hi/60' : ''}`}
+    />
   );
 }
 

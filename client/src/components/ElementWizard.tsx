@@ -25,7 +25,7 @@ import { findSimilarTasks } from '../lib/similar-tasks.js';
 import { inheritedBlockTag } from '../lib/planner.js';
 import { api, type Task, type Person, type DurationSuggestion, type PatternWindows, type ClassificationClaim } from '../lib/api.js';
 import { prioritizeMatchingTags } from '../lib/focus-add.js';
-import { ModalSheet } from '../ui/index.js';
+import { DatePicker, ModalSheet, TimePicker } from '../ui/index.js';
 
 const TB_REPEAT: RepeatPreset[] = ['none', 'daily', 'weekly', 'custom'];
 const TASK_REPEAT: RepeatPreset[] = ['none', 'daily', 'weekly', 'custom'];
@@ -1239,25 +1239,25 @@ export function ElementWizard() {
         <button type="button" onClick={() => nudgeTime(5)} class={`${utilChip} ${chipOff}`}>+5m</button>
         <button type="button" onClick={() => nudgeTime(15)} class={`${utilChip} ${chipOff}`}>+15m</button>
         <Show when={popover() === 'time'}>
-          <div class={`${popCard} w-44 max-h-56 overflow-y-auto`}>
-            <Show when={tab() === 'task'}>
-              <button type="button" class={popItem} onClick={() => { setTaskTime(''); setPopover(null); }}>No time</button>
-            </Show>
-            <For each={TIME_SLOTS}>
-              {(t) => (
-                <button type="button" class={popItem}
-                  classList={{ 'text-primary font-semibold': barStartMin() === t }}
-                  onClick={() => { setBarStart(t); setPopover(null); }}>
-                  {clockLabel(minToHHMM(t))}
-                </button>
-              )}
-            </For>
-            <label class="flex items-center gap-2 border-t border-border mt-1 pt-1.5 px-2 pb-0.5 text-xs text-muted-foreground">
-              Custom
-              <input type="time" class="input py-0.5 text-xs flex-1"
-                value={barStartMin() !== null ? minToHHMM(barStartMin()!) : ''}
-                onInput={(e) => { const v = e.currentTarget.value; if (v) setBarStart(hhmmToMin(v)!); }} />
-            </label>
+          <div class={`${popCard} w-44`}>
+            <div class="max-h-44 overflow-y-auto">
+              <Show when={tab() === 'task'}>
+                <button type="button" class={popItem} onClick={() => { setTaskTime(''); setPopover(null); }}>No time</button>
+              </Show>
+              <For each={TIME_SLOTS}>
+                {(t) => (
+                  <button type="button" class={popItem}
+                    classList={{ 'text-primary font-semibold': barStartMin() === t }}
+                    onClick={() => { setBarStart(t); setPopover(null); }}>
+                    {clockLabel(minToHHMM(t))}
+                  </button>
+                )}
+              </For>
+            </div>
+            <div class="flex items-center gap-2 border-t border-border mt-1 pt-1.5 px-2 pb-0.5 text-xs text-muted-foreground">
+              <span>Custom</span>
+              <TimePicker class="min-w-0 flex-1" triggerClass="py-0.5 text-xs" label="Custom start time" value={barStartMin() !== null ? minToHHMM(barStartMin()!) : ''} onChange={(value) => { if (value) setBarStart(hhmmToMin(value)!); }} />
+            </div>
           </div>
         </Show>
       </div>
@@ -1380,8 +1380,7 @@ export function ElementWizard() {
             </For>
             <label class="flex items-center gap-2 border-t border-border mt-1 pt-1.5 px-2 text-xs text-muted-foreground">
               Date
-              <input type="date" class="input py-0.5 text-xs flex-1" value={deferUntil()}
-                onInput={(e) => setDeferUntil(e.currentTarget.value)} />
+              <DatePicker class="min-w-0 flex-1" triggerClass="py-0.5 text-xs" label="Defer until" value={deferUntil()} onChange={setDeferUntil} />
             </label>
             <Show when={deferUntil()}>
               <button type="button" class={`${popItem} text-muted-foreground`}
@@ -2058,8 +2057,7 @@ export function ElementWizard() {
                             </button>
                           )}
                         </For>
-                        <input type="date" class="input py-0.5 text-xs w-32" value={goalDay()}
-                          onInput={(e) => setGoalDay(e.currentTarget.value)} />
+                        <DatePicker class="w-36" triggerClass="py-0.5 text-xs" label="Target week day" value={goalDay()} onChange={setGoalDay} clearable />
                       </div>
                     </div>
                     <DurationRow />

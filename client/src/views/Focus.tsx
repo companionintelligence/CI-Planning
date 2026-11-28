@@ -1,7 +1,7 @@
 import { createSignal, createMemo, createResource, createEffect, Show, For, onCleanup } from 'solid-js';
 import { setActiveTask } from '../stores/selection.js';
 import { revealDetails } from '../stores/ui.js';
-import { ChevronDown, ChevronRight, ChevronLeft, Crosshair, Play, Check, RotateCcw, NotebookPen, SlidersHorizontal, CalendarDays, X } from 'lucide-solid';
+import { ChevronDown, ChevronRight, Crosshair, Play, Check, RotateCcw, NotebookPen, SlidersHorizontal } from 'lucide-solid';
 import { FocusRitual } from '../components/FocusRitual.js';
 import { FocusLab } from '../components/FocusLab.js';
 import { FocusReminders } from '../components/FocusReminders.js';
@@ -22,7 +22,7 @@ import { SectionAddTask } from '../components/SectionAddTask.js';
 import { DayReflowBanner } from '../components/DayReflowBanner.js';
 import { blockColorVar } from '../lib/textures.js';
 import { categoryPrefs, textureColorSource, conflictedBlockIds } from '../stores/index.js';
-import { ModalSheet, PageHeader, Toolbar } from '../ui/index.js';
+import { DatePicker, PageHeader, Toolbar } from '../ui/index.js';
 
 function taskNeedsApproval(task?: Task): boolean {
   return !!task?.auto_generated && !task.human_approved_at;
@@ -76,20 +76,6 @@ interface Entry {
 export function Focus() {
   const viewDay = () => selectedDay();
   const isToday = () => viewDay() === localISODate();
-  const [datePickerOpen, setDatePickerOpen] = createSignal(false);
-  const [pickerMonth, setPickerMonth] = createSignal(new Date(`${viewDay()}T12:00:00`));
-  const [pickerDay, setPickerDay] = createSignal(viewDay());
-  const monthLabel = () => pickerMonth().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-  const monthDays = () => {
-    const month = pickerMonth();
-    const first = new Date(month.getFullYear(), month.getMonth(), 1, 12);
-    const offset = first.getDay();
-    const count = new Date(month.getFullYear(), month.getMonth() + 1, 0, 12).getDate();
-    return [...Array(offset).fill(null), ...Array.from({ length: count }, (_, i) => i + 1)];
-  };
-  const dateKey = (day: number) => `${pickerMonth().getFullYear()}-${String(pickerMonth().getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-  function openDatePicker() { setPickerDay(viewDay()); setPickerMonth(new Date(`${viewDay()}T12:00:00`)); setDatePickerOpen(true); }
-
   const [now, setNow] = createSignal(Date.now());
   const tick = setInterval(() => setNow(Date.now()), 30_000);
   onCleanup(() => clearInterval(tick));
@@ -458,9 +444,7 @@ export function Focus() {
         sub={new Date(`${viewDay()}T12:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
       >
         <Toolbar label="Focus actions">
-          <button class="btn-icon flex-shrink-0" title="Choose Focus day" aria-label="Choose Focus day" onClick={openDatePicker}>
-            <CalendarDays size={16} />
-          </button>
+          <DatePicker appearance="icon" presentation="dialog" mode="confirm" confirmLabel="Choose day" label="Choose Focus day" value={viewDay()} onChange={setSelectedDay} />
           <Show when={!isToday()}><button class="btn-ghost text-xs" onClick={() => setSelectedDay(localISODate())}>Today</button></Show>
           <BriefMenu date={viewDay()} />
           <FocusMenu date={viewDay()} />
@@ -483,42 +467,6 @@ export function Focus() {
           </button>
         </Toolbar>
       </PageHeader>
-      <Show when={datePickerOpen()}>
-        <ModalSheet
-          open={datePickerOpen()}
-          title="Choose Focus day"
-          ariaLabel="Choose Focus day"
-          onClose={() => setDatePickerOpen(false)}
-          class="max-w-sm rounded-2xl"
-          header={
-            <header class="flex flex-shrink-0 items-center justify-between gap-2 border-b border-border px-4 pb-3">
-              <button class="btn-icon" aria-label="Previous month" onClick={() => setPickerMonth(new Date(pickerMonth().getFullYear(), pickerMonth().getMonth() - 1, 1, 12))}><ChevronLeft size={18}/></button>
-              <h2 class="flex-1 text-center text-lg font-semibold text-foreground">{monthLabel()}</h2>
-              <button class="btn-icon" aria-label="Next month" onClick={() => setPickerMonth(new Date(pickerMonth().getFullYear(), pickerMonth().getMonth() + 1, 1, 12))}><ChevronRight size={18}/></button>
-              <button class="btn-icon" aria-label="Close calendar" onClick={() => setDatePickerOpen(false)}><X size={16}/></button>
-            </header>
-          }
-          footer={
-            <div class="flex items-center justify-between gap-2 px-4 pb-1">
-              <button class="btn-ghost" onClick={() => setPickerDay(localISODate())}>Today</button>
-              <div class="flex gap-2"><button class="btn-ghost" onClick={() => setDatePickerOpen(false)}>Cancel</button><button class="btn-primary" onClick={() => { setSelectedDay(pickerDay()); setDatePickerOpen(false); }}>Choose day</button></div>
-            </div>
-          }
-        >
-          <div class="px-4">
-            <div class="mb-1 grid grid-cols-7 text-center text-xs font-semibold uppercase text-muted-foreground">
-              <For each={['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']}>{(day) => <div class="py-2">{day}</div>}</For>
-            </div>
-            <div class="grid grid-cols-7 gap-1">
-              <For each={monthDays()}>{(day) => day === null
-                ? <div aria-hidden="true" />
-                : <button type="button" class={`aspect-square rounded-full text-sm transition-colors hover:bg-primary/15 ${pickerDay() === dateKey(day) ? 'bg-primary text-primary-foreground font-semibold' : 'text-foreground'}`} aria-label={new Date(`${dateKey(day)}T12:00:00`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} aria-pressed={pickerDay() === dateKey(day)} onClick={() => setPickerDay(dateKey(day))}>{day}</button>}
-              </For>
-            </div>
-          </div>
-        </ModalSheet>
-      </Show>
-
       {/* Inline day-note editor + display (the Today idiom — no modal). */}
       <Show when={editingNote()}>
         <div class="mb-5 flex flex-col gap-2">

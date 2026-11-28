@@ -26,7 +26,7 @@ import { PriorityToggle, DateField } from './TaskCard.js';
 import { flattenObjectives } from '../lib/objectives.js';
 import { describeRule } from '../lib/recurrence.js';
 import { addDays, rangeUTC } from '../lib/dates.js';
-import { ModalSheet } from '../ui/index.js';
+import { DatePicker, ModalSheet } from '../ui/index.js';
 import { minutesIntoDay } from '../lib/grid.js';
 import { Card, FormActions, Toolbar } from '../ui/index.js';
 import { OpenTimeSummary } from './OpenTimeSummary.js';
@@ -800,13 +800,7 @@ function DayPlanChecklist(props: { date: string }) {
                             <div class="flex flex-wrap items-center gap-2">
                               <label class="flex items-center gap-1.5 text-muted-foreground">
                                 {removeAction() === 'reschedule' ? 'Reschedule to' : 'Defer until'}
-                                <input
-                                  type="date"
-                                  class="input py-0.5 text-[10px]"
-                                  min={addDays(props.date, 1)}
-                                  value={removeDate()}
-                                  onInput={(e) => setRemoveDate(e.currentTarget.value)}
-                                />
+                                <DatePicker class="min-w-[10rem]" triggerClass="py-0.5 text-[10px]" label={removeAction() === 'reschedule' ? 'Reschedule to' : 'Defer until'} min={addDays(props.date, 1)} value={removeDate()} onChange={setRemoveDate} />
                               </label>
                               <button
                                 type="button"

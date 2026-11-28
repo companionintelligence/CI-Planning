@@ -3,6 +3,7 @@ import { Bell, Plus, Trash2 } from 'lucide-solid';
 import { api } from '../lib/api.js';
 import { reminders, refetchReminders, tasks, taskOf, blocks, showToast } from '../stores/index.js';
 import { localISODate } from '../lib/dates.js';
+import { TimePicker } from '../ui/index.js';
 
 /**
  * FocusReminders (#388) — the Focus view's reminders card: the first UI ever to
@@ -155,10 +156,7 @@ export function FocusReminders() {
           </label>
           <label class="flex flex-col gap-1">
             <span class="text-[10px] uppercase tracking-wider text-muted-foreground">Time</span>
-            <input
-              type="time" step={900} class="input text-sm w-full"
-              value={time()} onInput={(e) => setTime(e.currentTarget.value)}
-            />
+            <TimePicker label="Reminder time" stepMinutes={15} value={time()} onChange={setTime} triggerClass="text-sm w-full" />
           </label>
           <div class="flex gap-2">
             <button type="button" class="btn-primary text-xs" disabled={!taskId() || busy()} onClick={() => void create()}>
