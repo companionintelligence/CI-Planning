@@ -4,6 +4,7 @@ import { A } from '@solidjs/router';
 import { tags, patternPrefs, plannerAxisState, refetchPatternPrefs, refetchPatternBlocks, refetchDayConflicts, showToast } from '../stores/index.js';
 import { api } from '../lib/api.js';
 import { bottomCollapseStart, topCollapseEnd } from '../lib/day-axis.js';
+import { TimePicker } from '../ui/index.js';
 
 /**
  * Per-direction availability windows (Pattern-blocks) for ONE day type, plus the
@@ -142,26 +143,26 @@ export function SchedulePatternEditor(props: SchedulePatternEditorProps) {
               {(r, i) => (
                 <div class="flex items-center gap-2">
                   <div class={`flex min-w-0 flex-1 ${props.date ? 'flex-col items-stretch' : 'items-center'} gap-2`}>
-                    <input
-                      type="time"
-                      class={`input py-1 text-sm min-w-0 ${props.date ? 'w-full' : 'flex-1'}`}
+                    <TimePicker
+                      class={`min-w-0 ${props.date ? 'w-full' : 'flex-1'}`}
+                      triggerClass="py-1 text-sm"
                       min={earliestTime()}
                       max={latestTime()}
                       value={r.start_time}
-                      aria-label={`${dir.name} window start`}
-                      onInput={(e) => updateRange(dir.id, i(), 'start_time', e.currentTarget.value)}
-                      onBlur={() => save(dir.id)}
+                      label={`${dir.name} window start`}
+                      onChange={(value) => updateRange(dir.id, i(), 'start_time', value)}
+                      onCommit={() => { void save(dir.id); }}
                     />
                     <span class={`text-muted-foreground text-xs ${props.date ? 'self-center' : ''}`}>{props.date ? 'to' : '–'}</span>
-                    <input
-                      type="time"
-                      class={`input py-1 text-sm min-w-0 ${props.date ? 'w-full' : 'flex-1'}`}
+                    <TimePicker
+                      class={`min-w-0 ${props.date ? 'w-full' : 'flex-1'}`}
+                      triggerClass="py-1 text-sm"
                       min={earliestTime()}
                       max={latestTime()}
                       value={r.end_time}
-                      aria-label={`${dir.name} window end`}
-                      onInput={(e) => updateRange(dir.id, i(), 'end_time', e.currentTarget.value)}
-                      onBlur={() => save(dir.id)}
+                      label={`${dir.name} window end`}
+                      onChange={(value) => updateRange(dir.id, i(), 'end_time', value)}
+                      onCommit={() => { void save(dir.id); }}
                     />
                   </div>
                   <button

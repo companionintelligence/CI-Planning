@@ -45,6 +45,15 @@ const REM = (over: Partial<Reminder> = {}): Reminder => ({
 // scheduled for the mocked today or it drops out of the candidate list.
 const TASK = { id: 't1', title: 'Write report', status: 'open', scheduled_for: '2026-07-19' } as unknown as Task;
 
+function chooseTime(value: string) {
+  const [hour24, minute] = value.split(':').map(Number);
+  fireEvent.click(screen.getByRole('button', { name: /Reminder time/ }));
+  fireEvent.input(screen.getByLabelText('Hour'), { target: { value: String(hour24 % 12 || 12) } });
+  fireEvent.input(screen.getByLabelText('Minute'), { target: { value: String(minute) } });
+  fireEvent.click(screen.getByRole('button', { name: hour24 < 12 ? 'AM' : 'PM' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+}
+
 describe('FocusReminders — list, create, delete', () => {
   beforeEach(() => {
     createMock.mockReset().mockResolvedValue({ reminder: { id: 'r-new' } });
@@ -78,11 +87,11 @@ describe('FocusReminders — list, create, delete', () => {
   });
 
   it('create sends { taskId, date, time } — no fireAt key — then refetches and collapses', async () => {
-    const { container } = render(() => <FocusReminders />);
+    render(() => <FocusReminders />);
     fireEvent.click(screen.getByText('Add reminder'));
 
-    fireEvent.change(container.querySelector('select')!, { target: { value: 't1' } });
-    fireEvent.input(container.querySelector('input[type=time]')!, { target: { value: '14:30' } });
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 't1' } });
+    chooseTime('14:30');
     fireEvent.click(screen.getByText('Remind me'));
 
     await waitFor(() => expect(createMock).toHaveBeenCalledWith({ taskId: 't1', date: '2026-07-19', time: '14:30' }));

@@ -57,6 +57,21 @@ const onBackMock = vi.fn();
 const reportAiUseMock = vi.fn();
 const mount = () => render(() => <PlanWeekScheduleTasks append={appendMock} onBack={onBackMock} reportAiUse={reportAiUseMock} />);
 
+function chooseTime(label: string, value: string) {
+  const [hour24, minute] = value.split(':').map(Number);
+  const hour12 = hour24 % 12 || 12;
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(label) }));
+  fireEvent.input(screen.getByLabelText('Hour'), { target: { value: String(hour12) } });
+  fireEvent.input(screen.getByLabelText('Minute'), { target: { value: String(minute) } });
+  fireEvent.click(screen.getByRole('button', { name: hour24 < 12 ? 'AM' : 'PM' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+}
+
+function chooseDay(label: string, value: string) {
+  fireEvent.click(screen.getByRole('button', { name: label }));
+  fireEvent.click(document.querySelector(`[data-date="${value}"]`) as HTMLButtonElement);
+}
+
 const PLAIN = { id: 't1', title: 'Pay invoices', estimated_minutes: 30 };
 
 describe('PlanWeekScheduleTasks — deterministic one-at-a-time placement', () => {
@@ -105,8 +120,7 @@ describe('PlanWeekScheduleTasks — deterministic one-at-a-time placement', () =
     mount();
     fireEvent.click(await screen.findByText('Pay invoices'));
 
-    const time = document.querySelector('input[type=time]') as HTMLInputElement;
-    fireEvent.input(time, { target: { value: '09:30' } });
+    chooseTime('Time', '09:30');
     fireEvent.click(screen.getByText('Set'));
 
     await waitFor(() => expect(updateMock).toHaveBeenCalledWith('t1', { scheduled_for: '2026-07-18', task_time: '09:30' }));
@@ -155,8 +169,7 @@ describe('PlanWeekScheduleTasks — deterministic one-at-a-time placement', () =
 
     mount();
     fireEvent.click(await screen.findByText('Pay invoices'));
-    const dayInput = document.querySelector('input[type=date]') as HTMLInputElement;
-    fireEvent.input(dayInput, { target: { value: '2026-07-25' } });
+    chooseDay('Day', '2026-07-25');
     fireEvent.click(screen.getByText('Let Auto place it'));
 
     await waitFor(() => expect(runMock).toHaveBeenCalledWith({ date: '2026-07-25' }));
@@ -172,10 +185,8 @@ describe('PlanWeekScheduleTasks — deterministic one-at-a-time placement', () =
 
     mount();
     fireEvent.click(await screen.findByText('Pay invoices'));
-    const dayInput = document.querySelector('input[type=date]') as HTMLInputElement;
-    const timeInput = document.querySelector('input[type=time]') as HTMLInputElement;
-    fireEvent.input(dayInput, { target: { value: '2026-07-25' } });
-    fireEvent.input(timeInput, { target: { value: '14:30' } });
+    chooseDay('Day', '2026-07-25');
+    chooseTime('Time', '14:30');
     fireEvent.click(screen.getByText('Let Auto place it'));
 
     await waitFor(() => expect(updateMock).toHaveBeenCalledWith('t1', { scheduled_for: '2026-07-25', task_time: '14:30' }));

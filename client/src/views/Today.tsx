@@ -1,5 +1,5 @@
 import { createResource, createMemo, createSignal, createEffect, onCleanup, onMount, Show, For } from 'solid-js';
-import { AlertCircle, CalendarClock, X, Repeat, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, CalendarDays, NotebookPen, Zap, ListFilter } from 'lucide-solid';
+import { AlertCircle, CalendarClock, X, Repeat, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, NotebookPen, Zap, ListFilter } from 'lucide-solid';
 import { blocks, tasks, taskOf, tags, isRoutineTask, setElementModal, refetchPatterns, refetchFlightPlan, refetchTasks, refetchBlocks, showToast, selectedDay, setSelectedDay, prefs } from '../stores/index.js';
 import { dueFilterActive, passesDueFilter } from '../lib/due-filter.js';
 import { dueFilter, toggleDirection, setHideHabits, setHideRoutines } from '../stores/due-filter.js';
@@ -16,7 +16,7 @@ import { OpenTimeSummary } from '../components/OpenTimeSummary.js';
 import { DayStarsRow } from '../components/DayStarsRow.js';
 import { ReplanBanner } from '../components/ReplanBanner.js';
 import { FocusMenu, BriefMenu } from '../components/DayGoals.js';
-import { FormActions, ModalSheet } from '../ui/index.js';
+import { DatePicker, FormActions, ModalSheet } from '../ui/index.js';
 
 /**
  * TODAY — the planner cockpit (Phase G, G5). **Day Overview** (day/date + today's
@@ -203,15 +203,7 @@ export function Today() {
               <span class="text-sm text-muted-foreground">· {monthDay()}</span>
               </div>
               <button onClick={() => stepDay(1)} class="btn-icon flex-shrink-0" title="Next day"><ChevronRight size={16} /></button>
-              <label class="btn-icon relative cursor-pointer flex-shrink-0" title="Pick a day">
-                <CalendarDays size={15} />
-                <input
-                  type="date"
-                  class="absolute inset-0 opacity-0 cursor-pointer"
-                  value={selectedDay()}
-                  onInput={(e) => e.currentTarget.value && setSelectedDay(e.currentTarget.value)}
-                />
-              </label>
+              <DatePicker appearance="icon" label="Pick a day" value={selectedDay()} onChange={setSelectedDay} />
               <button type="button" class="btn-icon flex-shrink-0" aria-label="Filter directions" title="Filter directions" aria-expanded={directionFilterOpen()} onClick={() => setDirectionFilterOpen((open) => !open)}><ListFilter size={15} /></button>
               <Show when={!isToday()}>
                 <button onClick={() => setSelectedDay(today())} class="text-xs text-primary hover:underline ml-1">Jump to today</button>

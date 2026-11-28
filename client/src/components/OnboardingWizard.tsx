@@ -14,8 +14,7 @@ import { PatternTagsSetup, DayTypeSetup, WeekdayTypesStep } from './onboarding/P
 import { useNavigate } from '@solidjs/router';
 import { isCapacitorShell } from '../lib/server-config.js';
 import { clearDeviceLock, hasDeviceLock, setDeviceLockPassword } from '../lib/native-app-lock.js';
-import { ModalSheet } from '../ui/index.js';
-import { OnboardingTimePicker } from './onboarding/OnboardingTimePicker.js';
+import { ModalSheet, TimePicker } from '../ui/index.js';
 
 const BROWSER_TZ = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
@@ -255,14 +254,14 @@ export function OnboardingWizard() {
                   <span class="text-foreground">{BROWSER_TZ}</span>
                 </p>
               </div>
-              <div class="flex gap-3 ftue-time-fields">
+              <div class="flex gap-3">
                 <div class="flex min-w-0 flex-1 flex-col gap-1 text-sm">
                   <span class="text-xs text-muted-foreground">Usually wake up</span>
-                  <OnboardingTimePicker label="Usually wake up" value={wakeTime()} onChange={setWakeTime} />
+                  <TimePicker label="Usually wake up" value={wakeTime()} onChange={setWakeTime} align="start" />
                 </div>
                 <div class="flex min-w-0 flex-1 flex-col gap-1 text-sm">
                   <span class="text-xs text-muted-foreground">Usually go to bed</span>
-                  <OnboardingTimePicker label="Usually go to bed" value={bedTime()} onChange={setBedTime} />
+                  <TimePicker label="Usually go to bed" value={bedTime()} onChange={setBedTime} />
                 </div>
               </div>
               <p class="text-[11px] text-muted-foreground -mt-1">

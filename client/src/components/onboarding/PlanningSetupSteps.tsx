@@ -9,6 +9,7 @@ import type { Component } from 'solid-js';
 import { api, type PatternRange, type Tag } from '../../lib/api.js';
 import { PATTERN_COLORS, colorVar } from '../../lib/pattern-meta.js';
 import { refetchPatternBlocks, refetchPatternPrefs, refetchTags, showToast } from '../../stores/index.js';
+import { TimePicker } from '../../ui/index.js';
 
 const ICONS: [string, Component<{ size?: number; strokeWidth?: number } >][] = [
   ['House', House], ['Briefcase', Briefcase], ['Users', Users], ['Heart', Heart], ['Star', Star], ['Sun', Sun],
@@ -79,7 +80,7 @@ export function DayTypeSetup(props: { dayType: string; onBack: () => void; onNex
     <div><h2 class="text-base font-semibold text-foreground">{title()}</h2><p class="text-xs text-muted-foreground mt-0.5">{props.dayType === 'weekend' ? 'Setting up Weekend now helps the planner use different availability on your days off. Choose when Home, Work, and Community are usually available.' : 'Choose when Home, Work, and Community are usually available. These defaults guide open time and auto-scheduling.'}</p></div>
     <div class="flex flex-col gap-3 max-h-[54vh] overflow-y-auto">
       <For each={dirs()}>{(dir) => <section class="rounded border border-border p-2.5 flex flex-col gap-2"><h3 class="text-sm font-medium capitalize">{dir.name}</h3>
-        <For each={get(dir.id)}>{(range, index) => <div class="flex items-center gap-2"><input class="input py-1 text-sm flex-1 min-w-0" type="time" value={range.start_time} onInput={(e) => update(dir.id, index(), 'start_time', e.currentTarget.value)}/><span class="text-muted-foreground">–</span><input class="input py-1 text-sm flex-1 min-w-0" type="time" value={range.end_time} onInput={(e) => update(dir.id, index(), 'end_time', e.currentTarget.value)}/><button class="btn-ghost text-xs" aria-label="Remove window" onClick={() => setRows((old) => ({ ...old, [dir.id]: get(dir.id).filter((_, i) => i !== index()) }))}>×</button></div>}</For>
+        <For each={get(dir.id)}>{(range, index) => <div class="flex items-center gap-2"><TimePicker class="flex-1 min-w-0" triggerClass="py-1 text-sm" label={`${dir.name} availability start`} value={range.start_time} onChange={(value) => update(dir.id, index(), 'start_time', value)} align="start"/><span class="text-muted-foreground">–</span><TimePicker class="flex-1 min-w-0" triggerClass="py-1 text-sm" label={`${dir.name} availability end`} value={range.end_time} onChange={(value) => update(dir.id, index(), 'end_time', value)}/><button class="btn-ghost text-xs" aria-label="Remove window" onClick={() => setRows((old) => ({ ...old, [dir.id]: get(dir.id).filter((_, i) => i !== index()) }))}>×</button></div>}</For>
         <button class="text-xs text-primary self-start" onClick={() => add(dir.id)}>+ Add window</button>
       </section>}</For>
     </div>

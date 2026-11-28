@@ -30,7 +30,7 @@ import { shareApiExport, shareTextExport } from '../lib/native-export.js';
 import { clearDeviceLock, hasDeviceLock, setDeviceLockPassword } from '../lib/native-app-lock.js';
 import { colorway, setColorway, setTheme, theme, type Colorway, type Theme } from '../lib/theme.js';
 import { setTextSize, textSize, type TextSize } from '../lib/text-size.js';
-import { Card, ModalSheet } from '../ui/index.js';
+import { Card, DatePicker, ModalSheet } from '../ui/index.js';
 
 const BROWSER_TZ = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
@@ -1725,11 +1725,11 @@ export function Settings() {
             <div class="flex items-end gap-3 flex-wrap">
               <label class="flex flex-col gap-1">
                 <span class="text-[11px] text-muted-foreground">Start (required)</span>
-                <input type="date" class="input py-1 text-sm" value={clearStart()} onInput={(e) => { setClearStart(e.currentTarget.value); setClearPreview(null); }} />
+                <DatePicker label="Clear from date" value={clearStart()} onChange={(value) => { setClearStart(value); setClearPreview(null); }} triggerClass="py-1 text-sm" />
               </label>
               <label class="flex flex-col gap-1">
                 <span class="text-[11px] text-muted-foreground">End (optional)</span>
-                <input type="date" class="input py-1 text-sm" value={clearEnd()} onInput={(e) => { setClearEnd(e.currentTarget.value); setClearPreview(null); }} />
+                <DatePicker label="Clear through date" value={clearEnd()} onChange={(value) => { setClearEnd(value); setClearPreview(null); }} min={clearStart() || undefined} clearable triggerClass="py-1 text-sm" />
               </label>
               <button type="button" class="btn-secondary text-sm" disabled={clearBusy() || !clearStart()} onClick={previewClear}>Preview</button>
             </div>

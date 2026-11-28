@@ -40,7 +40,7 @@ describe('Focus day picker', () => {
     render(() => <Focus />);
     expect(screen.getByText('Today task')).toBeTruthy();
     setSelectedDay('2099-01-01'); // Start the calendar near the fixture date without navigating 870 months.
-    fireEvent.click(screen.getByRole('button', { name: 'Choose Focus day' }));
+    fireEvent.click(screen.getByRole('button', { name: /Choose Focus day/ }));
     const calendar = screen.getByRole('dialog', { name: 'Choose Focus day' });
     fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
     fireEvent.click(screen.getByRole('button', { name: 'February 1, 2099' }));
@@ -48,7 +48,7 @@ describe('Focus day picker', () => {
     expect(screen.getByText('Future task')).toBeTruthy();
     expect(screen.queryByText('Today task')).toBeNull();
     await waitFor(() => expect(getNote).toHaveBeenCalledWith('2099-02-01'));
-    fireEvent.click(screen.getByRole('button', { name: 'Choose Focus day' }));
+    fireEvent.click(screen.getByRole('button', { name: /Choose Focus day/ }));
     const returnCalendar = screen.getByRole('dialog', { name: 'Choose Focus day' });
     fireEvent.click(returnCalendar.querySelector('footer button')!);
     fireEvent.click(returnCalendar.querySelector('button.btn-primary')!);

@@ -18,7 +18,7 @@ import { type AxisState, yOf as axisYOf, axisHeightPx, visibleExtent, topCollaps
 import { isImmovable } from '../lib/drag.js';
 import { ShapeIcon } from './ShapeIcon.js';
 import { LockToggle } from './LockToggle.js';
-import { ModalSheet } from '../ui/index.js';
+import { DatePicker, ModalSheet, TimePicker } from '../ui/index.js';
 
 function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
@@ -460,8 +460,8 @@ export function PlannerEntityCard(props: {
 
         <Show when={scheduleDraft()}>
           {(draft) => <div class="rounded-lg border border-border bg-card/60 p-2.5 flex flex-wrap items-end gap-2">
-            <label class="flex min-w-[130px] flex-1 flex-col gap-1"><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Date</span><input class="input py-1 text-xs" type="date" value={draft().day} onInput={(e) => setScheduleDraft((v) => v && ({ ...v, day: e.currentTarget.value }))}/></label>
-            <label class="flex min-w-[95px] flex-1 flex-col gap-1"><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Start</span><input class="input py-1 text-xs" type="time" value={draft().start} onInput={(e) => setScheduleDraft((v) => v && ({ ...v, start: e.currentTarget.value }))}/></label>
+            <label class="flex min-w-[130px] flex-1 flex-col gap-1"><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Date</span><DatePicker class="min-w-0 flex-1" triggerClass="py-1 text-xs" label="Schedule date" value={draft().day} onChange={(day) => setScheduleDraft((v) => v && ({ ...v, day }))}/></label>
+            <label class="flex min-w-[95px] flex-1 flex-col gap-1"><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Start</span><TimePicker class="min-w-0 flex-1" triggerClass="py-1 text-xs" label="Schedule start time" value={draft().start} onChange={(start) => setScheduleDraft((v) => v && ({ ...v, start }))}/></label>
             <label class="flex w-24 flex-col gap-1"><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Minutes</span><input class="input py-1 text-xs" type="number" min="1" value={draft().duration} onInput={(e) => setScheduleDraft((v) => v && ({ ...v, duration: Number(e.currentTarget.value) }))}/></label>
             <div class="ml-auto flex gap-1"><button type="button" class="btn-ghost text-xs" onClick={() => setScheduleDraft(null)}>Cancel</button><button type="button" class="btn-primary text-xs" onClick={() => void saveSchedule()}>Save time</button></div>
           </div>}
