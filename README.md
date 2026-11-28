@@ -182,8 +182,8 @@ roll-up reads 33 %); **New Objective** opens the editor.
 > both themes (`localStorage['vite-ui-theme']`) into `docs/ui/planning-<screen>-<theme>.png`,
 > and the [Screenshots](#screenshots) tour below at 1280×800 dark. The tour includes
 > **Tags**, **Jobs**, **Routines**, and **Settings**; capture **People** from the People
-> tab in Settings. The theme-toggle GIF uses the paired Today captures. The first-run
-> GIF shows the current ten-step setup.
+> tab in Settings. The theme-toggle GIF uses the paired Today captures. Recapture the
+> first-run GIF if its flow changes before publishing it.
 
 ## Architecture
 
@@ -1130,14 +1130,13 @@ numbering skips 0009, 0119, 0159 and 0160).
 
 ## See it in action
 
-The current first-run setup walks through profile, schedule, pattern tags, day types,
+The current first-run setup walks through schedule, pattern tags, day types,
 integrations, and planning preferences. The app-view screenshots below show the current
 Today, Calendar, Tasks, and Settings screens.
 
-![Companion Planning — current ten-step first-run setup](docs/ftue.gif)
-
-First-time setup has ten steps: **Welcome** (name and email), **Time and place** (wake
-and bed times), **Pattern Tags** (edit names, colors, and shapes), **Workday** (set
+The older first-run GIF is omitted because it shows the removed identity step. First-time
+setup now has nine steps: **Time and place** (wake and bed times), **Pattern Tags** (edit
+names, colors, and shapes), **Workday** (set
 availability and optionally add a day type), **Weekend** (set availability or skip),
 **Weekday map** (choose which day type applies to each weekday), **Connect a source**,
 **Trust dial**, **First sync**, and a finish screen with the option to set up Life Balance.
@@ -2213,7 +2212,7 @@ are in [CHANGELOG.md](CHANGELOG.md).
 - **Today + Tasks UI** (Phase AC) — Today's single header row (Brief · Focus · Note popovers + FAB, collapsible DUE); Tasks task-chip redesign, Routine grouping with end-of-day archive and a midnight `reset_routines` job
 - **Memory integration** (Phase AA, opt-in) — a pull-first, read-only link to the CI-Server `companion-memory` graph behind `memory_pull_enabled`: the `memory_suggest` job stages upcoming events as task suggestions (auto-promoted since Phase AF), the Daily Brief folds in a memory excerpt, the Hands-off trust tier's day ordering favors memory-related tasks, and memory-drafted tasks get a history-based default estimate; a one-way `push_memory` job (behind `memory_sync_enabled`) mirrors completions/habits/reflections back
 - **People on work** (0151–0154) — a dedicated Settings → People directory, plus Responsible and Beneficiaries on tasks and time blocks, and people detected on suggestions; see [docs/people-on-work.md](docs/people-on-work.md)
-- **First-time setup** — a persistent ten-step setup for profile, planner hours, pattern tags, day-type availability, weekday mapping, integrations, automation trust, and optional Life Balance setup.
+- **First-time setup** — a persistent nine-step setup for planner hours, pattern tags, day-type availability, weekday mapping, integrations, automation trust, and optional Life Balance setup. Profile identity stays in Settings → Profile.
 - **Learning from what you do** — weekly, batch-only passes over per-owner evidence logs, never run mid-request: `calibrate_classification` (category and motivation picks), `calibrate_dismissals` (suggestion noise), `calibrate_placement` (preferred hours for auto-placed blocks), `calibrate_plan_loop` (authoring-loop stats) and the flagged `calibrate_triality`. All but the plan-loop stats have a reset endpoint. Settings → Learning shows what the first four measured, with the number of cases behind every figure, and offers a clear button for all but the plan-loop stats (Triality's readout is on Balance, Metrics)
 - **Balance targets in planning** (0164–0165, 0168) — `balance_bias_enabled` (default on) puts life dimensions that are behind their weekly target first in Fill and in the day's order; `snapshot_balance` freezes each closed week into `balance_week_log`
 - **Accounts** — local username/password and optional Companion Portal sign-in; configurable self-serve sign-up (`AUTH_SIGNUP=open` by default, `invite`, or `off`); operator / member / viewer roles
@@ -2950,6 +2949,27 @@ pnpm --filter client test      # client vitest — two projects: `unit` (pure lo
 cd tests/container && npm i && npx playwright install chromium && APP_URL=http://localhost:3848 npx playwright test   # container smoke against a running instance
 tests/container/run-local.sh   # the same container smoke gate (standalone, password login, Companion Portal login) from this checkout, no Docker; needs `pnpm install` and `pnpm --filter client build` first
 ```
+
+### Route and theme review
+
+The container Playwright suite includes a separate `visual-review` project for
+release-candidate and shared-UI reviews. Against an already-running local-login
+container, it captures 23 authenticated/public surface states at desktop and phone
+sizes in light and dark themes. Point `UI_REVIEW_DIR` at an artifact directory to keep
+the individual PNGs grouped by theme and viewport:
+
+```bash
+LOGIN_USER=<local-user> LOGIN_PASS=<local-password> \
+APP_URL=http://localhost:3848 \
+UI_REVIEW_DIR=test-results/ui-surface-review/<commit> \
+pnpm --dir tests/container test:visual-review
+```
+
+Review the screenshots at normal size; capture and axe results are not visual sign-off.
+This Chromium viewport sweep does not replace physical iOS/Android keyboard and
+screen-reader checks. See [UI surface review](docs/ui-surface-review.md) for the route
+matrix, migration checklist, and device checklist. Generated screenshots under
+`test-results/` are ignored by Git.
 
 <!-- companion-hub-readme-deep-review -->
 

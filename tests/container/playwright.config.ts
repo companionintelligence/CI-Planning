@@ -58,6 +58,10 @@ export default defineConfig({
       name: "accessibility",
       testMatch: "accessibility.spec.ts",
     },
+    {
+      name: "visual-review",
+      testMatch: "visual-review.spec.ts",
+    },
   ],
   timeout: 90_000,
   expect: { timeout: 15_000 },

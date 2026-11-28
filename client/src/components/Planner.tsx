@@ -20,7 +20,7 @@ import { snapToSlot, minuteToHHMM, isSlotOccupied } from '../lib/create-click.js
 import { useDropZone } from '../lib/draggable.js';
 import { isSelected, toggleSelection, setActiveTask, setActiveBlock, selection, setRoutineModal } from '../stores/selection.js';
 import { layoutBlocks } from './CalendarGrid.js';
-import { blocks, concepts, prefs, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay, tags, categoryPrefs, patternPrefs, patternBlocks, tasks, plannerAxisState, togglePlannerTop, togglePlannerBottom, texturesEnabled, objectiveAccentByBlock, askRecurringScope, isRecurringOccurrence, conflictedBlockIds, openCloseRitual, canUndoAuto } from '../stores/index.js';
+import { blocks, concepts, prefs, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay, tags, categoryPrefs, patternPrefs, patternBlocks, tasks, plannerAxisState, togglePlannerTop, togglePlannerBottom, texturesEnabled, textureColorSource, objectiveAccentByBlock, askRecurringScope, isRecurringOccurrence, conflictedBlockIds, openCloseRitual, canUndoAuto } from '../stores/index.js';
 import { accentColor } from '../lib/objective-accent.js';
 import { isAllDay } from '../lib/overlay.js';
 import { elementTextureStyle, blockColorVar, doneHatchStyle } from '../lib/textures.js';
@@ -32,7 +32,7 @@ import { splitTagNames } from '../lib/multi-tag.js';
 import { PatternBlockOverlay } from './PatternBlockOverlay.js';
 import { DirectionColumn } from './DirectionColumn.js';
 import { PlannerEntityCard } from './PlannerEntityCard.js';
-import { ViewportOverlay } from './ViewportOverlay.js';
+import { ModalSheet } from '../ui/index.js';
 
 /** Open the unified Element wizard to edit a Time Block. */
 function editTimeBlock(id: string) {
@@ -296,7 +296,7 @@ function NowLine(props: { day: string; now: string; state: () => AxisState }) {
   return (
     <Show when={visible()}>
       <div class="absolute left-0 right-0 z-20 pointer-events-none" style={{ top: `${axisYOf(mins(), props.state(), PX_PER_MIN)}px` }}>
-        <div class="h-px bg-ring shadow-[0_0_6px_rgba(88,235,191,.5)]" />
+        <div class="h-px bg-ring timeline-now-glow" />
         <div class="absolute -left-1 -top-[3px] w-[7px] h-[7px] rounded-circle bg-ring" />
       </div>
     </Show>
@@ -364,7 +364,8 @@ function ContainerOutline(props: { block: Block; day: string; state: () => AxisS
 
   // 0069: the Time-Block category colour — stamped category colour wins, else the tag
   // hash (the same helper the chips use), so the column matches the rest of the planner.
-  const fill = () => blockColorVar(b(), categoryPrefs()?.prefs);
+  const fill = () => blockColorVar(b(), categoryPrefs()?.prefs,
+    { source: textureColorSource(), tags: tags(), categories: categoryPrefs()?.prefs, directions: patternPrefs()?.prefs });
   return (
     <Show when={ext()}>
       {(e) => (
@@ -465,16 +466,18 @@ function PlannerChip(props: { placed: Placed; day: string; nowISO: () => string;
   const tagNames = () => { const t = task()?.tags?.[0]; return t ? [t] : splitTagNames(b().tag); };
   const tag = () => tagNames()[0];
   // 0069: a block's colour — stamped category colour wins, else the tag hash (forward-only).
-  const color = () => blockColorVar(b(), categoryPrefs()?.prefs);
+  const color = () => blockColorVar({ ...task(), ...b(), tags: task()?.tags, secondary_tags: task()?.secondary_tags, categories: b().categories?.length ? b().categories : task()?.categories, texture_color_token: b().texture_color_token ?? task()?.texture_color_token, responsible: b().responsible?.length ? b().responsible : task()?.responsible }, categoryPrefs()?.prefs,
+    { source: textureColorSource(), tags: tags(), categories: categoryPrefs()?.prefs, directions: patternPrefs()?.prefs });
   // Phase C: the chip's texture — category stripes / override / legacy pattern motif.
   const chipTexture = () => {
     if (!texturesEnabled()) return undefined;
     const p = pat();
     return elementTextureStyle(
-      b(),
+      { ...task(), ...b(), tags: task()?.tags, secondary_tags: task()?.secondary_tags, categories: b().categories?.length ? b().categories : task()?.categories, texture_color_token: b().texture_color_token ?? task()?.texture_color_token, responsible: b().responsible?.length ? b().responsible : task()?.responsible },
       tags(),
       categoryPrefs()?.prefs,
       p ? { iconShape: p.type?.icon_shape, seedTag: p.pattern.directions?.[0] ?? p.pattern.tag ?? tag() ?? null } : undefined,
+      { source: textureColorSource(), tags: tags(), categories: categoryPrefs()?.prefs, directions: patternPrefs()?.prefs },
     );
   };
   const conflict = () => props.placed.cols > 1;
@@ -690,11 +693,7 @@ function DeletePlanDialog(props: { plan: Block; childCount: number; onClose: () 
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
   return (
-    <ViewportOverlay class="modal-backdrop" onClick={props.onClose}>
-      <div class="modal max-w-sm" onClick={(e) => e.stopPropagation()}>
-        <div class="px-4 py-3 border-b border-border">
-          <span class="text-sm font-semibold text-foreground">Remove "{props.plan.title}"?</span>
-        </div>
+    <ModalSheet open title={`Remove "${props.plan.title}"?`} onClose={props.onClose} mode="modal" backdropClass="modal-backdrop" class="max-w-sm">
         <div class="p-4 flex flex-col gap-3">
           <p class="text-xs text-muted-foreground">
             This Plan contains {props.childCount} task{props.childCount === 1 ? '' : 's'}. Keep them on the day as
@@ -706,8 +705,7 @@ function DeletePlanDialog(props: { plan: Block; childCount: number; onClose: () 
             <button onClick={props.onClose} class="btn-ghost text-sm px-4 py-1.5 justify-center">Cancel</button>
           </div>
         </div>
-      </div>
-    </ViewportOverlay>
+    </ModalSheet>
   );
 }
 

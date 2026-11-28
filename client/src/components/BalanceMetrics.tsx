@@ -26,11 +26,11 @@ const WINDOWS = [7, 30, 90] as const;
 
 /** 1-5, worst → best. The ramp is the scale, so the colours are ordered, not categorical. */
 const SCORE_META: { key: 1 | 2 | 3 | 4 | 5; color: string; label: string }[] = [
-  { key: 1, color: '#ef4444', label: '1 — bad' },
-  { key: 2, color: '#f97316', label: '2' },
-  { key: 3, color: '#94a3b8', label: '3 — fine' },
-  { key: 4, color: '#5eead4', label: '4' },
-  { key: 5, color: '#58ebbf', label: '5 — good' },
+  { key: 1, color: 'var(--rating-score-1)', label: '1 — bad' },
+  { key: 2, color: 'var(--rating-score-2)', label: '2' },
+  { key: 3, color: 'var(--rating-score-3)', label: '3 — fine' },
+  { key: 4, color: 'var(--rating-score-4)', label: '4' },
+  { key: 5, color: 'var(--rating-score-5)', label: '5 — good' },
 ];
 
 const fmtHours = (min: number) => (min >= 60 ? `${(min / 60).toFixed(1)}h` : `${min}m`);
@@ -96,7 +96,7 @@ function DailyCompletion(props: { days: number }) {
                       <div role="img" class="min-w-0 rounded border border-border/70 px-1 py-1.5 text-center" title={label} aria-label={label}>
                         <div class="flex justify-center gap-px" aria-hidden="true">
                           <For each={STAR_PARTS}>{(part) =>
-                            <Star size={9} class={day[part.key] ? 'fill-amber-300 text-amber-300' : 'text-muted-foreground/40'} />
+                            <Star size={9} class={day[part.key] ? 'fill-star-gold text-star-gold' : 'text-muted-foreground/40'} />
                           }</For>
                         </div>
                         <div class="mt-1 text-[9px] leading-tight text-muted-foreground truncate">{day.date.slice(5)}</div>
@@ -190,10 +190,10 @@ function AxisCard(props: { m: AxisMetrics }) {
           >
             <Show when={bias()! > 1.15} fallback={
               <Show when={bias()! < 0.85} fallback={<Minus size={11} class="text-muted-foreground" />}>
-                <TrendingDown size={11} class="text-emerald-400" />
+                <TrendingDown size={11} class="text-success" />
               </Show>
             }>
-              <TrendingUp size={11} class="text-amber-400" />
+              <TrendingUp size={11} class="text-warning" />
             </Show>
             <span class="font-mono text-foreground">{bias()!.toFixed(2)}×</span>
             <span class="text-muted-foreground">est</span>
@@ -354,7 +354,7 @@ export function BalanceMetrics() {
               </span>
               <span
                 class="ml-auto text-[11px] font-medium"
-                classList={{ 'text-emerald-400': improved(), 'text-amber-400': !improved() }}
+                classList={{ 'text-success': improved(), 'text-warning': !improved() }}
               >
                 {improved() ? 'closer to accurate' : 'drifting from accurate'}
               </span>

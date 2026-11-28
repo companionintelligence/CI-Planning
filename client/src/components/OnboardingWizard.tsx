@@ -1,5 +1,4 @@
 import { createSignal, createResource, createEffect, onMount, For, Show } from 'solid-js';
-import { editableOwnerName } from '../lib/owner-name.js';
 import { api } from '../lib/api.js';
 import {
   prefs, refetchPrefs, showToast, onboardingStep, setOnboardingStep, onboardingForceOpen, setOnboardingForceOpen,
@@ -15,7 +14,7 @@ import { PatternTagsSetup, DayTypeSetup, WeekdayTypesStep } from './onboarding/P
 import { useNavigate } from '@solidjs/router';
 import { isCapacitorShell } from '../lib/server-config.js';
 import { clearDeviceLock, hasDeviceLock, setDeviceLockPassword } from '../lib/native-app-lock.js';
-import { ViewportOverlay } from './ViewportOverlay.js';
+import { ModalSheet, TimePicker } from '../ui/index.js';
 
 const BROWSER_TZ = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
@@ -44,7 +43,7 @@ function clampMinutes(v: number, lo: number, hi: number): number {
 // retired auto-promotion.)
 
 /**
- * FTUE — first-run setup for identity, time, tags, availability, integrations and planning preferences.
+ * FTUE — first-run setup for time, tags, availability, integrations and planning preferences.
  * Gated on the owner's own `onboarded_at` flag (0132), never on
  * route, so it covers every screen the same way `ElementWizard` does.
  *
@@ -84,36 +83,6 @@ export function OnboardingWizard() {
     }).catch((err) => setDeviceLockError((err as Error).message || 'Secure storage is unavailable'))
       .finally(() => setDeviceLockReady(true));
   });
-
-  const [me] = createResource(() => api.auth.me().catch(() => null));
-
-  // Step 1 — identity
-  const [name, setName] = createSignal('');
-  const [email, setEmail] = createSignal('');
-  createEffect(() => {
-    const m = me();
-    if (m) { setName(editableOwnerName(m.name)); setEmail(m.email ?? ''); }
-  });
-
-  /**
-   * The identity inputs are ALSO read straight from the DOM on submit, not only from the
-   * signals above.
-   *
-   * Browser autofill sets `input.value` without dispatching an `input` event, so `onInput`
-   * never runs and the signal stays ''. The submit path then reads an empty name, takes
-   * its "nothing to write" branch, and advances to step 2 having saved nothing — the form
-   * looks filled, the wizard looks like it worked, and the account details are silently
-   * dropped. Chrome does this for its own address/email autofill and for password-manager
-   * fills that land before the first user interaction.
-   *
-   * Reading the element is the only reliable source of truth here: it covers autofill,
-   * extensions, and any other programmatic write, none of which are obliged to fire events.
-   */
-  let nameEl: HTMLInputElement | undefined;
-  let emailEl: HTMLInputElement | undefined;
-  /** Signal value, or the DOM value when something set it without firing `input`. */
-  const liveName = () => (nameEl?.value ?? name()) || name();
-  const liveEmail = () => (emailEl?.value ?? email()) || email();
 
   /**
    * Wake / bed times drive the planner's night collapse — the hours the day grid folds
@@ -186,7 +155,7 @@ export function OnboardingWizard() {
 
   /** Shared shape behind every "save this step, then advance" transition: busy-guard,
    *  write, advance on success, toast + stay put on failure. */
-  async function advance(write: () => Promise<unknown>, nextStep: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10) {
+  async function advance(write: () => Promise<unknown>, nextStep: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10) {
     setBusy(true);
     try {
       await write();
@@ -196,13 +165,6 @@ export function OnboardingWizard() {
     } finally {
       setBusy(false);
     }
-  }
-
-  function nextFromIdentity() {
-    // liveName/liveEmail, not the signals — see the autofill note above.
-    const trimmed = liveName().trim();
-    if (!trimmed) { setOnboardingStep(2); return Promise.resolve(); } // genuinely blank — move on rather than 400
-    return advance(() => api.owner.updateProfile({ name: trimmed, email: liveEmail().trim() || null }), 2);
   }
 
   function nextFromTimePlace() {
@@ -247,7 +209,7 @@ export function OnboardingWizard() {
    * empty-state CTA (`onboardingForceOpen`) would otherwise land back on a bare Settings
    * page with only a toast — the force-open flag must be re-armed here too, and the step
    * explicitly set on BOTH outcomes (on error nothing else sets it, so it would silently
-   * default back to step 1 instead of staying on Connect where the user can retry).
+   * default back to the first FTUE step instead of staying on Connect where the user can retry).
    */
   onMount(() => {
     if (typeof window === 'undefined') return;
@@ -261,7 +223,7 @@ export function OnboardingWizard() {
       setOnboardingStep(8);
     } else {
       showToast(`Google connect failed${q.get('reason') ? `: ${q.get('reason')}` : ''}`, 'error');
-      setOnboardingStep(7); // back to Connect so the user can retry, not the step-1 default
+      setOnboardingStep(7); // back to Connect so the user can retry, not the first-step default
     }
     setOnboardingForceOpen(true);
     q.delete('google'); q.delete('reason');
@@ -271,31 +233,17 @@ export function OnboardingWizard() {
 
   return (
     <Show when={shouldOnboard()}>
-      <ViewportOverlay
-        class="onboarding-backdrop fixed inset-0 z-[1000] flex items-center justify-center p-4"
+      <ModalSheet
+        open
+        title="Set up your planner"
+        onClose={() => void completeOnboarding()}
+        mode="modal"
+        backdropClass="onboarding-backdrop"
+        class="w-full max-w-md"
+        header={<h2 class="sr-only">Set up your planner</h2>}
       >
-        <div class="card w-full max-w-md flex flex-col gap-4">
-          <p class="text-[11px] text-muted-foreground -mb-1">Step {onboardingStep()} of 10</p>
-          <Show when={onboardingStep() === 1}>
-            <div class="flex flex-col gap-3">
-              <div>
-                <h2 class="text-base font-semibold text-foreground">Welcome</h2>
-                <p class="text-xs text-muted-foreground mt-0.5">Let's get your planner set up — every step is skippable.</p>
-              </div>
-              <label class="flex flex-col gap-1 text-sm">
-                <span class="text-xs text-muted-foreground">Your name</span>
-                <input ref={nameEl} class="input" value={name()} onInput={(e) => setName(e.currentTarget.value)} placeholder="Your name" />
-              </label>
-              <label class="flex flex-col gap-1 text-sm">
-                <span class="text-xs text-muted-foreground">Email</span>
-                <input ref={emailEl} class="input" type="email" value={email()} onInput={(e) => setEmail(e.currentTarget.value)} placeholder="you@example.com" />
-              </label>
-              <div class="flex justify-between items-center pt-1">
-                <button type="button" class="btn-ghost text-xs" disabled={busy()} onClick={() => void completeOnboarding()}>Skip</button>
-                <button type="button" class="btn-primary text-xs" disabled={busy()} onClick={() => void nextFromIdentity()}>Next</button>
-              </div>
-            </div>
-          </Show>
+        <div class="flex flex-col gap-4">
+          <p class="text-[11px] text-muted-foreground -mb-1">Step {onboardingStep() - 1} of 9</p>
 
           <Show when={onboardingStep() === 2}>
             <div class="flex flex-col gap-3">
@@ -307,14 +255,14 @@ export function OnboardingWizard() {
                 </p>
               </div>
               <div class="flex gap-3">
-                <label class="flex flex-col gap-1 text-sm flex-1">
+                <div class="flex min-w-0 flex-1 flex-col gap-1 text-sm">
                   <span class="text-xs text-muted-foreground">Usually wake up</span>
-                  <input class="input" type="time" value={wakeTime()} onInput={(e) => setWakeTime(e.currentTarget.value)} />
-                </label>
-                <label class="flex flex-col gap-1 text-sm flex-1">
+                  <TimePicker label="Usually wake up" value={wakeTime()} onChange={setWakeTime} align="start" />
+                </div>
+                <div class="flex min-w-0 flex-1 flex-col gap-1 text-sm">
                   <span class="text-xs text-muted-foreground">Usually go to bed</span>
-                  <input class="input" type="time" value={bedTime()} onInput={(e) => setBedTime(e.currentTarget.value)} />
-                </label>
+                  <TimePicker label="Usually go to bed" value={bedTime()} onChange={setBedTime} />
+                </div>
               </div>
               <p class="text-[11px] text-muted-foreground -mt-1">
                 The planner folds the hours outside this away, so your real day fills the screen.
@@ -323,7 +271,6 @@ export function OnboardingWizard() {
               <div class="flex justify-between items-center pt-1">
                 <button type="button" class="btn-ghost text-xs" disabled={busy()} onClick={() => void completeOnboarding()}>Skip</button>
                 <div class="flex gap-2">
-                  <button type="button" class="btn-ghost text-xs" disabled={busy()} onClick={() => setOnboardingStep(1)}>Back</button>
                   <button type="button" class="btn-primary text-xs" disabled={busy()} onClick={() => void nextFromTimePlace()}>Next</button>
                 </div>
               </div>
@@ -434,7 +381,7 @@ export function OnboardingWizard() {
             </div>
           </Show>
         </div>
-      </ViewportOverlay>
+      </ModalSheet>
     </Show>
   );
 }

@@ -13,7 +13,7 @@ import { isSelected, toggleSelection, setActiveTask, activeTask } from '../store
 import { revealDetails } from '../stores/ui.js';
 import { useDraggable } from '../lib/draggable.js';
 import { splitTagNames } from '../lib/multi-tag.js';
-import { Card, EmptyState, Toolbar } from '../ui/index.js';
+import { Card, EmptyState, TimePicker, Toolbar } from '../ui/index.js';
 import {
   groupFlightPlan, buildRows, pageSlice, filterByName, defaultPlaceTimeHHMM, localDayTimeToISO,
   type PagedSlice, type FpRowModel,
@@ -319,7 +319,7 @@ export function FlightPlan() {
         <Show when={placing()}>
           <div class="flex items-center gap-2 px-3 pb-2 pl-8">
             <span class="text-[11px] text-muted-foreground">Place on {selectedDay()} at</span>
-            <input type="time" step={900} class="input py-0.5 text-sm w-24" value={time()} onInput={(e) => setTime(e.currentTarget.value)} onKeyDown={(e) => e.key === 'Enter' && place()} />
+            <TimePicker label="Placement time" stepMinutes={15} value={time()} onChange={setTime} onEnter={place} triggerClass="py-0.5 text-sm w-24" />
             <button onClick={place} class="btn-primary !rounded-sm !py-0.5 !px-2.5 text-[11px] flex items-center gap-1" title="Create the block at this time"><CalendarCheck size={12} /> Place</button>
             <button onClick={() => setPlacing(false)} class="btn-icon" title="Cancel"><X size={13} /></button>
           </div>

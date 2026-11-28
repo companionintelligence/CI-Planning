@@ -1,35 +1,35 @@
 import { createSignal, Show, For, createResource } from 'solid-js';
 import { setActiveTask } from '../stores/selection.js';
 import { revealDetails } from '../stores/ui.js';
-import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward, CalendarDays, Rocket, X, Shapes, Target, Check, Sparkles, Share2 } from 'lucide-solid';
+import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward, Rocket, X, Shapes, Target, Check, Sparkles, Share2 } from 'lucide-solid';
 import { type Task, type RecurringScope, api } from '../lib/api.js';
 import { ObjectiveMenu } from './ObjectiveMenu.js';
 import { RoutineMenu } from './RoutineMenu.js';
-import { tasks, refetchTasks, showToast, setElementModal, tags, patternPrefs, patternForTask, isRoutineTask, flightPlanTaskIds, scheduledByTaskId, texturesEnabled, categoryPrefs, openCloseRitual, askRecurringScope, isRecurringOccurrence } from '../stores/index.js';
+import { tasks, refetchTasks, showToast, setElementModal, tags, patternPrefs, patternForTask, isRoutineTask, flightPlanTaskIds, scheduledByTaskId, texturesEnabled, textureColorSource, categoryPrefs, openCloseRitual, askRecurringScope, isRecurringOccurrence } from '../stores/index.js';
 import { directionColorForTask, directionShapeForTask, colorVar, resolveItemColor } from '../lib/pattern-meta.js';
-import { elementTextureStyle } from '../lib/textures.js';
+import { elementTextureStyle, automaticTextureColor } from '../lib/textures.js';
 import { initialsOf } from '../lib/element.js';
 import { localISODate } from '../lib/dates.js';
 import { isTaskOverdueOnDay } from '../lib/task-buckets.js';
 import { ShapeIcon } from './ShapeIcon.js';
+import { DatePicker } from '../ui/index.js';
 
 const statusClass: Record<string, string> = {
-  open:      'text-slate-200',
-  done:      'text-slate-500 line-through',
-  scheduled: 'text-blue-300',
-  cancelled: 'text-slate-600 line-through',
+  open:      'text-foreground',
+  done:      'text-muted-foreground line-through',
+  scheduled: 'text-info',
+  cancelled: 'text-muted-foreground line-through',
   archived: 'text-slate-500',
-  deferred:  'text-yellow-500',
+  deferred:  'text-warning',
 };
 
-// Priority selector options (T-TASKS-2). Four buckets over the 1–5 model: P1/P2/P3
-// map to 1/2/3; "Later" stores 4 and displays for any priority >= 4. Fill colours
-// mirror index.css .p1/.p2/.p3/.p5; fg picked for contrast on each.
-const PRIO: { label: string; value: number; bg: string; fg: string }[] = [
-  { label: 'P1',    value: 1, bg: '#ef4444', fg: '#fff' },
-  { label: 'P2',    value: 2, bg: '#f97316', fg: '#fff' },
-  { label: 'P3',    value: 3, bg: '#58ebbf', fg: '#0b1220' },
-  { label: 'Later', value: 4, bg: '#244859', fg: '#fff' },
+// Priority selector options (T-TASKS-2). Color treatments live in index.css so
+// semantic tokens, rather than view-owned literals, determine foreground contrast.
+const PRIO: { label: string; value: number; className: string }[] = [
+  { label: 'P1', value: 1, className: 'priority-choice-1' },
+  { label: 'P2', value: 2, className: 'priority-choice-2' },
+  { label: 'P3', value: 3, className: 'priority-choice-3' },
+  { label: 'Later', value: 4, className: 'priority-choice-later' },
 ];
 
 export function PriorityToggle(props: { value: number; onPick: (v: number) => void }) {
@@ -41,9 +41,7 @@ export function PriorityToggle(props: { value: number; onPick: (v: number) => vo
           <button
             type="button"
             onClick={() => props.onPick(o.value)}
-            class="px-2 h-full flex items-center transition-colors"
-            classList={{ 'text-muted-foreground hover:text-foreground': !isSel(o.value) }}
-            style={isSel(o.value) ? { background: o.bg, color: o.fg } : {}}
+            class={`px-2 h-full flex items-center transition-colors ${isSel(o.value) ? o.className : 'text-muted-foreground hover:text-foreground'}`}
           >
             {o.label}
           </button>
@@ -53,9 +51,7 @@ export function PriorityToggle(props: { value: number; onPick: (v: number) => vo
   );
 }
 
-// Compact inline date field: a calendar-icon BUTTON that opens the native date
-// picker, plus a clear (×) button to reset the date. Matches the Today/Settings
-// "pick a day" pattern but with an explicit trigger + reset.
+// Compact task date pill; the shared picker owns its calendar and clear behavior.
 export function DateField(props: {
   label: string;
   value?: string | null;
@@ -66,55 +62,21 @@ export function DateField(props: {
   onSet: (v: string) => void;
 }) {
   const ymd = () => (props.value ? props.value.slice(0, 10) : '');
-  const display = () => {
-    const v = ymd();
-    if (!v) return '—';
-    const d = new Date(v + 'T00:00:00');
-    return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  };
-  let inputRef: HTMLInputElement | undefined;
-  const openPicker = () => {
-    // showPicker() needs a user gesture (this click) and an in-DOM, non-hidden input.
-    try { inputRef?.showPicker(); } catch { inputRef?.focus(); }
-  };
   const labelClass = () =>
     props.overdue ? 'text-destructive'
     : props.highlight ? 'text-accent-hi font-medium'
     : 'text-muted-foreground';
   return (
-    // A uniform-height pill (matches the footer's 32px controls); the clear (×) lives
-    // INSIDE the bordered pill (nesting a real button in a button is invalid, so the
-    // pill container is a div holding two sibling buttons).
-    <div
-      class="relative flex items-center h-8 rounded-lg border border-border/70 bg-muted/30 text-[11px] flex-shrink-0"
-      classList={{
-        'bg-accent-hi/10 border-accent-hi/40': props.highlight === 'accent',
-        'bg-accent-hi/20 border-accent-hi/60': props.highlight === 'routine',
-      }}
-    >
-      <button
-        type="button"
-        class="flex items-center gap-1 h-full pl-2.5 rounded-lg hover:text-foreground"
-        classList={{ 'pr-1.5': !ymd(), 'pr-1': !!ymd() }}
-        title={`Set ${props.label.toLowerCase()} date`}
-        onClick={openPicker}
-      >
-        <CalendarDays size={11} class={`flex-shrink-0 ${props.highlight ? 'text-accent-hi' : 'text-muted-foreground'}`} />
-        <span class={labelClass()}>{props.label} {display()}</span>
-      </button>
-      <Show when={ymd()}>
-        <button type="button" class="flex items-center h-full pr-2 text-muted-foreground hover:text-red-400" title={`Clear ${props.label.toLowerCase()} date`} onClick={() => props.onSet('')}>
-          <X size={11} />
-        </button>
-      </Show>
-      <input
-        ref={inputRef}
-        type="date"
-        class="absolute bottom-0 right-0 w-0 h-0 opacity-0 pointer-events-none"
-        value={ymd()}
-        onChange={(e) => props.onSet(e.currentTarget.value)}
-      />
-    </div>
+    <DatePicker
+      appearance="pill"
+      label={`Set ${props.label.toLowerCase()} date`}
+      prefix={props.label}
+      value={ymd()}
+      onChange={props.onSet}
+      clearable
+      triggerClass={labelClass()}
+      class={`text-[11px] ${props.highlight === 'accent' ? 'bg-accent-hi/10 border-accent-hi/40' : ''} ${props.highlight === 'routine' ? 'bg-accent-hi/20 border-accent-hi/60' : ''}`}
+    />
   );
 }
 
@@ -369,7 +331,12 @@ export function TaskCard(props: Props) {
   const hasDirection = () =>
     dirDefs().some((t) => t.kind === 'direction' && (props.task.tags ?? []).includes(t.name));
   const dirTaskForIcon = (): { tags: string[] } => (hasDirection() ? { tags: props.task.tags ?? [] } : { tags: ['work'] });
-  const dirColor = (): string => directionColorForTask(dirTaskForIcon(), dirDefs(), patternPrefs()?.prefs ?? {});
+  const dirColor = (): string => {
+    const token = props.task.texture_color_token ?? automaticTextureColor(props.task, {
+      source: textureColorSource(), tags: tags(), categories: categoryPrefs()?.prefs, directions: patternPrefs()?.prefs,
+    });
+    return token ? colorVar(token) : directionColorForTask(dirTaskForIcon(), dirDefs(), patternPrefs()?.prefs ?? {});
+  };
   const dirShape = (): string => directionShapeForTask(dirTaskForIcon(), dirDefs(), patternPrefs()?.prefs ?? {});
 
   // "Scheduled" = a real placement on the planner (any engine) OR a persisted scheduled
@@ -410,6 +377,7 @@ export function TaskCard(props: Props) {
       tags(),
       categoryPrefs()?.prefs,
       r ? { iconShape: r.type?.icon_shape, seedTag: r.pattern.directions?.[0] ?? r.pattern.tag } : undefined,
+      { source: textureColorSource(), tags: tags(), categories: categoryPrefs()?.prefs, directions: patternPrefs()?.prefs },
     );
     if (!style) return undefined;
     // The motif fallback tints currentColor — feed it the routine's item colour
@@ -423,8 +391,15 @@ export function TaskCard(props: Props) {
 
       <div class="relative overflow-hidden">
         <Show when={canSwipe()}>
-          <div class="absolute inset-y-0 left-0 flex items-center px-4 text-xs text-accent-hi gap-1" aria-hidden="true"><Rocket size={15} /> Flight Plan</div>
-          <div class="absolute inset-y-0 right-0 flex items-center gap-1 px-1">
+          <div
+            class="absolute inset-y-0 left-0 flex items-center px-4 text-xs text-accent-hi gap-1"
+            classList={{ 'opacity-0': inFlightPlan() }}
+            aria-hidden="true"
+          ><Rocket size={15} /> Flight Plan</div>
+          <div
+            class="absolute inset-y-0 right-0 flex items-center gap-1 px-1 transition-opacity"
+            classList={{ 'opacity-0 pointer-events-none': !swipeOpen() && swipeOffset() >= -8 }}
+          >
             <button type="button" class="h-10 px-2 rounded-md bg-muted text-foreground text-xs" aria-label={`Archive ${props.task.title}`} tabIndex={swipeOpen() ? 0 : -1} onClick={() => { setSwipeOpen(false); setSwipeOffset(0); void archiveTask(); }}>Archive</button>
             <button type="button" class="h-10 px-2 rounded-md bg-destructive text-destructive-foreground text-xs" aria-label={`Delete ${props.task.title}`} tabIndex={swipeOpen() ? 0 : -1} onClick={() => { setSwipeOpen(false); setSwipeOffset(0); void remove(); }}>Delete</button>
           </div>
@@ -564,7 +539,7 @@ export function TaskCard(props: Props) {
                 </button>
               </Show>
               <button class="btn-icon" title="Edit" onClick={() => setElementModal({ open: true, mode: 'edit', kind: props.task.is_habit ? 'habit' : 'task', editTarget: { kind: props.task.is_habit ? 'habit' : 'task', id: props.task.id } })}><Pencil size={13} /></button>
-              <button onClick={remove} class="btn-icon hover:text-red-400" title="Cancel task"><Trash2 size={13} /></button>
+              <button onClick={remove} class="btn-icon hover:text-destructive" title="Cancel task"><Trash2 size={13} /></button>
             </div>
           </div>
         </div>
@@ -760,7 +735,7 @@ export function TaskCard(props: Props) {
               class="flex items-center justify-center h-8 w-8 rounded-sm flex-shrink-0 transition-all"
               classList={{
                 'bg-accent-hi/20 text-accent-hi': inFlightPlan(),
-                'bg-accent-hi text-[#041620] hover:brightness-110': !inFlightPlan(),
+                'bg-accent-hi text-accent-hi-foreground hover:brightness-110': !inFlightPlan(),
               }}
               title={inFlightPlan() ? 'In the Flight-plan' : 'Send to Flight-plan'}
             >

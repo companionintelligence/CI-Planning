@@ -8,6 +8,7 @@ import {
 } from '../stores/index.js';
 import type { BranchProps } from './PlanWeekAssistant.js';
 import { InstructBox } from './InstructBox.js';
+import { DatePicker, TimePicker } from '../ui/index.js';
 
 /**
  * "Schedule tasks" (FTUE · T4, #340) — the deterministic one-at-a-time branch: list the
@@ -223,14 +224,8 @@ export function PlanWeekScheduleTasks(props: BranchProps) {
             <p class="text-sm text-foreground">{t().title}</p>
 
             <div class="flex items-center gap-2">
-              <input
-                type="date" class="input text-sm" aria-label="Day"
-                value={day()} onInput={(e) => setDay(e.currentTarget.value)}
-              />
-              <input
-                type="time" step={900} class="input text-sm" aria-label="Time"
-                value={time()} onInput={(e) => setTime(e.currentTarget.value)}
-              />
+              <DatePicker label="Day" value={day()} onChange={setDay} triggerClass="text-sm" />
+              <TimePicker label="Time" value={time()} onChange={setTime} stepMinutes={15} clearable triggerClass="text-sm" />
             </div>
 
             <div class="flex flex-wrap gap-2">

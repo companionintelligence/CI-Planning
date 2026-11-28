@@ -76,7 +76,7 @@ test('Objective child creation can be reset to top level and directly receive a 
 
     // Quick-add opens the full task editor so the user can review its fields. Close
     // that editor to return to the objective, then complete the linked task in place.
-    await page.locator('.modal-backdrop .modal > div').first().locator('button.btn-icon').click();
+    await page.getByRole('button', { name: 'Close task form', exact: true }).click();
     const objectiveRow = page.locator('.objective-header').filter({ hasText: childTitle }).locator('..');
     const taskUpdate = page.waitForResponse((response) =>
       response.url().endsWith(`/api/tasks/${task.id}`) && response.request().method() === 'PATCH', { timeout: 10_000 });

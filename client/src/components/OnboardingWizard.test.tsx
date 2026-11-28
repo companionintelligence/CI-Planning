@@ -6,12 +6,12 @@ import type { Integrations } from '../lib/api.js';
 
 /**
  * OnboardingWizard (FTUE · T11, #347 / T12, #348) — gating on the owner's
- * `onboarded_at` flag, the ten-step wiring (identity / time+place / pattern tags /
+ * `onboarded_at` flag, the nine-step wiring (time+place / pattern tags /
  * workday / weekend / weekday map / connect / trust / sync / balance), and completion. T12 moved `step` from a component-
  * local signal to the store (`onboardingStep`) and added the Connect/Run-sync step
  * slots — this file was rewritten for that shape, not just extended.
  *
- * SEAMS mocked: `../lib/api.js` (auth.me / owner.updateProfile / prefs.update /
+ * SEAMS mocked: `../lib/api.js` (auth.config / prefs.update /
  * planWeek.session.open+close / oauth.googleStart / googleConfig.get+save /
  * jobs.runNow) and `../stores/index.js` (prefs / refetchPrefs / showToast /
  * onboardingStep+setOnboardingStep / onboardingForceOpen+setOnboardingForceOpen /
@@ -22,11 +22,6 @@ import type { Integrations } from '../lib/api.js';
  * record that they were called.
  */
 
-const meMock = vi.fn(async () => ({
-  ownerId: 'o1', name: 'Ada', email: 'ada@x.io', username: null,
-  backupEmail: null, role: 'operator' as const, isOperator: true,
-}));
-const updateProfileMock = vi.fn(async (_b: unknown) => ({ ok: true, name: 'Ada', email: 'ada@x.io' }));
 const prefsUpdateMock = vi.fn(async (_b: unknown) => ({ prefs: {} }));
 const sessionOpenMock = vi.fn(async (_branch: string) => ({ session: { id: 's1' } }));
 const sessionCloseMock = vi.fn(async (_id: string, _b: unknown) => ({ session: { id: 's1' } }));
@@ -64,8 +59,7 @@ const refetchTagsMock = vi.fn();
 
 vi.mock('../lib/api.js', () => ({
   api: {
-    auth: { me: () => meMock() },
-    owner: { updateProfile: (b: unknown) => updateProfileMock(b) },
+    auth: { config: async () => ({ portal: false }) },
     prefs: { update: (b: unknown) => prefsUpdateMock(b) },
     planWeek: {
       session: {
@@ -114,7 +108,7 @@ const setPrefs = (p: PrefsLike) => setPrefsValue(p);
 const refetchPrefsMock = vi.fn(async () => {
   setPrefsValue((p) => ({ ...(p ?? {}), onboarded_at: '2026-07-19T00:00:00.000Z' }) as PrefsLike);
 });
-const [onboardingStepValue, setOnboardingStepValue] = createSignal<1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10>(1);
+const [onboardingStepValue, setOnboardingStepValue] = createSignal<2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10>(2);
 const [onboardingForceOpenValue, setOnboardingForceOpenValue] = createSignal(false);
 // Gates ConnectSourceStep's "Try with sample data" (store default: true). A real signal
 // so the wizard's Finish/Skip reset is observable, not just recorded as a call.
@@ -140,7 +134,7 @@ vi.mock('../stores/index.js', () => ({
   refetchPrefs: () => refetchPrefsMock(),
   showToast: (...a: unknown[]) => toastMock(...a),
   onboardingStep: () => onboardingStepValue(),
-  setOnboardingStep: (s: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10) => setOnboardingStepValue(s),
+  setOnboardingStep: (s: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10) => setOnboardingStepValue(s),
   onboardingForceOpen: () => onboardingForceOpenValue(),
   setOnboardingForceOpen: (v: boolean) => setOnboardingForceOpenValue(v),
   onboardingSampleDataAllowed: () => onboardingSampleDataAllowedValue(),
@@ -185,10 +179,15 @@ async function saveAndContinue() {
 }
 
 async function advanceToStep2() {
-  await screen.findByText('Welcome');
-  await waitFor(() => expect((screen.getByPlaceholderText('Your name') as HTMLInputElement).value).toBe('Ada'));
-  fireEvent.click(screen.getByText('Next'));
   await screen.findByText('Time and place');
+}
+
+function setPickerTime(label: string, hour: number, minute: number, period: 'AM' | 'PM') {
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(label) }));
+  fireEvent.input(screen.getByLabelText('Hour'), { target: { value: String(hour) } });
+  fireEvent.input(screen.getByLabelText('Minute'), { target: { value: String(minute) } });
+  fireEvent.click(screen.getByRole('button', { name: period }));
+  fireEvent.click(screen.getByText('Done'));
 }
 
 async function advanceToConnectStep() {
@@ -223,11 +222,6 @@ describe('OnboardingWizard', () => {
     // seeds saved collapse bounds leaks them into the next one's hydration assertions.
     setPlannerAxisValue({});
     setPlannerCollapseBoundsMock.mockClear();
-    meMock.mockReset().mockResolvedValue({
-      ownerId: 'o1', name: 'Ada', email: 'ada@x.io', username: null,
-      backupEmail: null, role: 'operator', isOperator: true,
-    });
-    updateProfileMock.mockReset().mockResolvedValue({ ok: true, name: 'Ada', email: 'ada@x.io' });
     prefsUpdateMock.mockReset().mockResolvedValue({ prefs: {} });
     sessionOpenMock.mockReset().mockResolvedValue({ session: { id: 's1' } });
     sessionCloseMock.mockReset().mockResolvedValue({ session: { id: 's1' } });
@@ -256,7 +250,7 @@ describe('OnboardingWizard', () => {
     refetchFlightPlanMock.mockReset();
     toastMock.mockReset();
     setPrefsValue(undefined);
-    setOnboardingStepValue(1);
+    setOnboardingStepValue(2);
     setOnboardingForceOpenValue(false);
     setOnboardingSampleDataAllowedValue(true);
     setIntegrationsValue(OFF_INTEGRATIONS);
@@ -266,7 +260,7 @@ describe('OnboardingWizard', () => {
   describe('gating', () => {
     it('renders nothing while prefs() is loading', () => {
       mount();
-      expect(screen.queryByText('Welcome')).toBeNull();
+      expect(screen.queryByText('Time and place')).toBeNull();
     });
 
     it('renders nothing once onboarded_at is set', () => {
@@ -278,7 +272,7 @@ describe('OnboardingWizard', () => {
     it('renders the step shell when onboarded_at is null', async () => {
       setPrefs({ onboarded_at: null });
       mount();
-      await screen.findByText('Welcome');
+      await screen.findByText('Time and place');
     });
 
     it('onboardingForceOpen reopens the wizard even when already onboarded', async () => {
@@ -291,71 +285,13 @@ describe('OnboardingWizard', () => {
   });
 
   describe('step wiring', () => {
-    it('Step 1 Next prefills from auth.me and writes via owner.updateProfile; empty email -> null', async () => {
+    it('starts on Time and place without showing account identity fields', async () => {
       setPrefs({ onboarded_at: null });
       mount();
-      await screen.findByText('Welcome');
-      await waitFor(() => expect((screen.getByPlaceholderText('Your name') as HTMLInputElement).value).toBe('Ada'));
-      fireEvent.input(screen.getByPlaceholderText('you@example.com'), { target: { value: '' } });
-
-      fireEvent.click(screen.getByText('Next'));
-
-      await waitFor(() => expect(updateProfileMock).toHaveBeenCalledWith({ name: 'Ada', email: null }));
       await screen.findByText('Time and place');
-    });
-
-    /**
-     * Browser autofill sets `input.value` WITHOUT dispatching an `input` event, so a
-     * controlled Solid input's signal stays at its old value. Step 1 previously read only
-     * the signal: an autofilled form therefore looked blank, took the "nothing to write"
-     * branch, and advanced to step 2 having saved nothing — the wizard appeared to work
-     * while silently discarding the account details.
-     *
-     * Assigning `.value` directly (no fireEvent.input) is exactly what the browser does,
-     * so this reproduces it faithfully rather than approximating it.
-     */
-    it('Step 1 saves values the browser AUTOFILLED, which fire no input event', async () => {
-      meMock.mockResolvedValueOnce({
-        ownerId: 'o1', name: '', email: '', username: null,
-        backupEmail: null, role: 'operator' as const, isOperator: true,
-      });
-      setPrefs({ onboarded_at: null });
-      mount();
-      await screen.findByText('Welcome');
-
-      const nameEl = screen.getByPlaceholderText('Your name') as HTMLInputElement;
-      const emailEl = screen.getByPlaceholderText('you@example.com') as HTMLInputElement;
-      await waitFor(() => expect(nameEl.value).toBe(''));
-
-      nameEl.value = 'Liam';
-      emailEl.value = 'liam@example.com';
-
-      fireEvent.click(screen.getByText('Next'));
-
-      await waitFor(() =>
-        expect(updateProfileMock).toHaveBeenCalledWith({ name: 'Liam', email: 'liam@example.com' }),
-      );
-      await screen.findByText('Time and place');
-    });
-
-    it('Step 1 still advances without writing when the field is genuinely blank', async () => {
-      // The guard the autofill fix must not break: a real empty name skips the write
-      // rather than sending a 400.
-      meMock.mockResolvedValueOnce({
-        ownerId: 'o1', name: '', email: '', username: null,
-        backupEmail: null, role: 'operator' as const, isOperator: true,
-      });
-      setPrefs({ onboarded_at: null });
-      mount();
-      await screen.findByText('Welcome');
-      await waitFor(() =>
-        expect((screen.getByPlaceholderText('Your name') as HTMLInputElement).value).toBe(''),
-      );
-
-      fireEvent.click(screen.getByText('Next'));
-
-      await screen.findByText('Time and place');
-      expect(updateProfileMock).not.toHaveBeenCalled();
+      expect(screen.queryByText('Welcome')).toBeNull();
+      expect(screen.queryByPlaceholderText('Your name')).toBeNull();
+      expect(screen.queryByPlaceholderText('you@example.com')).toBeNull();
     });
 
     /**
@@ -374,8 +310,8 @@ describe('OnboardingWizard', () => {
       mount();
       await screen.findByText('Time and place');
 
-      fireEvent.input(screen.getByLabelText(/Usually wake up/), { target: { value: '06:30' } });
-      fireEvent.input(screen.getByLabelText(/Usually go to bed/), { target: { value: '22:45' } });
+      setPickerTime('Usually wake up', 6, 30, 'AM');
+      setPickerTime('Usually go to bed', 10, 45, 'PM');
 
       fireEvent.click(screen.getByText('Next'));
 
@@ -401,8 +337,8 @@ describe('OnboardingWizard', () => {
       mount();
       await screen.findByText('Time and place');
 
-      fireEvent.input(screen.getByLabelText(/Usually wake up/), { target: { value: '23:00' } });
-      fireEvent.input(screen.getByLabelText(/Usually go to bed/), { target: { value: '01:00' } });
+      setPickerTime('Usually wake up', 11, 0, 'PM');
+      setPickerTime('Usually go to bed', 1, 0, 'AM');
 
       fireEvent.click(screen.getByText('Next'));
 
@@ -416,8 +352,8 @@ describe('OnboardingWizard', () => {
       mount();
       await screen.findByText('Time and place');
 
-      expect((screen.getByLabelText(/Usually wake up/) as HTMLInputElement).value).toBe('08:00');
-      expect((screen.getByLabelText(/Usually go to bed/) as HTMLInputElement).value).toBe('22:00');
+      expect(screen.getByRole('button', { name: 'Usually wake up: 08:00 AM' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Usually go to bed: 10:00 PM' })).toBeTruthy();
     });
 
     it('Step 2 Next saves timezone (without workday_start/workday_end), then lands on Pattern Tags', async () => {
@@ -695,31 +631,30 @@ describe('OnboardingWizard', () => {
       await waitFor(() => expect(screen.queryByText('Run your first sync')).toBeNull());
     });
 
-    it('Skip from step 1 completes onboarding without an identity write', async () => {
+    it('Skip from the first setup step completes onboarding', async () => {
       setPrefs({ onboarded_at: null });
       mount();
-      await screen.findByText('Welcome');
+      await screen.findByText('Time and place');
 
       fireEvent.click(screen.getByText('Skip'));
 
       await waitFor(() => expect(prefsUpdateMock).toHaveBeenCalledWith(
         expect.objectContaining({ onboarded_at: expect.any(String) }),
       ));
-      expect(updateProfileMock).not.toHaveBeenCalled();
-      await waitFor(() => expect(screen.queryByText('Welcome')).toBeNull());
+      await waitFor(() => expect(screen.queryByText('Time and place')).toBeNull());
     });
 
     it('a failed onboarded_at write toasts and leaves the wizard open (no session recorded)', async () => {
       prefsUpdateMock.mockRejectedValueOnce(new Error('offline'));
       setPrefs({ onboarded_at: null });
       mount();
-      await screen.findByText('Welcome');
+      await screen.findByText('Time and place');
 
       fireEvent.click(screen.getByText('Skip'));
 
       await waitFor(() => expect(toastMock).toHaveBeenCalledWith('offline', 'error'));
       expect(sessionOpenMock).not.toHaveBeenCalled();
-      expect(screen.queryByText('Welcome')).not.toBeNull();
+      expect(screen.queryByText('Time and place')).not.toBeNull();
     });
 
     it('completing a force-reopened (already-onboarded) wizard clears the force-open flag', async () => {
@@ -759,13 +694,13 @@ describe('OnboardingWizard', () => {
       localStorage.setItem('cp-ftue-resume', '1');
       window.history.replaceState({}, '', '/settings?google=connected');
       setPrefs({ onboarded_at: '2020-01-01T00:00:00.000Z' });
-      setOnboardingStepValue(1); // the fresh-boot default, NOT the step the user was on
+      setOnboardingStepValue(2); // the fresh-boot default, NOT the step the user was on
       setOnboardingForceOpenValue(false); // also reset by the fresh boot
 
       mount();
 
       await waitFor(() => expect(toastMock).toHaveBeenCalledWith('Google account connected', 'success'));
-      await screen.findByText('Trust dial'); // the successful OAuth return resumes at step 8
+      await screen.findByText('Trust dial'); // successful OAuth return resumes at the trust step
       expect(localStorage.getItem('cp-ftue-resume')).toBeNull();
       expect(window.location.search).toBe('');
 
@@ -776,13 +711,13 @@ describe('OnboardingWizard', () => {
       localStorage.setItem('cp-ftue-resume', '1');
       window.history.replaceState({}, '', '/settings?google=error&reason=access_denied');
       setPrefs({ onboarded_at: '2020-01-01T00:00:00.000Z' });
-      setOnboardingStepValue(1);
+      setOnboardingStepValue(2);
       setOnboardingForceOpenValue(false);
 
       mount();
 
       await waitFor(() => expect(toastMock).toHaveBeenCalledWith('Google connect failed: access_denied', 'error'));
-      await screen.findByText('Connect a source'); // step 3, so the user can retry
+      await screen.findByText('Connect a source'); // the user can retry the connection
 
       window.history.replaceState({}, '', '/');
     });

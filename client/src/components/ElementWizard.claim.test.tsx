@@ -37,6 +37,8 @@ import { createSignal } from 'solid-js';
  */
 
 const quickParseMock = vi.fn();
+const tasksListMock = vi.fn(async () => ({ tasks: [] as unknown[] }));
+const addTasksMock = vi.fn(async (_id: string, _ids: string[]) => ({ placed: 2, unplaced: 0, skipped: 0 }));
 const tasksCreateMock = vi.fn(async (_b: unknown) => ({ task: { id: 'task-new' } }));
 const tasksUpdateMock = vi.fn(async (_id: string, _b: unknown, _scope?: string) => ({}));
 const blocksCreateMock = vi.fn(async (_b: unknown) => ({ block: { id: 'blk-new' } }));
@@ -50,13 +52,14 @@ vi.mock('../lib/api.js', () => ({
     calibration: { suggest: async () => ({ suggestion: null }) },
     tags: { create: vi.fn(async () => ({})) },
     tasks: {
+      list: () => tasksListMock(),
       quickParse: (...a: unknown[]) => quickParseMock(...a),
       create: (b: unknown) => tasksCreateMock(b),
       update: (id: string, b: unknown, scope?: string) => tasksUpdateMock(id, b, scope),
       suggestTags: async () => ({ tags: [] }),
       suggestSubtasks: async () => ({ subtasks: [] }),
     },
-    blocks: { create: (b: unknown) => blocksCreateMock(b), update: (id: string, b: unknown) => blocksUpdateMock(id, b), addTasks: vi.fn(async () => ({})) },
+    blocks: { create: (b: unknown) => blocksCreateMock(b), update: (id: string, b: unknown) => blocksUpdateMock(id, b), addTasks: (id: string, ids: string[]) => addTasksMock(id, ids) },
     patterns: { create: vi.fn(async () => ({})), update: (id: string, b: unknown) => patternsUpdateMock(id, b), placeToday: vi.fn(async () => ({})) },
   },
 }));
@@ -71,11 +74,17 @@ const TAGS = [
   { id: 'c2', name: 'leisure', kind: 'category', directions: [] },
   { id: 'c3', name: 'career', kind: 'category', directions: [] },
   { id: 'c4', name: 'travel', kind: 'category', directions: [] },
+  { id: 'i1', name: 'email', kind: 'intention', directions: [] },
+  { id: 'i2', name: 'invoice', kind: 'intention', directions: [] },
+  { id: 'i3', name: 'review', kind: 'intention', directions: [] },
+  { id: 'i4', name: 'archive', kind: 'intention', directions: [], muted: true },
+  { id: 'i5', name: 'errand', kind: 'intention', directions: [] },
 ];
 
 type ModalState = {
   open: boolean; mode: 'add' | 'edit'; kind: 'task' | 'habit' | 'timeblock' | null;
   editTarget?: { kind: 'task' | 'habit' | 'timeblock'; id: string };
+  prefill?: { day?: string; start?: string; taskSomeday?: boolean };
 };
 const CLOSED: ModalState = { open: false, mode: 'add', kind: null };
 const [modal, setModal] = createSignal<ModalState>(CLOSED);
@@ -633,5 +642,79 @@ describe('ElementWizard — a task or habit edit sends the category picker only 
     fireEvent.input(titleInput(), { target: { value: 'Pay the invoice' } });
     fireEvent.click(chip('Career'));
     expect((await add()).categories).toEqual(['career']);
+  });
+});
+
+
+describe('ElementWizard — time-block tasks', () => {
+  it('ranks by matching tag and saves multiple existing tasks without creating one', async () => {
+    tasksListMock.mockResolvedValueOnce({ tasks: [
+      { id: 'home-task', title: 'Pay bill', status: 'open', tags: ['home'] },
+      { id: 'work-task', title: 'Write report', status: 'open', tags: ['work'] },
+    ] });
+    render(() => <ElementWizard />);
+    open('timeblock');
+    fireEvent.click(chip('work'));
+    const picker = screen.getByRole('textbox', { name: 'Find tasks to add' });
+    fireEvent.focus(picker);
+    await screen.findByRole('button', { name: /Write report/ });
+    const suggestions = screen.getAllByRole('button', { name: /Write report|Pay bill/ });
+    expect(suggestions.map((button) => button.textContent)).toEqual(['Write reporttask', 'Pay billtask']);
+    fireEvent.click(suggestions[0]);
+    fireEvent.click(screen.getByRole('button', { name: /Pay bill/ }));
+    fireEvent.input(picker, { target: { value: 'Send invoice' } });
+    fireEvent.keyDown(picker, { key: 'Enter' });
+    expect(screen.getByText('No matching tasks')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Create|New task/ })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: 'Add task' })).toBeNull();
+    expect(screen.getByText('2 selected. Add the time block to place them.')).toBeTruthy();
+    fireEvent.input(screen.getByPlaceholderText('Time block title…'), { target: { value: 'Office work' } });
+    await press('Add');
+    expect(addTasksMock).toHaveBeenCalledWith('blk-new', ['work-task', 'home-task']);
+    expect(tasksCreateMock).not.toHaveBeenCalled();
+    expect(showToastMock).toHaveBeenLastCalledWith('Time Block saved · Tasks: 2 added', 'success');
+  });
+});
+
+describe('ElementWizard — add entry points', () => {
+  it('creates a FAB draft as Someday after switching between Task and Time Block', async () => {
+    render(() => <ElementWizard />);
+    setModal({ open: true, mode: 'add', kind: null, prefill: { taskSomeday: true } });
+    fireEvent.click(chip('Time Block'));
+    expect(chip('Scheduled').classList.contains('text-primary')).toBe(true);
+    fireEvent.click(chip('Task'));
+    fireEvent.input(titleInput(), { target: { value: 'Capture an idea' } });
+    expect(screen.getByText('Task · Someday')).toBeTruthy();
+    const body = await add();
+    expect(body).toMatchObject({ title: 'Capture an idea', auto_place: false });
+    expect(body).not.toHaveProperty('scheduled_for');
+    expect(body).not.toHaveProperty('task_time');
+    expect(body).not.toHaveProperty('due_at');
+  });
+
+  it('keeps a clicked date and time when Describe it contains no schedule', async () => {
+    quickParseMock.mockResolvedValueOnce(parseOk(undefined, undefined));
+    render(() => <ElementWizard />);
+    setModal({ open: true, mode: 'add', kind: 'task', prefill: { day: '2026-12-02', start: '14:15' } });
+    await describeIt(LINE);
+    expect(await add()).toMatchObject({ scheduled_for: '2026-12-02', task_time: '14:15', auto_place: true });
+  });
+});
+
+describe('ElementWizard — suggested task tags', () => {
+  it('shows three existing tags below Categories and saves with the user’s changes', async () => {
+    render(() => <ElementWizard />);
+    open();
+    fireEvent.input(titleInput(), { target: { value: 'Email invoice review and archive travel notes' } });
+    const suggestions = screen.getAllByRole('button', { name: /^Remove suggested tag/ });
+    expect(suggestions.map((button) => button.getAttribute('aria-label'))).toEqual([
+      'Remove suggested tag email', 'Remove suggested tag invoice', 'Remove suggested tag review',
+    ]);
+    expect(screen.getByText(/Categories/).compareDocumentPosition(screen.getByText('Tags')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(chip('Remove suggested tag invoice'));
+    fireEvent.click(chip('Add tag'));
+    fireEvent.input(screen.getByRole('textbox', { name: 'Find or type a tag' }), { target: { value: 'err' } });
+    fireEvent.click(chip('errand'));
+    expect(await add()).toMatchObject({ tags: [], secondary_tags: ['errand', 'email', 'review'] });
   });
 });

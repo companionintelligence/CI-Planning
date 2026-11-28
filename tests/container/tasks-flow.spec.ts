@@ -57,3 +57,81 @@ test('task details save a timestamped note and completion', async ({ page }, tes
     await data.cleanup();
   }
 });
+
+test('task swipe actions persist after reload', async ({ page }, testInfo) => {
+  test.skip(!username || !password, 'requires a local-login container with LOGIN_USER and LOGIN_PASS');
+  const runId = `${testInfo.testId}-${Date.now()}`;
+  const data = new OwnerFixtures(page.request, runId);
+  const touch = await page.context().newCDPSession(page);
+  await touch.send('Emulation.setTouchEmulationEnabled', { enabled: true });
+  await page.setViewportSize({ width: 430, height: 900 });
+
+  const card = (title: string) => page.locator('.task-card').filter({ hasText: title });
+  const swipe = async (title: string, direction: 1 | -1) => {
+    const label = card(title).getByText(title, { exact: true });
+    await label.scrollIntoViewIfNeeded();
+    const bounds = await label.boundingBox();
+    if (!bounds) throw new Error(`Cannot swipe a hidden task: ${title}`);
+    const x = Math.round(bounds.x + Math.min(bounds.width / 2, 50));
+    const y = Math.round(bounds.y + bounds.height / 2);
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+    for (const distance of [30, 70, 100]) {
+      await touch.send('Input.dispatchTouchEvent', {
+        type: 'touchMove', touchPoints: [{ x: x + direction * distance, y }],
+      });
+    }
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  };
+  const mutation = (path: string, method: string) => page.waitForResponse((response) =>
+    new URL(response.url()).pathname === path && response.request().method() === method);
+
+  try {
+    await signInLocal(page, url);
+    const staged = await data.createTask({ title: `Stage ${runId}` });
+    const archived = await data.createTask({ title: `Archive ${runId}` });
+    const deleted = await data.createTask({ title: `Delete ${runId}` });
+    await page.goto(`${url}/tasks`);
+
+    const stageWrite = mutation('/api/flight-plan', 'POST');
+    await swipe(staged.title, 1);
+    expect((await stageWrite).ok()).toBe(true);
+    await expect(card(staged.title)).toHaveClass(/opacity-40/);
+    await expect(card(staged.title).getByText('Flight Plan', { exact: true })).toBeHidden();
+    await expect(card(staged.title).getByRole('button', { name: `Archive ${staged.title}` })).toBeHidden();
+    await expect(card(staged.title).getByRole('button', { name: `Delete ${staged.title}` })).toBeHidden();
+
+    await swipe(archived.title, -1);
+    const archiveWrite = mutation(`/api/tasks/${archived.id}/archive`, 'POST');
+    await page.getByRole('button', { name: `Archive ${archived.title}`, exact: true }).click();
+    expect((await archiveWrite).ok()).toBe(true);
+    await expect(card(archived.title)).toHaveCount(0);
+
+    await swipe(deleted.title, -1);
+    const deleteWrite = mutation(`/api/tasks/${deleted.id}`, 'DELETE');
+    page.once('dialog', (dialog) => dialog.accept());
+    await page.getByRole('button', { name: `Delete ${deleted.title}`, exact: true }).click();
+    expect((await deleteWrite).ok()).toBe(true);
+
+    await page.reload();
+    await expect(card(staged.title)).toHaveClass(/opacity-40/);
+    await expect(card(archived.title)).toHaveCount(0);
+    await expect(card(deleted.title)).toHaveCount(0);
+    const flightPlan = await page.request.get(`${url}/api/flight-plan`);
+    expect(flightPlan.ok()).toBe(true);
+    expect((await flightPlan.json()).flight_plan).toContainEqual(expect.objectContaining({ task_id: staged.id }));
+
+    await page.getByTitle('View completed and thrown-away tasks').click();
+    for (const [task, section] of [[archived, 'Archived'], [deleted, 'Thrown away']] as const) {
+      const sectionToggle = page.getByRole('button', { name: new RegExp(`^${section}\\s+\\d+$`) });
+      await expect(sectionToggle.locator('..').getByText(task.title, { exact: true })).toBeVisible();
+    }
+    for (const [task, status] of [[archived, 'archived'], [deleted, 'cancelled']] as const) {
+      const response = await page.request.get(`${url}/api/tasks?status=${status}`);
+      expect(response.ok()).toBe(true);
+      expect((await response.json()).tasks).toContainEqual(expect.objectContaining({ id: task.id, status }));
+    }
+  } finally {
+    await data.cleanup();
+    await touch.detach();
+  }
+});

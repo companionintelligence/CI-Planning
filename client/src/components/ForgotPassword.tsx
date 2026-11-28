@@ -1,7 +1,7 @@
 import { createSignal, Show } from 'solid-js';
-import { X, Loader2 } from 'lucide-solid';
+import { Loader2 } from 'lucide-solid';
 import { api } from '../lib/api.js';
-import { ViewportOverlay } from './ViewportOverlay.js';
+import { FormActions, ModalSheet } from '../ui/index.js';
 
 /**
  * V6 — "Forgot password?" modal, opened from the local login form (Login.tsx). One
@@ -47,13 +47,7 @@ export function ForgotPassword(props: Props) {
   }
 
   return (
-    <ViewportOverlay class="modal-backdrop" onClick={props.onClose}>
-      <div class="modal max-w-sm" onClick={(e) => e.stopPropagation()}>
-        <div class="px-4 py-3 border-b border-border flex items-center justify-between">
-          <span class="text-sm font-semibold text-foreground">Reset your password</span>
-          <button class="btn-icon" onClick={props.onClose} aria-label="Close"><X size={15} /></button>
-        </div>
-
+    <ModalSheet open title="Reset your password" onClose={props.onClose} mode="modal" backdropClass="modal-backdrop" class="max-w-sm">
         <Show
           when={!sent()}
           fallback={
@@ -84,17 +78,16 @@ export function ForgotPassword(props: Props) {
             <p class="text-xs text-muted-foreground">
               We'll email a reset link to the address on file for that account.
             </p>
-            <div class="flex justify-end gap-2">
+            <FormActions>
               <button type="button" class="btn-ghost text-sm px-3 py-1.5" onClick={props.onClose}>Cancel</button>
               <button type="submit" class="btn-primary text-sm px-4 py-1.5 justify-center" disabled={submitting() || !identifier().trim()}>
                 <Show when={submitting()} fallback={<>Send reset link</>}>
                   <Loader2 class="animate-spin" size={14} /> Sending…
                 </Show>
               </button>
-            </div>
+            </FormActions>
           </form>
         </Show>
-      </div>
-    </ViewportOverlay>
+    </ModalSheet>
   );
 }

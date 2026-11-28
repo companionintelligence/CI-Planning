@@ -22,6 +22,7 @@ interface OpenSlot extends TimeRange { directions: string[] }
 interface TimelineBlock {
   block: Block;
   task?: ReturnType<typeof taskOf>;
+  lane: 'timeblock' | 'contained' | 'full';
   start: number;
   end: number;
   directions: string[];
@@ -153,8 +154,9 @@ export function OpenTimeSummary(props: { date: string; filterOpen?: boolean; onT
 
   const timelineBlocks = createMemo<TimelineBlock[]>(() => {
     const output: TimelineBlock[] = [];
-    for (const block of blocks() ?? []) {
-      if (!occupiesMinuteAxis(block) || !isInDay(block, props.date)) continue;
+    const dayBlocks = (blocks() ?? []).filter((block) => occupiesMinuteAxis(block) && isInDay(block, props.date));
+    const timeblockIds = new Set(dayBlocks.filter((block) => block.block_kind === 'timeblock').map((block) => block.id));
+    for (const block of dayBlocks) {
       const start = localMinute(block.start_at);
       const rawEnd = localMinute(block.end_at);
       const endDate = new Date(block.end_at);
@@ -176,6 +178,8 @@ export function OpenTimeSummary(props: { date: string; filterOpen?: boolean; onT
       output.push({
         block,
         task,
+        lane: block.block_kind === 'timeblock' ? 'timeblock'
+          : block.parent_block_id && timeblockIds.has(block.parent_block_id) ? 'contained' : 'full',
         start: Math.max(0, start),
         end: Math.min(DAY_MINUTES, end),
         directions: directions.sort((a, b) => directionRank(a) - directionRank(b) || a.localeCompare(b)),
@@ -379,13 +383,18 @@ export function OpenTimeSummary(props: { date: string; filterOpen?: boolean; onT
             <button
               type="button"
               class="open-time-scheduled"
-              classList={{ 'is-dimmed': isDimmed(item.directions), 'has-label': item.end - item.start >= 90 && item.showTitle }}
+              classList={{
+                'is-dimmed': isDimmed(item.directions),
+                'has-label': item.end - item.start >= 90 && item.showTitle,
+                'is-timeblock': item.lane === 'timeblock',
+                'is-contained': item.lane === 'contained',
+              }}
               style={{
                 left: percent(item.start, range()),
                 width: percentSpan(item.start, item.end, range()),
                 '--item-color': item.color,
               }}
-              aria-label={`${item.title}${item.directions.length ? `, ${item.directions.join(', ')}` : ''}, ${formatClock(item.start)} to ${formatClock(item.end)}. Click to preview; click again to edit.`}
+              aria-label={`${item.lane === 'timeblock' ? 'Time block: ' : item.lane === 'contained' ? 'Task in time block: ' : ''}${item.title}${item.directions.length ? `, ${item.directions.join(', ')}` : ''}, ${formatClock(item.start)} to ${formatClock(item.end)}. Click to preview; click again to edit.`}
               onPointerEnter={() => {
                 cancelClose();
                 const current = popup();

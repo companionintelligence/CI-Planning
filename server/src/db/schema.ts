@@ -369,6 +369,7 @@ export const tags = sqliteTable('tags', {
   // surfaced to the user as "Time Block Category". ('direction' was briefly renamed to
   // 'pattern' in 0038/0043; reverted in 0105 — "pattern" now means only the day-arrangement.)
   kind: text('kind').notNull().default('intention'),       // 'direction' | 'intention' | 'category'
+  colorToken: text('color_token'),
   muted: integer('muted', { mode: 'boolean' }).notNull().default(false),
   isBase: integer('is_base', { mode: 'boolean' }).notNull().default(false), // undeletable base direction
 }, (t) => ({ ownerName: unique().on(t.ownerId, t.name) }));

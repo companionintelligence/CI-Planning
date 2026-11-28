@@ -2,9 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent, waitFor } from '@solidjs/testing-library';
 
 /**
- * Phase 3 — the add box at the DOM seam. The acceptance bar is "both paths work
- * from the keyboard alone", so these drive it entirely with typing and keys:
- * search → Enter picks a match; no match → Enter creates and places.
+ * Search and place existing tasks with the keyboard.
  */
 
 const listTasks = vi.fn();
@@ -69,8 +67,7 @@ describe('SectionAddTask — search path', () => {
   it('a task already in the block is not offered', async () => {
     const { container } = render(() => <SectionAddTask block={BLOCK} memberTaskIds={new Set(['t1'])} />);
     typeInto(boxOf(container), 'draft');
-    // The only match is excluded → the create affordance takes its place.
-    await waitFor(() => expect(container.textContent).toMatch(/Create/));
+    await waitFor(() => expect(container.textContent).toContain('No matching tasks'));
     expect(container.textContent).not.toContain('Draft the spec');
   });
 
@@ -84,25 +81,26 @@ describe('SectionAddTask — search path', () => {
   });
 });
 
-describe('SectionAddTask — create path', () => {
-  it('Enter with no match creates the task, then places it — one gesture', async () => {
+describe('SectionAddTask — empty results', () => {
+  it('Enter with no match leaves the query and task list alone', async () => {
     listTasks.mockResolvedValue({ tasks: [] });
     const { container } = render(() => <SectionAddTask block={BLOCK} memberTaskIds={new Set()} />);
     const input = boxOf(container);
     typeInto(input, 'Brand new task');
-    await waitFor(() => expect(container.textContent).toMatch(/Create/));
+    await waitFor(() => expect(container.textContent).toContain('No matching tasks'));
 
     fireEvent.keyDown(input, { key: 'Enter' });
-    await waitFor(() => expect(createTask).toHaveBeenCalledWith({ title: 'Brand new task' }));
-    await waitFor(() => expect(addTasks).toHaveBeenCalledWith('tb1', ['new1']));
+    await waitFor(() => expect(input.readOnly).toBe(false));
+    expect(input.value).toBe('Brand new task');
+    expect(createTask).not.toHaveBeenCalled();
+    expect(addTasks).not.toHaveBeenCalled();
   });
 
   it('clears the box after a successful add', async () => {
-    listTasks.mockResolvedValue({ tasks: [] });
     const { container } = render(() => <SectionAddTask block={BLOCK} memberTaskIds={new Set()} />);
     const input = boxOf(container);
-    typeInto(input, 'Brand new task');
-    await waitFor(() => expect(container.textContent).toMatch(/Create/));
+    typeInto(input, 'draft');
+    await waitFor(() => expect(container.textContent).toContain('Draft the spec'));
     fireEvent.keyDown(input, { key: 'Enter' });
     await waitFor(() => expect(input.value).toBe(''));
   });
@@ -166,7 +164,7 @@ describe('SectionAddTask — racing the backlog fetch', () => {
     expect(createTask).not.toHaveBeenCalled();
   });
 
-  it('still creates when the resolved backlog genuinely has no match', async () => {
+  it('leaves tasks alone when a pending search resolves without a match', async () => {
     let release!: (v: { tasks: unknown[] }) => void;
     listTasks.mockReturnValue(new Promise((r) => { release = r; }));
 
@@ -177,8 +175,10 @@ describe('SectionAddTask — racing the backlog fetch', () => {
 
     release({ tasks: [{ id: 't1', title: 'Something else', status: 'open' }] });
 
-    await waitFor(() => expect(createTask).toHaveBeenCalledWith({ title: 'Brand new task' }));
-    await waitFor(() => expect(addTasks).toHaveBeenCalledWith('tb1', ['new1']));
+    await waitFor(() => expect(input.readOnly).toBe(false));
+    expect(input.value).toBe('Brand new task');
+    expect(createTask).not.toHaveBeenCalled();
+    expect(addTasks).not.toHaveBeenCalled();
   });
 });
 

@@ -16,7 +16,11 @@ export function PageHeader(props: { title: JSX.Element | string; sub?: JSX.Eleme
   );
 }
 
-/** Shared bordered surface. Keep layout in the feature via `class`; the surface tokens live in `.card`. */
+/**
+ * Shared bordered surface. Keep body layout in the feature via `class`; the
+ * title/actions slot uses the ui-card header recipe below. At narrow widths its
+ * action group wraps onto a full row so controls do not compress the heading.
+ */
 export function Card(props: SharedClass & {
   title?: JSX.Element | string;
   label?: string;
@@ -33,17 +37,25 @@ export function Card(props: SharedClass & {
       aria-label={!props.title ? props.label : undefined}
     >
       <Show when={props.title || props.description || props.actions}>
-        <header class="flex flex-wrap items-start justify-between gap-2">
-          <div class="min-w-0">
-            <Show when={props.title}><h2 id={titleId} class="text-sm font-bold text-foreground">{props.title}</h2></Show>
-            <Show when={props.description}><div class="text-xs text-muted-foreground">{props.description}</div></Show>
+        <header class="ui-card__header">
+          <div class="ui-card__copy">
+            <Show when={props.title}><h2 id={titleId} class="ui-card__title">{props.title}</h2></Show>
+            <Show when={props.description}><div class="ui-card__description">{props.description}</div></Show>
           </div>
-          <Show when={props.actions}><div class="flex flex-wrap items-center gap-2">{props.actions}</div></Show>
+          <Show when={props.actions}><div class="ui-card__actions">{props.actions}</div></Show>
         </header>
       </Show>
       {props.children}
     </section>
   );
+}
+
+/**
+ * Right-aligned form actions with a narrow-screen contract: at phone widths,
+ * direct buttons share the row evenly so labels stay reachable without overflow.
+ */
+export function FormActions(props: SharedClass) {
+  return <div class={`ui-form-actions ${props.class ?? ''}`}>{props.children}</div>;
 }
 
 /** A visually toolbar-like, labeled group of controls. Use role=tablist for actual tabs. */
@@ -188,13 +200,26 @@ export interface ModalSheetProps {
   footer?: JSX.Element;
   mode?: 'modal' | 'sheet';
   class?: string;
+  /** Classes for the scrollable content region when a feature needs its own internal scrolling layout. */
+  contentClass?: string;
   /** Extra backdrop classes for a feature's existing placement recipe (for example, a centered mobile dialog). */
   backdropClass?: string;
   style?: JSX.CSSProperties;
   closeLabel?: string;
+  /** Return true to consume Escape for a nested popover before closing this dialog. */
+  onEscape?: () => boolean;
+  /** Optional access to the dialog node for feature-specific viewport behavior. */
+  dialogRef?: (element: HTMLDivElement) => void;
+  /** Disable automatic restoration when a layered parent surface owns focus return. */
+  restoreFocus?: boolean;
 }
 
-/** Viewport-anchored dialog/sheet. Native focus cycling, Escape and focus restore are managed here. */
+/**
+ * Use for every dialog or sheet. Owns dialog semantics, initial focus, focus
+ * cycling, Escape and backdrop dismissal, plus focus return by default.
+ * `ViewportOverlay` is only its low-level placement layer for passive or
+ * non-modal surfaces.
+ */
 export function ModalSheet(props: ModalSheetProps) {
   const titleId = createUniqueId();
   function DialogContent() {
@@ -209,7 +234,7 @@ export function ModalSheet(props: ModalSheetProps) {
         (first ?? dialog).focus();
       });
     });
-    onCleanup(() => previousFocus?.isConnected && previousFocus.focus());
+    onCleanup(() => props.restoreFocus !== false && previousFocus?.isConnected && previousFocus.focus());
 
     function keyDown(event: KeyboardEvent & { currentTarget: HTMLDivElement }) {
       if (event.key === 'Escape') {
@@ -218,6 +243,7 @@ export function ModalSheet(props: ModalSheetProps) {
         // settings above the ElementWizard). Keep Escape scoped to the topmost
         // surface so global or parent dismissal handlers cannot close both.
         event.stopPropagation();
+        if (props.onEscape?.()) return;
         props.onClose();
         return;
       }
@@ -236,7 +262,7 @@ export function ModalSheet(props: ModalSheetProps) {
         onClick={(event) => { if (event.target === event.currentTarget) props.onClose(); }}
       >
         <div
-          ref={dialog}
+          ref={(element) => { dialog = element; props.dialogRef?.(element); }}
           style={props.style}
           role="dialog"
           aria-modal="true"
@@ -258,7 +284,7 @@ export function ModalSheet(props: ModalSheetProps) {
             role="region"
             aria-label={`${props.ariaLabel ?? props.title} content`}
             tabindex="0"
-            class="min-h-0 flex-1 overflow-y-auto py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            class={`min-h-0 flex-1 overflow-y-auto py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${props.contentClass ?? ''}`}
           >{props.children}</div>
           <Show when={props.footer}>
             <footer class="flex-shrink-0 border-t border-border pt-3">{props.footer}</footer>

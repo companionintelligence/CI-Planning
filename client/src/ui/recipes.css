@@ -12,12 +12,131 @@
  *   preserve long text and timestamps without creating horizontal overflow.
  * - modal-form-fields owns vertical rhythm inside a modal body. modal-form-field aligns
  *   a label and control. modal-form-grid stacks fields on narrow screens and uses two
- *   equal columns once there is room. modal-form-footer keeps actions reachable and
+ *   equal columns once there is room. ui-form-actions keeps actions reachable and
  *   allows buttons to share width on very narrow screens.
  * - settings-preference-card uses the shared Card title/actions slots for settings
  *   groups. Its header wraps without squeezing the section title or Save action;
  *   settings content remains feature-owned and keeps the existing responsive field rows.
+ * - ui-card header slots keep title/description and actions from fighting for
+ *   width. The action group wraps below 26rem; body layout remains feature-owned.
+ * - ui-form-actions is the shared right-aligned button row. Below 26rem direct
+ *   buttons share available width; use it for form and modal actions, not toolbars.
+ * - ui-date-picker and ui-time-picker own all interactive calendar/clock controls.
+ *   Feature code chooses only the field, icon or compact pill treatment; popover
+ *   geometry and focus states stay canonical, and dialog calendars use ModalSheet.
  */
+
+.ui-date-picker,
+.ui-time-picker {
+  position: relative;
+  min-width: 0;
+}
+.ui-date-picker__trigger,
+.ui-time-picker__trigger {
+  display: flex;
+  min-width: 0;
+  min-height: 2.25rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  text-align: left;
+  cursor: pointer;
+}
+.ui-date-picker__trigger > span,
+.ui-time-picker__trigger > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-date-picker__trigger svg,
+.ui-time-picker__trigger svg { flex: none; color: var(--muted-foreground); }
+.ui-date-picker__icon-trigger { flex: none; }
+.ui-date-picker__popover,
+.ui-time-picker__popover {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 0.4rem);
+  right: 0;
+  width: min(19rem, calc(100vw - 2rem));
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-8);
+  color: var(--popover-foreground);
+  background: var(--popover);
+  box-shadow: var(--shadow-lg);
+}
+.ui-date-picker__popover { width: min(20rem, calc(100vw - 2rem)); }
+.ui-date-picker__monthbar {
+  display: flex;
+  min-height: 2rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem;
+  margin-bottom: 0.5rem;
+}
+.ui-date-picker__month { flex: 1; color: var(--foreground); text-align: center; font-size: 0.875rem; font-weight: 650; }
+.ui-date-picker__grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.2rem; text-align: center; }
+.ui-date-picker__weekday { display: grid; min-height: 1.75rem; place-items: center; color: var(--muted-foreground); font-size: 0.65rem; font-weight: 650; text-transform: uppercase; }
+.ui-date-picker__day {
+  display: grid;
+  min-width: 0;
+  aspect-ratio: 1;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--foreground);
+  background: transparent;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.ui-date-picker__day:hover:not(:disabled) { background: color-mix(in srgb, var(--primary) 12%, var(--popover)); }
+.ui-date-picker__day.is-today { border-color: var(--primary); }
+.ui-date-picker__day.is-selected { color: var(--primary-foreground); background: var(--primary); font-weight: 700; }
+.ui-date-picker__day:disabled { cursor: not-allowed; opacity: 0.35; }
+.ui-date-picker__day:focus-visible,
+.ui-date-picker__monthbar button:focus-visible,
+.ui-date-picker__footer button:focus-visible,
+.ui-time-picker__period button:focus-visible,
+.ui-time-picker__number-field input:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.ui-date-picker__footer,
+.ui-date-picker__dialog-footer {
+  display: flex;
+  min-height: 2rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--border);
+}
+.ui-date-picker__dialog-header { display: flex; flex-shrink: 0; align-items: center; gap: 0.25rem; padding: 0 1rem 0.75rem; border-bottom: 1px solid var(--border); }
+.ui-date-picker__monthbar--dialog { width: 100%; margin: 0; }
+.ui-date-picker__dialog-footer { margin: 0; padding: 0.25rem 1rem 0; border: 0; }
+.ui-date-picker__clear,
+.ui-date-picker__pill-clear { position: absolute; z-index: 1; top: 50%; right: 0.4rem; display: grid; place-items: center; transform: translateY(-50%); color: var(--muted-foreground); }
+.ui-date-picker__clear:hover,
+.ui-date-picker__pill-clear:hover { color: var(--destructive); }
+.ui-date-picker:has(.ui-date-picker__clear) .ui-date-picker__trigger { padding-right: 2rem; }
+.ui-date-picker--pill { display: inline-flex; max-width: 100%; height: 2rem; align-items: center; flex-shrink: 0; border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: var(--radius-8); color: var(--muted-foreground); background: color-mix(in srgb, var(--muted) 30%, transparent); font-size: 0.6875rem; }
+.ui-date-picker__pill-trigger { display: flex; height: 100%; min-width: 0; align-items: center; gap: 0.25rem; padding: 0 1.8rem 0 0.625rem; border-radius: inherit; text-align: left; }
+.ui-date-picker__pill-trigger > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-date-picker__prefix { flex-shrink: 0; }
+.ui-date-picker__pill-trigger svg { flex: none; color: var(--muted-foreground); }
+.ui-date-picker__pill-trigger.text-accent-hi svg { color: var(--accent-hi); }
+.ui-date-picker__pill-clear { right: 0.35rem; }
+
+.ui-time-picker__controls { display: grid; grid-template-columns: 1fr 1fr 1.15fr; gap: 0.5rem; }
+.ui-time-picker__column { display: flex; min-width: 0; flex-direction: column; align-items: center; gap: 0.2rem; }
+.ui-time-picker__number-field { display: flex; min-width: 0; flex-direction: column; align-items: center; gap: 0.35rem; }
+.ui-time-picker__caption { color: var(--muted-foreground); font-size: 0.65rem; }
+.ui-time-picker__number-field input { min-width: 0; padding-inline: 0.35rem; text-align: center; font-variant-numeric: tabular-nums; }
+.ui-time-picker__number-field input::-webkit-inner-spin-button,
+.ui-time-picker__number-field input::-webkit-outer-spin-button { margin: 0; appearance: none; }
+.ui-time-picker__period { display: flex; flex-direction: column; gap: 0.25rem; }
+.ui-time-picker__period button { display: inline-flex; width: 3.25rem; min-width: 2rem; min-height: 1.75rem; align-items: center; justify-content: center; border: 1px solid transparent; border-radius: var(--radius-3); color: var(--foreground); background: var(--muted); font-size: 0.75rem; cursor: pointer; }
+.ui-time-picker__period button:hover { border-color: var(--border); background: var(--secondary); }
+.ui-time-picker__period button[aria-pressed='true'] { border-color: var(--primary); color: var(--primary-foreground); background: var(--primary); }
+.ui-time-picker__footer { display: flex; min-height: 2rem; align-items: center; justify-content: space-between; gap: 0.75rem; margin-top: 0.75rem; padding-top: 0.6rem; border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: 0.75rem; }
+.ui-time-picker__footer > span { margin-right: auto; }
+.ui-time-picker--start .ui-time-picker__popover { right: auto; left: 0; }
+
 .planner-actions-menu {
   display: flex;
   min-width: 10rem;
@@ -117,12 +236,6 @@
   grid-template-columns: minmax(0, 1fr);
   gap: 0.75rem;
 }
-.modal-form-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-}
-
 .settings-preference-card {
   min-width: 0;
 }
@@ -133,10 +246,36 @@
   min-width: 0;
 }
 
+.ui-card__header {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.ui-card__copy { min-width: 0; flex: 1 1 12rem; }
+.ui-card__title { color: var(--foreground); font-size: 0.875rem; font-weight: 700; }
+.ui-card__description { color: var(--muted-foreground); font-size: 0.75rem; }
+.ui-card__actions {
+  display: flex;
+  max-width: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ui-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
 @media (min-width: 40rem) {
   .modal-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 26rem) {
-  .modal-form-footer > button { flex: 1 1 0; }
+  .ui-card__actions { width: 100%; }
+  .ui-form-actions > button { flex: 1 1 0; }
 }

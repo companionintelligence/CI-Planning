@@ -1,7 +1,7 @@
 import { createSignal, createResource, createEffect, For } from 'solid-js';
 import { api, type Objective, type ObjectiveInput } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
-import { FormField, ModalSheet } from '../ui/index.js';
+import { DatePicker, FormActions, FormField, ModalSheet } from '../ui/index.js';
 import { ItemColorPicker } from './ItemColorPicker.js';
 
 /** Flatten the objectives tree into indented rows for the parent picker.
@@ -128,12 +128,12 @@ export function ObjectiveModal(props: Props) {
       mode="sheet"
       class="!max-w-lg rounded-t-3xl sm:rounded-sm"
       footer={
-        <div class="modal-form-footer px-4 pb-1">
+        <FormActions class="px-4 pb-1">
           <button type="button" class="btn-ghost text-sm px-3 py-1.5" onClick={props.onClose}>Cancel</button>
           <button type="button" class="btn-primary text-sm px-4 py-1.5" onClick={save} disabled={saving()}>
             {saving() ? 'Saving…' : isEdit() ? 'Save' : 'Create'}
           </button>
-        </div>
+        </FormActions>
       }
     >
       <div class="modal-form-fields px-4">
@@ -173,7 +173,7 @@ export function ObjectiveModal(props: Props) {
           </FormField>
 
           <FormField label="Target date (soft)" class="modal-form-field">
-            {(control) => <input {...control} type="date" class="input text-sm" value={targetDate()} onInput={(e) => setTargetDate(e.currentTarget.value)} />}
+            {(control) => <DatePicker {...control} label="Target date" value={targetDate()} onChange={setTargetDate} triggerClass="text-sm" clearable />}
           </FormField>
         </div>
 

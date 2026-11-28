@@ -63,10 +63,57 @@ export function tagColorVar(tag: string | null | undefined): string {
  *   3. `tagColorVar(block.tag)` — the legacy per-tag hash (also the no-tag fallback)
  * Editing a category never re-colours a placed block because step 1 reads the stamp.
  */
+export type TextureColorSource = 'direction' | 'category' | 'tag' | 'responsible';
+export interface TextureColorContext {
+  source: TextureColorSource;
+  tags?: readonly { id: string; name: string; kind: string; color_token?: string | null }[];
+  categories?: Record<string, { color_token: string }>;
+  directions?: Record<string, { color_token: string }>;
+}
+export interface ColorableElement extends TexturedElement {
+  tag?: string | null;
+  tags?: string[];
+  secondary_tags?: string[];
+  responsible?: { id: string }[];
+}
+
+function namedColor(names: readonly string[], kind: string, context: TextureColorContext): string | undefined {
+  for (const name of names) {
+    const tag = context.tags?.find((candidate) => candidate.kind === kind && candidate.name.toLowerCase() === name.toLowerCase());
+    if (!tag) continue;
+    if (kind === 'category') return context.categories?.[tag.id]?.color_token ?? tagHueToken(tag.name);
+    if (kind === 'direction') return context.directions?.[tag.id]?.color_token ?? tagHueToken(tag.name);
+    return tag.color_token ?? tagHueToken(tag.name);
+  }
+  return undefined;
+}
+
+export function automaticTextureColor(element: ColorableElement, context: TextureColorContext): string | undefined {
+  const names = [...(element.tags ?? []), ...(element.secondary_tags ?? []), ...(element.tag?.split(',') ?? [])];
+  if (context.source === 'responsible' && element.responsible?.[0]) return tagHueToken(element.responsible[0].id);
+  if (context.source === 'tag') return namedColor(names, 'intention', context);
+  if (context.source === 'direction') return namedColor(names, 'direction', context);
+  return namedColor(element.categories ?? [], 'category', context);
+}
+
+function automaticTextureKey(element: ColorableElement, context: TextureColorContext): string | undefined {
+  if (context.source === 'responsible') return element.responsible?.[0]?.id;
+  const names = context.source === 'category'
+    ? element.categories ?? []
+    : [...(element.tags ?? []), ...(element.secondary_tags ?? []), ...(element.tag?.split(',') ?? [])];
+  const kind = context.source === 'tag' ? 'intention' : context.source;
+  return names.find((name) => context.tags?.some((tag) => tag.kind === kind && tag.name.toLowerCase() === name.toLowerCase()));
+}
+
 export function blockColorVar(
-  block: { color_token?: string | null; category_id?: string | null; tag?: string | null },
+  block: ColorableElement & { color_token?: string | null; category_id?: string | null },
   categoryPrefs?: Record<string, { color_token: string }>,
+  context?: TextureColorContext,
 ): string {
+  if (block.texture_color_token) return 'var(--' + block.texture_color_token + ')';
+  if (context?.source === 'category' && block.color_token) return 'var(--' + block.color_token + ')';
+  const automatic = context && automaticTextureColor(block, context);
+  if (automatic) return 'var(--' + automatic + ')';
   if (block.color_token) return `var(--${block.color_token})`;
   if (block.category_id && categoryPrefs?.[block.category_id]) return `var(--${categoryPrefs[block.category_id].color_token})`;
   return tagColorVar(block.tag);
@@ -152,7 +199,7 @@ export function categoryStripeColors(
  * and a single category reads as a plain fine hatch in its hue. Deterministic in
  * `colors`; empty input yields no stripes (callers fall back to the motif).
  */
-export function stripeStyle(colors: readonly string[]): TextureStyle | undefined {
+export function stripeStyle(colors: readonly string[], angle = 45): TextureStyle | undefined {
   if (!colors.length) return undefined;
   const period = STRIPE_LINE_PX + STRIPE_GAP_PX;
   const stops: string[] = [];
@@ -164,7 +211,7 @@ export function stripeStyle(colors: readonly string[]): TextureStyle | undefined
     position: 'absolute',
     inset: '0',
     'pointer-events': 'none',
-    'background-image': `repeating-linear-gradient(45deg, ${stops.join(', ')})`,
+    'background-image': `repeating-linear-gradient(${angle}deg, ${stops.join(', ')})`,
     opacity: TEXTURE_OPACITY,
   };
 }
@@ -238,13 +285,20 @@ export interface TexturedElement {
  *   5. otherwise → none.
  */
 export function elementTextureStyle(
-  el: TexturedElement,
-  tagList: readonly { id: string; name: string; kind: string }[] | undefined,
+  el: ColorableElement,
+  tagList: readonly { id: string; name: string; kind: string; color_token?: string | null }[] | undefined,
   prefs: Record<string, { color_token: string }> | undefined,
   motifFallback?: { iconShape: string | null | undefined; seedTag: string | null | undefined },
+  context?: TextureColorContext,
 ): TextureStyle | undefined {
   if (el.texture_enabled === false) return undefined;
-  if (el.texture_color_token) return stripeStyle([`var(--${el.texture_color_token})`]);
+  const key = context && automaticTextureKey(el, context);
+  const angle = context?.source === 'category' || !key ? 45 : 30 + (textureSeed(key) % 4) * 15;
+  if (el.texture_color_token) return stripeStyle([`var(--${el.texture_color_token})`], angle);
+  const automatic = context && automaticTextureColor(el, context);
+  if (automatic && context) {
+    return stripeStyle(['var(--' + automatic + ')'], angle);
+  }
   const catColors = categoryStripeColors(el.categories, tagList, prefs);
   if (catColors.length) return stripeStyle(catColors);
   return motifFallback ? textureStyle(motifFallback.iconShape, motifFallback.seedTag) : undefined;

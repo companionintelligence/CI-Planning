@@ -17,7 +17,7 @@ import { createOwner, resetDb, startTestServer, api, SECOND_OWNER_ID, type TestS
  * the tags wipe finally makes hold for entity_tags (the T1→T2 completion).
  */
 
-const EXPECTED_COLS = ['id', 'owner_id', 'name', 'kind', 'muted', 'is_base'];
+const EXPECTED_COLS = ['id', 'owner_id', 'name', 'kind', 'muted', 'is_base', 'color_token'];
 const DAY = '2026-06-22';
 const at = (hhmm: string) => `${DAY}T${hhmm}:00.000Z`;
 
@@ -154,6 +154,25 @@ describe('tags HTTP owner-isolation', () => {
     const aId = a.body.tag.id as string;
     expect((await api(srv.url, `/api/tags/${aId}`, { ...asB, method: 'PATCH', json: { muted: true } })).status).toBe(404);
     expect((await api(srv.url, `/api/tags/${aId}`, { ...asB, method: 'DELETE' })).status).toBe(404);
+  });
+
+  it('saves an intention color for its owner and allows clearing it', async () => {
+    const created = await api(srv.url, '/api/tags', { method: 'POST', json: { name: 'email' } });
+    const id = created.body.tag.id as string;
+    expect((await api(srv.url, `/api/tags/${id}`, {
+      method: 'PATCH', json: { color_token: 'tag-8' },
+    })).status).toBe(200);
+    const listed = await api(srv.url, '/api/tags');
+    expect((listed.body.tags as { id: string; color_token: string | null }[]).find((tag) => tag.id === id)?.color_token).toBe('tag-8');
+    expect((await api(srv.url, `/api/tags/${id}`, {
+      ...asB, method: 'PATCH', json: { color_token: 'tag-2' },
+    })).status).toBe(404);
+    expect((await api(srv.url, `/api/tags/${id}`, {
+      method: 'PATCH', json: { color_token: 'not-a-token' },
+    })).status).toBe(400);
+    await api(srv.url, `/api/tags/${id}`, { method: 'PATCH', json: { color_token: null } });
+    const cleared = await api(srv.url, '/api/tags');
+    expect((cleared.body.tags as { id: string; color_token: string | null }[]).find((tag) => tag.id === id)?.color_token).toBeNull();
   });
 
   it("a block can't be stamped against another owner's category", async () => {

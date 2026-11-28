@@ -27,12 +27,12 @@ import { captureException } from './lib/telemetry.js';
 import { setElementModal, blocks, taskOf, tags, patternPrefs, prefs, refetchPrefs, showToast, refetchTasks, refetchBlocks, refetchFlightPlan, reminders as serverReminders, refetchReminders, closeRitualTask, closeRitualQueue, advanceCloseRitual, clearCloseRitual } from './stores/index.js';
 import { api } from './lib/api.js';
 import {
-  requestNotificationPermission,
   scheduleTaskReminders,
   type ReminderTask,
 } from './lib/notifications.js';
 import { RecurringScopeDialog } from './components/RecurringScopeDialog.js';
 import { GuestPlanner } from './components/GuestPlanner.js';
+import { DockableFab } from './components/DockableFab.js';
 import { handleNativePortalCallback } from './lib/native-portal-auth.js';
 import { clearDeviceLock, DEVICE_LOCK_CHANGED_EVENT, getDeviceLockVerifier, verifyDeviceLockPassword, type LockVerifier } from './lib/native-app-lock.js';
 
@@ -53,9 +53,10 @@ const Settings = lazy(() => import('./views/Settings.js').then((m) => ({ default
 const Jobs = lazy(() => import('./views/Jobs.js').then((m) => ({ default: m.Jobs })));
 
 /**
- * T7 — wire browser reminders into the app root. Ask once for permission, then
- * (re)schedule whenever the day's scheduled blocks / pattern prefs / tag taxonomy
- * change, and again whenever the tab becomes visible (a `visibilitychange` tick the
+ * T7 — wire browser reminders into the app root. Schedule only after notification
+ * permission has been explicitly granted in Settings, then refresh whenever the day's
+ * scheduled blocks / pattern prefs / tag taxonomy change, and again whenever the tab
+ * becomes visible (a `visibilitychange` tick the
  * effect depends on). The block→ReminderTask mapping lives here so notifications.ts
  * stays store-free: we resolve each block's task's kind='pattern' tag *names* to ids
  * via the tags() resource, keep only future starts, and feed patternPrefs to the
@@ -69,7 +70,6 @@ function useTaskReminders() {
     // Capacitor shells use OS scheduled notifications below. Web Notifications and
     // JavaScript timers are foreground-only there and would duplicate reminders.
     if (isCapacitorShell()) return;
-    requestNotificationPermission();
     const onVisibility = () => {
       if (document.visibilityState === 'visible') setVisibleTick((n) => n + 1);
     };
@@ -138,6 +138,7 @@ function Shell(props: { children?: any }) {
   function isPhoneLayout() {
     return typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches;
   }
+  const dockFabsForDenseTags = () => isPhoneLayout() && location.pathname === '/tags';
   function openAgent() {
     const phone = isPhoneLayout();
     setRestoreDetailsAfterAgent(phone && detailsOpen());
@@ -284,15 +285,9 @@ function Shell(props: { children?: any }) {
       <DetailsDrawer />
 
       {/* One shared mobile/desktop Create button across the planner's primary views. */}
-      <button class={`fab ${hasFab() ? 'bottom-36 md:bottom-20' : 'bottom-20 md:bottom-6'}`} onClick={openAgent} title="Talk to task assistant" aria-label="Talk to task assistant"><MessageCircle size={18} /></button>
+      <DockableFab name="Talk to task assistant" title="Talk to task assistant" storageKey="planning-chat-docked" position={hasFab() ? 'bottom-36 md:bottom-20' : 'bottom-20 md:bottom-6'} icon={<MessageCircle size={18} />} onOpen={openAgent} initiallyDocked={dockFabsForDenseTags} />
       <Show when={hasFab()}>
-        <button
-          class="fab bottom-20 md:bottom-6"
-          onClick={() => setElementModal({ open: true, mode: 'add', kind: null })}
-          title="Add to calendar"
-        >
-          <Plus size={18} />
-        </button>
+        <DockableFab name="Add to calendar" title="Add to calendar" storageKey="planning-new-task-docked" position="bottom-20 md:bottom-6" icon={<Plus size={18} />} onOpen={() => setElementModal({ open: true, mode: 'add', kind: null })} initiallyDocked={dockFabsForDenseTags} />
       </Show>
       <Show when={agentMounted()}><TaskAgent open={agentOpen()} screenContext={screenContext} onClose={closeAgent} /></Show>
 

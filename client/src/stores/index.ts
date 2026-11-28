@@ -431,6 +431,18 @@ export const [prefs, { refetch: refetchPrefs }] = createResource(signedIn, () =>
 // setter writes straight through (merge-over-existing so calendar/planner blobs
 // survive) and refetches so every card re-renders from the server truth.
 export const texturesEnabled = () => prefs()?.view_prefs?.appearance?.direction_textures !== false;
+export type TextureColorSource = 'direction' | 'category' | 'tag' | 'responsible';
+export const textureColorSource = (): TextureColorSource =>
+  prefs()?.view_prefs?.appearance?.texture_color_source ?? 'category';
+export async function setTextureColorSource(source: TextureColorSource) {
+  const existing = prefs()?.view_prefs ?? {};
+  const appearance = { ...(existing.appearance ?? {}), texture_color_source: source };
+  try {
+    await api.prefs.update({ view_prefs: { ...existing, appearance } });
+    refetchPrefs();
+  } catch (err) { showToast((err as Error).message, 'error'); }
+}
+
 export function setTexturesEnabled(v: boolean) {
   const existing = prefs()?.view_prefs ?? {};
   const appearance = { ...(existing.appearance ?? {}), direction_textures: v };
@@ -692,7 +704,7 @@ export const [elementModal, setElementModal] = createSignal<{
   open: boolean;
   mode: 'add' | 'edit';
   kind: ElementKind | null;
-  prefill?: { day?: string; start?: string; durationMin?: number };
+  prefill?: { day?: string; start?: string; durationMin?: number; taskSomeday?: boolean };
   editTarget?: { kind: ElementKind; id: string };
   agentDraft?: { title?: string; priority?: number; scheduled_for?: string; task_time?: string; notes?: string };
   parentId?: string; // when adding a subtask
@@ -709,9 +721,9 @@ export const [planWeekModal, setPlanWeekModal] = createSignal<{ open: boolean }>
 // it needed to move it). T12 adds the empty-state "Connect a source" CTA, which lives
 // in Focus/Today/AllTasks — siblings of the wizard, not descendants — so the step
 // needs to be store-level for `openOnboardingAt` to reach the already-mounted wizard
-// and jump it to the Connect step. 10 steps: identity, time/place, pattern tags,
-// Workday, Weekend, weekday defaults, connect, trust, sync, and optional Balance.
-export const [onboardingStep, setOnboardingStep] = createSignal<1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10>(1);
+// and jump it to the Connect step. 9 steps: time/place, pattern tags, Workday,
+// Weekend, weekday defaults, connect, trust, sync, and optional Balance.
+export const [onboardingStep, setOnboardingStep] = createSignal<2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10>(2);
 // The wizard's own gate is `prefs().onboarded_at == null` — true only pre-completion.
 // By the time a user can SEE an empty Focus/Today/Tasks view, onboarding has almost
 // always already finished (any Skip, from any step, sets `onboarded_at`), so the
@@ -727,9 +739,9 @@ export const [onboardingForceOpen, setOnboardingForceOpen] = createSignal(false)
 export const [onboardingSampleDataAllowed, setOnboardingSampleDataAllowed] = createSignal(true);
 /** Jump the (already-mounted, self-gating) onboarding wizard to `step`, reopening it
  *  if onboarding already completed — used by Settings' "Restart the First-Time
- *  Experience" (step 1). Sample data stays available; use `openQuickConnect` for the
+ *  Experience" at its first setup step. Sample data stays available; use `openQuickConnect` for the
  *  empty-state shortcut instead. */
-export function openOnboardingAt(step: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10): void {
+export function openOnboardingAt(step: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10): void {
   setOnboardingStep(step);
   setOnboardingForceOpen(true);
 }
