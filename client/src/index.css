@@ -574,66 +574,6 @@ html[data-colorway="void"]:not(.dark) {
   .input-lg { @apply py-2.5 text-base; }
   .textarea  { @apply resize-none; }
 
-  /* The native <input type=time> popup is owned by the browser and ignores app CSS.
-     FTUE uses a small custom popover so the controls follow the active theme. */
-  .ftue-time-picker { position: relative; min-width: 0; }
-  .ftue-time-picker__trigger {
-    display: flex;
-    min-height: 2.25rem;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-    text-align: left;
-    cursor: pointer;
-  }
-  .ftue-time-picker__trigger svg { color: var(--muted-foreground); flex: none; }
-  .ftue-time-picker__popover {
-    position: absolute;
-    z-index: 20;
-    top: calc(100% + 0.4rem);
-    right: 0;
-    width: min(17rem, calc(100vw - 2rem));
-    padding: 0.75rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius, 0.5rem);
-    background: var(--popover);
-    color: var(--popover-foreground);
-    box-shadow: var(--shadow-lg);
-  }
-  .ftue-time-fields > div:first-child .ftue-time-picker__popover { right: auto; left: 0; }
-  .ftue-time-picker__controls { display: grid; grid-template-columns: 1fr 1fr 1.15fr; gap: 0.5rem; }
-  .ftue-time-picker__column { display: flex; min-width: 0; flex-direction: column; align-items: center; gap: 0.2rem; }
-  .ftue-time-picker__number-field { display: flex; min-width: 0; flex-direction: column; align-items: center; gap: 0.35rem; }
-  .ftue-time-picker__caption { color: var(--muted-foreground); font-size: 0.65rem; }
-  .ftue-time-picker__number-field input {
-    min-width: 0;
-    padding-inline: 0.35rem;
-    text-align: center;
-    font-variant-numeric: tabular-nums;
-  }
-  .ftue-time-picker__number-field input::-webkit-inner-spin-button,
-  .ftue-time-picker__number-field input::-webkit-outer-spin-button { margin: 0; appearance: none; }
-  .ftue-time-picker__period button {
-    display: inline-flex;
-    min-height: 2rem;
-    min-width: 2rem;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid transparent;
-    border-radius: 0.35rem;
-    color: var(--foreground);
-    background: var(--muted);
-    cursor: pointer;
-  }
-  .ftue-time-picker__period button:hover { border-color: var(--border); background: var(--secondary); }
-  .ftue-time-picker__number-field input:focus-visible,
-  .ftue-time-picker__period button:focus-visible,
-  .ftue-time-picker__footer button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
-  .ftue-time-picker__period { display: flex; flex-direction: column; gap: 0.25rem; }
-  .ftue-time-picker__period button { width: 3.25rem; min-height: 1.75rem; font-size: 0.75rem; }
-  .ftue-time-picker__period button[aria-pressed='true'] { border-color: var(--primary); color: var(--primary-foreground); background: var(--primary); }
-  .ftue-time-picker__footer { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin-top: 0.75rem; padding-top: 0.6rem; border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: 0.75rem; }
-
   /* Fixed Planner lane proportions; per-day geometry stays data-driven inline. */
   .planner-grid { grid-template-columns: 3.5rem 1.75rem minmax(0, 1fr); }
 

@@ -254,7 +254,7 @@ export function OnboardingWizard() {
                   <span class="text-foreground">{BROWSER_TZ}</span>
                 </p>
               </div>
-              <div class="flex gap-3 ftue-time-fields">
+              <div class="flex gap-3">
                 <div class="flex min-w-0 flex-1 flex-col gap-1 text-sm">
                   <span class="text-xs text-muted-foreground">Usually wake up</span>
                   <TimePicker label="Usually wake up" value={wakeTime()} onChange={setWakeTime} align="start" />
