@@ -1,7 +1,8 @@
-import { createSignal, Show, For, createResource } from 'solid-js';
+import { createSignal, Show, For, createResource, onMount, onCleanup } from 'solid-js';
+import { Portal } from 'solid-js/web';
 import { setActiveTask } from '../stores/selection.js';
 import { revealDetails } from '../stores/ui.js';
-import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward, Rocket, X, Shapes, Target, Check, Sparkles, Share2 } from 'lucide-solid';
+import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Archive, Repeat, Flame, SkipForward, Rocket, X, Shapes, Target, Check, Sparkles, Share2 } from 'lucide-solid';
 import { type Task, type RecurringScope, api } from '../lib/api.js';
 import { ObjectiveMenu } from './ObjectiveMenu.js';
 import { RoutineMenu } from './RoutineMenu.js';
@@ -97,6 +98,30 @@ export function TaskCard(props: Props) {
   const [expanded, setExpanded] = createSignal(false);
   const [swipeOpen, setSwipeOpen] = createSignal(false);
   const [swipeOffset, setSwipeOffset] = createSignal(0);
+  const [archiveMenuOpen, setArchiveMenuOpen] = createSignal(false);
+  const [archiveMenuPosition, setArchiveMenuPosition] = createSignal({ top: 0, left: 0 });
+  let archiveButton: HTMLButtonElement | undefined;
+  const closeArchiveMenu = () => setArchiveMenuOpen(false);
+  const onArchiveMenuPointerDown = (event: PointerEvent) => {
+    if (!archiveButton?.contains(event.target as Node) && !(event.target as HTMLElement).closest('[data-task-archive-menu]')) closeArchiveMenu();
+  };
+  const onArchiveMenuKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') closeArchiveMenu(); };
+  onMount(() => {
+    document.addEventListener('pointerdown', onArchiveMenuPointerDown);
+    document.addEventListener('keydown', onArchiveMenuKeyDown);
+  });
+  onCleanup(() => {
+    document.removeEventListener('pointerdown', onArchiveMenuPointerDown);
+    document.removeEventListener('keydown', onArchiveMenuKeyDown);
+  });
+  const toggleArchiveMenu = (event: MouseEvent) => {
+    event.stopPropagation();
+    if (archiveMenuOpen()) { closeArchiveMenu(); return; }
+    const rect = (event.currentTarget as HTMLButtonElement).getBoundingClientRect();
+    const width = 152;
+    setArchiveMenuPosition({ top: Math.min(rect.bottom + 6, window.innerHeight - 96), left: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8)) });
+    setArchiveMenuOpen(true);
+  };
   const [dragging, setDragging] = createSignal(false);
   const canSwipe = () => !!props.swipeActions && !props.task.shared && !['done', 'cancelled', 'archived'].includes(props.task.status);
   let touchStart: { x: number; y: number; tracking: boolean } | null = null;
@@ -539,10 +564,19 @@ export function TaskCard(props: Props) {
                 </button>
               </Show>
               <button class="btn-icon" title="Edit" onClick={() => setElementModal({ open: true, mode: 'edit', kind: props.task.is_habit ? 'habit' : 'task', editTarget: { kind: props.task.is_habit ? 'habit' : 'task', id: props.task.id } })}><Pencil size={13} /></button>
-              <button onClick={remove} class="btn-icon hover:text-destructive" title="Cancel task"><Trash2 size={13} /></button>
+              <button ref={archiveButton} type="button" onClick={toggleArchiveMenu} class="btn-icon" title="Archive or delete task" aria-label={`Archive or delete ${props.task.title}`} aria-haspopup="menu" aria-expanded={archiveMenuOpen()}><Archive size={13} /></button>
             </div>
           </div>
         </div>
+
+        <Show when={archiveMenuOpen()}>
+          <Portal>
+            <div data-task-archive-menu role="menu" aria-label={`Actions for ${props.task.title}`} class="fixed z-[100] w-40 rounded-md border border-border bg-popover p-1 shadow-lg" style={{ top: `${archiveMenuPosition().top}px`, left: `${archiveMenuPosition().left}px` }}>
+              <button type="button" role="menuitem" class="w-full rounded px-3 py-2 text-left text-xs hover:bg-sidebar-accent" onClick={() => { closeArchiveMenu(); void archiveTask(); }}><Archive size={13} class="mr-2 inline" />Archive</button>
+              <button type="button" role="menuitem" class="w-full rounded px-3 py-2 text-left text-xs text-destructive hover:bg-destructive/10" onClick={() => { closeArchiveMenu(); void remove(); }}><Trash2 size={13} class="mr-2 inline" />Delete</button>
+            </div>
+          </Portal>
+        </Show>
 
         <Show when={pastScheduled() && !props.task.is_habit && !props.task.shared}>
           <div class="mt-2 ml-9 flex items-center gap-1.5" role="group" aria-label={`Triage overdue task ${props.task.title}`}>

@@ -72,20 +72,11 @@ export function AllTasks() {
   const statusOptions = ['', 'open', 'scheduled', 'in_progress', 'deferred'];
   const ARCHIVED = new Set(['done', 'cancelled', 'archived']);
 
-  // A task completed TODAY stays in the active list — rendered checked — and only falls
-  // into the Archive once the day rolls over (derived by date, so no background job is
-  // needed to "move at end of day"). Uses the client's LOCAL day (localISODate) to match
-  // the rest of the client's day-boundary convention — a UTC comparison would flip the
-  // day around midnight for non-UTC users.
-  const isDoneToday = (t: Task) =>
-    t.status === 'done' && !!t.completed_at && localISODate(new Date(t.completed_at)) === localISODate();
-  // Shown in the active backlog: everything not archived, PLUS today's completions
-  // (cancelled always archives immediately — no same-day grace). Routine tasks are a
-  // repeatable checklist: they are NEVER archived on completion — they stay in the list
-  // (checked) and the midnight `reset_routines` job flips them back to open. Only a
-  // cancelled (thrown-away) routine task leaves the active list.
+  // Completed standard tasks leave the active log immediately and appear in Archive.
+  // Routine members are repeatable checklists: completed members stay checked until the
+  // midnight reset job reopens them. Cancelled/archived routines leave the active list.
   const inActiveList = (t: Task) =>
-    isRoutineTask(t.id) ? !['cancelled', 'archived'].includes(t.status) : (!ARCHIVED.has(t.status) || isDoneToday(t));
+    isRoutineTask(t.id) ? !['cancelled', 'archived'].includes(t.status) : !ARCHIVED.has(t.status);
 
   // Header "N open" count — owner decision (AF-7 follow-up): a task created today is
   // open IMMEDIATELY, so the count spans the New Today AND Open sections (a task sits in
@@ -224,18 +215,17 @@ export function AllTasks() {
     return [...groups.values()];
   };
 
-  // Archive — done (before today) + cancelled, fetched explicitly. Re-keyed on tasks() so
+  // Archive — done + cancelled, fetched explicitly. Re-keyed on tasks() so
   // it refetches whenever a task mutates while the panel is open — e.g. un-checking a
   // completed task there flips it back to open and it leaves the archive immediately.
-  // Today's completions are filtered out (they're still in the active list).
   const [archived] = createResource(
     () => (showArchive() ? (tasks() ?? []) : null),
     async () => {
       const [d, c, a] = await Promise.all([api.tasks.list({ status: 'done' }), api.tasks.list({ status: 'cancelled' }), api.tasks.list({ status: 'archived' })]);
       return {
-        // Routine tasks are never archived on completion (they reset at midnight), so
-        // they never appear in Completed — only the day's completions are also withheld.
-        done: d.tasks.filter((t) => isTopLevel(t) && !isDoneToday(t) && !isRoutineTask(t.id)),
+        // Routine completions are repeatable checklist state and reset at midnight.
+        // Standard task completions are archived immediately, including today's.
+        done: d.tasks.filter((t) => isTopLevel(t) && !isRoutineTask(t.id)),
         cancelled: c.tasks.filter(isTopLevel),
         archived: a.tasks.filter(isTopLevel),
       };
