@@ -62,6 +62,15 @@
   box-shadow: var(--shadow-lg);
 }
 .ui-date-picker__popover { width: min(20rem, calc(100vw - 2rem)); }
+.ui-picker-popover--viewport {
+  position: fixed !important;
+  z-index: 1200 !important;
+  right: auto !important;
+  bottom: auto !important;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  max-width: calc(100vw - 16px);
+}
 .ui-date-picker__monthbar {
   display: flex;
   min-height: 2rem;

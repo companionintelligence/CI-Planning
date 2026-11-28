@@ -1,4 +1,5 @@
 import { For, Show, createMemo, createResource, createSignal, onCleanup, onMount } from 'solid-js';
+import { Portal } from 'solid-js/web';
 import { ChevronDown, ListFilter } from 'lucide-solid';
 import { api, type Block } from '../lib/api.js';
 import {
@@ -104,7 +105,7 @@ function isInDay(block: Block, date: string): boolean {
   return !Number.isNaN(start.getTime()) && localISODate(start) === date;
 }
 
-export function OpenTimeSummary(props: { date: string; filterOpen?: boolean; onToggleFilter?: () => void; hideFilterTrigger?: boolean }) {
+export function OpenTimeSummary(props: { date: string; filterOpen?: boolean; onToggleFilter?: () => void; hideFilterTrigger?: boolean; filterAnchorId?: string }) {
   // Re-read when this date changes or its day-window overrides are edited.
   const [windows] = createResource(
     () => [props.date, patternBlocks()] as const,
@@ -250,12 +251,35 @@ export function OpenTimeSummary(props: { date: string; filterOpen?: boolean; onT
   const [now, setNow] = createSignal(new Date());
   let rootEl: HTMLDivElement | undefined;
   let trackEl: HTMLDivElement | undefined;
+  let filterRowEl: HTMLDivElement | undefined;
+  let filterMenuEl: HTMLDivElement | undefined;
+  const [filterMenuPosition, setFilterMenuPosition] = createSignal({ top: 0, left: 0 });
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
+  function positionFilterMenu() {
+    const row = filterRowEl?.getBoundingClientRect();
+    const trigger = props.filterAnchorId
+      ? document.getElementById(props.filterAnchorId)?.getBoundingClientRect()
+      : undefined;
+    const anchor = trigger ?? row;
+    if (!anchor || !filterMenuEl) return;
+    const viewport = window.visualViewport;
+    const leftBound = viewport?.offsetLeft ?? 0;
+    const topBound = viewport?.offsetTop ?? 0;
+    const viewportWidth = viewport?.width ?? window.innerWidth;
+    const viewportHeight = viewport?.height ?? window.innerHeight;
+    const width = Math.max(filterMenuEl.offsetWidth, 152);
+    const left = Math.max(leftBound + 8, Math.min(anchor.right - width, leftBound + viewportWidth - width - 8));
+    const below = anchor.bottom + 4;
+    const top = below + filterMenuEl.offsetHeight <= topBound + viewportHeight - 8
+      ? below
+      : Math.max(topBound + 8, anchor.top - filterMenuEl.offsetHeight - 4);
+    setFilterMenuPosition({ top, left });
+  }
   onMount(() => {
     const updateNow = () => setNow(new Date());
     const interval = window.setInterval(updateNow, 60_000);
     const onOutsidePointer = (event: PointerEvent) => {
-      if (rootEl && !rootEl.contains(event.target as Node)) {
+      if (rootEl && !rootEl.contains(event.target as Node) && !filterMenuEl?.contains(event.target as Node)) {
         setPopup(null);
         setFiltersOpen(false);
       }
@@ -425,7 +449,7 @@ export function OpenTimeSummary(props: { date: string; filterOpen?: boolean; onT
         </Show>
 
         <Show when={visibleDirections().length > 0}>
-          <div class="open-time-filter-row">
+          <div ref={filterRowEl} class="open-time-filter-row">
             <div class="open-time-filter-wrap">
               <Show when={!props.hideFilterTrigger}>
               <button
@@ -441,18 +465,28 @@ export function OpenTimeSummary(props: { date: string; filterOpen?: boolean; onT
               </button>
               </Show>
               <Show when={filterIsOpen()}>
-                <div class="open-time-filter-menu" role="group" aria-label="Show directions">
-                  <For each={visibleDirections()}>{(direction) => (
-                    <label class="open-time-filter-option">
-                      <input
-                        type="checkbox"
-                        checked={!dimmedDirections().has(direction)}
-                        onChange={() => toggleDirection(direction)}
-                      />
-                      <span>{direction.charAt(0).toUpperCase() + direction.slice(1)}</span>
-                    </label>
-                  )}</For>
-                </div>
+                <Portal>
+                  <div
+                    class="open-time-filter-menu open-time-filter-menu--viewport"
+                    style={{ top: `${filterMenuPosition().top}px`, left: `${filterMenuPosition().left}px` }}
+                    role="group" aria-label="Show directions"
+                    ref={(element) => {
+                      filterMenuEl = element;
+                      requestAnimationFrame(positionFilterMenu);
+                    }}
+                  >
+                    <For each={visibleDirections()}>{(direction) => (
+                      <label class="open-time-filter-option">
+                        <input
+                          type="checkbox"
+                          checked={!dimmedDirections().has(direction)}
+                          onChange={() => toggleDirection(direction)}
+                        />
+                        <span>{direction.charAt(0).toUpperCase() + direction.slice(1)}</span>
+                      </label>
+                    )}</For>
+                  </div>
+                </Portal>
               </Show>
             </div>
           </div>

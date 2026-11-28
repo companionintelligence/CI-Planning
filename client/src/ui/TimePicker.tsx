@@ -1,5 +1,6 @@
 import { createSignal, createUniqueId, onCleanup, onMount, Show } from 'solid-js';
 import { Clock3 } from 'lucide-solid';
+import { Portal } from 'solid-js/web';
 
 type Props = {
   value: string;
@@ -66,13 +67,30 @@ export function TimePicker(props: Props) {
   const step = () => Math.max(1, props.stepMinutes ?? 1);
   const [open, setOpen] = createSignal(false);
   const [draft, setDraft] = createSignal('');
+  const [popoverPosition, setPopoverPosition] = createSignal({ top: 8, left: 8, width: 304, maxHeight: 'calc(100dvh - 16px)' });
   let root: HTMLDivElement | undefined;
   let triggerRef: HTMLButtonElement | undefined;
+  let popoverRef: HTMLDivElement | undefined;
+
+  function positionPopover() {
+    if (!triggerRef) return;
+    const viewport = window.visualViewport;
+    const leftBound = viewport?.offsetLeft ?? 0;
+    const topBound = viewport?.offsetTop ?? 0;
+    const viewportWidth = viewport?.width ?? window.innerWidth;
+    const viewportHeight = viewport?.height ?? window.innerHeight;
+    const width = Math.min(304, viewportWidth - 16);
+    const height = Math.min(popoverRef?.offsetHeight ?? 220, viewportHeight - 16);
+    const left = leftBound + (viewportWidth - width) / 2;
+    const top = topBound + (viewportHeight - height) / 2;
+    setPopoverPosition({ top, left, width, maxHeight: `${Math.max(140, viewportHeight - 16)}px` });
+  }
 
   function openPicker() {
     const initial = props.value || props.min || '09:00';
     setDraft(boundedTime(initial, props.min, props.max, step()));
     setOpen(true);
+    requestAnimationFrame(positionPopover);
   }
   function setClock(next: ClockValue) {
     const normalized = boundedTime(fromClock(next), props.min, props.max, step());
@@ -97,7 +115,7 @@ export function TimePicker(props: Props) {
     setOpen(false);
   }
   function outside(event: PointerEvent) {
-    if (open() && root && !root.contains(event.target as Node)) close();
+    if (open() && root && !root.contains(event.target as Node) && !popoverRef?.contains(event.target as Node)) close();
   }
   function escape(event: KeyboardEvent) {
     if (open() && event.key === 'Escape') {
@@ -129,7 +147,8 @@ export function TimePicker(props: Props) {
         <Clock3 size={16} aria-hidden="true" />
       </button>
       <Show when={open()}>
-        <div id={`${id}-popup`} class="ui-time-picker__popover" role="dialog" aria-label={`Set ${props.label.toLowerCase()}`}>
+        <Portal>
+        <div ref={popoverRef} id={`${id}-popup`} class="ui-time-picker__popover ui-picker-popover--viewport" style={{ top: `${popoverPosition().top}px`, left: `${popoverPosition().left}px`, width: `${popoverPosition().width}px`, 'max-height': popoverPosition().maxHeight }} role="dialog" aria-label={`Set ${props.label.toLowerCase()}`}>
           <div class="ui-time-picker__controls">
             <label class="ui-time-picker__number-field">
               <span class="ui-time-picker__caption">Hour</span>
@@ -153,6 +172,7 @@ export function TimePicker(props: Props) {
             <button type="button" class="btn-primary text-xs" onClick={() => close(true, true)}>Done</button>
           </div>
         </div>
+        </Portal>
       </Show>
     </div>
   );

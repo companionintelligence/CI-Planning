@@ -5,15 +5,14 @@ import { displayDirection, type Band } from '../lib/day-windows.js';
 
 const BADGE_HEIGHT_PX = 14;
 const BADGE_GAP_PX = 2;
-const BADGE_TOP_INSET_PX = 4;
+const BADGE_TOP_INSET_PX = 22;
 
 type TransitionBadge = { band: Band; top: number };
 type TransitionMarker = { minute: number; badges: TransitionBadge[] };
 
 /**
- * The Direction column: a thin, fixed-width lane (right after the time gutter) that
- * marks the day's availability windows. Each band gets a 3px coloured left edge.
- * Letter badges show the set of active window types at every start/end transition, so
+ * The combined time and window lane marks hour labels and the day's availability.
+ * Each band gets a 3px coloured edge. Letter badges show the set of active window types at every start/end transition, so
  * a continuing window is repeated when another one closes. Past transition badges dim.
  * Fixed width by design — it never widens, so the grid stays stable.
  *
@@ -26,6 +25,7 @@ export function DirectionColumn(props: {
   bands: () => Band[];
   state: () => AxisState;
   currentMinute: () => number;
+  hours: () => number[];
 }) {
   const markers = createMemo((): TransitionMarker[] => {
     const bands = props.bands();
@@ -73,6 +73,19 @@ export function DirectionColumn(props: {
 
   return (
     <div class="relative pointer-events-none select-none" style={{ height: `${axisHeightPx(props.state(), PX_PER_MIN)}px` }}>
+      <For each={props.hours()}>
+        {(h) => (
+          <div
+            class="planner-time-label absolute left-0 right-0 -translate-y-1/2 text-[10px] text-muted-foreground font-mono tabular-nums"
+            style={{ top: `${axisYOf(h * 60, props.state(), PX_PER_MIN)}px` }}
+          >
+            {h > 0 && <>
+              <span>{new Date(2000, 0, 1, h).toLocaleTimeString('en-US', { hour: 'numeric', hour12: true }).split(' ')[0]}</span>
+              <span>{new Date(2000, 0, 1, h).toLocaleTimeString('en-US', { hour: 'numeric', hour12: true }).split(' ')[1]}</span>
+            </>}
+          </div>
+        )}
+      </For>
       {/* Band region markers — the coloured left edge over each window's full extent. */}
       <For each={props.bands()}>
         {(b) => (
